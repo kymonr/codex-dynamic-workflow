@@ -34,7 +34,8 @@ MAX_PROMPT_CHARS = 20000
 DEFAULT_RUNS_ROOT = Path(r"D:\.codex-tmp\workflows")
 
 # 任务1探针若发现 PATH 上的 codex 是 .cmd 垫片,把这里改成真实 codex.exe 的绝对路径
-DEFAULT_CODEX_CMD = "codex"
+# 2026-06-13 任务1探针填入(PATH 上是 codex.CMD 垫片);codex 升级后 vendor 路径可能变,届时按探针重填
+DEFAULT_CODEX_CMD = r"C:\Users\Orz\AppData\Roaming\npm\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe"
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
