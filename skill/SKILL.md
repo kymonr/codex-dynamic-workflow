@@ -84,7 +84,7 @@ argument-hint: "要并行处理的大任务描述"
 字段说明(spec 只允许这些字段,多一个 runner 都拒绝运行):
 - name:1-50 位小写字母/数字/连字符。
 - workdir:子代理工作目录,必须已存在,且只填用户点名的项目目录(不要指向用户主目录或整个盘符)。
-- max_concurrency 可省略(1..4,默认 2,想调高先问用户);timeout_seconds 可省略(60..1800,默认 900)。
+- max_concurrency 可省略(1..8,默认 2,想调高先问用户);timeout_seconds 可省略(60..1800,默认 900)。
 - 任务字段:id、prompt 必填;output_schema、reasoning_effort(low/medium/high)可选。
   id 不能用 Windows 保留名(CON/PRN/AUX/NUL/COM1..9/LPT1..9),并按 Windows 大小写不敏感规则去重。
 - output_schema 的每个 type:object 会被 runner 自动补 "additionalProperties": false

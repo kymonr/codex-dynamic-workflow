@@ -5,7 +5,7 @@
 
 安全护栏(硬编码,spec 无法放开):
 - 所有子代理强制 -s read-only,命令白名单拼装,不透传任何参数
-- 并发上限 4(默认 2);单次运行子代理总数上限 12
+- 并发上限 8(默认 2);单次运行子代理总数上限 12
 - 单任务超时 60..1800 秒(默认 900),超时强杀
 - 失败不自动重试;spec 含未知字段直接拒绝
 """
@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-HARD_MAX_CONCURRENCY = 4
+HARD_MAX_CONCURRENCY = 8
 DEFAULT_MAX_CONCURRENCY = 2
 HARD_MAX_AGENTS = 12
 MIN_TIMEOUT_S = 60

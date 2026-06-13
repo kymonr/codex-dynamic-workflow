@@ -41,7 +41,10 @@ class TestValidateSpec(unittest.TestCase):
         runner.validate_spec(earlier)  # 不应抛错
 
     def test_concurrency_bounds(self):
-        d = spec_dict([stage("s1", task("a"))], max_concurrency=5)
+        spec = runner.validate_spec(
+            spec_dict([stage("s1", task("a"))], max_concurrency=8))
+        self.assertEqual(spec["max_concurrency"], 8)
+        d = spec_dict([stage("s1", task("a"))], max_concurrency=9)
         with self.assertRaises(runner.SpecError):
             runner.validate_spec(d)
 
