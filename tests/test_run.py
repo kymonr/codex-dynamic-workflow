@@ -51,6 +51,26 @@ class TestRunWorkflow(unittest.TestCase):
         self.assertEqual(t["status"], "timeout")
         self.assertLess(t["duration_s"], 10)
 
+    def test_output_schema_hardened_on_disk(self):
+        # 落盘给 codex 的 schema.json 顶层必须被自动补上 additionalProperties: false
+        import json as _json
+        raw = spec_dict([stage("s1", task("a", prompt="你好",
+                                          output_schema={"type": "object",
+                                                         "properties": {}}))])
+        s, _ = run_wf(raw)
+        sp = Path(s["tasks"][0]["task_dir"]) / "schema.json"
+        written = _json.loads(sp.read_text(encoding="utf-8"))
+        self.assertIs(written["additionalProperties"], False)
+
+    def test_harden_schema_nested_and_keeps_explicit(self):
+        from helpers import runner
+        out = runner._harden_schema({
+            "type": "object",
+            "properties": {"inner": {"type": "object", "properties": {},
+                                     "additionalProperties": True}}})
+        self.assertIs(out["additionalProperties"], False)               # 顶层自动补
+        self.assertIs(out["properties"]["inner"]["additionalProperties"], True)  # 显式不覆盖
+
 
 if __name__ == "__main__":
     unittest.main()

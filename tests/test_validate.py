@@ -92,6 +92,13 @@ class TestValidateSpec(unittest.TestCase):
         with self.assertRaises(runner.SpecError):
             runner.validate_spec(d)
 
+    def test_task_id_windows_reserved_rejected(self):
+        # CON/NUL 等会拿去 mkdir,Windows 上必失败,必须在校验期拦下
+        for bad in ("CON", "nul", "Com1", "LPT9"):
+            d = spec_dict([stage("s1", task(bad))])
+            with self.assertRaises(runner.SpecError):
+                runner.validate_spec(d)
+
 
 if __name__ == "__main__":
     unittest.main()

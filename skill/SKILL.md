@@ -74,7 +74,7 @@ argument-hint: "要并行处理的大任务描述"
           "output_schema": { "type": "object",
             "properties": { "findings": { "type": "array",
               "items": { "type": "string" } } },
-            "required": ["findings"] },
+            "required": ["findings"], "additionalProperties": false },
           "reasoning_effort": "medium" } ] },
     { "name": "verify", "tasks": [
         { "id": "check",
@@ -86,4 +86,7 @@ argument-hint: "要并行处理的大任务描述"
 - workdir:子代理工作目录,必须已存在,且只填用户点名的项目目录(不要指向用户主目录或整个盘符)。
 - max_concurrency 可省略(1..4,默认 2,想调高先问用户);timeout_seconds 可省略(60..1800,默认 900)。
 - 任务字段:id、prompt 必填;output_schema、reasoning_effort(low/medium/high)可选。
+  id 不能用 Windows 保留名(CON/PRN/AUX/NUL/COM1..9/LPT1..9)。
+- output_schema 的每个 type:object 会被 runner 自动补 "additionalProperties": false
+  (OpenAI 结构化输出 strict 的硬要求);示例里写出来只是为了直观,不写 runner 也会补。
 - v0.1 不支持选模型,一律用 codex 默认模型;prompt(含占位符替换后)上限 20000 字符。

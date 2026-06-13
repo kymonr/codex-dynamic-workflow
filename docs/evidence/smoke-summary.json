@@ -1,0 +1,49 @@
+{
+  "name": "smoke-review-runner",
+  "run_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834",
+  "started": "2026-06-13T07:48:34",
+  "finished": "2026-06-13T07:51:02",
+  "ok": 3,
+  "total": 3,
+  "tasks": [
+    {
+      "id": "defects",
+      "stage": "find",
+      "status": "ok",
+      "exit_code": 0,
+      "duration_s": 127.8,
+      "output": {
+        "findings": [
+          "src/runner.py:173-185 将 `prompt` 直接作为最后一个 argv 追加给 `codex exec`，没有在位置参数前插入 `--`。如果 prompt 以 `-`/`--` 开头，底层 CLI 可能把它解析成选项，轻则任务失败，重则绕过“spec 不透传任何参数”的护栏。",
+          "src/runner.py:222-233 只做了极简 schema 复核：顶层 object 和 required 存在性。像 `{\"findings\":\"not array\"}` 这类不符合 `properties.findings.items`/类型约束的输出会被标记为 `ok`，后续 stage 也会把错误结构当作可信结果注入。",
+          "src/runner.py:40-42 和 259-260 允许 task id 为 Windows 保留设备名或边界文件名，例如 `CON`、`NUL`、`AUX`、`COM1`；这些 id 会直接用于创建任务目录，Windows 上可能在运行期 `mkdir` 失败并让 `asyncio.gather` 抛出，导致整次 workflow 没有正常 summary。"
+        ]
+      },
+      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834\\tasks\\defects"
+    },
+    {
+      "id": "readability",
+      "stage": "find",
+      "status": "ok",
+      "exit_code": 0,
+      "duration_s": 37.1,
+      "output": {
+        "suggestions": [
+          "拆分 `validate_spec` 和 `_run_task`：这两个函数承担了过多职责，分别混合了字段校验、归一化、安全规则，以及目录准备、进程启动、超时、输出解析、状态汇总。拆成小函数后主流程会更容易扫读。",
+          "把状态字符串和错误文案集中管理：`ok`、`timeout`、`schema_mismatch`、`spawn_error` 等散落在流程中，后续调整或排查时容易漏改；可以提取为常量或轻量枚举。",
+          "分离编排逻辑和文件落盘逻辑：当前任务执行函数直接写 `prompt.txt`、`schema.json`、`cmd.json`、`summary.json`，使核心控制流被 I/O 细节打断；引入小的路径/结果结构会让数据流更清晰。"
+        ]
+      },
+      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834\\tasks\\readability"
+    },
+    {
+      "id": "summary",
+      "stage": "synthesize",
+      "status": "ok",
+      "exit_code": 0,
+      "duration_s": 19.7,
+      "output": "最需要先处理的是 [src/runner.py](D:/codex/codex-dynamic-workflow/src/runner.py:173) 调用 `codex exec` 时未在 prompt 前加 `--`，以 `-`/`--` 开头的 prompt 可能被误解析为 CLI 参数，影响任务隔离和护栏；其次是 [src/runner.py](D:/codex/codex-dynamic-workflow/src/runner.py:222) 的 schema 复核过浅，只检查顶层 object 和 required，可能把类型错误的子代理输出当成 `ok` 继续注入后续阶段；第三是 task id 校验未排除 Windows 保留设备名，可能导致目录创建失败并中断整次 workflow。可维护性上，建议后续再拆分 `validate_spec` 与 `_run_task` 的职责，集中管理状态字符串/错误文案，并把文件落盘逻辑从执行编排中分离出来，让主流程更容易阅读和修改。",
+      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834\\tasks\\summary"
+    }
+  ]
+}

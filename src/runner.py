@@ -39,6 +39,10 @@ DEFAULT_CODEX_CMD = r"C:\Users\Orz\AppData\Roaming\npm\node_modules\@openai\code
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+# Windows 保留设备名(大小写不敏感):不能拿来当任务目录名,否则 mkdir 失败、整个 workflow 崩
+WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL"}
+                | {"COM%d" % i for i in range(1, 10)}
+                | {"LPT%d" % i for i in range(1, 10)})
 PLACEHOLDER_RE = re.compile(r"\{\{result:([A-Za-z0-9_-]+)\}\}")
 EFFORTS = {"low", "medium", "high"}
 
@@ -135,6 +139,9 @@ def validate_spec(raw, allowed_roots=None):
             tid = t.get("id")
             if not isinstance(tid, str) or not TASK_ID_RE.match(tid):
                 raise SpecError("%s.id 必须是 1-40 位字母/数字/_/-" % where)
+            if tid.upper() in WIN_RESERVED:
+                raise SpecError("%s.id 不能是 Windows 保留设备名(会让 mkdir 失败): %s"
+                                % (where, tid))
             if tid in seen_ids:
                 raise SpecError("任务 id 重复: %s" % tid)
             seen_ids.add(tid)
@@ -182,8 +189,31 @@ def build_cmd(codex_prefix, workdir, prompt, out_path,
     cmd += ["-o", str(out_path)]
     if reasoning_effort:
         cmd += ["-c", "model_reasoning_effort=%s" % reasoning_effort]
-    cmd.append(prompt)
+    # prompt 前插 -- 分隔符:防止以 - 开头的 prompt(或注入内容)被 codex 当成选项解析,
+    # 那会导致任务失败、甚至绕过"spec 不透传参数"的护栏
+    cmd += ["--", prompt]
     return cmd
+
+
+def _harden_schema(schema):
+    """递归给所有 type==object 的子 schema 补 additionalProperties: false
+    (OpenAI structured-output strict 的硬要求,缺了 codex exec 会拒整个 schema);
+    已显式写了 additionalProperties 的不覆盖。返回新对象,不改入参。"""
+    if not isinstance(schema, dict):
+        return schema
+    out = {}
+    for k, v in schema.items():
+        if k == "properties" and isinstance(v, dict):
+            out[k] = {pk: _harden_schema(pv) for pk, pv in v.items()}
+        elif k == "items":
+            out[k] = _harden_schema(v)
+        elif k in ("anyOf", "allOf", "oneOf") and isinstance(v, list):
+            out[k] = [_harden_schema(e) for e in v]
+        else:
+            out[k] = v
+    if out.get("type") == "object" and "additionalProperties" not in out:
+        out["additionalProperties"] = False
+    return out
 
 
 # 上游结果注入下游 prompt 时的不可信数据边界。被审查代码库可能埋恶意文本,甚至伪造
@@ -281,7 +311,8 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
     if task["output_schema"] is not None:
         schema_path = tdir / "schema.json"
         schema_path.write_text(
-            json.dumps(task["output_schema"], ensure_ascii=False, indent=2),
+            json.dumps(_harden_schema(task["output_schema"]),
+                       ensure_ascii=False, indent=2),
             encoding="utf-8")
     out_path = tdir / ("out.json" if schema_path else "out.txt")
     cmd = build_cmd(codex_prefix, workdir, prompt, out_path, schema_path,
