@@ -191,8 +191,17 @@ def validate_spec(raw, allowed_roots=None):
 
 
 def _run_git(args, cwd=None):
-    """跑一条 git 命令(本地、不联网)。args 形如 ["git", ...];不自动抛,调用方查 returncode。"""
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    """跑一条 git 命令并返回 CompletedProcess(不自动抛,调用方查 returncode)。
+    args 形如 ["git", "rev-parse", "HEAD"];stdin 关掉,避免 git 偶发等输入挂死。"""
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _is_git_repo(path):
@@ -204,6 +213,78 @@ def _is_git_repo(path):
     except OSError:
         return False
     return cp.returncode == 0 and cp.stdout.strip() == "true"
+
+
+# ===== 写模式 v0.2:git 辅助 =====
+# 全部走 subprocess.run(capture_output=True, text=True),不联网、不交互。
+# 约定:除 _git_worktree_add 在失败时抛 WorkflowError 外,其余不自动抛,
+# 由调用方查 returncode / 自行判定;git 输出统一按 UTF-8 解码、坏字节替换。
+
+
+def _git_head(path):
+    """git -C <path> rev-parse HEAD;返回 strip 后的全哈希(40 位)。"""
+    cp = _run_git(["git", "-C", str(path), "rev-parse", "HEAD"])
+    return cp.stdout.strip()
+
+
+def _git_status_porcelain(path):
+    """git -C <path> status --porcelain;返回 stdout(空串=工作树干净)。"""
+    cp = _run_git(["git", "-C", str(path), "status", "--porcelain"])
+    return cp.stdout
+
+
+def _git_worktree_paths(repo):
+    """git -C <repo> worktree list --porcelain;取以 "worktree " 开头行的路径,
+    返回路径字符串列表(含主工作树自身)。"""
+    cp = _run_git(["git", "-C", str(repo), "worktree", "list", "--porcelain"])
+    out = []
+    for line in cp.stdout.splitlines():
+        if line.startswith("worktree "):
+            out.append(line[len("worktree "):].strip())
+    return out
+
+
+def _git_worktree_add(repo, wt_path, base):
+    """git -C <repo> worktree add --detach <wt_path> <base>;
+    --detach 防止按路径名建/撞分支;rc!=0 → WorkflowError(带 git stderr)。"""
+    cp = _run_git(["git", "-C", str(repo), "worktree", "add", "--detach",
+                   str(wt_path), str(base)])
+    if cp.returncode != 0:
+        raise WorkflowError(
+            "git worktree add 失败(repo=%s base=%s): %s"
+            % (repo, base, (cp.stderr or cp.stdout).strip()))
+
+
+def _git_worktree_remove(repo, wt_path):
+    """git -C <repo> worktree remove --force <wt_path>;不自动抛,清理用尽力删除。"""
+    _run_git(["git", "-C", str(repo), "worktree", "remove", "--force",
+              str(wt_path)])
+
+
+def _git_worktree_prune(repo):
+    """git -C <repo> worktree prune;清掉已删副本的残留元数据,不自动抛。"""
+    _run_git(["git", "-C", str(repo), "worktree", "prune"])
+
+
+def _git_diff_binary(wt, base):
+    """git -C <wt> diff --binary <base>;返回 stdout(副本相对 base 的完整 patch,
+    含被 commit 的改动与二进制)。"""
+    cp = _run_git(["git", "-C", str(wt), "diff", "--binary", str(base)])
+    return cp.stdout
+
+
+def _git_untracked(wt):
+    """git -C <wt> ls-files --others --exclude-standard;按行去空返回未跟踪文件列表。"""
+    cp = _run_git(["git", "-C", str(wt), "ls-files", "--others",
+                   "--exclude-standard"])
+    return [ln for ln in cp.stdout.splitlines() if ln.strip()]
+
+
+def _git_changed_names(wt, base):
+    """git -C <wt> diff --name-only <base>;按行去空返回改动文件名列表
+    (相对仓库根、正斜杠)。"""
+    cp = _run_git(["git", "-C", str(wt), "diff", "--name-only", str(base)])
+    return [ln for ln in cp.stdout.splitlines() if ln.strip()]
 
 
 def validate_write_spec(raw, allowed_roots=None):
