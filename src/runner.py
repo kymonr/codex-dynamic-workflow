@@ -82,6 +82,13 @@ def _check_workdir_safe(workdir, allowed_roots):
     return str(rp)
 
 
+def _check_utf8_encodable(text, where):
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise SpecError("%s 必须可 UTF-8 编码(不能包含 lone surrogate)" % where)
+
+
 def validate_spec(raw, allowed_roots=None):
     """校验并归一化 spec。白名单制:未知字段一律拒绝。返回归一化后的 dict。
     allowed_roots 非空时,workdir 必须落在其中之一下(由 CLI/调用方传入)。"""
@@ -154,6 +161,7 @@ def validate_spec(raw, allowed_roots=None):
             if len(prompt) > MAX_PROMPT_CHARS:
                 raise SpecError("%s.prompt 长 %d,超过上限 %d 字符"
                                 % (where, len(prompt), MAX_PROMPT_CHARS))
+            _check_utf8_encodable(prompt, "%s.prompt" % where)
             for ref in PLACEHOLDER_RE.findall(prompt):
                 if ref not in earlier_ids:
                     raise SpecError(

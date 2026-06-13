@@ -18,12 +18,12 @@
 - `src/runner.py`：spec 白名单校验 / 子代理命令白名单拼装（prompt 前加 `--` 防选项注入）/
   带随机 nonce 的不可信数据注入边界 / 单任务执行（超时 `taskkill /F /T` 杀进程树）/
   并发上限 / 多阶段流水线 / schema 自动补 `additionalProperties:false` / CLI 入口与退出码
-- `tests/`：9 个测试文件，**47 个离线用例**（全走 mock，不调真实 codex）
+- `tests/`：9 个测试文件，**48 个离线用例**（全走 mock，不调真实 codex）
 - `skill/SKILL.md`：技能正文（触发条件 / 硬性边界 / spec 格式 / 子代理身份写法）
 - `README.md`：含任务 1 探针的环境结论
 
 ## 测试与验证
-- **离线**：`py -m unittest discover -s tests -v` → **47 tests OK**（完整输出见 `docs/evidence/unittest-final.txt`）。
+- **离线**：`py -m unittest discover -s tests -v` → **48 tests OK**（完整输出见 `docs/evidence/unittest-final.txt`）。
 - **真实冒烟**（post-fix：`D:\.codex-tmp\workflows\smoke-review-runner-20260613-133032-989645-8407f4`）：3 个只读子代理
   （2 并行审查 runner.py + 1 汇总），并发 2，五条验收全过——退出码 0 / ok=3/3 /
   out.json 合法且过最小 schema / 注入带 `UNTRUSTED-<nonce>` 边界 / 并发 2 时序正确 / 项目零污染。
@@ -45,7 +45,7 @@
    （OpenAI 结构化输出 strict 的硬要求，让技能开箱即用）。
 5. `validate_spec` 对 task id 按 Windows 大小写不敏感规则去重，避免 `a` / `A` 目录碰撞。
 6. 默认 run_dir 加微秒和随机后缀；`run_workflow()` 遇到已存在 run_dir 直接失败，拒绝覆盖。
-   均含新测试，47 全绿。
+   均含新测试，48 全绿。
 
 ## 已知限制（v0.1）
 - schema 校验只查顶层 object 与 required 存在，不验字段类型（标准库无 JSON Schema 校验器）。

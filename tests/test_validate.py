@@ -78,6 +78,11 @@ class TestValidateSpec(unittest.TestCase):
         with self.assertRaises(runner.SpecError):
             runner.validate_spec(d)
 
+    def test_prompt_lone_surrogate_rejected(self):
+        d = spec_dict([stage("s1", task("a", prompt="\ud800"))])
+        with self.assertRaises(runner.SpecError):
+            runner.validate_spec(d)
+
     def test_version_bool_rejected(self):
         d = spec_dict([stage("s1", task("a"))])
         d["version"] = True            # JSON true 不能冒充整数 1
