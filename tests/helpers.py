@@ -73,6 +73,6 @@ def write_spec_dict(tasks, workdir, **over):
 
 
 def wtask(tid, prompt="改文件", scope=None, **kw):
-    """构造一个写模式 task dict。scope 仅在非空时注入;其余关键字原样并入。"""
+    """构造一个写模式 task dict。scope 仅在 truthy 时注入;其余关键字原样并入。"""
     return {"id": tid, "prompt": prompt,
             **({"scope": scope} if scope else {}), **kw}

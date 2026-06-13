@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -50,6 +51,11 @@ ALLOWED_SPEC_KEYS = {"version", "name", "workdir", "max_concurrency",
                      "timeout_seconds", "stages"}
 ALLOWED_STAGE_KEYS = {"name", "tasks"}
 ALLOWED_TASK_KEYS = {"id", "prompt", "reasoning_effort", "output_schema"}
+
+ALLOWED_WRITE_SPEC_KEYS = {"version", "mode", "name", "workdir", "tasks"}
+ALLOWED_WRITE_TASK_KEYS = {"id", "prompt", "scope", "reasoning_effort"}
+HARD_MAX_WRITE_TASKS = 8
+WRITE_RUNS_ROOT = Path(r"D:\.codex-tmp\workflows")   # 钉死;写模式不认 DYNWF_RUNS_ROOT
 
 
 class WorkflowError(Exception):
@@ -182,6 +188,106 @@ def validate_spec(raw, allowed_roots=None):
         raise SpecError("子代理总数 %d 超过上限 %d" % (total, HARD_MAX_AGENTS))
     return {"version": 1, "name": name, "workdir": str(Path(workdir)),
             "max_concurrency": mc, "timeout_seconds": timeout_s, "stages": stages}
+
+
+def _run_git(args, cwd=None):
+    """跑一条 git 命令(本地、不联网)。args 形如 ["git", ...];不自动抛,调用方查 returncode。"""
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+
+
+def _is_git_repo(path):
+    """path 是否在某个 git 工作树内。git -C <path> rev-parse --is-inside-work-tree;
+    rc==0 且 stdout.strip()=='true' 才算真。任何异常一律视为非仓库。"""
+    try:
+        cp = _run_git(["git", "-C", str(path), "rev-parse",
+                       "--is-inside-work-tree"])
+    except OSError:
+        return False
+    return cp.returncode == 0 and cp.stdout.strip() == "true"
+
+
+def validate_write_spec(raw, allowed_roots=None):
+    """校验并归一化写模式 spec。白名单制:未知字段一律拒绝。
+    返回 {"version":1,"mode":"write","name":str,"workdir":str,
+          "tasks":[{"id","prompt","scope":[...],"reasoning_effort":None|low|medium|high}]}。
+    与读模式 validate_spec 互不影响:写模式无 stages、无 {{result}} 跨引用。"""
+    if not isinstance(raw, dict):
+        raise SpecError("写 spec 顶层必须是 JSON 对象")
+    unknown = sorted(set(raw) - ALLOWED_WRITE_SPEC_KEYS)
+    if unknown:
+        raise SpecError("写 spec 含未知字段(拒绝运行): %s" % unknown)
+
+    ver = raw.get("version")
+    if not isinstance(ver, int) or isinstance(ver, bool) or ver != 1:
+        raise SpecError("version 必须是整数 1")
+    mode = raw.get("mode")
+    if mode != "write":
+        raise SpecError('写模式 mode 必须是 "write": %r' % (mode,))
+    name = raw.get("name")
+    if not isinstance(name, str) or not NAME_RE.match(name):
+        raise SpecError("name 必须是 1-50 位小写字母/数字/连字符")
+    workdir = raw.get("workdir")
+    if not isinstance(workdir, str):
+        raise SpecError("workdir 必须是字符串: %r" % (workdir,))
+    workdir = _check_workdir_safe(workdir, allowed_roots)
+    if not _is_git_repo(workdir):
+        raise SpecError("写模式 workdir 必须是 git 仓库: %s" % workdir)
+
+    tasks_raw = raw.get("tasks")
+    if not isinstance(tasks_raw, list) or not tasks_raw:
+        raise SpecError("tasks 必须是非空数组")
+    if len(tasks_raw) > HARD_MAX_WRITE_TASKS:
+        raise SpecError("写任务数 %d 超过上限 %d"
+                        % (len(tasks_raw), HARD_MAX_WRITE_TASKS))
+
+    tasks = []
+    seen_ids_folded = set()
+    for ti, t in enumerate(tasks_raw):
+        where = "tasks[%d]" % ti
+        if not isinstance(t, dict):
+            raise SpecError("%s 必须是对象" % where)
+        unknown = sorted(set(t) - ALLOWED_WRITE_TASK_KEYS)
+        if unknown:
+            raise SpecError("%s 含未知字段: %s" % (where, unknown))
+        tid = t.get("id")
+        if not isinstance(tid, str) or not TASK_ID_RE.match(tid):
+            raise SpecError("%s.id 必须是 1-40 位字母/数字/_/-" % where)
+        if tid.upper() in WIN_RESERVED:
+            raise SpecError("%s.id 不能是 Windows 保留设备名: %s" % (where, tid))
+        tid_folded = tid.casefold()
+        if tid_folded in seen_ids_folded:
+            raise SpecError("任务 id 重复: %s" % tid)
+        seen_ids_folded.add(tid_folded)
+
+        prompt = t.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise SpecError("%s.prompt 必须是非空字符串" % where)
+        if len(prompt) > MAX_PROMPT_CHARS:
+            raise SpecError("%s.prompt 长 %d,超过上限 %d 字符"
+                            % (where, len(prompt), MAX_PROMPT_CHARS))
+        _check_utf8_encodable(prompt, "%s.prompt" % where)
+        if PLACEHOLDER_RE.search(prompt):
+            raise SpecError("%s.prompt 不能含 {{result:..}}(写模式无跨引用)" % where)
+
+        scope = t.get("scope")
+        if scope is None:
+            scope = []
+        else:
+            if not isinstance(scope, list) or not scope:
+                raise SpecError("%s.scope 若提供必须是非空字符串列表" % where)
+            for sj, item in enumerate(scope):
+                if not isinstance(item, str) or not item.strip():
+                    raise SpecError("%s.scope[%d] 必须是非空字符串" % (where, sj))
+
+        effort = t.get("reasoning_effort")
+        if effort is not None and effort not in EFFORTS:
+            raise SpecError("%s.reasoning_effort 只能是 low/medium/high" % where)
+
+        tasks.append({"id": tid, "prompt": prompt,
+                      "scope": scope, "reasoning_effort": effort})
+
+    return {"version": 1, "mode": "write", "name": name,
+            "workdir": workdir, "tasks": tasks}
 
 
 def build_cmd(codex_prefix, workdir, prompt, out_path,
