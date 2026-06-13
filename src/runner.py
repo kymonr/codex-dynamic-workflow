@@ -287,6 +287,105 @@ def _git_changed_names(wt, base):
     return [ln for ln in cp.stdout.splitlines() if ln.strip()]
 
 
+# prompt.txt 末尾追加的边界提示:把 scope 写给 codex 当软边界,并硬性禁止跑 git。
+# scope 是提示不是护栏(真正防越界靠隔离副本 + collect 的冲突/越界报告 + 人工看 patch)。
+_PROMPT_BOUNDARY = (
+    "\n\n---\n"
+    "[边界约束] 你只负责改以下范围内的文件,绝不碰范围外的目录:%s。\n"
+    "不要跑任何 git 命令(不 add / 不 commit / 不 checkout / 不 branch);"
+    "只改文件,集成与提交由人工完成。\n")
+
+
+def prepare(spec, run_dir, *, allow_dirty=False):
+    """为写 spec 的每个 task 建一份隔离 worktree 副本,写 prompt 与 summary 骨架。
+
+    spec 必须已过 validate_write_spec;run_dir 是 Path(由 CLI 在 WRITE_RUNS_ROOT 下生成,
+    含 name+时间戳+随机)。流程:确认 workdir 是 git 仓库 → 原子建 run_dir(已存在即拒,
+    兜并发 TOCTOU)→ 默认拒 dirty(--allow-dirty 知情放行)→ 记 base HEAD → 逐 task 建
+    --detach 副本 + 写 prompt.txt → 写 summary.json 骨架。任一步失败:对已建副本逐个
+    remove + prune,删 run_dir,再抛 WorkflowError,不留半成品。
+    返回 manifest {"run_dir", "dispatch":[逐任务派工命令字符串], "warn":(>2 警告或 None)}。
+    """
+    run_dir = Path(run_dir)
+    workdir = spec["workdir"]
+    if not _is_git_repo(workdir):
+        raise WorkflowError("workdir 不是 git 仓库,无法建 worktree: %s" % workdir)
+
+    # 原子建 run_dir:已存在直接拒,兜并发 prepare 的 TOCTOU
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise WorkflowError("run_dir 已存在,拒绝覆盖: %s" % run_dir)
+    except OSError as e:
+        raise WorkflowError("run_dir 创建失败: %s" % e)
+
+    created_wts = []  # 已建副本路径,失败时按此回滚
+    try:
+        dirty = _git_status_porcelain(workdir)
+        if dirty.strip() and not allow_dirty:
+            raise WorkflowError(
+                "主工作树有未提交改动(这些改动不会进副本);"
+                "请先提交或加 --allow-dirty 知情放行。未提交清单:\n%s" % dirty)
+        base = _git_head(workdir)
+
+        skeleton_tasks = []
+        for t in spec["tasks"]:
+            tid = t["id"]
+            wt = run_dir / "wt" / tid
+            wt.parent.mkdir(parents=True, exist_ok=True)
+            _git_worktree_add(workdir, wt, base)   # 失败抛 WorkflowError
+            created_wts.append(wt)
+
+            tdir = run_dir / "tasks" / tid
+            tdir.mkdir(parents=True, exist_ok=True)
+            scope = t["scope"]
+            scope_desc = "、".join(scope) if scope else "(spec 未限定,自行克制)"
+            (tdir / "prompt.txt").write_text(
+                t["prompt"] + _PROMPT_BOUNDARY % scope_desc, encoding="utf-8")
+
+            skeleton_tasks.append({
+                "id": tid,
+                "scope": scope,
+                "worktree": str(wt),
+                "reasoning_effort": t["reasoning_effort"],
+            })
+
+        skeleton = {
+            "name": spec["name"],
+            "run_dir": str(run_dir),
+            "mode": "write",
+            "base_head": base,
+            "workdir": workdir,
+            "status_raw": dirty,
+            "tasks": skeleton_tasks,
+        }
+        (run_dir / "summary.json").write_text(
+            json.dumps(skeleton, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        # 回滚:逐个移除已建副本 + prune 元数据,删 run_dir,再抛原异常
+        for wt in created_wts:
+            try:
+                _git_worktree_remove(workdir, wt)
+            except Exception:
+                pass
+        try:
+            _git_worktree_prune(workdir)
+        except Exception:
+            pass
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+
+    dispatch_cmds = [
+        "python runner.py dispatch %s %s" % (run_dir, t["id"])
+        for t in spec["tasks"]
+    ]
+    warn = None
+    if len(spec["tasks"]) > 2:
+        warn = ("本次 %d 个写任务(>2):每个 dispatch 仍各过一次人工确认,"
+                "建议确认拆分确属互相独立、不碰同一文件。" % len(spec["tasks"]))
+    return {"run_dir": str(run_dir), "dispatch": dispatch_cmds, "warn": warn}
+
+
 def validate_write_spec(raw, allowed_roots=None):
     """校验并归一化写模式 spec。白名单制:未知字段一律拒绝。
     返回 {"version":1,"mode":"write","name":str,"workdir":str,
