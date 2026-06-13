@@ -7,3 +7,6 @@ __pycache__/
 # 运行产物（不进项目）
 /runs/
 *.tmp
+
+# codegraph 索引（不进 git）
+.codegraph/
