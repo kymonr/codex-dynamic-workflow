@@ -60,7 +60,7 @@ Path               : C:\Users\Orz\AppData\Roaming\npm\codex.ps1
 codex-cli 0.139.0
 ```
 
-执行备注：按原计划应把真实 `codex.exe` 路径写进 `src\runner.py` 的 `DEFAULT_CODEX_CMD`；本轮用户明确要求“不要改 src/ 和 tests/ 下已有文件”，所以这里只记录事实。任务 10/11 若继续，安装后的 runner 必须解决该默认命令问题，或运行时显式传 `--codex-cmd`。
+执行备注：`src\runner.py` 的 `DEFAULT_CODEX_CMD` 已按该探针结论填入真实 `codex.exe` 绝对路径；Codex 升级或 npm vendor 路径变化后需重新跑探针并更新。
 
 ### 3. 嵌套探针结果 B：需要升级权限运行 runner
 

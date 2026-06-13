@@ -115,6 +115,7 @@ def validate_spec(raw, allowed_roots=None):
     stages = []
     earlier_ids = set()
     seen_ids = set()
+    seen_ids_folded = set()
     total = 0
     for si, stage_raw in enumerate(stages_raw):
         if not isinstance(stage_raw, dict):
@@ -142,9 +143,11 @@ def validate_spec(raw, allowed_roots=None):
             if tid.upper() in WIN_RESERVED:
                 raise SpecError("%s.id 不能是 Windows 保留设备名(会让 mkdir 失败): %s"
                                 % (where, tid))
-            if tid in seen_ids:
+            tid_folded = tid.casefold()
+            if tid_folded in seen_ids_folded:
                 raise SpecError("任务 id 重复: %s" % tid)
             seen_ids.add(tid)
+            seen_ids_folded.add(tid_folded)
             prompt = t.get("prompt")
             if not isinstance(prompt, str) or not prompt.strip():
                 raise SpecError("%s.prompt 必须是非空字符串" % where)
@@ -385,7 +388,12 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
 async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
     """按 stage 顺序执行;stage 内任务并发(共享信号量);写 summary.json 并返回 summary。"""
     run_dir = Path(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise WorkflowError("运行目录已存在,拒绝覆盖: %s" % run_dir)
+    except OSError as e:
+        raise WorkflowError("运行目录创建失败: %s" % e)
     (run_dir / "spec.resolved.json").write_text(
         json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     timeout_s = timeout_override if timeout_override is not None \
@@ -490,11 +498,16 @@ def main(argv=None):
             print("无法开跑: --run-dir 必须在 %s 下" % runs_root, file=sys.stderr)
             return 1
     else:
-        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        run_dir = runs_root / ("%s-%s" % (spec["name"], stamp))
+        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        run_dir = runs_root / ("%s-%s-%s" % (spec["name"], stamp,
+                                             secrets.token_hex(3)))
 
-    summary = asyncio.run(run_workflow(spec, run_dir, codex_prefix,
-                                       timeout_override=args.timeout_override))
+    try:
+        summary = asyncio.run(run_workflow(spec, run_dir, codex_prefix,
+                                           timeout_override=args.timeout_override))
+    except WorkflowError as e:
+        print("无法开跑: %s" % e, file=sys.stderr)
+        return 1
     print("")
     print("== 完成: %d/%d ok; 详情 %s ==" % (summary["ok"], summary["total"],
                                             run_dir / "summary.json"))

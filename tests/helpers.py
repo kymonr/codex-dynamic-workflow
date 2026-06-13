@@ -32,6 +32,6 @@ def task(tid, prompt="干活", **kw):
 def run_wf(raw, **kw):
     """校验 spec 并在临时运行目录里用 mock 替身跑完整个 workflow。"""
     spec = runner.validate_spec(raw)
-    rd = Path(tempfile.mkdtemp(prefix="dynwf-test-"))
+    rd = Path(tempfile.mkdtemp(prefix="dynwf-test-")) / "run"
     summary = asyncio.run(runner.run_workflow(spec, rd, MOCK_PREFIX, **kw))
     return summary, rd

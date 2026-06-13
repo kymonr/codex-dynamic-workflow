@@ -27,6 +27,11 @@ class TestValidateSpec(unittest.TestCase):
         with self.assertRaises(runner.SpecError):
             runner.validate_spec(d)
 
+    def test_duplicate_task_ids_case_insensitive_rejected(self):
+        d = spec_dict([stage("s1", task("a"), task("A"))])
+        with self.assertRaises(runner.SpecError):
+            runner.validate_spec(d)
+
     def test_placeholder_must_reference_earlier_stage(self):
         same = spec_dict([stage("s1", task("a"), task("b", prompt="看 {{result:a}}"))])
         with self.assertRaises(runner.SpecError):

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import unittest
+import asyncio
+import tempfile
 from pathlib import Path
 
-from helpers import run_wf, spec_dict, stage, task
+from helpers import MOCK_PREFIX, run_wf, runner, spec_dict, stage, task
 
 
 class TestRunWorkflow(unittest.TestCase):
@@ -70,6 +72,13 @@ class TestRunWorkflow(unittest.TestCase):
                                      "additionalProperties": True}}})
         self.assertIs(out["additionalProperties"], False)               # 顶层自动补
         self.assertIs(out["properties"]["inner"]["additionalProperties"], True)  # 显式不覆盖
+
+    def test_existing_run_dir_is_rejected(self):
+        raw = spec_dict([stage("s1", task("a"))])
+        spec = runner.validate_spec(raw)
+        existing = Path(tempfile.mkdtemp(prefix="dynwf-existing-"))
+        with self.assertRaises(runner.WorkflowError):
+            asyncio.run(runner.run_workflow(spec, existing, MOCK_PREFIX))
 
 
 if __name__ == "__main__":

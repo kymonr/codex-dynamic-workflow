@@ -74,6 +74,20 @@ class TestCli(unittest.TestCase):
                 "--codex-cmd", sys.executable, "--codex-cmd", mock]
         self.assertEqual(runner.main(argv), 1)
 
+    def test_default_run_dir_is_unique_for_back_to_back_runs(self):
+        spec_path = write_spec(spec_dict([stage("s1", task("a"))]))
+        runs_root = spec_path.parent / "runs"
+        runs_root.mkdir(exist_ok=True)
+        os.environ["DYNWF_RUNS_ROOT"] = str(runs_root)
+        mock = str(ROOT / "tests" / "mock_codex.py")
+        argv = [str(spec_path), "--codex-cmd", sys.executable,
+                "--codex-cmd", mock, "--timeout-override", "5"]
+        self.assertEqual(runner.main(argv), 0)
+        self.assertEqual(runner.main(argv), 0)
+        run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]
+        self.assertEqual(len(run_dirs), 2)
+        self.assertNotEqual(run_dirs[0].name, run_dirs[1].name)
+
 
 if __name__ == "__main__":
     unittest.main()

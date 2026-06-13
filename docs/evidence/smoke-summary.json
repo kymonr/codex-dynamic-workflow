@@ -1,8 +1,8 @@
 {
   "name": "smoke-review-runner",
-  "run_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834",
-  "started": "2026-06-13T07:48:34",
-  "finished": "2026-06-13T07:51:02",
+  "run_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-133032-989645-8407f4",
+  "started": "2026-06-13T13:30:32",
+  "finished": "2026-06-13T13:32:54",
   "ok": 3,
   "total": 3,
   "tasks": [
@@ -11,39 +11,39 @@
       "stage": "find",
       "status": "ok",
       "exit_code": 0,
-      "duration_s": 127.8,
+      "duration_s": 123.0,
       "output": {
         "findings": [
-          "src/runner.py:173-185 将 `prompt` 直接作为最后一个 argv 追加给 `codex exec`，没有在位置参数前插入 `--`。如果 prompt 以 `-`/`--` 开头，底层 CLI 可能把它解析成选项，轻则任务失败，重则绕过“spec 不透传任何参数”的护栏。",
-          "src/runner.py:222-233 只做了极简 schema 复核：顶层 object 和 required 存在性。像 `{\"findings\":\"not array\"}` 这类不符合 `properties.findings.items`/类型约束的输出会被标记为 `ok`，后续 stage 也会把错误结构当作可信结果注入。",
-          "src/runner.py:40-42 和 259-260 允许 task id 为 Windows 保留设备名或边界文件名，例如 `CON`、`NUL`、`AUX`、`COM1`；这些 id 会直接用于创建任务目录，Windows 上可能在运行期 `mkdir` 失败并让 `asyncio.gather` 抛出，导致整次 workflow 没有正常 summary。"
+          "src/runner.py:79-81 与 src/runner.py:462-463：`--allowed-root` 是可选的；未传时 `_check_workdir_safe` 只拒绝盘符根、home 和少数敏感目录，spec 仍可把 `workdir` 指到任意其他已存在目录，读范围可能超出用户本次点名项目。",
+          "src/runner.py:255-265 与 src/runner.py:366-379：`output_schema` 的本地复核只检查顶层 `type=object` 和顶层 `required`，不会验证 properties 类型、数组 items、enum、additionalProperties 等；不符合 schema 的 JSON 仍可能被标记为 `ok` 并注入后续 stage。",
+          "src/runner.py:201-219：`_harden_schema()` 声称递归补所有 object 的 `additionalProperties:false`，但只遍历 `properties`、`items` 和 any/all/oneOf；`$defs`/`definitions`、tuple `items` 列表、`additionalProperties` 子 schema 等位置里的 object 会漏掉，可能导致传给 `codex exec --output-schema` 的 schema 不够 strict 或被拒。"
         ]
       },
-      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834\\tasks\\defects"
+      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-133032-989645-8407f4\\tasks\\defects"
     },
     {
       "id": "readability",
       "stage": "find",
       "status": "ok",
       "exit_code": 0,
-      "duration_s": 37.1,
+      "duration_s": 51.8,
       "output": {
         "suggestions": [
-          "拆分 `validate_spec` 和 `_run_task`：这两个函数承担了过多职责，分别混合了字段校验、归一化、安全规则，以及目录准备、进程启动、超时、输出解析、状态汇总。拆成小函数后主流程会更容易扫读。",
-          "把状态字符串和错误文案集中管理：`ok`、`timeout`、`schema_mismatch`、`spawn_error` 等散落在流程中，后续调整或排查时容易漏改；可以提取为常量或轻量枚举。",
-          "分离编排逻辑和文件落盘逻辑：当前任务执行函数直接写 `prompt.txt`、`schema.json`、`cmd.json`、`summary.json`，使核心控制流被 I/O 细节打断；引入小的路径/结果结构会让数据流更清晰。"
+          "把 `validate_spec()` 拆成 `_validate_spec_root()`、`_validate_stage()`、`_validate_task()` 等小函数；当前函数同时处理顶层、stage、task、引用校验、计数和归一化，嵌套较深，阅读时很难快速定位某一类规则。",
+          "把 `_run_task()` 拆分为“准备任务目录和输入产物”“启动并等待子进程”“读取并校验输出”“生成 summary entry”几个步骤；现在一个函数混合文件写入、进程控制、状态转移、日志打印和 JSON 解析，可读性和后续修改成本都偏高。",
+          "为 task、stage、summary entry、status 字符串补充 `TypedDict`/dataclass 或集中常量；当前大量使用裸 dict 和硬编码 status，读者需要在多个分支里反推字段形状，类型提示会让数据流更清楚。"
         ]
       },
-      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834\\tasks\\readability"
+      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-133032-989645-8407f4\\tasks\\readability"
     },
     {
       "id": "summary",
       "stage": "synthesize",
       "status": "ok",
       "exit_code": 0,
-      "duration_s": 19.7,
-      "output": "最需要先处理的是 [src/runner.py](D:/codex/codex-dynamic-workflow/src/runner.py:173) 调用 `codex exec` 时未在 prompt 前加 `--`，以 `-`/`--` 开头的 prompt 可能被误解析为 CLI 参数，影响任务隔离和护栏；其次是 [src/runner.py](D:/codex/codex-dynamic-workflow/src/runner.py:222) 的 schema 复核过浅，只检查顶层 object 和 required，可能把类型错误的子代理输出当成 `ok` 继续注入后续阶段；第三是 task id 校验未排除 Windows 保留设备名，可能导致目录创建失败并中断整次 workflow。可维护性上，建议后续再拆分 `validate_spec` 与 `_run_task` 的职责，集中管理状态字符串/错误文案，并把文件落盘逻辑从执行编排中分离出来，让主流程更容易阅读和修改。",
-      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-074834\\tasks\\summary"
+      "duration_s": 18.3,
+      "output": "按重要性看，首要风险是 `src/runner.py` 的执行边界不够严：`--allowed-root` 可选，未传时只排除少数敏感目录，spec 仍可能把 `workdir` 指向其他既有目录，导致读取范围超出本次授权项目。其次是输出 JSON 的 schema 复核偏弱：本地只检查顶层 `object` 和 `required`，没有验证字段类型、数组、枚举、`additionalProperties` 等，可能把不符合约束的结果标记为 `ok` 并传给后续 stage。第三是 `_harden_schema()` 的递归补强不完整，遗漏 `$defs`、`definitions`、tuple `items`、`additionalProperties` 子 schema 等位置，可能让传给 `codex exec --output-schema` 的 schema 不够严格或被拒。可读性方面，主要问题集中在函数职责过大和数据结构不显式：`validate_spec()`、`_run_task()` 建议按校验层级和执行阶段拆小，同时为 task、stage、summary entry、status 等补 `TypedDict`、dataclass 或集中常量，降低后续维护成本。",
+      "task_dir": "D:\\.codex-tmp\\workflows\\smoke-review-runner-20260613-133032-989645-8407f4\\tasks\\summary"
     }
   ]
 }
