@@ -312,6 +312,24 @@ def build_cmd(codex_prefix, workdir, prompt, out_path,
     return cmd
 
 
+def build_write_cmd(codex_prefix, workdir, prompt, reasoning_effort=None):
+    """白名单拼装写模式子代理命令。-s workspace-write 硬编码,spec 无法放开;
+    与读模式 build_cmd 的 -s read-only 互不串。不带 -o/--output-schema:
+    写模式只落笔改文件,产物靠 collect 从 worktree 收 diff,不收结构化输出。
+    prompt 前插 -- 分隔符,防以 - 开头的 prompt 被 codex 当选项解析。"""
+    cmd = list(codex_prefix) + [
+        "exec",
+        "-s", "workspace-write",
+        "--skip-git-repo-check",
+        "--color", "never",
+        "-C", str(workdir),
+    ]
+    if reasoning_effort:
+        cmd += ["-c", "model_reasoning_effort=%s" % reasoning_effort]
+    cmd += ["--", prompt]
+    return cmd
+
+
 def _harden_schema(schema):
     """递归给所有 type==object 的子 schema 补 additionalProperties: false
     (OpenAI structured-output strict 的硬要求,缺了 codex exec 会拒整个 schema);
