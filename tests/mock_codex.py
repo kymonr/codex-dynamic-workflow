@@ -4,6 +4,7 @@
   [MOCK:sleep=0.5]  启动后睡 0.5 秒
   [MOCK:exit=3]     不写输出文件,以退出码 3 退出
   [MOCK:badjson]    写入非法 JSON
+  [MOCK:tokens=42]  向 stdout 打印一行用量 footer(模拟 codex 的 token 用量输出)
 默认:带 --output-schema 时写 {"echo": <prompt>},否则写 "ECHO:<prompt>"。
 无论成败都写 <out>.times 记录起止时间,供并发测试统计重叠。
 """
@@ -45,6 +46,10 @@ def main():
                     json.dumps({"echo": prompt}, ensure_ascii=False), encoding="utf-8")
             else:
                 Path(out).write_text("ECHO:" + prompt, encoding="utf-8")
+    # 模拟 codex 把用量 footer 打到 stdout(runner 会把它重定向进 agent.log)
+    m = re.search(r"\[MOCK:tokens=(\d+)\]", prompt)
+    if m:
+        print("tokens used: %s" % m.group(1))
     sys.exit(exit_code)
 
 

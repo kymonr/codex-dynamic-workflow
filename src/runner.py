@@ -274,6 +274,39 @@ def _check_schema_minimal(value, schema):
     return problems
 
 
+# codex exec 跑完会在日志里打印一行 token 用量 footer。它是非契约输出,格式随版本漂,
+# 故宽松多模式匹配:先试更具体的 "tokens used"/"total tokens",再退到 "N tokens"。
+# 注意:codex-cli 0.139.0 的真实 footer 格式尚未在本机实测核实(沙箱内子代理跑不起来),
+# 当前为兜底匹配;真机首次运行后应核对 agent.log 尾部、按实际格式收紧或补模式。
+_TOKEN_PATTERNS = [
+    re.compile(r"tokens?\s+used[:\s]+([0-9][0-9,]*)", re.IGNORECASE),
+    re.compile(r"total\s+tokens?[:\s]+([0-9][0-9,]*)", re.IGNORECASE),
+    re.compile(r"([0-9][0-9,]*)\s+tokens?\b", re.IGNORECASE),
+]
+
+
+def _extract_tokens(log_path):
+    """从 agent.log 尾部尽力抠出 token 用量;抠不到返回 None。
+    纯展示用途,绝不抛异常影响主流程:任何读/解析失败一律降级为 None。"""
+    try:
+        p = Path(log_path)
+        if not p.exists():
+            return None
+        with open(p, "rb") as f:
+            try:
+                f.seek(-8192, os.SEEK_END)   # 只看尾部几 KB,日志可能很大
+            except OSError:
+                f.seek(0)
+            tail = f.read().decode("utf-8", errors="replace")
+        for pat in _TOKEN_PATTERNS:
+            nums = [int(m.group(1).replace(",", "")) for m in pat.finditer(tail)]
+            if nums:
+                return max(nums)
+        return None
+    except Exception:
+        return None
+
+
 async def _kill_tree(proc):
     """超时强杀整棵进程树:Windows 用 taskkill /T 把孙进程一起杀,
     taskkill 不可用或非 Windows 时退回 proc.kill()(只杀直接子进程)。"""
@@ -300,8 +333,8 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
     tdir = run_dir / "tasks" / task["id"]
     tdir.mkdir(parents=True, exist_ok=True)
     entry = {"id": task["id"], "stage": stage_name, "status": "",
-             "exit_code": None, "duration_s": None, "output": None,
-             "task_dir": str(tdir)}
+             "exit_code": None, "duration_s": None, "tokens": None,
+             "output": None, "task_dir": str(tdir)}
 
     prompt, missing = substitute(task["prompt"], results)
     if missing:
@@ -360,6 +393,8 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
             log_f.close()
         entry["exit_code"] = rc
         entry["duration_s"] = round(time.monotonic() - t0, 1)
+        # 进程已结束、agent.log 已 flush 关闭,顺手抠一次用量(抠不到记 None)
+        entry["tokens"] = _extract_tokens(tdir / "agent.log")
 
     if rc != 0:
         entry["status"] = "error"
@@ -421,6 +456,7 @@ async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
             if e["status"] == "ok":
                 results[e["id"]] = e["output"]
         entries.extend(stage_entries)
+    tok_vals = [e["tokens"] for e in entries if isinstance(e["tokens"], int)]
     summary = {
         "name": spec["name"],
         "run_dir": str(run_dir),
@@ -428,6 +464,7 @@ async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
         "finished": _dt.datetime.now().isoformat(timespec="seconds"),
         "ok": sum(1 for e in entries if e["status"] == "ok"),
         "total": len(entries),
+        "total_tokens": sum(tok_vals) if tok_vals else None,
         "tasks": entries,
     }
     (run_dir / "summary.json").write_text(
@@ -519,6 +556,8 @@ def main(argv=None):
     print("")
     print("== 完成: %d/%d ok; 详情 %s ==" % (summary["ok"], summary["total"],
                                             run_dir / "summary.json"))
+    if summary["total_tokens"] is not None:
+        print("   本次约 %s tokens" % summary["total_tokens"])
     for t in summary["tasks"]:
         dur = "-" if t["duration_s"] is None else ("%.1fs" % t["duration_s"])
         print("  [%-21s] %s/%s %s" % (t["status"], t["stage"], t["id"], dur))
