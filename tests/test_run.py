@@ -4,7 +4,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from helpers import MOCK_PREFIX, run_wf, runner, spec_dict, stage, task
+from helpers import MOCK_PREFIX, run_wf, runner, spec_dict, stage, task, mktemp
 
 
 class TestRunWorkflow(unittest.TestCase):
@@ -76,7 +76,7 @@ class TestRunWorkflow(unittest.TestCase):
     def test_existing_run_dir_is_rejected(self):
         raw = spec_dict([stage("s1", task("a"))])
         spec = runner.validate_spec(raw)
-        existing = Path(tempfile.mkdtemp(prefix="dynwf-existing-"))
+        existing = mktemp("dynwf-existing-")
         with self.assertRaises(runner.WorkflowError):
             asyncio.run(runner.run_workflow(spec, existing, MOCK_PREFIX))
 
