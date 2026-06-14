@@ -287,6 +287,81 @@ def _git_changed_names(wt, base):
     return [ln for ln in cp.stdout.splitlines() if ln.strip()]
 
 
+def _load_write_skeleton(run_dir):
+    """读 + 校验写模式 run-dir 的 summary.json 骨架,dispatch/collect 共用。
+    三道闸:① run_dir resolve 后必须在 WRITE_RUNS_ROOT 下(防错项目/伪造 run-dir);
+    ② summary.json 存在且可解析(读/解析失败转 WorkflowError,不抛裸异常);
+    ③ 是本 runner 写的写模式骨架(mode==write + base_head + workdir + tasks 是 list)。
+    返回 (resolved_run_dir, skel)。任一不符抛 WorkflowError。"""
+    run_dir = Path(run_dir).resolve()
+    root = WRITE_RUNS_ROOT.resolve()
+    if run_dir != root and not run_dir.is_relative_to(root):
+        raise WorkflowError("run-dir 必须在 %s 下: %s" % (root, run_dir))
+    skel_path = run_dir / "summary.json"
+    if not skel_path.is_file():
+        raise WorkflowError("run-dir 缺少 summary.json 骨架: %s" % skel_path)
+    try:
+        skel = json.loads(skel_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise WorkflowError("summary.json 骨架读取失败: %s" % e)
+    if not isinstance(skel, dict) or skel.get("mode") != "write" \
+            or "base_head" not in skel or "workdir" not in skel \
+            or not isinstance(skel.get("tasks"), list):
+        raise WorkflowError("summary.json 不是本 runner 写的写模式骨架: %s" % skel_path)
+    return run_dir, skel
+
+
+def _leftover_worktrees(workdir):
+    """列出 workdir 已注册的、主工作树以外的所有 worktree 路径。
+    CLAUDE.md worktree 红线要求建副本前 git worktree list 确认「没有其它遗留副本」,
+    故这里不限于本工具 WRITE_RUNS_ROOT 下的副本——任何非主 worktree 都算遗留,
+    prepare 默认拒(避免多会话/多批互踩,也避免在已有 worktree 的脏仓库上叠新副本)。"""
+    main = Path(workdir).resolve()
+    out = []
+    for p in _git_worktree_paths(workdir):
+        try:
+            rp = Path(p).resolve()
+        except OSError:
+            continue
+        if rp != main:
+            out.append(p)
+    return out
+
+
+# 未跟踪文件单个上限:超过只记名不复制,避免把巨型产物全量拷进验收材料
+_UNTRACKED_BUNDLE_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _bundle_untracked(wt, untracked, dest_dir):
+    """把副本里的未跟踪新文件内容镜像复制到 dest_dir(按原相对路径),收进验收材料
+    (git diff --binary 不含未跟踪文件,否则纯新增文件的 patch 会是空的)。
+    返回每个文件的处置记录 [{"file","bundled":bool,"reason":str}];
+    超过大小上限或读失败的只记不复制,绝不抛异常影响主收集流程。"""
+    records = []
+    if not untracked:
+        return records
+    wt = Path(wt)
+    dest_dir = Path(dest_dir)
+    for rel in untracked:
+        rec = {"file": rel, "bundled": False, "reason": ""}
+        try:
+            src = wt / rel
+            if not src.is_file():
+                rec["reason"] = "不是普通文件,跳过"
+            elif src.stat().st_size > _UNTRACKED_BUNDLE_MAX_BYTES:
+                rec["reason"] = ("超过 %d 字节上限,只记名不打包"
+                                 % _UNTRACKED_BUNDLE_MAX_BYTES)
+            else:
+                target = dest_dir / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, target)
+                rec["bundled"] = True
+        except OSError as e:
+            rec["reason"] = "复制失败: %s" % e
+        records.append(rec)
+    return records
+
+
 # prompt.txt 末尾追加的边界提示:把 scope 写给 codex 当软边界,并硬性禁止跑 git。
 # scope 是提示不是护栏(真正防越界靠隔离副本 + collect 的冲突/越界报告 + 人工看 patch)。
 _PROMPT_BOUNDARY = (
@@ -310,6 +385,14 @@ def prepare(spec, run_dir, *, allow_dirty=False):
     workdir = spec["workdir"]
     if not _is_git_repo(workdir):
         raise WorkflowError("workdir 不是 git 仓库,无法建 worktree: %s" % workdir)
+
+    # 红线:建副本前查无遗留副本——若本工具上一批副本(WRITE_RUNS_ROOT 下)还挂在该仓库,
+    # 拒绝开跑(在建 run_dir 之前查,拒绝时不留任何半成品),避免多会话/多批互踩同一项目。
+    leftovers = _leftover_worktrees(workdir)
+    if leftovers:
+        raise WorkflowError(
+            "该仓库已有本工具的遗留 worktree 副本,请先 collect 后人工清理再重跑;遗留:\n%s"
+            % "\n".join(leftovers))
 
     # 原子建 run_dir:已存在直接拒,兜并发 prepare 的 TOCTOU
     try:
@@ -375,8 +458,11 @@ def prepare(spec, run_dir, *, allow_dirty=False):
         shutil.rmtree(run_dir, ignore_errors=True)
         raise
 
+    # 用本 runner.py 的绝对路径,保证打印出的命令在任意 cwd 都能直接跑
+    # (从 repo root 跑 "python runner.py ..." 会找不到文件)。
+    runner_path = Path(__file__).resolve()
     dispatch_cmds = [
-        "python runner.py dispatch %s %s" % (run_dir, t["id"])
+        'python "%s" dispatch "%s" %s' % (runner_path, run_dir, t["id"])
         for t in spec["tasks"]
     ]
     warn = None
@@ -508,6 +594,235 @@ def build_write_cmd(codex_prefix, workdir, prompt, reasoning_effort=None):
         cmd += ["-c", "model_reasoning_effort=%s" % reasoning_effort]
     cmd += ["--", prompt]
     return cmd
+
+
+def dispatch(run_dir, task_id, codex_prefix):
+    """真正「落笔写」的唯一入口:在该 task 的隔离副本里跑一个 codex 写子代理。
+    逐任务跑(一次调用 = 一次人工确认,守红线);prompt 由 argv 直传不过 shell;
+    stdin=DEVNULL 不卡死、不抢主会话。返回 {"id", "exit_code"}。"""
+    # dispatch 是唯一 -s workspace-write 落笔写入口,信任度不得低于只读的 collect:
+    # 同样过 run-dir 归属 + 骨架真伪校验(共用 _load_write_skeleton)。
+    run_dir, skeleton = _load_write_skeleton(run_dir)
+
+    entry = next((t for t in skeleton["tasks"] if t.get("id") == task_id), None)
+    if entry is None:
+        raise WorkflowError("run-dir 里没有这个 task-id: %s" % task_id)
+    wt = entry.get("worktree")
+    if not wt or not Path(wt).is_dir():
+        raise WorkflowError("任务 %s 的副本缺失: %s" % (task_id, wt))
+    # 副本必须落在本 run-dir 的 wt/ 下,防骨架 worktree 字段被改指到隔离副本之外
+    # (如真实项目工作树)——否则 codex -s workspace-write 会写到那里。
+    wt_root = (run_dir / "wt").resolve()
+    if not Path(wt).resolve().is_relative_to(wt_root):
+        raise WorkflowError(
+            "任务 %s 的副本不在 run-dir 的 wt/ 下,拒绝派工: %s" % (task_id, wt))
+
+    prompt_path = run_dir / "tasks" / task_id / "prompt.txt"
+    if not prompt_path.is_file():
+        raise WorkflowError("找不到任务 prompt: %s" % prompt_path)
+    prompt = prompt_path.read_text(encoding="utf-8")
+
+    # reasoning_effort 不信任骨架内容(run-dir 可能被手改),过一次白名单:
+    # 非法/缺失一律降级 None,绝不让畸形值流进 -c model_reasoning_effort。
+    reasoning_effort = entry.get("reasoning_effort")
+    if reasoning_effort not in EFFORTS:
+        reasoning_effort = None
+    cmd = build_write_cmd(codex_prefix, wt, prompt, reasoning_effort)
+
+    tdir = run_dir / "tasks" / task_id
+    tdir.mkdir(parents=True, exist_ok=True)
+    log_path = tdir / "agent.log"
+    # 关键:stdin=DEVNULL,子进程不读 stdin、不挂死;stdout/stderr 都进 agent.log
+    with open(log_path, "wb") as log_f:
+        proc = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+        )
+    rc = proc.returncode
+    # 持久化派工结果:collect 据此判该块是否真派过工、退出码是否 0。
+    # 否则「prepare 后没 dispatch」或「dispatch 失败后 collect」会假绿(no_changes + clean)。
+    (tdir / "dispatch.json").write_text(
+        json.dumps({"exit_code": rc}, ensure_ascii=False), encoding="utf-8")
+    return {"id": task_id, "exit_code": rc}
+
+
+def _norm_scope(scope):
+    """规范化 scope 目录前缀:统一正斜杠、去 ./ 前缀、合并多斜杠、去首尾斜杠。
+    返回 (norm_list, whole_repo);whole_repo=True 表示有 "."/"./"/"" 这类整仓前缀。"""
+    norm = []
+    whole_repo = False
+    for s in scope:
+        ns = s.replace("\\", "/")
+        parts = [p for p in ns.split("/") if p not in ("", ".")]
+        if not parts:
+            whole_repo = True   # "."、"./"、"" 都表示整个仓库根
+        else:
+            norm.append("/".join(parts))
+    return norm, whole_repo
+
+
+def _scope_violations(changed, scope):
+    """返回 changed 中不落在任一 scope 目录前缀下的文件列表;scope 空 -> []。
+    "." / "./" 表示整个仓库根(不算越界);其余按 'scope/' 前缀或精确等于判定落入 scope。"""
+    if not scope:
+        return []
+    norm, whole_repo = _norm_scope(scope)
+    if whole_repo:
+        return []
+    out = []
+    for f in changed:
+        nf = f.replace("\\", "/").strip("/")
+        if not any(nf == ns or nf.startswith(ns + "/") for ns in norm):
+            out.append(f)
+    return out
+
+
+def _git_has_staged(wt):
+    """副本里是否有暂存(index)改动:git -C <wt> diff --cached --quiet,rc==1 即有。
+    用于抓子代理偷偷 git add(未 commit)——CLAUDE.md 禁止子代理跑 git add/commit。"""
+    cp = _run_git(["git", "-C", str(wt), "diff", "--cached", "--quiet"])
+    return cp.returncode == 1
+
+
+def collect(run_dir):
+    """收集写模式各 worktree 副本的改动,写完整 summary.json 并返回。
+    校验:run_dir 必须在 WRITE_RUNS_ROOT 下(resolve 后)且含 prepare 写的 summary.json 骨架。
+    clean 当且仅当:无 overlaps、无 head_changed、无 status==error、无 main_drift。
+    只读取/diff,绝不 apply/merge/commit/删副本;最后打印手动清理命令。"""
+    run_dir, skel = _load_write_skeleton(run_dir)
+    skel_path = run_dir / "summary.json"
+
+    base = skel["base_head"]
+    workdir = skel["workdir"]
+
+    tasks_out = []
+    # 文件名 -> 出现它的 task id 列表,用于横向同文件冲突检测
+    file_owners = {}
+    for st in skel["tasks"]:
+        tid = st["id"]
+        wt = st["worktree"]
+        scope = st.get("scope") or []
+        tdir = run_dir / "tasks" / tid
+        tdir.mkdir(parents=True, exist_ok=True)
+        entry = {"id": tid, "status": "", "worktree": wt, "scope": scope,
+                 "touched_files": [], "untracked_files": [], "out_of_scope": [],
+                 "untracked_bundle": [], "head_changed": False,
+                 "index_changed": False, "dispatched": False,
+                 "dispatch_exit_code": None,
+                 "patch": str(tdir / "changes.patch")}
+        # 副本缺失/损坏:git 辅助走 subprocess 不带 check,失败时只返回空串、不抛异常,
+        # 会把坏副本误判成 no_changes。先显式判副本是否仍是合法 git worktree,
+        # 不合法即 error 并使 clean=false(设计 §9 错误处理,否则该通道是死代码)。
+        if not _is_git_repo(wt):
+            entry["status"] = "error"
+            entry["error"] = "副本缺失或已损坏(非合法 git worktree): %s" % wt
+            tasks_out.append(entry)
+            continue
+        try:
+            head = _git_head(wt)
+            if not head:
+                raise ValueError("git rev-parse HEAD 返回空,副本可能损坏")
+            patch = _git_diff_binary(wt, base)
+            (tdir / "changes.patch").write_text(patch, encoding="utf-8")
+            untracked = _git_untracked(wt)
+            changed = _git_changed_names(wt, base)
+            head_changed = (head != base)
+        except (OSError, ValueError) as e:
+            entry["status"] = "error"
+            entry["error"] = "收集失败: %s" % e
+            tasks_out.append(entry)
+            continue
+
+        # 抓子代理偷偷 git add(暂存未提交):head_changed 抓不到 index 写入。
+        index_changed = _git_has_staged(wt)
+        # 读 dispatch 持久化结果:区分「真派过工且成功」/「没派工」/「派工失败」,
+        # 否则没派工或派工失败也会因副本无改动而被判 no_changes + clean(假绿)。
+        disp_p = tdir / "dispatch.json"
+        dispatched = disp_p.is_file()
+        dispatch_rc = None
+        if dispatched:
+            try:
+                dispatch_rc = json.loads(
+                    disp_p.read_text(encoding="utf-8")).get("exit_code")
+            except (OSError, json.JSONDecodeError):
+                dispatch_rc = None
+
+        # git diff --binary 不含未跟踪新文件;把它们的内容也镜像进验收材料,
+        # 否则纯新增文件的 changes.patch 为空、人工集成拿不到内容(设计 §6/§7)。
+        entry["untracked_bundle"] = _bundle_untracked(
+            wt, untracked, tdir / "untracked")
+        entry["touched_files"] = changed
+        entry["untracked_files"] = untracked
+        entry["head_changed"] = head_changed
+        entry["index_changed"] = index_changed
+        entry["dispatched"] = dispatched
+        entry["dispatch_exit_code"] = dispatch_rc
+        # scope 越界判定覆盖已跟踪改动 + 未跟踪新增。scope 仍不阻止 codex 在隔离副本里落笔写,
+        # 但越界改动会让 collect 判 clean=false、须人工复核后才集成
+        # (CLAUDE.md:清单外的新增/产物文件一律判不通过)。
+        entry["out_of_scope"] = _scope_violations(
+            sorted(set(changed) | set(untracked)), scope)
+        # 状态:没派工 / 派工失败 优先(它们本身就该拦住集成);其次才看改动量。
+        if not dispatched:
+            entry["status"] = "not_dispatched"
+        elif dispatch_rc != 0:
+            entry["status"] = "dispatch_failed"
+        elif not changed and not untracked:
+            entry["status"] = "no_changes"
+        else:
+            entry["status"] = "ok"
+        # 冲突检测合并:已跟踪改动 + 未跟踪新增都算"碰到的文件"
+        for f in set(changed) | set(untracked):
+            file_owners.setdefault(f, []).append(tid)
+        tasks_out.append(entry)
+
+    overlaps = sorted(f for f, owners in file_owners.items() if len(owners) >= 2)
+    current_main_head = _git_head(workdir)
+    main_drift = (current_main_head != base) \
+        or (_git_status_porcelain(workdir) != skel.get("status_raw", ""))
+
+    # clean 当且仅当:无同文件冲突、无主仓库漂移、每块都「成功派工且改动可直接集成」——
+    # 即状态只能是 ok/no_changes(排除 error/not_dispatched/dispatch_failed),
+    # 且无副本 commit(head_changed)、无 git add(index_changed)、无 scope 越界(out_of_scope)。
+    clean = (not overlaps) \
+        and (not main_drift) \
+        and all(t["status"] in ("ok", "no_changes") for t in tasks_out) \
+        and all(not t["head_changed"] for t in tasks_out) \
+        and all(not t["index_changed"] for t in tasks_out) \
+        and all(not t["out_of_scope"] for t in tasks_out)
+
+    summary = {
+        "name": skel.get("name"),
+        "run_dir": str(run_dir),
+        "mode": "write",
+        "base_head": base,
+        "current_main_head": current_main_head,
+        "workdir": workdir,
+        "status_raw": skel.get("status_raw", ""),
+        "clean": clean,
+        "main_drift": main_drift,
+        "overlaps": overlaps,
+        "tasks": tasks_out,
+    }
+    # 原子写:先写临时文件再 rename,避免半写坏掉骨架
+    tmp = skel_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    tmp.replace(skel_path)
+
+    # 只打印手动清理命令,绝不自动删
+    print("")
+    print("== collect 完成: clean=%s; 详情 %s ==" % (clean, skel_path))
+    if overlaps:
+        print("   ! 同文件冲突 overlaps: %s" % overlaps)
+    if main_drift:
+        print("   ! 主仓库自基线以来发生漂移(HEAD 或 status 变化)")
+    print("   清理副本(确认后自己删):")
+    for t in tasks_out:
+        print("     git -C %s worktree remove %s" % (workdir, t["worktree"]))
+    return summary
 
 
 def _harden_schema(schema):
@@ -802,7 +1117,8 @@ def _runs_root():
     return (Path(env) if env else DEFAULT_RUNS_ROOT).resolve()
 
 
-def main(argv=None):
+def _main_read(argv):
+    """读模式(v0.1):无子命令时的默认入口。逻辑保持不变。"""
     ap = argparse.ArgumentParser(
         description="dynamic-workflow runner v0.1(只读并行子代理编排)")
     ap.add_argument("spec", help="workflow spec JSON 文件路径")
@@ -866,6 +1182,104 @@ def main(argv=None):
         dur = "-" if t["duration_s"] is None else ("%.1fs" % t["duration_s"])
         print("  [%-21s] %s/%s %s" % (t["status"], t["stage"], t["id"], dur))
     return 0 if summary["ok"] == summary["total"] else 2
+
+
+def _gen_write_run_dir(name):
+    """写模式 run_dir:钉死在 WRITE_RUNS_ROOT 下,name+时间戳+随机,不认 DYNWF_RUNS_ROOT。"""
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    return WRITE_RUNS_ROOT / ("%s-%s-%s" % (name, stamp, secrets.token_hex(3)))
+
+
+def _cmd_prepare(argv):
+    ap = argparse.ArgumentParser(prog="runner.py prepare",
+                                 description="写模式:校验 + 建隔离 worktree 副本")
+    ap.add_argument("spec", help="写模式 spec JSON 文件路径")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="主工作树有未提交改动时仍开跑(知情:WIP 不进副本)")
+    ap.add_argument("--allowed-root", action="append", default=None,
+                    help="限制 workdir 必须在这些根目录之一下(可重复)")
+    args = ap.parse_args(argv)
+
+    try:
+        raw = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print("spec 读取失败: %s" % e, file=sys.stderr)
+        return 1
+    try:
+        spec = validate_write_spec(raw, allowed_roots=args.allowed_root)
+    except WorkflowError as e:
+        print("无法开跑: %s" % e, file=sys.stderr)
+        return 1
+
+    run_dir = _gen_write_run_dir(spec["name"])
+    try:
+        manifest = prepare(spec, run_dir, allow_dirty=args.allow_dirty)
+    except WorkflowError as e:
+        print("无法开跑: %s" % e, file=sys.stderr)
+        return 1
+
+    print("")
+    print("== prepare 完成: %s ==" % manifest["run_dir"])
+    if manifest.get("warn"):
+        print("警告: %s" % manifest["warn"])
+    print("逐任务派工(每条各过一次人工确认):")
+    for line in manifest["dispatch"]:
+        print("  " + line)
+    return 0
+
+
+def _cmd_dispatch(argv):
+    ap = argparse.ArgumentParser(prog="runner.py dispatch",
+                                 description="写模式:在某副本里跑一个 codex 写")
+    ap.add_argument("run_dir", help="prepare 生成的 run-dir")
+    ap.add_argument("task_id", help="要派工的任务 id")
+    ap.add_argument("--codex-cmd", action="append", default=None,
+                    help="子代理命令前缀,可重复传多段(测试用,默认 codex)")
+    args = ap.parse_args(argv)
+
+    try:
+        codex_prefix = resolve_codex_prefix(args.codex_cmd)
+    except WorkflowError as e:
+        print("无法开跑: %s" % e, file=sys.stderr)
+        return 1
+    try:
+        result = dispatch(Path(args.run_dir), args.task_id, codex_prefix)
+    except WorkflowError as e:
+        print("无法派工: %s" % e, file=sys.stderr)
+        return 1
+    rc = result["exit_code"]
+    print("== dispatch %s 完成: exit=%s ==" % (args.task_id, rc))
+    return 0 if rc == 0 else 1
+
+
+def _cmd_collect(argv):
+    ap = argparse.ArgumentParser(prog="runner.py collect",
+                                 description="写模式:收 diff/未跟踪/冲突/漂移 → summary.json")
+    ap.add_argument("run_dir", help="prepare 生成的 run-dir")
+    args = ap.parse_args(argv)
+
+    try:
+        summary = collect(Path(args.run_dir))
+    except WorkflowError as e:
+        print("无法收集: %s" % e, file=sys.stderr)
+        return 1
+    print("")
+    print("== collect 完成: clean=%s ==" % summary["clean"])
+    return 0 if summary["clean"] else 2
+
+
+_WRITE_CMDS = {"prepare": _cmd_prepare,
+               "dispatch": _cmd_dispatch,
+               "collect": _cmd_collect}
+
+
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    argv = list(argv)
+    if argv and argv[0] in _WRITE_CMDS:
+        return _WRITE_CMDS[argv[0]](argv[1:])
+    return _main_read(argv)
 
 
 if __name__ == "__main__":
