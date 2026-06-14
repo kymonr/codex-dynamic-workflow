@@ -90,6 +90,8 @@ class PrepareSuccessTest(unittest.TestCase):
         spec = _vspec(self.repo, [wtask("a")])
         manifest = runner.prepare(spec, self.run_dir)
         self.assertTrue(all(" -- " in line for line in manifest["dispatch"]))
+        self.assertTrue(all("--ack-external-model-export" in line
+                            for line in manifest["dispatch"]))
 
     def test_oversized_final_prompt_rejected_no_residue(self):
         # scope 极长 → 加边界后最终 prompt 超上限 → prepare 拒、不留 run_dir

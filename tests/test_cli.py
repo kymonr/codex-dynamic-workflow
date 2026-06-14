@@ -15,7 +15,7 @@ def write_spec(raw):
     return p
 
 
-def cli(raw, *extra):
+def cli(raw, *extra, ack=True):
     spec_path = write_spec(raw)
     # 把运行根指到本测试的临时目录,这样 --run-dir 能通过 runner 的"必须在根下"包含检查
     runs_root = spec_path.parent / "runs"
@@ -26,6 +26,8 @@ def cli(raw, *extra):
     argv = [str(spec_path), "--run-dir", str(run_dir),
             "--codex-cmd", sys.executable, "--codex-cmd", mock,
             "--timeout-override", "5"]
+    if ack:
+        argv.append("--ack-external-model-export")
     argv += list(extra)
     return runner.main(argv), run_dir
 
@@ -39,6 +41,11 @@ class TestCli(unittest.TestCase):
         code, run_dir = cli(spec_dict([stage("s1", task("a"))]))
         self.assertEqual(code, 0)
         self.assertTrue((run_dir / "summary.json").exists())
+
+    def test_missing_external_model_ack_exit_1(self):
+        code, run_dir = cli(spec_dict([stage("s1", task("a"))]), ack=False)
+        self.assertEqual(code, 1)
+        self.assertFalse((run_dir / "summary.json").exists())
 
     def test_partial_fail_exit_2(self):
         raw = spec_dict([stage("s1", task("a"),
@@ -66,7 +73,8 @@ class TestCli(unittest.TestCase):
         mock = str(ROOT / "tests" / "mock_codex.py")
         # run-dir 指到运行根之外(spec 同级的 evil),应被拒、exit 1
         argv = [str(spec_path), "--run-dir", str(spec_path.parent / "evil"),
-                "--codex-cmd", sys.executable, "--codex-cmd", mock]
+                "--codex-cmd", sys.executable, "--codex-cmd", mock,
+                "--ack-external-model-export"]
         self.assertEqual(runner.main(argv), 1)
 
     def test_run_dir_in_production_rejected(self):
@@ -75,7 +83,8 @@ class TestCli(unittest.TestCase):
         mock = str(ROOT / "tests" / "mock_codex.py")
         # 生产模式不接受 --run-dir(避免越界/junction),应被拒、exit 1
         argv = [str(spec_path), "--run-dir", str(spec_path.parent / "run"),
-                "--codex-cmd", sys.executable, "--codex-cmd", mock]
+                "--codex-cmd", sys.executable, "--codex-cmd", mock,
+                "--ack-external-model-export"]
         self.assertEqual(runner.main(argv), 1)
 
     def test_default_run_dir_is_unique_for_back_to_back_runs(self):
@@ -85,7 +94,8 @@ class TestCli(unittest.TestCase):
         os.environ["DYNWF_RUNS_ROOT"] = str(runs_root)
         mock = str(ROOT / "tests" / "mock_codex.py")
         argv = [str(spec_path), "--codex-cmd", sys.executable,
-                "--codex-cmd", mock, "--timeout-override", "5"]
+                "--codex-cmd", mock, "--timeout-override", "5",
+                "--ack-external-model-export"]
         self.assertEqual(runner.main(argv), 0)
         self.assertEqual(runner.main(argv), 0)
         run_dirs = [p for p in runs_root.iterdir() if p.is_dir()]

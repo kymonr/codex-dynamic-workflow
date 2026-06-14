@@ -480,7 +480,8 @@ def prepare(spec, run_dir, *, allow_dirty=False):
     runner_path = Path(__file__).resolve()
     dispatch_cmds = [
         # 加 -- 分隔:即便 task id 异常以 - 开头,argparse 也按位置参数解析(防被当选项)
-        'python "%s" dispatch "%s" -- %s' % (runner_path, run_dir, t["id"])
+        'python "%s" dispatch "%s" --ack-external-model-export -- %s'
+        % (runner_path, run_dir, t["id"])
         for t in spec["tasks"]
     ]
     warn = None
@@ -1212,7 +1213,15 @@ def _main_read(argv):
                     help="子代理命令前缀,可重复传多段(测试用,默认 codex)")
     ap.add_argument("--timeout-override", type=int, default=None,
                     help="覆盖每任务超时秒数(测试用;只允许 1..%d,不得放大护栏)" % MAX_TIMEOUT_S)
+    ap.add_argument("--ack-external-model-export", action="store_true",
+                    help="确认允许把 workdir/snapshot 内容发送给 Codex 子代理模型")
     args = ap.parse_args(argv)
+
+    if not args.ack_external_model_export:
+        print("无法开跑: 缺少 --ack-external-model-export;"
+              "必须先由用户当轮明确允许发送目录内容给 Codex 子代理模型",
+              file=sys.stderr)
+        return 1
 
     if args.timeout_override is not None \
             and not (1 <= args.timeout_override <= MAX_TIMEOUT_S):
@@ -1321,7 +1330,15 @@ def _cmd_dispatch(argv):
                     help="agent.log 连续无新增多少秒判卡死并杀进程树(%d..%d,默认 %d)"
                          % (MIN_DISPATCH_STALL_S, MAX_DISPATCH_STALL_S,
                             DEFAULT_DISPATCH_STALL_S))
+    ap.add_argument("--ack-external-model-export", action="store_true",
+                    help="确认允许把隔离副本内容发送给 Codex 子代理模型")
     args = ap.parse_args(argv)
+
+    if not args.ack_external_model_export:
+        print("无法派工: 缺少 --ack-external-model-export;"
+              "必须先由用户当轮明确允许发送隔离副本内容给 Codex 子代理模型",
+              file=sys.stderr)
+        return 1
 
     # 生产不接受任意 --codex-cmd:写模式落笔写的命令必须定死(CLAUDE.md 模板定死红线);
     # 只有显式测试模式(DYNWF_TEST_MODE)才放行注入 mock。读模式 -s read-only 低危,沿用 v0.1 不在此限。
