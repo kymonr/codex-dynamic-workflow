@@ -85,6 +85,20 @@ class PrepareSuccessTest(unittest.TestCase):
         self.assertEqual(len(manifest["dispatch"]), 3)
         self.assertIsNotNone(manifest["warn"])
 
+    def test_dispatch_cmds_have_double_dash(self):
+        # 打印的派工命令含 -- 分隔,防 task id 以 - 开头被当选项
+        spec = _vspec(self.repo, [wtask("a")])
+        manifest = runner.prepare(spec, self.run_dir)
+        self.assertTrue(all(" -- " in line for line in manifest["dispatch"]))
+
+    def test_oversized_final_prompt_rejected_no_residue(self):
+        # scope 极长 → 加边界后最终 prompt 超上限 → prepare 拒、不留 run_dir
+        spec = _vspec(self.repo, [
+            wtask("a", prompt="改", scope=["x" * (runner.MAX_PROMPT_CHARS + 100)])])
+        with self.assertRaises(runner.WorkflowError):
+            runner.prepare(spec, self.run_dir)
+        self.assertFalse(self.run_dir.exists())
+
 
 class PrepareRunDirExistsTest(unittest.TestCase):
     def setUp(self):

@@ -184,6 +184,20 @@ class TestCollectGuards(CollectBase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_malformed_task_entry_rejected(self):
+        # 骨架的 task 条目缺 worktree → WorkflowError(而非 collect 直接下标裸 KeyError)
+        d = runner.WRITE_RUNS_ROOT / ("malformed-%s" % os.urandom(3).hex())
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            (d / "summary.json").write_text(json.dumps({
+                "mode": "write", "base_head": "abc", "workdir": str(self.repo),
+                "tasks": [{"id": "a"}],  # 缺 worktree
+            }), encoding="utf-8")
+            with self.assertRaises(runner.WorkflowError):
+                runner.collect(d)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 class TestCollectDrift(CollectBase):
     """主仓库自基线以来漂移 → main_drift True、clean False(红线:集成前主 HEAD/status 须一致)。"""

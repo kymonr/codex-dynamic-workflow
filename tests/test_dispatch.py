@@ -173,6 +173,20 @@ class DispatchTest(unittest.TestCase):
             (Path(run_dir) / "tasks" / "a" / "dispatch.json").read_text(encoding="utf-8"))
         self.assertTrue(disp["stalled"])
 
+    def test_nonexistent_codex_raises_workflowerror(self):
+        """codex 二进制不存在/不可执行 → WorkflowError(CLI 稳定退 1),不抛裸 traceback。"""
+        run_dir = self._prepare([wtask("a", prompt="改", scope=["."])])
+        with self.assertRaises(runner.WorkflowError):
+            runner.dispatch(run_dir, "a", [r"D:\no\such\codex-xyzzy.exe"])
+
+    def test_oversized_prompt_in_run_dir_rejected(self):
+        """run-dir 被手改成超长 prompt → 落笔写前拦下(防撑爆 argv)。"""
+        run_dir = self._prepare([wtask("a", prompt="改", scope=["."])])
+        (Path(run_dir) / "tasks" / "a" / "prompt.txt").write_text(
+            "x" * (runner.MAX_PROMPT_CHARS + 1), encoding="utf-8")
+        with self.assertRaises(runner.WorkflowError):
+            runner.dispatch(run_dir, "a", MOCK_PREFIX)
+
 
 if __name__ == "__main__":
     unittest.main()

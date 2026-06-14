@@ -135,6 +135,12 @@ class ValidateWriteSpecTest(unittest.TestCase):
         with self.assertRaises(runner.SpecError):
             runner.validate_write_spec(raw2)
 
+    def test_leading_dash_id_rejected(self):
+        # id 以 - 开头会被 dispatch 的命令行当选项,校验阶段就拒
+        raw = self._spec([wtask("-x")])
+        with self.assertRaises(runner.SpecError):
+            runner.validate_write_spec(raw)
+
     # ---- prompt ----
     def test_empty_prompt_rejected(self):
         raw = self._spec([wtask("a", prompt="   ")])

@@ -2,93 +2,97 @@ test_dash_prefixed_prompt_after_separator (test_build_cmd.TestBuildCmd.test_dash
 test_full_argv_exact (test_build_cmd.TestBuildCmd.test_full_argv_exact) ... ok
 test_minimal_is_readonly_no_schema (test_build_cmd.TestBuildCmd.test_minimal_is_readonly_no_schema) ... ok
 test_prefix_can_be_multi_token (test_build_cmd.TestBuildCmd.test_prefix_can_be_multi_token) ... ok
-test_all_ok_exit_0 (test_cli.TestCli.test_all_ok_exit_0) ... [14:13:05] START a (stage=s1)
-[14:13:05] OK    a (0.0s)
-ok
-test_default_run_dir_is_unique_for_back_to_back_runs (test_cli.TestCli.test_default_run_dir_is_unique_for_back_to_back_runs) ... 
-== 完成: 1/1 ok; 详情 C:\Users\Orz\AppData\Local\Temp\dynwf-cli-gjyycx3k\runs\run\summary.json ==
-  [ok                   ] s1/a 0.0s
-[14:13:05] START a (stage=s1)
-[14:13:05] OK    a (0.1s)
-
-== 完成: 1/1 ok; 详情 C:\Users\Orz\AppData\Local\Temp\dynwf-cli-1509iulm\runs\t-20260613-141305-684812-246c0c\summary.json ==
-  [ok                   ] s1/a 0.1s
-[14:13:05] START a (stage=s1)
-[14:13:05] OK    a (0.1s)
-ok
+test_all_ok_exit_0 (test_cli.TestCli.test_all_ok_exit_0) ... ok
+test_default_run_dir_is_unique_for_back_to_back_runs (test_cli.TestCli.test_default_run_dir_is_unique_for_back_to_back_runs) ... ok
 test_invalid_spec_exit_1 (test_cli.TestCli.test_invalid_spec_exit_1) ... 无法开跑: spec 含未知字段(拒绝运行): ['sandbox']
 ok
-test_partial_fail_exit_2 (test_cli.TestCli.test_partial_fail_exit_2) ... 
-== 完成: 1/1 ok; 详情 C:\Users\Orz\AppData\Local\Temp\dynwf-cli-1509iulm\runs\t-20260613-141305-742590-7a6932\summary.json ==
-  [ok                   ] s1/a 0.1s
-[14:13:05] START a (stage=s1)
-[14:13:05] START b (stage=s1)
-[14:13:05] OK    a (0.1s)
-[14:13:05] FAIL  b exit=3 (0.1s)
-ok
+test_partial_fail_exit_2 (test_cli.TestCli.test_partial_fail_exit_2) ... ok
 test_run_dir_in_production_rejected (test_cli.TestCli.test_run_dir_in_production_rejected) ... 无法开跑: 生产模式不接受 --run-dir,运行目录会自动生成
 ok
-test_run_dir_outside_root_exit_1 (test_cli.TestCli.test_run_dir_outside_root_exit_1) ... 无法开跑: --run-dir 必须在 C:\Users\Orz\AppData\Local\Temp\dynwf-cli-8etlyfv1\runs 下
+test_run_dir_outside_root_exit_1 (test_cli.TestCli.test_run_dir_outside_root_exit_1) ... 无法开跑: --run-dir 必须在 C:\Users\Orz\AppData\Local\Temp\dynwf-cli-jswghurg\runs 下
 ok
 test_timeout_override_out_of_range_exit_1 (test_cli.TestCli.test_timeout_override_out_of_range_exit_1) ... 无法开跑: --timeout-override 必须在 1..1800 内
 ok
-test_cap_two_honored (test_concurrency.TestConcurrencyCap.test_cap_two_honored) ... 
-== 完成: 1/2 ok; 详情 C:\Users\Orz\AppData\Local\Temp\dynwf-cli-ja4k2h7j\runs\run\summary.json ==
-  [ok                   ] s1/a 0.1s
-  [error                ] s1/b 0.1s
-[14:13:05] START t0 (stage=s1)
-[14:13:05] START t1 (stage=s1)
-[14:13:06] OK    t0 (0.7s)
-[14:13:06] START t2 (stage=s1)
-[14:13:06] OK    t1 (0.7s)
-[14:13:06] START t3 (stage=s1)
-[14:13:07] OK    t2 (0.7s)
-[14:13:07] START t4 (stage=s1)
-[14:13:07] OK    t3 (0.7s)
-[14:13:07] OK    t4 (0.6s)
-ok
-test_failed_upstream_skips_downstream (test_pipeline.TestPipeline.test_failed_upstream_skips_downstream) ... [14:13:07] START a (stage=find)
-[14:13:07] FAIL  a exit=3 (0.0s)
-[14:13:07] SKIP  b (缺上游结果 ['a'])
-ok
-test_stage2_sees_stage1_result (test_pipeline.TestPipeline.test_stage2_sees_stage1_result) ... [14:13:07] START a (stage=find)
-[14:13:07] OK    a (0.0s)
-[14:13:07] START b (stage=verify)
-[14:13:07] OK    b (0.1s)
-ok
-test_substituted_prompt_too_long_is_blocked (test_pipeline.TestPipeline.test_substituted_prompt_too_long_is_blocked) ... [14:13:08] START a (stage=find)
-[14:13:08] OK    a (0.1s)
-[14:13:08] PROMPT_TOO_LONG b (20179 字符)
-ok
-test_bad_json_is_parse_error (test_run.TestRunWorkflow.test_bad_json_is_parse_error) ... [14:13:08] START a (stage=s1)
-[14:13:08] PARSE_ERROR a
-ok
+test_secret_commit_marks_head_changed_not_clean (test_collect.TestCollectConflicts.test_secret_commit_marks_head_changed_not_clean) ... ok
+test_two_tasks_same_file_overlaps_not_clean (test_collect.TestCollectConflicts.test_two_tasks_same_file_overlaps_not_clean) ... ok
+test_collect_without_dispatch_not_clean (test_collect.TestCollectDispatchState.test_collect_without_dispatch_not_clean) ... ok
+test_dispatch_failure_marks_not_clean (test_collect.TestCollectDispatchState.test_dispatch_failure_marks_not_clean) ... ok
+test_staged_changes_marks_index_changed_not_clean (test_collect.TestCollectDispatchState.test_staged_changes_marks_index_changed_not_clean) ... ok
+test_main_repo_dirty_worktree_marks_drift_not_clean (test_collect.TestCollectDrift.test_main_repo_dirty_worktree_marks_drift_not_clean) ... ok
+test_main_repo_new_commit_marks_drift_not_clean (test_collect.TestCollectDrift.test_main_repo_new_commit_marks_drift_not_clean) ... ok
+test_missing_worktree_copy_marks_error_not_clean (test_collect.TestCollectError.test_missing_worktree_copy_marks_error_not_clean) ... ok
+test_malformed_task_entry_rejected (test_collect.TestCollectGuards.test_malformed_task_entry_rejected) ... ok
+test_missing_skeleton_rejected (test_collect.TestCollectGuards.test_missing_skeleton_rejected) ... ok
+test_run_dir_outside_write_root_rejected (test_collect.TestCollectGuards.test_run_dir_outside_write_root_rejected) ... ok
+test_no_changes_when_task_writes_nothing (test_collect.TestCollectHappyPath.test_no_changes_when_task_writes_nothing) ... ok
+test_writes_produce_patch_untracked_and_ok (test_collect.TestCollectHappyPath.test_writes_produce_patch_untracked_and_ok) ... ok
+test_out_of_scope_marks_not_clean (test_collect.TestCollectScope.test_out_of_scope_marks_not_clean) ... ok
+test_scope_dot_means_whole_repo_no_violation (test_collect.TestCollectScope.test_scope_dot_means_whole_repo_no_violation) ... ok
+test_tracked_file_modification_produces_nonempty_patch (test_collect.TestCollectTrackedFile.test_tracked_file_modification_produces_nonempty_patch) ... ok
+test_tracked_file_out_of_scope_marks_not_clean (test_collect.TestCollectTrackedFile.test_tracked_file_out_of_scope_marks_not_clean) ... ok
+test_untracked_content_bundled (test_collect.TestCollectUntrackedBundle.test_untracked_content_bundled) ... ok
+test_cap_two_honored (test_concurrency.TestConcurrencyCap.test_cap_two_honored) ... ok
+test_bad_reasoning_effort_sanitized (test_dispatch.DispatchTest.test_bad_reasoning_effort_sanitized)
+骨架被手改塞入非法 reasoning_effort → 降级 None,绝不拼进 -c。 ... ok
+test_commit_changes_head (test_dispatch.DispatchTest.test_commit_changes_head)
+[MOCK:commit] 后副本 HEAD 应不同于 base(子代理偷偷 commit 的场景)。 ... ok
+test_devnull_stdin_and_workspace_write_in_argv (test_dispatch.DispatchTest.test_devnull_stdin_and_workspace_write_in_argv)
+落笔写必须 stdin=DEVNULL(不挂死)且 argv 含 -s workspace-write(硬编码沙箱)。 ... ok
+test_nonexistent_codex_raises_workflowerror (test_dispatch.DispatchTest.test_nonexistent_codex_raises_workflowerror)
+codex 二进制不存在/不可执行 → WorkflowError(CLI 稳定退 1),不抛裸 traceback。 ... ok
+test_oversized_prompt_in_run_dir_rejected (test_dispatch.DispatchTest.test_oversized_prompt_in_run_dir_rejected)
+run-dir 被手改成超长 prompt → 落笔写前拦下(防撑爆 argv)。 ... ok
+test_run_dir_outside_write_root_rejected (test_dispatch.DispatchTest.test_run_dir_outside_write_root_rejected)
+run_dir 不在 WRITE_RUNS_ROOT 下(伪造/错项目)→ WorkflowError,绝不落笔写。 ... ok
+test_stall_detected_and_killed (test_dispatch.DispatchTest.test_stall_detected_and_killed)
+agent.log 连续无新增超过 stall_seconds → 判卡死、杀进程树、返回 stalled。 ... ok
+test_unknown_task_id_raises (test_dispatch.DispatchTest.test_unknown_task_id_raises)
+run_dir 里没有这个 task_id → WorkflowError。 ... ok
+test_worktree_outside_wt_dir_rejected (test_dispatch.DispatchTest.test_worktree_outside_wt_dir_rejected)
+骨架 worktree 字段被改指到 run-dir/wt 之外(如真实项目树)→ 拒绝派工。 ... ok
+test_writes_appear_in_worktree (test_dispatch.DispatchTest.test_writes_appear_in_worktree)
+[MOCK:writes=...] 指定的文件应出现在该任务的副本里;exit_code==0;agent.log 存在。 ... ok
+test_git_head_is_full_hash (test_git_helpers.GitHelpersTest.test_git_head_is_full_hash) ... ok
+test_is_git_repo_false_on_missing_dir (test_git_helpers.GitHelpersTest.test_is_git_repo_false_on_missing_dir) ... ok
+test_is_git_repo_false_on_plain_dir (test_git_helpers.GitHelpersTest.test_is_git_repo_false_on_plain_dir) ... ok
+test_is_git_repo_true (test_git_helpers.GitHelpersTest.test_is_git_repo_true) ... ok
+test_run_git_returns_completed_process (test_git_helpers.GitHelpersTest.test_run_git_returns_completed_process) ... ok
+test_status_clean_then_dirty (test_git_helpers.GitHelpersTest.test_status_clean_then_dirty) ... ok
+test_worktree_add_bad_base_raises (test_git_helpers.GitHelpersTest.test_worktree_add_bad_base_raises) ... ok
+test_worktree_lifecycle (test_git_helpers.GitHelpersTest.test_worktree_lifecycle) ... ok
+test_failed_upstream_skips_downstream (test_pipeline.TestPipeline.test_failed_upstream_skips_downstream) ... ok
+test_stage2_sees_stage1_result (test_pipeline.TestPipeline.test_stage2_sees_stage1_result) ... ok
+test_substituted_prompt_too_long_is_blocked (test_pipeline.TestPipeline.test_substituted_prompt_too_long_is_blocked) ... ok
+test_allow_dirty_succeeds (test_prepare.PrepareDirtyRepoTest.test_allow_dirty_succeeds) ... ok
+test_dirty_default_rejected_and_no_residue (test_prepare.PrepareDirtyRepoTest.test_dirty_default_rejected_and_no_residue) ... ok
+test_worktree_add_failure_rolls_back (test_prepare.PrepareRollbackTest.test_worktree_add_failure_rolls_back) ... ok
+test_existing_run_dir_rejected (test_prepare.PrepareRunDirExistsTest.test_existing_run_dir_rejected) ... ok
+test_creates_worktrees_prompts_and_skeleton (test_prepare.PrepareSuccessTest.test_creates_worktrees_prompts_and_skeleton) ... ok
+test_dispatch_cmds_have_double_dash (test_prepare.PrepareSuccessTest.test_dispatch_cmds_have_double_dash) ... ok
+test_oversized_final_prompt_rejected_no_residue (test_prepare.PrepareSuccessTest.test_oversized_final_prompt_rejected_no_residue) ... ok
+test_warn_when_more_than_two_tasks (test_prepare.PrepareSuccessTest.test_warn_when_more_than_two_tasks) ... ok
+test_bad_json_is_parse_error (test_run.TestRunWorkflow.test_bad_json_is_parse_error) ... ok
 test_existing_run_dir_is_rejected (test_run.TestRunWorkflow.test_existing_run_dir_is_rejected) ... ok
 test_harden_schema_nested_and_keeps_explicit (test_run.TestRunWorkflow.test_harden_schema_nested_and_keeps_explicit) ... ok
-test_missing_required_key_is_schema_mismatch (test_run.TestRunWorkflow.test_missing_required_key_is_schema_mismatch) ... [14:13:08] START a (stage=s1)
-[14:13:08] SCHEMA_MISMATCH a
-ok
-test_nonzero_exit_is_error (test_run.TestRunWorkflow.test_nonzero_exit_is_error) ... [14:13:08] START a (stage=s1)
-[14:13:08] FAIL  a exit=3 (0.0s)
-ok
-test_ok_with_schema_parses_json (test_run.TestRunWorkflow.test_ok_with_schema_parses_json) ... [14:13:08] START a (stage=s1)
-[14:13:08] OK    a (0.0s)
-ok
-test_ok_without_schema_returns_text (test_run.TestRunWorkflow.test_ok_without_schema_returns_text) ... [14:13:08] START a (stage=s1)
-[14:13:08] OK    a (0.0s)
-ok
-test_output_schema_hardened_on_disk (test_run.TestRunWorkflow.test_output_schema_hardened_on_disk) ... [14:13:08] START a (stage=s1)
-[14:13:08] OK    a (0.0s)
-ok
-test_timeout_kills_agent (test_run.TestRunWorkflow.test_timeout_kills_agent) ... [14:13:08] START a (stage=s1)
-[14:13:09] TIMEOUT a (1s)
-ok
+test_missing_required_key_is_schema_mismatch (test_run.TestRunWorkflow.test_missing_required_key_is_schema_mismatch) ... ok
+test_nonzero_exit_is_error (test_run.TestRunWorkflow.test_nonzero_exit_is_error) ... ok
+test_ok_with_schema_parses_json (test_run.TestRunWorkflow.test_ok_with_schema_parses_json) ... ok
+test_ok_without_schema_returns_text (test_run.TestRunWorkflow.test_ok_without_schema_returns_text) ... ok
+test_output_schema_hardened_on_disk (test_run.TestRunWorkflow.test_output_schema_hardened_on_disk) ... ok
+test_timeout_kills_agent (test_run.TestRunWorkflow.test_timeout_kills_agent) ... ok
 test_boundary_nonce_randomized (test_substitute.TestSubstitute.test_boundary_nonce_randomized) ... ok
 test_dict_result_injected_as_json (test_substitute.TestSubstitute.test_dict_result_injected_as_json) ... ok
 test_injection_text_wrapped_not_bare (test_substitute.TestSubstitute.test_injection_text_wrapped_not_bare) ... ok
 test_missing_ref_reported (test_substitute.TestSubstitute.test_missing_ref_reported) ... ok
 test_no_placeholder_passthrough (test_substitute.TestSubstitute.test_no_placeholder_passthrough) ... ok
 test_str_result_injected_wrapped (test_substitute.TestSubstitute.test_str_result_injected_wrapped) ... ok
+test_extracts_tokens_used (test_tokens.TestExtractTokens.test_extracts_tokens_used) ... ok
+test_extracts_total_with_commas (test_tokens.TestExtractTokens.test_extracts_total_with_commas) ... ok
+test_garbage_returns_none (test_tokens.TestExtractTokens.test_garbage_returns_none) ... ok
+test_missing_file_returns_none (test_tokens.TestExtractTokens.test_missing_file_returns_none) ... ok
+test_task_and_total_tokens_captured (test_tokens.TestTokensInSummary.test_task_and_total_tokens_captured) ... ok
+test_total_tokens_null_when_none_reported (test_tokens.TestTokensInSummary.test_total_tokens_null_when_none_reported) ... ok
+test_total_tokens_sums_multiple (test_tokens.TestTokensInSummary.test_total_tokens_sums_multiple) ... ok
 test_agent_total_cap (test_validate.TestValidateSpec.test_agent_total_cap) ... ok
 test_bad_effort_rejected (test_validate.TestValidateSpec.test_bad_effort_rejected) ... ok
 test_concurrency_bounds (test_validate.TestValidateSpec.test_concurrency_bounds) ... ok
@@ -107,8 +111,95 @@ test_version_bool_rejected (test_validate.TestValidateSpec.test_version_bool_rej
 test_workdir_home_rejected (test_validate.TestValidateSpec.test_workdir_home_rejected) ... ok
 test_workdir_must_exist (test_validate.TestValidateSpec.test_workdir_must_exist) ... ok
 test_workdir_under_codex_rejected (test_validate.TestValidateSpec.test_workdir_under_codex_rejected) ... ok
+test_collect_bad_run_dir_exit_1 (test_write_cli.TestCollectSubcommand.test_collect_bad_run_dir_exit_1) ... 无法收集: run-dir 必须在 C:\Users\Orz\AppData\Local\Temp\dynwf-wroot-vo1yvnaf\workflows 下: C:\Users\Orz\AppData\Local\Temp\dynwf-bogus-6lebo2uk
+ok
+test_collect_clean_exit_0 (test_write_cli.TestCollectSubcommand.test_collect_clean_exit_0) ... ok
+test_collect_main_drift_exit_2 (test_write_cli.TestCollectSubcommand.test_collect_main_drift_exit_2) ... ok
+test_collect_overlap_not_clean_exit_2 (test_write_cli.TestCollectSubcommand.test_collect_overlap_not_clean_exit_2) ... ok
+test_dispatch_codex_cmd_rejected_in_production (test_write_cli.TestDispatchSubcommand.test_dispatch_codex_cmd_rejected_in_production) ... 无法派工: 生产模式不接受 --codex-cmd(写命令定死);仅测试模式可注入
+ok
+test_dispatch_passes_through_codex_nonzero (test_write_cli.TestDispatchSubcommand.test_dispatch_passes_through_codex_nonzero) ... ok
+test_dispatch_runs_mock_and_returns_0 (test_write_cli.TestDispatchSubcommand.test_dispatch_runs_mock_and_returns_0) ... ok
+test_dispatch_unknown_task_id_exit_1 (test_write_cli.TestDispatchSubcommand.test_dispatch_unknown_task_id_exit_1) ... 无法派工: run-dir 里没有这个 task-id: nope
+ok
+test_prepare_creates_run_dir_under_write_runs_root (test_write_cli.TestPrepareSubcommand.test_prepare_creates_run_dir_under_write_runs_root) ... ok
+test_prepare_dirty_repo_allow_dirty_ok (test_write_cli.TestPrepareSubcommand.test_prepare_dirty_repo_allow_dirty_ok) ... ok
+test_prepare_dirty_repo_default_rejected (test_write_cli.TestPrepareSubcommand.test_prepare_dirty_repo_default_rejected) ... 无法开跑: 主工作树有未提交改动(这些改动不会进副本);请先提交或加 --allow-dirty 知情放行。未提交清单:
+?? dirty.txt
+
+ok
+test_prepare_leftover_worktree_rejected (test_write_cli.TestPrepareSubcommand.test_prepare_leftover_worktree_rejected)
+红线:仓库已有本工具的遗留副本(WRITE_RUNS_ROOT 下)→ prepare 拒、不留新 run_dir。 ... 无法开跑: 该仓库已有本工具的遗留 worktree 副本,请先 collect 后人工清理再重跑;遗留:
+C:/Users/Orz/AppData/Local/Temp/dynwf-wroot-t0ntm4bc/workflows/old-run/wt/x
+ok
+test_prepare_missing_spec_file_exit_1 (test_write_cli.TestPrepareSubcommand.test_prepare_missing_spec_file_exit_1) ... spec 读取失败: [Errno 2] No such file or directory: 'D:\\不存在的-spec-xyz.json'
+ok
+test_prepare_non_git_workdir_exit_1 (test_write_cli.TestPrepareSubcommand.test_prepare_non_git_workdir_exit_1) ... 无法开跑: 写模式 workdir 必须是 git 仓库: C:\Users\Orz\AppData\Local\Temp\dynwf-nogit-g2qf2nkf
+ok
+test_prepare_too_many_tasks_exit_1 (test_write_cli.TestPrepareSubcommand.test_prepare_too_many_tasks_exit_1) ... 无法开跑: 写任务数 9 超过上限 8
+ok
+test_prepare_writes_worktree_and_prompt (test_write_cli.TestPrepareSubcommand.test_prepare_writes_worktree_and_prompt) ... ok
+test_read_mode_all_ok_exit_0 (test_write_cli.TestReadModeBackCompat.test_read_mode_all_ok_exit_0) ... ok
+test_read_mode_invalid_spec_exit_1 (test_write_cli.TestReadModeBackCompat.test_read_mode_invalid_spec_exit_1) ... 无法开跑: spec 含未知字段(拒绝运行): ['sandbox']
+ok
+test_read_mode_partial_fail_exit_2 (test_write_cli.TestReadModeBackCompat.test_read_mode_partial_fail_exit_2) ... ok
+test_dispatch_without_task_id_exit_1 (test_write_cli.TestSubcommandArgErrors.test_dispatch_without_task_id_exit_1) ... usage: runner.py dispatch [-h] [--codex-cmd CODEX_CMD]
+                          [--stall-seconds STALL_SECONDS]
+                          run_dir task_id
+runner.py dispatch: error: the following arguments are required: task_id
+ok
+test_prepare_without_spec_arg_exit_1 (test_write_cli.TestSubcommandArgErrors.test_prepare_without_spec_arg_exit_1) ... usage: runner.py prepare [-h] [--allow-dirty] [--allowed-root ALLOWED_ROOT]
+                         spec
+runner.py prepare: error: the following arguments are required: spec
+ok
+test_full_argv_exact_no_reasoning (test_write_cmd.TestBuildWriteCmd.test_full_argv_exact_no_reasoning) ... ok
+test_full_argv_exact_with_reasoning (test_write_cmd.TestBuildWriteCmd.test_full_argv_exact_with_reasoning) ... ok
+test_is_workspace_write_not_readonly (test_write_cmd.TestBuildWriteCmd.test_is_workspace_write_not_readonly) ... ok
+test_no_output_flags (test_write_cmd.TestBuildWriteCmd.test_no_output_flags) ... ok
+test_prefix_can_be_multi_token (test_write_cmd.TestBuildWriteCmd.test_prefix_can_be_multi_token) ... ok
+test_prompt_after_separator (test_write_cmd.TestBuildWriteCmd.test_prompt_after_separator) ... ok
+test_str_workdir_when_path_like (test_write_cmd.TestBuildWriteCmd.test_str_workdir_when_path_like) ... ok
+test_read_build_cmd_full_argv_unchanged (test_write_cmd.TestReadModeRegression.test_read_build_cmd_full_argv_unchanged) ... ok
+test_read_build_cmd_still_readonly (test_write_cmd.TestReadModeRegression.test_read_build_cmd_still_readonly) ... ok
+test_has_one_commit_head_exists (test_write_helpers.TestMakeGitRepo.test_has_one_commit_head_exists) ... ok
+test_is_a_work_tree (test_write_helpers.TestMakeGitRepo.test_is_a_work_tree) ... ok
+test_seed_file_committed (test_write_helpers.TestMakeGitRepo.test_seed_file_committed) ... ok
+test_write_spec_dict_override (test_write_helpers.TestWriteSpecBuilders.test_write_spec_dict_override) ... ok
+test_write_spec_dict_shape (test_write_helpers.TestWriteSpecBuilders.test_write_spec_dict_shape) ... ok
+test_wtask_minimal (test_write_helpers.TestWriteSpecBuilders.test_wtask_minimal) ... ok
+test_wtask_scope_none_omitted (test_write_helpers.TestWriteSpecBuilders.test_wtask_scope_none_omitted) ... ok
+test_wtask_with_scope_and_extra (test_write_helpers.TestWriteSpecBuilders.test_wtask_with_scope_and_extra) ... ok
+test_bad_effort_rejected (test_write_validate.ValidateWriteSpecTest.test_bad_effort_rejected) ... ok
+test_bad_id_rejected (test_write_validate.ValidateWriteSpecTest.test_bad_id_rejected) ... ok
+test_bad_name_rejected (test_write_validate.ValidateWriteSpecTest.test_bad_name_rejected) ... ok
+test_duplicate_id_casefold_rejected (test_write_validate.ValidateWriteSpecTest.test_duplicate_id_casefold_rejected) ... ok
+test_empty_prompt_rejected (test_write_validate.ValidateWriteSpecTest.test_empty_prompt_rejected) ... ok
+test_empty_tasks_rejected (test_write_validate.ValidateWriteSpecTest.test_empty_tasks_rejected) ... ok
+test_exactly_max_tasks_ok (test_write_validate.ValidateWriteSpecTest.test_exactly_max_tasks_ok) ... ok
+test_leading_dash_id_rejected (test_write_validate.ValidateWriteSpecTest.test_leading_dash_id_rejected) ... ok
+test_minimal_ok_fills_defaults (test_write_validate.ValidateWriteSpecTest.test_minimal_ok_fills_defaults) ... ok
+test_mode_missing_rejected (test_write_validate.ValidateWriteSpecTest.test_mode_missing_rejected) ... ok
+test_mode_must_be_write (test_write_validate.ValidateWriteSpecTest.test_mode_must_be_write) ... ok
+test_not_dict_rejected (test_write_validate.ValidateWriteSpecTest.test_not_dict_rejected) ... ok
+test_prompt_non_utf8_rejected (test_write_validate.ValidateWriteSpecTest.test_prompt_non_utf8_rejected) ... ok
+test_prompt_too_long_rejected (test_write_validate.ValidateWriteSpecTest.test_prompt_too_long_rejected) ... ok
+test_prompt_with_placeholder_rejected (test_write_validate.ValidateWriteSpecTest.test_prompt_with_placeholder_rejected) ... ok
+test_scope_and_effort_preserved (test_write_validate.ValidateWriteSpecTest.test_scope_and_effort_preserved) ... ok
+test_scope_empty_list_rejected (test_write_validate.ValidateWriteSpecTest.test_scope_empty_list_rejected) ... ok
+test_scope_not_list_rejected (test_write_validate.ValidateWriteSpecTest.test_scope_not_list_rejected) ... ok
+test_scope_with_empty_string_rejected (test_write_validate.ValidateWriteSpecTest.test_scope_with_empty_string_rejected) ... ok
+test_scope_with_non_string_rejected (test_write_validate.ValidateWriteSpecTest.test_scope_with_non_string_rejected) ... ok
+test_stages_key_rejected (test_write_validate.ValidateWriteSpecTest.test_stages_key_rejected) ... ok
+test_tasks_not_list_rejected (test_write_validate.ValidateWriteSpecTest.test_tasks_not_list_rejected) ... ok
+test_too_many_tasks_rejected (test_write_validate.ValidateWriteSpecTest.test_too_many_tasks_rejected) ... ok
+test_unknown_task_key_rejected (test_write_validate.ValidateWriteSpecTest.test_unknown_task_key_rejected) ... ok
+test_unknown_top_key_rejected (test_write_validate.ValidateWriteSpecTest.test_unknown_top_key_rejected) ... ok
+test_version_must_be_int_one (test_write_validate.ValidateWriteSpecTest.test_version_must_be_int_one) ... ok
+test_win_reserved_id_rejected (test_write_validate.ValidateWriteSpecTest.test_win_reserved_id_rejected) ... ok
+test_workdir_git_repo_ok (test_write_validate.ValidateWriteSpecTest.test_workdir_git_repo_ok) ... ok
+test_workdir_must_be_git_repo (test_write_validate.ValidateWriteSpecTest.test_workdir_must_be_git_repo) ... ok
 
 ----------------------------------------------------------------------
-Ran 48 tests in 4.199s
+Ran 166 tests in 59.303s
 
 OK

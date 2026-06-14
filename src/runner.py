@@ -312,6 +312,13 @@ def _load_write_skeleton(run_dir):
             or "base_head" not in skel or "workdir" not in skel \
             or not isinstance(skel.get("tasks"), list):
         raise WorkflowError("summary.json 不是本 runner 写的写模式骨架: %s" % skel_path)
+    # 每个 task 条目必须有非空 str 的 id 与 worktree;否则 collect/dispatch 直接下标会裸 KeyError。
+    # run-dir 被手改/损坏时在此统一拦下,转 WorkflowError。
+    for st in skel["tasks"]:
+        if not isinstance(st, dict) or not isinstance(st.get("id"), str) or not st.get("id") \
+                or not isinstance(st.get("worktree"), str) or not st.get("worktree"):
+            raise WorkflowError(
+                "summary.json 的 task 条目缺 id/worktree 或类型不对: %r" % (st,))
     return run_dir, skel
 
 
@@ -427,8 +434,14 @@ def prepare(spec, run_dir, *, allow_dirty=False):
             tdir.mkdir(parents=True, exist_ok=True)
             scope = t["scope"]
             scope_desc = "、".join(scope) if scope else "(spec 未限定,自行克制)"
-            (tdir / "prompt.txt").write_text(
-                t["prompt"] + _PROMPT_BOUNDARY % scope_desc, encoding="utf-8")
+            final_prompt = t["prompt"] + _PROMPT_BOUNDARY % scope_desc
+            # 加边界文本 + scope 后的最终 prompt 仍要 ≤ 上限:原始 prompt 校验过,但 scope 可能很长,
+            # 撑爆 argv 会触发 Windows 命令行长度上限。超了即拒(在 try 内,触发回滚不留半成品)。
+            if len(final_prompt) > MAX_PROMPT_CHARS:
+                raise WorkflowError(
+                    "任务 %s 加边界/scope 后 prompt 长 %d,超上限 %d"
+                    % (tid, len(final_prompt), MAX_PROMPT_CHARS))
+            (tdir / "prompt.txt").write_text(final_prompt, encoding="utf-8")
 
             skeleton_tasks.append({
                 "id": tid,
@@ -466,7 +479,8 @@ def prepare(spec, run_dir, *, allow_dirty=False):
     # (从 repo root 跑 "python runner.py ..." 会找不到文件)。
     runner_path = Path(__file__).resolve()
     dispatch_cmds = [
-        'python "%s" dispatch "%s" %s' % (runner_path, run_dir, t["id"])
+        # 加 -- 分隔:即便 task id 异常以 - 开头,argparse 也按位置参数解析(防被当选项)
+        'python "%s" dispatch "%s" -- %s' % (runner_path, run_dir, t["id"])
         for t in spec["tasks"]
     ]
     warn = None
@@ -522,6 +536,9 @@ def validate_write_spec(raw, allowed_roots=None):
         tid = t.get("id")
         if not isinstance(tid, str) or not TASK_ID_RE.match(tid):
             raise SpecError("%s.id 必须是 1-40 位字母/数字/_/-" % where)
+        if tid.startswith("-"):
+            # id 会作为 CLI 位置参数传给 dispatch,以 - 开头会被 argparse 当选项解析
+            raise SpecError("%s.id 不能以 - 开头(会被命令行当选项): %s" % (where, tid))
         if tid.upper() in WIN_RESERVED:
             raise SpecError("%s.id 不能是 Windows 保留设备名: %s" % (where, tid))
         tid_folded = tid.casefold()
@@ -674,6 +691,11 @@ def dispatch(run_dir, task_id, codex_prefix, *,
     if not prompt_path.is_file():
         raise WorkflowError("找不到任务 prompt: %s" % prompt_path)
     prompt = prompt_path.read_text(encoding="utf-8")
+    if len(prompt) > MAX_PROMPT_CHARS:
+        # run-dir 可能被手改;最终 prompt 超上限会撑爆 argv,落笔写前再拦一次
+        raise WorkflowError(
+            "任务 %s 的 prompt 长 %d,超上限 %d(run-dir 可能被改)"
+            % (task_id, len(prompt), MAX_PROMPT_CHARS))
 
     # reasoning_effort 不信任骨架内容(run-dir 可能被手改),过一次白名单:
     # 非法/缺失一律降级 None,绝不让畸形值流进 -c model_reasoning_effort。
@@ -688,12 +710,16 @@ def dispatch(run_dir, task_id, codex_prefix, *,
     # 关键:stdin=DEVNULL,子进程不读 stdin、不挂死;stdout/stderr 都进 agent.log。
     # 用 Popen + 卡死守卫(监控 agent.log 增长),而非 subprocess.run——能在停滞时杀进程树。
     with open(log_path, "wb") as log_f:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+            )
+        except (FileNotFoundError, OSError) as e:
+            # codex 二进制不存在/不可执行 → 转 WorkflowError(CLI 稳定返回 1,不抛裸 traceback)
+            raise WorkflowError("启动 codex 失败(命令不可执行?): %s" % e)
         stalled = _wait_with_stall_guard(proc, log_path, stall_seconds, poll_interval)
     rc = proc.returncode
     # 持久化派工结果:collect 据此判该块是否真派过工、退出码是否 0。
