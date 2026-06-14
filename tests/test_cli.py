@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import runner, spec_dict, stage, task, ROOT
+from helpers import runner, spec_dict, stage, task, ROOT, mktemp
 
 
 def write_spec(raw):
-    p = Path(tempfile.mkdtemp(prefix="dynwf-cli-")) / "spec.json"
+    p = mktemp("dynwf-cli-") / "spec.json"
     p.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
     return p
 
@@ -31,6 +31,10 @@ def cli(raw, *extra):
 
 
 class TestCli(unittest.TestCase):
+    def tearDown(self):
+        # cli() 会设 DYNWF_RUNS_ROOT 环境变量,逐测试清掉避免污染其它测试
+        os.environ.pop("DYNWF_RUNS_ROOT", None)
+
     def test_all_ok_exit_0(self):
         code, run_dir = cli(spec_dict([stage("s1", task("a"))]))
         self.assertEqual(code, 0)

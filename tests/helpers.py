@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """测试公共件:把 src 加进 import 路径,提供 mock 前缀、spec 构造器和 run_wf。"""
 import asyncio
+import atexit
 import os
 import shutil
 import stat
@@ -37,6 +38,24 @@ def rmtree(path):
         shutil.rmtree(path, onerror=lambda f, p, e: _onexc(f, p, e))  # 旧版回退
 
 
+_ATEXIT_DIRS = []
+
+
+def mktemp(prefix):
+    """建临时目录并登记「进程退出时 rmtree」,给"用完不便逐个 teardown"的测试兜底
+    (run_wf 的运行目录、CLI 测试的 spec 目录等),避免 %TEMP% 跨轮累积。
+    能 per-test 清的优先用 addCleanup/tearDown;这里是兜底。返回 Path。"""
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    _ATEXIT_DIRS.append(d)
+    return d
+
+
+@atexit.register
+def _cleanup_atexit_dirs():
+    for d in _ATEXIT_DIRS:
+        rmtree(d)
+
+
 def spec_dict(stages, workdir=None, **over):
     d = {"version": 1, "name": "t", "workdir": workdir or str(ROOT), "stages": stages}
     d.update(over)
@@ -54,7 +73,7 @@ def task(tid, prompt="干活", **kw):
 def run_wf(raw, **kw):
     """校验 spec 并在临时运行目录里用 mock 替身跑完整个 workflow。"""
     spec = runner.validate_spec(raw)
-    rd = Path(tempfile.mkdtemp(prefix="dynwf-test-")) / "run"
+    rd = mktemp("dynwf-test-") / "run"
     summary = asyncio.run(runner.run_workflow(spec, rd, MOCK_PREFIX, **kw))
     return summary, rd
 

@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import runner, run_wf, spec_dict, stage, task
+from helpers import runner, run_wf, spec_dict, stage, task, mktemp
 
 
 class TestExtractTokens(unittest.TestCase):
     def _write(self, text):
-        p = Path(tempfile.mkdtemp(prefix="dynwf-tok-")) / "agent.log"
+        p = mktemp("dynwf-tok-") / "agent.log"
         p.write_text(text, encoding="utf-8")
         return p
 
