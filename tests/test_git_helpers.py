@@ -17,7 +17,7 @@ class GitHelpersTest(unittest.TestCase):
     def tearDown(self):
         # worktree 副本可能在 repo 外,逐个尽力删除
         for p in self._cleanup:
-            shutil.rmtree(p, ignore_errors=True)
+            helpers.rmtree(p)
 
     # ---- _is_git_repo ----
     def test_is_git_repo_true(self):

@@ -19,7 +19,7 @@ class TestMakeGitRepo(unittest.TestCase):
         self.repo = helpers.make_git_repo()
 
     def tearDown(self):
-        shutil.rmtree(self.repo, ignore_errors=True)
+        helpers.rmtree(self.repo)
 
     def test_is_a_work_tree(self):
         cp = _git(["rev-parse", "--is-inside-work-tree"], self.repo)

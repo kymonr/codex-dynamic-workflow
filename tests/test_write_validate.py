@@ -18,7 +18,7 @@ class ValidateWriteSpecTest(unittest.TestCase):
 
     def tearDown(self):
         for p in self._cleanup:
-            shutil.rmtree(p, ignore_errors=True)
+            helpers.rmtree(p)
 
     def _spec(self, tasks, **over):
         return write_spec_dict(tasks, self.repo, **over)

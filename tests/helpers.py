@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """测试公共件:把 src 加进 import 路径,提供 mock 前缀、spec 构造器和 run_wf。"""
 import asyncio
+import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -14,6 +17,24 @@ if _SRC not in sys.path:
 MOCK_PREFIX = [sys.executable, str(ROOT / "tests" / "mock_codex.py")]
 
 import runner  # noqa: E402
+
+
+def rmtree(path):
+    """Windows 友好的 rmtree:git 的 loose object / pack 文件是只读的,
+    shutil.rmtree 默认删不掉(ignore_errors=True 会静默残留临时仓库),这里遇错先清只读位再重删,
+    清完仍删不掉才忽略。用于测试收尾,确保 %TEMP% 不堆 dynwf-* 残留。"""
+    if not os.path.exists(path):
+        return
+    def _onexc(func, p, exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+    try:
+        shutil.rmtree(path, onexc=_onexc)        # Python 3.12+
+    except TypeError:
+        shutil.rmtree(path, onerror=lambda f, p, e: _onexc(f, p, e))  # 旧版回退
 
 
 def spec_dict(stages, workdir=None, **over):

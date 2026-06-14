@@ -36,7 +36,7 @@ class PrepareSuccessTest(unittest.TestCase):
             runner._git_worktree_prune(str(self.repo))
         except Exception:
             pass
-        shutil.rmtree(self.repo, ignore_errors=True)
+        helpers.rmtree(self.repo)
         shutil.rmtree(self.run_dir.parent, ignore_errors=True)
 
     def test_creates_worktrees_prompts_and_skeleton(self):
@@ -91,7 +91,7 @@ class PrepareRunDirExistsTest(unittest.TestCase):
         self.repo = make_git_repo()
         self.run_dir = _fresh_run_dir()
         self.run_dir.mkdir(parents=True)  # 预先建好,触发 exist_ok=False 冲突
-        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        self.addCleanup(helpers.rmtree, self.repo)
         self.addCleanup(shutil.rmtree, self.run_dir.parent, ignore_errors=True)
 
     def test_existing_run_dir_rejected(self):
@@ -106,7 +106,7 @@ class PrepareDirtyRepoTest(unittest.TestCase):
         # 弄脏工作树:新增一个未跟踪文件
         (self.repo / "dirty.txt").write_text("WIP", encoding="utf-8")
         self.run_dir = _fresh_run_dir()
-        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        self.addCleanup(helpers.rmtree, self.repo)
         self.addCleanup(shutil.rmtree, self.run_dir.parent, ignore_errors=True)
 
     def test_dirty_default_rejected_and_no_residue(self):
@@ -137,7 +137,7 @@ class PrepareRollbackTest(unittest.TestCase):
             runner._git_worktree_prune(str(self.repo))
         except Exception:
             pass
-        shutil.rmtree(self.repo, ignore_errors=True)
+        helpers.rmtree(self.repo)
         shutil.rmtree(self.run_dir.parent, ignore_errors=True)
 
     def test_worktree_add_failure_rolls_back(self):
