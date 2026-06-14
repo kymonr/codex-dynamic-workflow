@@ -46,6 +46,8 @@ class WriteCliBase(_TempTracking):
         self._wroot_parent = Path(tempfile.mkdtemp(prefix="dynwf-wroot-"))
         self._tmp_root = self._wroot_parent / "workflows"
         runner.WRITE_RUNS_ROOT = self._tmp_root
+        # 写模式 dispatch 的 --codex-cmd 仅测试模式放行,测试里显式开
+        os.environ["DYNWF_TEST_MODE"] = "1"
 
     def tearDown(self):
         # 先注销可能残留的 worktree 副本,再还原根、删临时根目录
@@ -63,6 +65,7 @@ class WriteCliBase(_TempTracking):
                     except Exception:
                         pass
         runner.WRITE_RUNS_ROOT = self._orig_root
+        os.environ.pop("DYNWF_TEST_MODE", None)
         rmtree(self._wroot_parent)
 
     def _only_run_dir(self):
@@ -170,6 +173,14 @@ class TestDispatchSubcommand(WriteCliBase):
         code = runner.main(["dispatch", str(run_dir), "a",
                             "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
         self.assertEqual(code, 1)  # codex 非 0 → CLI 失败码 1
+
+    def test_dispatch_codex_cmd_rejected_in_production(self):
+        # 生产模式(无 DYNWF_TEST_MODE)拒绝 --codex-cmd:写命令必须定死,不接受任意前缀
+        run_dir = self._prepared([wtask("a", prompt="改", scope=["."])])
+        os.environ.pop("DYNWF_TEST_MODE", None)
+        code = runner.main(["dispatch", str(run_dir), "a",
+                            "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
+        self.assertEqual(code, 1)
 
 
 class TestCollectSubcommand(WriteCliBase):

@@ -27,6 +27,15 @@ def _make_counter():
 _counter = _make_counter()
 
 
+class _FakeProc:
+    """subprocess.Popen 的最小替身:wait() 立即返回(不卡死守卫),returncode=0。"""
+    returncode = 0
+    pid = 4321
+
+    def wait(self, timeout=None):
+        return 0
+
+
 class DispatchTest(unittest.TestCase):
     def setUp(self):
         self.repo = make_git_repo()
@@ -62,7 +71,7 @@ class DispatchTest(unittest.TestCase):
             wtask("a", prompt="改文件 [MOCK:writes=new1.txt,sub/new2.txt]"),
         ])
         res = runner.dispatch(run_dir, "a", MOCK_PREFIX)
-        self.assertEqual(res, {"id": "a", "exit_code": 0})
+        self.assertEqual(res, {"id": "a", "exit_code": 0, "stalled": False})
 
         skel = json.loads((Path(run_dir) / "summary.json").read_text(encoding="utf-8"))
         wt = Path(next(t["worktree"] for t in skel["tasks"] if t["id"] == "a"))
@@ -122,17 +131,15 @@ class DispatchTest(unittest.TestCase):
         run_dir = self._prepare([wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])])
         captured = {}
 
-        def fake_run(cmd, **kwargs):
+        def fake_popen(cmd, **kwargs):
             captured["cmd"] = cmd
             captured["kwargs"] = kwargs
+            return _FakeProc()
 
-            class _R:
-                returncode = 0
-            return _R()
-
-        with mock.patch.object(runner.subprocess, "run", fake_run):
+        with mock.patch.object(runner.subprocess, "Popen", fake_popen):
             res = runner.dispatch(run_dir, "a", MOCK_PREFIX)
         self.assertEqual(res["exit_code"], 0)
+        self.assertFalse(res["stalled"])
         self.assertIs(captured["kwargs"]["stdin"], runner.subprocess.DEVNULL)
         self.assertIn("-s", captured["cmd"])
         self.assertIn("workspace-write", captured["cmd"])
@@ -146,16 +153,25 @@ class DispatchTest(unittest.TestCase):
         skel_p.write_text(json.dumps(skel, ensure_ascii=False), encoding="utf-8")
         captured = {}
 
-        def fake_run(cmd, **kwargs):
+        def fake_popen(cmd, **kwargs):
             captured["cmd"] = cmd
+            return _FakeProc()
 
-            class _R:
-                returncode = 0
-            return _R()
-
-        with mock.patch.object(runner.subprocess, "run", fake_run):
+        with mock.patch.object(runner.subprocess, "Popen", fake_popen):
             runner.dispatch(run_dir, "a", MOCK_PREFIX)
         self.assertNotIn("-c", captured["cmd"])  # 非法值被降级,不拼 -c
+
+    def test_stall_detected_and_killed(self):
+        """agent.log 连续无新增超过 stall_seconds → 判卡死、杀进程树、返回 stalled。"""
+        run_dir = self._prepare([wtask("a", prompt="卡住不输出 [MOCK:sleep=5]")])
+        res = runner.dispatch(run_dir, "a", MOCK_PREFIX,
+                              stall_seconds=1, poll_interval=0.2)
+        self.assertTrue(res["stalled"])
+        self.assertNotEqual(res["exit_code"], 0)
+        # dispatch.json 也记下 stalled,供 collect/人工诊断
+        disp = json.loads(
+            (Path(run_dir) / "tasks" / "a" / "dispatch.json").read_text(encoding="utf-8"))
+        self.assertTrue(disp["stalled"])
 
 
 if __name__ == "__main__":

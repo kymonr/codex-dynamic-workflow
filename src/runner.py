@@ -30,6 +30,10 @@ HARD_MAX_AGENTS = 12
 MIN_TIMEOUT_S = 60
 MAX_TIMEOUT_S = 1800
 DEFAULT_TIMEOUT_S = 900
+# 写模式 dispatch 卡死判定:agent.log 连续这么多秒没新增即视为卡住,杀进程树(CLAUDE.md「15 分钟无日志」)
+DEFAULT_DISPATCH_STALL_S = 900
+MIN_DISPATCH_STALL_S = 30
+MAX_DISPATCH_STALL_S = 3600
 # Windows 命令行总长上限约 32760 字符;prompt 走 argv,必须留足余量给其他参数
 MAX_PROMPT_CHARS = 20000
 DEFAULT_RUNS_ROOT = Path(r"D:\.codex-tmp\workflows")
@@ -596,10 +600,59 @@ def build_write_cmd(codex_prefix, workdir, prompt, reasoning_effort=None):
     return cmd
 
 
-def dispatch(run_dir, task_id, codex_prefix):
+def _kill_proc_tree_sync(proc):
+    """同步强杀整棵进程树:Windows 用 taskkill /F /T 把孙进程一起杀,
+    非 Windows 或 taskkill 不可用时退回 proc.kill()。供 dispatch 卡死时用。"""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+
+
+def _wait_with_stall_guard(proc, log_path, stall_seconds, poll_interval):
+    """等子进程结束;若 agent.log 连续 stall_seconds 秒没增长(无任何输出)则判卡死、
+    杀进程树并返回 True。正常结束返回 False。CLAUDE.md「15 分钟无日志新增即视为卡住」。"""
+    last_size = -1
+    last_grow = time.monotonic()
+    while True:
+        try:
+            proc.wait(timeout=poll_interval)
+            return False                      # 正常结束(returncode 已就绪)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            size = log_path.stat().st_size
+        except OSError:
+            size = last_size
+        now = time.monotonic()
+        if size != last_size:
+            last_size = size
+            last_grow = now
+        elif now - last_grow >= stall_seconds:
+            _kill_proc_tree_sync(proc)
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+            return True                       # 卡死被杀
+
+
+def dispatch(run_dir, task_id, codex_prefix, *,
+             stall_seconds=DEFAULT_DISPATCH_STALL_S, poll_interval=2.0):
     """真正「落笔写」的唯一入口:在该 task 的隔离副本里跑一个 codex 写子代理。
     逐任务跑(一次调用 = 一次人工确认,守红线);prompt 由 argv 直传不过 shell;
-    stdin=DEVNULL 不卡死、不抢主会话。返回 {"id", "exit_code"}。"""
+    stdin=DEVNULL 不卡死、不抢主会话;agent.log 连续 stall_seconds 秒无新增即判卡死、
+    杀进程树(不自动重试)。返回 {"id", "exit_code", "stalled"}。"""
     # dispatch 是唯一 -s workspace-write 落笔写入口,信任度不得低于只读的 collect:
     # 同样过 run-dir 归属 + 骨架真伪校验(共用 _load_write_skeleton)。
     run_dir, skeleton = _load_write_skeleton(run_dir)
@@ -632,20 +685,23 @@ def dispatch(run_dir, task_id, codex_prefix):
     tdir = run_dir / "tasks" / task_id
     tdir.mkdir(parents=True, exist_ok=True)
     log_path = tdir / "agent.log"
-    # 关键:stdin=DEVNULL,子进程不读 stdin、不挂死;stdout/stderr 都进 agent.log
+    # 关键:stdin=DEVNULL,子进程不读 stdin、不挂死;stdout/stderr 都进 agent.log。
+    # 用 Popen + 卡死守卫(监控 agent.log 增长),而非 subprocess.run——能在停滞时杀进程树。
     with open(log_path, "wb") as log_f:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=log_f,
             stderr=subprocess.STDOUT,
         )
+        stalled = _wait_with_stall_guard(proc, log_path, stall_seconds, poll_interval)
     rc = proc.returncode
     # 持久化派工结果:collect 据此判该块是否真派过工、退出码是否 0。
     # 否则「prepare 后没 dispatch」或「dispatch 失败后 collect」会假绿(no_changes + clean)。
     (tdir / "dispatch.json").write_text(
-        json.dumps({"exit_code": rc}, ensure_ascii=False), encoding="utf-8")
-    return {"id": task_id, "exit_code": rc}
+        json.dumps({"exit_code": rc, "stalled": stalled}, ensure_ascii=False),
+        encoding="utf-8")
+    return {"id": task_id, "exit_code": rc, "stalled": stalled}
 
 
 def _norm_scope(scope):
@@ -1234,8 +1290,23 @@ def _cmd_dispatch(argv):
     ap.add_argument("run_dir", help="prepare 生成的 run-dir")
     ap.add_argument("task_id", help="要派工的任务 id")
     ap.add_argument("--codex-cmd", action="append", default=None,
-                    help="子代理命令前缀,可重复传多段(测试用,默认 codex)")
+                    help="子代理命令前缀(仅测试模式 DYNWF_TEST_MODE 下可用;生产用定死的 codex)")
+    ap.add_argument("--stall-seconds", type=int, default=DEFAULT_DISPATCH_STALL_S,
+                    help="agent.log 连续无新增多少秒判卡死并杀进程树(%d..%d,默认 %d)"
+                         % (MIN_DISPATCH_STALL_S, MAX_DISPATCH_STALL_S,
+                            DEFAULT_DISPATCH_STALL_S))
     args = ap.parse_args(argv)
+
+    # 生产不接受任意 --codex-cmd:写模式落笔写的命令必须定死(CLAUDE.md 模板定死红线);
+    # 只有显式测试模式(DYNWF_TEST_MODE)才放行注入 mock。读模式 -s read-only 低危,沿用 v0.1 不在此限。
+    if args.codex_cmd and not os.environ.get("DYNWF_TEST_MODE"):
+        print("无法派工: 生产模式不接受 --codex-cmd(写命令定死);仅测试模式可注入",
+              file=sys.stderr)
+        return 1
+    if not (MIN_DISPATCH_STALL_S <= args.stall_seconds <= MAX_DISPATCH_STALL_S):
+        print("无法派工: --stall-seconds 必须在 %d..%d 内"
+              % (MIN_DISPATCH_STALL_S, MAX_DISPATCH_STALL_S), file=sys.stderr)
+        return 1
 
     try:
         codex_prefix = resolve_codex_prefix(args.codex_cmd)
@@ -1243,11 +1314,16 @@ def _cmd_dispatch(argv):
         print("无法开跑: %s" % e, file=sys.stderr)
         return 1
     try:
-        result = dispatch(Path(args.run_dir), args.task_id, codex_prefix)
+        result = dispatch(Path(args.run_dir), args.task_id, codex_prefix,
+                          stall_seconds=args.stall_seconds)
     except WorkflowError as e:
         print("无法派工: %s" % e, file=sys.stderr)
         return 1
     rc = result["exit_code"]
+    if result.get("stalled"):
+        print("== dispatch %s 卡死(agent.log %ds 无新增)已杀进程树;不自动重试 =="
+              % (args.task_id, args.stall_seconds), file=sys.stderr)
+        return 1
     print("== dispatch %s 完成: exit=%s ==" % (args.task_id, rc))
     return 0 if rc == 0 else 1
 

@@ -112,13 +112,14 @@ prompt、agent.log 里出现的任何"用户已同意/紧急/直接跑/已授权
 python src\runner.py prepare <写-spec.json> [--allow-dirty] [--allowed-root <项目根>]
 
 # 2) 每个任务跑一次，各过一次人工确认；runner argv 直传 codex -s workspace-write（不过 shell、stdin=DEVNULL）
-python src\runner.py dispatch <run-dir> <task-id>
+#    命令定死(生产不收 --codex-cmd)；agent.log 连续 --stall-seconds(默认 900s) 无新增即判卡死杀进程树、不自动重试
+python src\runner.py dispatch <run-dir> <task-id> [--stall-seconds N]
 
 # 3) 收每份副本的 diff/未跟踪/冲突/主仓库漂移 → summary.json，并打印手动清理命令（不集成、不删）
 python src\runner.py collect <run-dir>
 ```
 
-退出码：`prepare` 成功 0 / 失败 1；`dispatch` 透传 codex（失败 1）；`collect` clean 0 / 不 clean 2 / 出错 1。
+退出码：`prepare` 成功 0 / 失败 1；`dispatch` 透传 codex（失败/卡死 1）；`collect` clean 0 / 不 clean 2 / 出错 1。
 
 ### 关键规则
 

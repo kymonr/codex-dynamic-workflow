@@ -134,7 +134,9 @@ argument-hint: "要并行处理的大任务描述"
 2. `python runner.py dispatch <run-dir> <task-id>`
    **每个任务跑一次,各过一次人工确认。** runner 内部用 argv 直传 `codex exec -s workspace-write`
    (不过 shell、`stdin=DEVNULL`)在该副本里写;codex 的文字回答落 `tasks\<id>\agent.log`。
-   退出码透传 codex(失败 1)。
+   命令**定死**:生产不接受 `--codex-cmd`(仅测试模式可注入 mock)。卡死保护:`agent.log` 连续
+   `--stall-seconds`(默认 900=15 分钟)无新增即判卡死、杀进程树并标 `stalled`,**不自动重试**。
+   退出码透传 codex(失败 / 卡死均 1)。
 3. `python runner.py collect <run-dir>`
    收每份副本相对基线的 diff(含被偷偷 commit 的改动)写 `changes.patch`、扫未跟踪文件并镜像其内容、
    查派工真相(`dispatched`/`dispatch_exit_code`:没派工→`not_dispatched`、非 0 退出→`dispatch_failed`)、
