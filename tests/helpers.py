@@ -16,6 +16,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 MOCK_PREFIX = [sys.executable, str(ROOT / "tests" / "mock_codex.py")]
+MOCK_CLAUDE_PREFIX = [sys.executable, str(ROOT / "tests" / "mock_claude.py")]
 
 import runner  # noqa: E402
 
@@ -70,11 +71,12 @@ def task(tid, prompt="干活", **kw):
     return {"id": tid, "prompt": prompt, **kw}
 
 
-def run_wf(raw, **kw):
-    """校验 spec 并在临时运行目录里用 mock 替身跑完整个 workflow。"""
+def run_wf(raw, prefix=None, **kw):
+    """校验 spec 并在临时运行目录里用 mock 替身跑完整个 workflow。
+    prefix 缺省 codex mock;claude 后端测试传 MOCK_CLAUDE_PREFIX。"""
     spec = runner.validate_spec(raw)
     rd = mktemp("dynwf-test-") / "run"
-    summary = asyncio.run(runner.run_workflow(spec, rd, MOCK_PREFIX, **kw))
+    summary = asyncio.run(runner.run_workflow(spec, rd, prefix or MOCK_PREFIX, **kw))
     return summary, rd
 
 

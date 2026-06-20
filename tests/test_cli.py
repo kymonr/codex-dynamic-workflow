@@ -103,5 +103,40 @@ class TestCli(unittest.TestCase):
         self.assertNotEqual(run_dirs[0].name, run_dirs[1].name)
 
 
+class TestCliClaude(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("DYNWF_RUNS_ROOT", None)
+
+    def _run(self, raw, *extra):
+        spec_path = write_spec(raw)
+        runs_root = spec_path.parent / "runs"
+        runs_root.mkdir(exist_ok=True)
+        os.environ["DYNWF_RUNS_ROOT"] = str(runs_root)
+        run_dir = runs_root / "run"
+        mock = str(ROOT / "tests" / "mock_claude.py")
+        argv = [str(spec_path), "--run-dir", str(run_dir),
+                "--claude-cmd", sys.executable, "--claude-cmd", mock,
+                "--timeout-override", "5", "--ack-external-model-export"]
+        argv += list(extra)
+        return runner.main(argv), run_dir
+
+    def test_backend_claude_persisted(self):
+        raw = spec_dict([stage("s1", task("a", prompt="你好"))], backend="claude")
+        code, run_dir = self._run(raw)
+        self.assertEqual(code, 0)
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["backend"], "claude")
+        resolved = json.loads((run_dir / "spec.resolved.json").read_text(encoding="utf-8"))
+        self.assertEqual(resolved["backend"], "claude")
+
+    def test_cli_backend_overrides_spec(self):
+        # spec 写 codex,CLI --backend claude 覆盖 → 用 mock_claude,退出 0
+        raw = spec_dict([stage("s1", task("a", prompt="你好"))], backend="codex")
+        code, run_dir = self._run(raw, "--backend", "claude")
+        self.assertEqual(code, 0)
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["backend"], "claude")
+
+
 if __name__ == "__main__":
     unittest.main()
