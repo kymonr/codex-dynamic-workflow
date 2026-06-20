@@ -1,8 +1,9 @@
 # codex-dynamic-workflow
 
 给 codex 桌面版的 `dynamic-workflow` 技能：把大任务拆成多个子代理并行执行。
-`native-subagent` 后端由主会话直接调用当前会话的 Codex subagent 工具，不生成运行目录；
-`cli-runner` 后端由 `src/runner.py` 确定性调度多个 `codex exec` 子进程，
+默认使用 `native-subagent`：主会话直接调用当前会话的 Codex subagent 工具，不生成运行目录；
+只有需要 runner 产物、隔离写模式、真实 `codex exec` 路径验证，或当前会话没有 native 工具时，
+才使用 `cli-runner`。`cli-runner` 后端由 `src/runner.py` 确定性调度多个 `codex exec` 子进程，
 并把结果汇总在运行目录的 `summary.json`。
 
 - 计划书：`docs/plans/2026-06-13-dynamic-workflow-skill.md`
@@ -10,13 +11,13 @@
 - 安装位置：`C:\Users\Orz\.codex\skills\dynamic-workflow\`
 - v0.1 读模式：只读子代理（分析/审查/调研，不改文件）。
 - v0.2 写模式：并行改文件 + 分工，由 `prepare`/`dispatch`/`collect` 三子命令自包含实现（见下文"写模式（v0.2）"）。
-- v0.3 后端选择：`native-subagent` 走当前会话工具；`cli-runner` 保留可审计运行目录、日志和 summary。
+- v0.3 后端选择：默认 `native-subagent`；必要时才用 `cli-runner` 保留可审计运行目录、日志和 summary。
 
 ## 后端选择（v0.3）
 
-- `native-subagent`：当前 Codex 会话已暴露 `multi_agent_v1.spawn_agent` / `wait_agent`，且用户明确要求 subagent / multi-agent / parallel agents 时使用。主会话直接调用工具、等待结果并汇总；不生成 `summary.json` / `agent.log` / 运行目录。
-- `cli-runner`：需要 `summary.json`、`agent.log`、结构化输出、token 汇总、stage 屏障，或写模式 `prepare` / `dispatch` / `collect` 时使用。`runner.py` 是普通 Python 子进程，不能调用主会话里的 `spawn_agent`/MCP 工具。
-- 两种后端都必须先报子代理数量、阶段、并发、耗时和用量风险，并单独确认允许把相关目录内容发送给 Codex 子代理模型。
+- `native-subagent`：当前 Codex 会话已暴露 `multi_agent_v1.spawn_agent` / `wait_agent`，且用户明确要求 dynamic-workflow / subagent / multi-agent / parallel agents / 并行分路处理时默认使用。主会话直接调用工具、等待结果并汇总；不生成 `summary.json` / `agent.log` / 运行目录。
+- `cli-runner`：只有需要 `summary.json`、`agent.log`、结构化输出、token 汇总、runner stage 屏障、真实 `codex exec` smoke，写模式 `prepare` / `dispatch` / `collect` 的隔离副本与 clean gates，当前会话没有 native 工具，或用户明确点名 `cli-runner` / `codex exec` 路径时使用。`runner.py` 是普通 Python 子进程，不能调用主会话里的 `spawn_agent`/MCP 工具。
+- 两种后端都必须先报子代理数量、阶段、并发、耗时和用量风险。用户当轮明确要求启动 `native-subagent` / `cli-runner` 即视为允许本轮 Codex 自调度和目录传递，不再额外追问外部模型导出确认。
 
 ## 运行环境结论（任务 1 探针填写）
 
@@ -106,7 +107,7 @@ PONG
 整套 worktree 生命周期由 `src/runner.py` 用 Python + git 自包含实现，不调别的 skill。
 约束权威：`D:\codex\CLAUDE.md` 的「worktree 并行派工」红线。设计稿：`docs/plans/2026-06-13-write-mode-v0.2-design.md`。
 
-读模式默认入口 `python runner.py <spec> --ack-external-model-export` 行为保持 `cli-runner` stage 屏障语义；
+`cli-runner` 读模式入口 `python runner.py <spec> --allowed-root <项目根> --ack-external-model-export` 行为保持 runner stage 屏障语义；
 写模式走三个新子命令。
 
 ### 入口闸（继承读模式反注入规则）
@@ -135,10 +136,10 @@ python src\runner.py collect <run-dir>
 
 - **dirty 默认拒**：主工作树有未提交改动时 `prepare` 默认拒绝开跑（worktree 副本只含已提交内容，未提交改动不进副本）；
   显式 `--allow-dirty` 才知情放行。
-- **外部模型导出显式确认**：读模式和写模式 `dispatch` 都必须带 `--ack-external-model-export`；
-  这个参数只能在用户当轮明确允许发送目录内容给 Codex 子代理模型后添加。
-- **scope 不阻止写、但越界会判 not clean**：`scope` 写进 prompt 给 codex 划边界，它在隔离副本里仍能写任何文件；声明 scope 后 `collect` 把 scope 外改动列进 `out_of_scope` 并判 `clean=false`（须人工复核后才集成，对应 CLAUDE.md「清单外的新增/产物文件一律判不通过」）；不声明 scope 则不做此判定。真正的隔离靠 worktree 副本 + 同文件冲突检测 + 人工看 patch。
-- **collect 反映派工真相**：collect 读 `dispatch` 落的结果——没派工→`not_dispatched`、派工非 0 退出→`dispatch_failed`、副本被偷偷 `git add`→`index_changed`，任一都判 `clean=false`，避免「没真跑或跑失败」被当成干净。
+- **Codex 自调度防误触标记**：读模式和写模式 `dispatch` 都必须带 `--ack-external-model-export`；
+  用户当轮明确要求启动 cli-runner 即可由主会话自动添加，不需要额外追问外部模型导出确认。
+- **scope 不阻止写、但越界会判 not clean**：`scope` 是必填的非空列表；整仓任务也要显式写 `["."]`。它写进 prompt 给 codex 划边界，隔离副本里仍能写任何文件；`collect` 把 scope 外改动列进 `out_of_scope` 并判 `clean=false`（须人工复核后才集成，对应 CLAUDE.md「清单外的新增/产物文件一律判不通过」）。真正的隔离靠 worktree 副本 + 同文件冲突检测 + 人工看 patch。
+- **collect 反映派工真相**：collect 读 `dispatch` 落的结果，并校验 `dispatch_nonce` / `prompt_sha256` / `worktree` / `base_head` 和当前 `prompt.txt` hash。这是防单边误改的一致性检查，不是防有意协同篡改的密码学证明。没派工→`not_dispatched`、派工非 0 或一致性失败→`dispatch_failed`、副本被偷偷 `git add`→`index_changed`、只产生 ignored 文件→`ignored_files`，任一都判 `clean=false`，避免「没真跑、跑失败、ignored-only 或手改一侧记录」被当成干净。
 - **runner 不集成、不自动删副本**：到 `collect` 出 `changes.patch` 为止就停。应用补丁、跑测试、commit、删副本全是人工/主会话的活；清理用 `collect` 打印的 `git -C <workdir> worktree remove <wt>` 命令。
 - **任务数上限 8**；>2 时 `prepare` 打警告。
 - 写模式产物根**钉死** `D:\.codex-tmp\workflows\`，不认 `DYNWF_RUNS_ROOT`（读模式才认）。
@@ -158,8 +159,8 @@ D:\.codex-tmp\workflows\<name>-<时间戳>-<随机>\
 
 summary.json 顶层键：`name` / `run_dir` / `mode` / `base_head` / `current_main_head` / `workdir` /
 `status_raw` / `clean` / `main_drift` / `overlaps` / `tasks`；任务级状态串：`ok` / `no_changes` / `error` /
-`not_dispatched` / `dispatch_failed`（任务条目另含 `head_changed` / `index_changed` / `out_of_scope` /
-`dispatched` / `dispatch_exit_code` / `untracked_bundle` 等明细）。
+`not_dispatched` / `dispatch_failed`（任务条目另含 `head_changed` / `index_changed` / `ignored_files` /
+`out_of_scope` / `dispatched` / `dispatch_exit_code` / `dispatch_error` / `untracked_bundle` 等明细）。
 
 ## 测试
 

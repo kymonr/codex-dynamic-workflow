@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Task 4: prepare —— 建隔离 worktree 副本、写 prompt、写 summary 骨架、失败回滚。"""
 import json
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -73,9 +74,17 @@ class PrepareSuccessTest(unittest.TestCase):
         ids = {t["id"]: t for t in skel["tasks"]}
         self.assertEqual(set(ids), {"alpha", "beta"})
         self.assertEqual(ids["alpha"]["scope"], ["src/alpha"])
-        self.assertEqual(ids["beta"]["scope"], [])
+        self.assertEqual(ids["beta"]["scope"], ["."])
         self.assertEqual(
             ids["alpha"]["worktree"], str(self.run_dir / "wt" / "alpha"))
+        for tid in ("alpha", "beta"):
+            task = ids[tid]
+            prompt_text = (self.run_dir / "tasks" / tid / "prompt.txt").read_text(
+                encoding="utf-8")
+            self.assertRegex(task["dispatch_nonce"], r"^[0-9a-f]{32}$")
+            self.assertEqual(
+                task["prompt_sha256"],
+                hashlib.sha256(prompt_text.encode("utf-8")).hexdigest())
 
     def test_warn_when_more_than_two_tasks(self):
         spec = _vspec(self.repo, [

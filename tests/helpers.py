@@ -112,7 +112,12 @@ def write_spec_dict(tasks, workdir, **over):
     return d
 
 
-def wtask(tid, prompt="改文件", scope=None, **kw):
-    """构造一个写模式 task dict。scope 仅在 truthy 时注入;其余关键字原样并入。"""
+_SCOPE_DEFAULT = object()
+
+
+def wtask(tid, prompt="改文件", scope=_SCOPE_DEFAULT, **kw):
+    """构造一个写模式 task dict。默认显式 scope=['.'];scope=None 用于构造缺 scope 反例。"""
+    if scope is _SCOPE_DEFAULT:
+        scope = ["."]
     return {"id": tid, "prompt": prompt,
-            **({"scope": scope} if scope else {}), **kw}
+            **({} if scope is None else {"scope": scope}), **kw}

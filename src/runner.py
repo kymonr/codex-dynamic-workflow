@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -284,11 +285,23 @@ def _git_untracked(wt):
     return [ln for ln in cp.stdout.splitlines() if ln.strip()]
 
 
+def _git_ignored(wt):
+    """git -C <wt> ls-files --others --ignored --exclude-standard;
+    返回被 ignore 规则吞掉的未跟踪文件列表。只记名,不打包内容。"""
+    cp = _run_git(["git", "-C", str(wt), "ls-files", "--others",
+                   "--ignored", "--exclude-standard"])
+    return [ln for ln in cp.stdout.splitlines() if ln.strip()]
+
+
 def _git_changed_names(wt, base):
     """git -C <wt> diff --name-only <base>;按行去空返回改动文件名列表
     (相对仓库根、正斜杠)。"""
     cp = _run_git(["git", "-C", str(wt), "diff", "--name-only", str(base)])
     return [ln for ln in cp.stdout.splitlines() if ln.strip()]
+
+
+def _sha256_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _load_write_skeleton(run_dir):
@@ -448,6 +461,8 @@ def prepare(spec, run_dir, *, allow_dirty=False):
                 "scope": scope,
                 "worktree": str(wt),
                 "reasoning_effort": t["reasoning_effort"],
+                "dispatch_nonce": secrets.token_hex(16),
+                "prompt_sha256": _sha256_text(final_prompt),
             })
 
         skeleton = {
@@ -557,15 +572,14 @@ def validate_write_spec(raw, allowed_roots=None):
         if PLACEHOLDER_RE.search(prompt):
             raise SpecError("%s.prompt 不能含 {{result:..}}(写模式无跨引用)" % where)
 
+        if "scope" not in t:
+            raise SpecError("%s.scope 必填;整仓任务请显式写 ['.']" % where)
         scope = t.get("scope")
-        if scope is None:
-            scope = []
-        else:
-            if not isinstance(scope, list) or not scope:
-                raise SpecError("%s.scope 若提供必须是非空字符串列表" % where)
-            for sj, item in enumerate(scope):
-                if not isinstance(item, str) or not item.strip():
-                    raise SpecError("%s.scope[%d] 必须是非空字符串" % (where, sj))
+        if not isinstance(scope, list) or not scope:
+            raise SpecError("%s.scope 必须是非空字符串列表" % where)
+        for sj, item in enumerate(scope):
+            if not isinstance(item, str) or not item.strip():
+                raise SpecError("%s.scope[%d] 必须是非空字符串" % (where, sj))
 
         effort = t.get("reasoning_effort")
         if effort is not None and effort not in EFFORTS:
@@ -697,6 +711,9 @@ def dispatch(run_dir, task_id, codex_prefix, *,
         raise WorkflowError(
             "任务 %s 的 prompt 长 %d,超上限 %d(run-dir 可能被改)"
             % (task_id, len(prompt), MAX_PROMPT_CHARS))
+    prompt_sha256 = _sha256_text(prompt)
+    if prompt_sha256 != entry.get("prompt_sha256"):
+        raise WorkflowError("任务 %s 的 prompt_sha256 与 prepare 骨架不一致" % task_id)
 
     # reasoning_effort 不信任骨架内容(run-dir 可能被手改),过一次白名单:
     # 非法/缺失一律降级 None,绝不让畸形值流进 -c model_reasoning_effort。
@@ -726,7 +743,14 @@ def dispatch(run_dir, task_id, codex_prefix, *,
     # 持久化派工结果:collect 据此判该块是否真派过工、退出码是否 0。
     # 否则「prepare 后没 dispatch」或「dispatch 失败后 collect」会假绿(no_changes + clean)。
     (tdir / "dispatch.json").write_text(
-        json.dumps({"exit_code": rc, "stalled": stalled}, ensure_ascii=False),
+        json.dumps({
+            "exit_code": rc,
+            "stalled": stalled,
+            "dispatch_nonce": entry.get("dispatch_nonce"),
+            "prompt_sha256": prompt_sha256,
+            "worktree": wt,
+            "base_head": skeleton.get("base_head"),
+        }, ensure_ascii=False),
         encoding="utf-8")
     return {"id": task_id, "exit_code": rc, "stalled": stalled}
 
@@ -791,13 +815,28 @@ def collect(run_dir):
         tdir.mkdir(parents=True, exist_ok=True)
         entry = {"id": tid, "status": "", "worktree": wt, "scope": scope,
                  "touched_files": [], "untracked_files": [], "out_of_scope": [],
+                 "ignored_files": [],
                  "untracked_bundle": [], "head_changed": False,
                  "index_changed": False, "dispatched": False,
                  "dispatch_exit_code": None,
+                 "dispatch_error": None,
                  "patch": str(tdir / "changes.patch")}
         # 副本缺失/损坏:git 辅助走 subprocess 不带 check,失败时只返回空串、不抛异常,
         # 会把坏副本误判成 no_changes。先显式判副本是否仍是合法 git worktree,
         # 不合法即 error 并使 clean=false(设计 §9 错误处理,否则该通道是死代码)。
+        try:
+            wt_root = (run_dir / "wt").resolve()
+            wt_resolved = Path(wt).resolve()
+        except OSError as e:
+            entry["status"] = "error"
+            entry["error"] = "副本路径解析失败: %s" % e
+            tasks_out.append(entry)
+            continue
+        if not wt_resolved.is_relative_to(wt_root):
+            entry["status"] = "error"
+            entry["error"] = "副本不在 run-dir 的 wt/ 下: %s" % wt
+            tasks_out.append(entry)
+            continue
         if not _is_git_repo(wt):
             entry["status"] = "error"
             entry["error"] = "副本缺失或已损坏(非合法 git worktree): %s" % wt
@@ -810,6 +849,7 @@ def collect(run_dir):
             patch = _git_diff_binary(wt, base)
             (tdir / "changes.patch").write_text(patch, encoding="utf-8")
             untracked = _git_untracked(wt)
+            ignored = _git_ignored(wt)
             changed = _git_changed_names(wt, base)
             head_changed = (head != base)
         except (OSError, ValueError) as e:
@@ -825,12 +865,30 @@ def collect(run_dir):
         disp_p = tdir / "dispatch.json"
         dispatched = disp_p.is_file()
         dispatch_rc = None
+        dispatch_error = None
         if dispatched:
             try:
-                dispatch_rc = json.loads(
-                    disp_p.read_text(encoding="utf-8")).get("exit_code")
+                disp = json.loads(disp_p.read_text(encoding="utf-8"))
+                dispatch_rc = disp.get("exit_code")
+                prompt_text = (tdir / "prompt.txt").read_text(encoding="utf-8")
+                current_prompt_sha = _sha256_text(prompt_text)
+                checks = [
+                    ("dispatch_nonce", disp.get("dispatch_nonce"),
+                     st.get("dispatch_nonce")),
+                    ("prompt_sha256", disp.get("prompt_sha256"),
+                     st.get("prompt_sha256")),
+                    ("prompt_sha256", current_prompt_sha,
+                     st.get("prompt_sha256")),
+                    ("worktree", disp.get("worktree"), wt),
+                    ("base_head", disp.get("base_head"), base),
+                ]
+                for name, actual, expected in checks:
+                    if actual != expected:
+                        dispatch_error = "%s mismatch" % name
+                        break
             except (OSError, json.JSONDecodeError):
                 dispatch_rc = None
+                dispatch_error = "dispatch.json unreadable"
 
         # git diff --binary 不含未跟踪新文件;把它们的内容也镜像进验收材料,
         # 否则纯新增文件的 changes.patch 为空、人工集成拿不到内容(设计 §6/§7)。
@@ -838,26 +896,28 @@ def collect(run_dir):
             wt, untracked, tdir / "untracked")
         entry["touched_files"] = changed
         entry["untracked_files"] = untracked
+        entry["ignored_files"] = ignored
         entry["head_changed"] = head_changed
         entry["index_changed"] = index_changed
         entry["dispatched"] = dispatched
         entry["dispatch_exit_code"] = dispatch_rc
+        entry["dispatch_error"] = dispatch_error
         # scope 越界判定覆盖已跟踪改动 + 未跟踪新增。scope 仍不阻止 codex 在隔离副本里落笔写,
         # 但越界改动会让 collect 判 clean=false、须人工复核后才集成
         # (CLAUDE.md:清单外的新增/产物文件一律判不通过)。
-        entry["out_of_scope"] = _scope_violations(
-            sorted(set(changed) | set(untracked)), scope)
+        touched = sorted(set(changed) | set(untracked) | set(ignored))
+        entry["out_of_scope"] = _scope_violations(touched, scope)
         # 状态:没派工 / 派工失败 优先(它们本身就该拦住集成);其次才看改动量。
         if not dispatched:
             entry["status"] = "not_dispatched"
-        elif dispatch_rc != 0:
+        elif dispatch_error or dispatch_rc != 0:
             entry["status"] = "dispatch_failed"
-        elif not changed and not untracked:
+        elif not touched:
             entry["status"] = "no_changes"
         else:
             entry["status"] = "ok"
-        # 冲突检测合并:已跟踪改动 + 未跟踪新增都算"碰到的文件"
-        for f in set(changed) | set(untracked):
+        # 冲突检测合并:已跟踪改动 + 未跟踪新增 + ignored 产物都算"碰到的文件"
+        for f in touched:
             file_owners.setdefault(f, []).append(tid)
         tasks_out.append(entry)
 
@@ -874,6 +934,7 @@ def collect(run_dir):
         and all(t["status"] in ("ok", "no_changes") for t in tasks_out) \
         and all(not t["head_changed"] for t in tasks_out) \
         and all(not t["index_changed"] for t in tasks_out) \
+        and all(not t["ignored_files"] for t in tasks_out) \
         and all(not t["out_of_scope"] for t in tasks_out)
 
     summary = {
@@ -903,8 +964,18 @@ def collect(run_dir):
     if main_drift:
         print("   ! 主仓库自基线以来发生漂移(HEAD 或 status 变化)")
     print("   清理副本(确认后自己删):")
+    wt_root = (run_dir / "wt").resolve()
+    printed_cleanup = False
     for t in tasks_out:
-        print("     git -C %s worktree remove %s" % (workdir, t["worktree"]))
+        try:
+            wt_resolved = Path(t["worktree"]).resolve()
+        except OSError:
+            continue
+        if wt_resolved.is_relative_to(wt_root):
+            print("     git -C %s worktree remove %s" % (workdir, t["worktree"]))
+            printed_cleanup = True
+    if not printed_cleanup:
+        print("     (无合法的 run-dir/wt 副本清理命令)")
     return summary
 
 
@@ -1214,12 +1285,12 @@ def _main_read(argv):
     ap.add_argument("--timeout-override", type=int, default=None,
                     help="覆盖每任务超时秒数(测试用;只允许 1..%d,不得放大护栏)" % MAX_TIMEOUT_S)
     ap.add_argument("--ack-external-model-export", action="store_true",
-                    help="确认允许把 workdir/snapshot 内容发送给 Codex 子代理模型")
+                    help="标记主会话已由用户当轮启动请求授权本轮 Codex 自调度")
     args = ap.parse_args(argv)
 
     if not args.ack_external_model_export:
         print("无法开跑: 缺少 --ack-external-model-export;"
-              "必须先由用户当轮明确允许发送目录内容给 Codex 子代理模型",
+              "必须由主会话在用户当轮要求启动 cli-runner 后自动添加",
               file=sys.stderr)
         return 1
 
@@ -1331,12 +1402,12 @@ def _cmd_dispatch(argv):
                          % (MIN_DISPATCH_STALL_S, MAX_DISPATCH_STALL_S,
                             DEFAULT_DISPATCH_STALL_S))
     ap.add_argument("--ack-external-model-export", action="store_true",
-                    help="确认允许把隔离副本内容发送给 Codex 子代理模型")
+                    help="标记主会话已由用户当轮启动请求授权本轮 Codex 自调度")
     args = ap.parse_args(argv)
 
     if not args.ack_external_model_export:
         print("无法派工: 缺少 --ack-external-model-export;"
-              "必须先由用户当轮明确允许发送隔离副本内容给 Codex 子代理模型",
+              "必须由主会话在用户当轮要求启动 dispatch 后自动添加",
               file=sys.stderr)
         return 1
 
