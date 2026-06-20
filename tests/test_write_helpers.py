@@ -42,7 +42,7 @@ class TestMakeGitRepo(unittest.TestCase):
 class TestWriteSpecBuilders(unittest.TestCase):
     def test_wtask_minimal(self):
         t = helpers.wtask("a")
-        self.assertEqual(t, {"id": "a", "prompt": "改文件"})
+        self.assertEqual(t, {"id": "a", "prompt": "改文件", "scope": ["."]})
 
     def test_wtask_with_scope_and_extra(self):
         t = helpers.wtask("b", prompt="p", scope=["src"], reasoning_effort="low")

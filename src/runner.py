@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """dynamic-workflow runner v0.1
-并行编排多个 `codex exec` 只读子代理。
+并行编排只读子代理,支持两个后端:codex(默认)与 claude(读模式)。
 
 安全护栏(硬编码,spec 无法放开):
-- 所有子代理强制 -s read-only,命令白名单拼装,不透传任何参数
+- 隔离机制按后端不同:codex 子代理强制 -s read-only(OS 沙箱,不可写/不可联网);
+  claude 读子代理靠 --tools "Read,Grep,Glob" 裁剪工具集 + --strict-mcp-config 不加载 MCP
+  实现只读——这是工具层约束、非 OS 沙箱,故工具白名单不得加入 Bash/WebFetch/WebSearch。
+- 两后端命令均白名单拼装,不透传任何参数
 - 并发上限 8(默认 2);单次运行子代理总数上限 12
 - 单任务超时 60..1800 秒(默认 900),超时强杀
 - 失败不自动重试;spec 含未知字段直接拒绝
@@ -14,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -42,6 +46,10 @@ DEFAULT_RUNS_ROOT = Path(r"D:\.codex-tmp\workflows")
 # 2026-06-13 任务1探针填入(PATH 上是 codex.CMD 垫片);codex 升级后 vendor 路径可能变,届时按探针重填
 DEFAULT_CODEX_CMD = r"C:\Users\Orz\AppData\Roaming\npm\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe"
 
+# claude 是原生 exe(C:\Users\Orz\.local\bin\claude.exe),Python 可直接 Popen,无 codex 的 .cmd 垫片坑。
+# 优先用 PATH 上的 claude;找不到再回退此绝对路径。版本/安装位置变动时按实际重填。
+DEFAULT_CLAUDE_CMD = r"C:\Users\Orz\.local\bin\claude.exe"
+
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 # Windows 保留设备名(大小写不敏感):不能拿来当任务目录名,否则 mkdir 失败、整个 workflow 崩
@@ -50,9 +58,10 @@ WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL"}
                 | {"LPT%d" % i for i in range(1, 10)})
 PLACEHOLDER_RE = re.compile(r"\{\{result:([A-Za-z0-9_-]+)\}\}")
 EFFORTS = {"low", "medium", "high"}
+BACKENDS = {"codex", "claude"}
 
 ALLOWED_SPEC_KEYS = {"version", "name", "workdir", "max_concurrency",
-                     "timeout_seconds", "stages"}
+                     "timeout_seconds", "stages", "backend"}
 ALLOWED_STAGE_KEYS = {"name", "tasks"}
 ALLOWED_TASK_KEYS = {"id", "prompt", "reasoning_effort", "output_schema"}
 
@@ -125,6 +134,9 @@ def validate_spec(raw, allowed_roots=None):
     if not isinstance(timeout_s, int) or isinstance(timeout_s, bool) \
             or not (MIN_TIMEOUT_S <= timeout_s <= MAX_TIMEOUT_S):
         raise SpecError("timeout_seconds 必须是 %d..%d 的整数" % (MIN_TIMEOUT_S, MAX_TIMEOUT_S))
+    backend = raw.get("backend", "codex")
+    if backend not in BACKENDS:
+        raise SpecError("backend 只能是 codex 或 claude: %r" % (backend,))
     stages_raw = raw.get("stages")
     if not isinstance(stages_raw, list) or not stages_raw:
         raise SpecError("stages 必须是非空数组")
@@ -191,7 +203,8 @@ def validate_spec(raw, allowed_roots=None):
     if total > HARD_MAX_AGENTS:
         raise SpecError("子代理总数 %d 超过上限 %d" % (total, HARD_MAX_AGENTS))
     return {"version": 1, "name": name, "workdir": str(Path(workdir)),
-            "max_concurrency": mc, "timeout_seconds": timeout_s, "stages": stages}
+            "max_concurrency": mc, "timeout_seconds": timeout_s,
+            "backend": backend, "stages": stages}
 
 
 def _run_git(args, cwd=None):
@@ -284,11 +297,23 @@ def _git_untracked(wt):
     return [ln for ln in cp.stdout.splitlines() if ln.strip()]
 
 
+def _git_ignored(wt):
+    """git -C <wt> ls-files --others --ignored --exclude-standard;
+    返回被 ignore 规则吞掉的未跟踪文件列表。只记名,不打包内容。"""
+    cp = _run_git(["git", "-C", str(wt), "ls-files", "--others",
+                   "--ignored", "--exclude-standard"])
+    return [ln for ln in cp.stdout.splitlines() if ln.strip()]
+
+
 def _git_changed_names(wt, base):
     """git -C <wt> diff --name-only <base>;按行去空返回改动文件名列表
     (相对仓库根、正斜杠)。"""
     cp = _run_git(["git", "-C", str(wt), "diff", "--name-only", str(base)])
     return [ln for ln in cp.stdout.splitlines() if ln.strip()]
+
+
+def _sha256_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _load_write_skeleton(run_dir):
@@ -448,6 +473,8 @@ def prepare(spec, run_dir, *, allow_dirty=False):
                 "scope": scope,
                 "worktree": str(wt),
                 "reasoning_effort": t["reasoning_effort"],
+                "dispatch_nonce": secrets.token_hex(16),
+                "prompt_sha256": _sha256_text(final_prompt),
             })
 
         skeleton = {
@@ -480,7 +507,8 @@ def prepare(spec, run_dir, *, allow_dirty=False):
     runner_path = Path(__file__).resolve()
     dispatch_cmds = [
         # 加 -- 分隔:即便 task id 异常以 - 开头,argparse 也按位置参数解析(防被当选项)
-        'python "%s" dispatch "%s" -- %s' % (runner_path, run_dir, t["id"])
+        'python "%s" dispatch "%s" --ack-external-model-export -- %s'
+        % (runner_path, run_dir, t["id"])
         for t in spec["tasks"]
     ]
     warn = None
@@ -556,15 +584,14 @@ def validate_write_spec(raw, allowed_roots=None):
         if PLACEHOLDER_RE.search(prompt):
             raise SpecError("%s.prompt 不能含 {{result:..}}(写模式无跨引用)" % where)
 
+        if "scope" not in t:
+            raise SpecError("%s.scope 必填;整仓任务请显式写 ['.']" % where)
         scope = t.get("scope")
-        if scope is None:
-            scope = []
-        else:
-            if not isinstance(scope, list) or not scope:
-                raise SpecError("%s.scope 若提供必须是非空字符串列表" % where)
-            for sj, item in enumerate(scope):
-                if not isinstance(item, str) or not item.strip():
-                    raise SpecError("%s.scope[%d] 必须是非空字符串" % (where, sj))
+        if not isinstance(scope, list) or not scope:
+            raise SpecError("%s.scope 必须是非空字符串列表" % where)
+        for sj, item in enumerate(scope):
+            if not isinstance(item, str) or not item.strip():
+                raise SpecError("%s.scope[%d] 必须是非空字符串" % (where, sj))
 
         effort = t.get("reasoning_effort")
         if effort is not None and effort not in EFFORTS:
@@ -595,6 +622,29 @@ def build_cmd(codex_prefix, workdir, prompt, out_path,
         cmd += ["-c", "model_reasoning_effort=%s" % reasoning_effort]
     # prompt 前插 -- 分隔符:防止以 - 开头的 prompt(或注入内容)被 codex 当成选项解析,
     # 那会导致任务失败、甚至绕过"spec 不透传参数"的护栏
+    cmd += ["--", prompt]
+    return cmd
+
+
+CLAUDE_READ_TOOLS = "Read,Grep,Glob"   # claude 读模式工具集,硬编码,spec 无法放开
+
+
+def build_claude_read_cmd(claude_prefix, prompt, schema_inline=None,
+                          reasoning_effort=None):
+    """白名单拼装 claude 读子代理命令。--tools 钉死只读集(Read,Grep,Glob),
+    spec 无法放开;--strict-mcp-config 不加载 MCP。无 -C(工作目录由调用方用 cwd 设)、
+    无 -o(输出经 stdout 的 JSON 信封,runner 自捕获)。schema 走 --json-schema 内联字符串。
+    variadic 的 --tools 后必跟另一个 -- 选项,防吞后续参数;prompt 前插 -- 分隔符。"""
+    cmd = list(claude_prefix) + [
+        "-p",
+        "--output-format", "json",
+        "--strict-mcp-config",
+        "--tools", CLAUDE_READ_TOOLS,
+    ]
+    if reasoning_effort:
+        cmd += ["--effort", reasoning_effort]
+    if schema_inline is not None:
+        cmd += ["--json-schema", schema_inline]
     cmd += ["--", prompt]
     return cmd
 
@@ -696,6 +746,9 @@ def dispatch(run_dir, task_id, codex_prefix, *,
         raise WorkflowError(
             "任务 %s 的 prompt 长 %d,超上限 %d(run-dir 可能被改)"
             % (task_id, len(prompt), MAX_PROMPT_CHARS))
+    prompt_sha256 = _sha256_text(prompt)
+    if prompt_sha256 != entry.get("prompt_sha256"):
+        raise WorkflowError("任务 %s 的 prompt_sha256 与 prepare 骨架不一致" % task_id)
 
     # reasoning_effort 不信任骨架内容(run-dir 可能被手改),过一次白名单:
     # 非法/缺失一律降级 None,绝不让畸形值流进 -c model_reasoning_effort。
@@ -725,7 +778,14 @@ def dispatch(run_dir, task_id, codex_prefix, *,
     # 持久化派工结果:collect 据此判该块是否真派过工、退出码是否 0。
     # 否则「prepare 后没 dispatch」或「dispatch 失败后 collect」会假绿(no_changes + clean)。
     (tdir / "dispatch.json").write_text(
-        json.dumps({"exit_code": rc, "stalled": stalled}, ensure_ascii=False),
+        json.dumps({
+            "exit_code": rc,
+            "stalled": stalled,
+            "dispatch_nonce": entry.get("dispatch_nonce"),
+            "prompt_sha256": prompt_sha256,
+            "worktree": wt,
+            "base_head": skeleton.get("base_head"),
+        }, ensure_ascii=False),
         encoding="utf-8")
     return {"id": task_id, "exit_code": rc, "stalled": stalled}
 
@@ -790,13 +850,28 @@ def collect(run_dir):
         tdir.mkdir(parents=True, exist_ok=True)
         entry = {"id": tid, "status": "", "worktree": wt, "scope": scope,
                  "touched_files": [], "untracked_files": [], "out_of_scope": [],
+                 "ignored_files": [],
                  "untracked_bundle": [], "head_changed": False,
                  "index_changed": False, "dispatched": False,
                  "dispatch_exit_code": None,
+                 "dispatch_error": None,
                  "patch": str(tdir / "changes.patch")}
         # 副本缺失/损坏:git 辅助走 subprocess 不带 check,失败时只返回空串、不抛异常,
         # 会把坏副本误判成 no_changes。先显式判副本是否仍是合法 git worktree,
         # 不合法即 error 并使 clean=false(设计 §9 错误处理,否则该通道是死代码)。
+        try:
+            wt_root = (run_dir / "wt").resolve()
+            wt_resolved = Path(wt).resolve()
+        except OSError as e:
+            entry["status"] = "error"
+            entry["error"] = "副本路径解析失败: %s" % e
+            tasks_out.append(entry)
+            continue
+        if not wt_resolved.is_relative_to(wt_root):
+            entry["status"] = "error"
+            entry["error"] = "副本不在 run-dir 的 wt/ 下: %s" % wt
+            tasks_out.append(entry)
+            continue
         if not _is_git_repo(wt):
             entry["status"] = "error"
             entry["error"] = "副本缺失或已损坏(非合法 git worktree): %s" % wt
@@ -809,6 +884,7 @@ def collect(run_dir):
             patch = _git_diff_binary(wt, base)
             (tdir / "changes.patch").write_text(patch, encoding="utf-8")
             untracked = _git_untracked(wt)
+            ignored = _git_ignored(wt)
             changed = _git_changed_names(wt, base)
             head_changed = (head != base)
         except (OSError, ValueError) as e:
@@ -824,12 +900,30 @@ def collect(run_dir):
         disp_p = tdir / "dispatch.json"
         dispatched = disp_p.is_file()
         dispatch_rc = None
+        dispatch_error = None
         if dispatched:
             try:
-                dispatch_rc = json.loads(
-                    disp_p.read_text(encoding="utf-8")).get("exit_code")
+                disp = json.loads(disp_p.read_text(encoding="utf-8"))
+                dispatch_rc = disp.get("exit_code")
+                prompt_text = (tdir / "prompt.txt").read_text(encoding="utf-8")
+                current_prompt_sha = _sha256_text(prompt_text)
+                checks = [
+                    ("dispatch_nonce", disp.get("dispatch_nonce"),
+                     st.get("dispatch_nonce")),
+                    ("prompt_sha256", disp.get("prompt_sha256"),
+                     st.get("prompt_sha256")),
+                    ("prompt_sha256", current_prompt_sha,
+                     st.get("prompt_sha256")),
+                    ("worktree", disp.get("worktree"), wt),
+                    ("base_head", disp.get("base_head"), base),
+                ]
+                for name, actual, expected in checks:
+                    if actual != expected:
+                        dispatch_error = "%s mismatch" % name
+                        break
             except (OSError, json.JSONDecodeError):
                 dispatch_rc = None
+                dispatch_error = "dispatch.json unreadable"
 
         # git diff --binary 不含未跟踪新文件;把它们的内容也镜像进验收材料,
         # 否则纯新增文件的 changes.patch 为空、人工集成拿不到内容(设计 §6/§7)。
@@ -837,26 +931,28 @@ def collect(run_dir):
             wt, untracked, tdir / "untracked")
         entry["touched_files"] = changed
         entry["untracked_files"] = untracked
+        entry["ignored_files"] = ignored
         entry["head_changed"] = head_changed
         entry["index_changed"] = index_changed
         entry["dispatched"] = dispatched
         entry["dispatch_exit_code"] = dispatch_rc
+        entry["dispatch_error"] = dispatch_error
         # scope 越界判定覆盖已跟踪改动 + 未跟踪新增。scope 仍不阻止 codex 在隔离副本里落笔写,
         # 但越界改动会让 collect 判 clean=false、须人工复核后才集成
         # (CLAUDE.md:清单外的新增/产物文件一律判不通过)。
-        entry["out_of_scope"] = _scope_violations(
-            sorted(set(changed) | set(untracked)), scope)
+        touched = sorted(set(changed) | set(untracked) | set(ignored))
+        entry["out_of_scope"] = _scope_violations(touched, scope)
         # 状态:没派工 / 派工失败 优先(它们本身就该拦住集成);其次才看改动量。
         if not dispatched:
             entry["status"] = "not_dispatched"
-        elif dispatch_rc != 0:
+        elif dispatch_error or dispatch_rc != 0:
             entry["status"] = "dispatch_failed"
-        elif not changed and not untracked:
+        elif not touched:
             entry["status"] = "no_changes"
         else:
             entry["status"] = "ok"
-        # 冲突检测合并:已跟踪改动 + 未跟踪新增都算"碰到的文件"
-        for f in set(changed) | set(untracked):
+        # 冲突检测合并:已跟踪改动 + 未跟踪新增 + ignored 产物都算"碰到的文件"
+        for f in touched:
             file_owners.setdefault(f, []).append(tid)
         tasks_out.append(entry)
 
@@ -873,6 +969,7 @@ def collect(run_dir):
         and all(t["status"] in ("ok", "no_changes") for t in tasks_out) \
         and all(not t["head_changed"] for t in tasks_out) \
         and all(not t["index_changed"] for t in tasks_out) \
+        and all(not t["ignored_files"] for t in tasks_out) \
         and all(not t["out_of_scope"] for t in tasks_out)
 
     summary = {
@@ -902,8 +999,18 @@ def collect(run_dir):
     if main_drift:
         print("   ! 主仓库自基线以来发生漂移(HEAD 或 status 变化)")
     print("   清理副本(确认后自己删):")
+    wt_root = (run_dir / "wt").resolve()
+    printed_cleanup = False
     for t in tasks_out:
-        print("     git -C %s worktree remove %s" % (workdir, t["worktree"]))
+        try:
+            wt_resolved = Path(t["worktree"]).resolve()
+        except OSError:
+            continue
+        if wt_resolved.is_relative_to(wt_root):
+            print("     git -C %s worktree remove %s" % (workdir, t["worktree"]))
+            printed_cleanup = True
+    if not printed_cleanup:
+        print("     (无合法的 run-dir/wt 副本清理命令)")
     return summary
 
 
@@ -1008,6 +1115,35 @@ def _extract_tokens(log_path):
         return None
 
 
+def _parse_claude_result(raw_text, has_schema):
+    """解析 claude -p --output-format json 的 stdout 信封。
+    返回 (status, output, tokens, error)。
+    空/非法 JSON → parse_error;is_error 或 subtype!=success → error;
+    has_schema 时取 structured_output(缺则 error),否则取 result 文本。"""
+    if not raw_text or not raw_text.strip():
+        return "parse_error", None, None, "claude 输出为空"
+    try:
+        env = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        return "parse_error", None, None, "claude 信封不是合法 JSON: %s" % e
+    if not isinstance(env, dict):
+        return "parse_error", None, None, "claude 信封不是 JSON 对象"
+    tokens = None
+    usage = env.get("usage")
+    if (isinstance(usage, dict) and isinstance(usage.get("output_tokens"), int)
+            and not isinstance(usage.get("output_tokens"), bool)):
+        tokens = usage["output_tokens"]
+    if env.get("is_error") is True or env.get("subtype") != "success":
+        return ("error", None, tokens,
+                "claude 信封报告失败: subtype=%s is_error=%s"
+                % (env.get("subtype"), env.get("is_error")))
+    if has_schema:
+        if "structured_output" not in env:
+            return "error", None, tokens, "claude 信封缺 structured_output"
+        return "ok", env["structured_output"], tokens, None
+    return "ok", env.get("result", ""), tokens, None
+
+
 async def _kill_tree(proc):
     """超时强杀整棵进程树:Windows 用 taskkill /T 把孙进程一起杀,
     taskkill 不可用或非 Windows 时退回 proc.kill()(只杀直接子进程)。"""
@@ -1028,7 +1164,7 @@ async def _kill_tree(proc):
 
 
 async def _run_task(task, stage_name, *, sem, run_dir, workdir,
-                    timeout_s, codex_prefix, results):
+                    timeout_s, backend, prefix, results):
     """跑一个子代理,返回 summary 条目。
     results 在这里只读(做占位符替换);写入由 run_workflow 在 stage 结束后统一合并。"""
     tdir = run_dir / "tasks" / task["id"]
@@ -1052,6 +1188,9 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
         print("[%s] PROMPT_TOO_LONG %s (%d 字符)" % (_now(), task["id"], len(prompt)),
               flush=True)
         return entry
+    if backend == "claude":
+        return await _run_claude_task(task, stage_name, tdir, workdir, prompt,
+                                      timeout_s, prefix, sem, entry)
     schema_path = None
     if task["output_schema"] is not None:
         schema_path = tdir / "schema.json"
@@ -1060,7 +1199,7 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
                        ensure_ascii=False, indent=2),
             encoding="utf-8")
     out_path = tdir / ("out.json" if schema_path else "out.txt")
-    cmd = build_cmd(codex_prefix, workdir, prompt, out_path, schema_path,
+    cmd = build_cmd(prefix, workdir, prompt, out_path, schema_path,
                     task["reasoning_effort"])
     (tdir / "cmd.json").write_text(json.dumps(cmd, ensure_ascii=False, indent=2),
                                    encoding="utf-8")
@@ -1129,7 +1268,96 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
     return entry
 
 
-async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
+# claude 内联 schema 后,prompt + schema 合计 argv 上限(防撑爆 Windows 命令行 ~32760,留余量给固定参数)
+MAX_CLAUDE_ARGV_CHARS = 28000
+
+
+async def _run_claude_task(task, stage_name, tdir, workdir, prompt,
+                           timeout_s, prefix, sem, entry):
+    """claude 读路径:stdout 收信封到 raw.json、stderr 进 agent.log、stdin=DEVNULL、
+    cwd=workdir;跑完解析信封填 entry(entry 已含 id/stage 等公共字段)。"""
+    schema_inline = None
+    if task["output_schema"] is not None:
+        schema_inline = json.dumps(_harden_schema(task["output_schema"]),
+                                   ensure_ascii=False)
+    if len(prompt) + (len(schema_inline) if schema_inline else 0) > MAX_CLAUDE_ARGV_CHARS:
+        entry["status"] = "prompt_too_long"
+        entry["error"] = "claude prompt+schema 合计超过 argv 上限 %d" % MAX_CLAUDE_ARGV_CHARS
+        print("[%s] PROMPT_TOO_LONG %s (claude argv)" % (_now(), task["id"]),
+              flush=True)
+        return entry
+
+    cmd = build_claude_read_cmd(prefix, prompt, schema_inline,
+                                task["reasoning_effort"])
+    (tdir / "cmd.json").write_text(json.dumps(cmd, ensure_ascii=False, indent=2),
+                                   encoding="utf-8")
+    raw_path = tdir / "raw.json"
+
+    async with sem:
+        print("[%s] START %s (stage=%s, claude)" % (_now(), task["id"], stage_name),
+              flush=True)
+        t0 = time.monotonic()
+        log_f = open(tdir / "agent.log", "wb")
+        raw_f = open(raw_path, "wb")
+        try:
+            try:
+                # claude 无 -C:用 cwd 设工作目录;stdin=DEVNULL 避免等 3 秒 stdin;
+                # stdout=信封→raw.json,stderr=诊断→agent.log(两路分离,信封不被噪音污染)
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=raw_f, stderr=log_f,
+                    stdin=asyncio.subprocess.DEVNULL, cwd=str(workdir))
+            except (FileNotFoundError, OSError) as e:
+                entry["status"] = "spawn_error"
+                entry["error"] = "启动失败: %s" % e
+                print("[%s] SPAWN_ERROR %s: %s" % (_now(), task["id"], e),
+                      flush=True)
+                return entry
+            try:
+                rc = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                await _kill_tree(proc)
+                entry["status"] = "timeout"
+                entry["duration_s"] = round(time.monotonic() - t0, 1)
+                print("[%s] TIMEOUT %s (%ds)" % (_now(), task["id"], timeout_s),
+                      flush=True)
+                return entry
+        finally:
+            log_f.close()
+            raw_f.close()
+        entry["exit_code"] = rc
+        entry["duration_s"] = round(time.monotonic() - t0, 1)
+
+    raw_text = (raw_path.read_text(encoding="utf-8", errors="replace")
+                if raw_path.exists() else "")
+    has_schema = task["output_schema"] is not None
+    status, output, tokens, err = _parse_claude_result(raw_text, has_schema)
+    entry["tokens"] = tokens
+    if rc != 0:
+        entry["status"] = "error"
+        entry["error"] = ("claude 退出码 %s" % rc) + (("; " + err) if err else "")
+        print("[%s] FAIL  %s exit=%s (%.1fs)" % (_now(), task["id"], rc,
+                                                 entry["duration_s"]), flush=True)
+        return entry
+    if status != "ok":
+        entry["status"] = status
+        entry["error"] = err
+        print("[%s] %s %s" % (_now(), status.upper(), task["id"]), flush=True)
+        return entry
+    if has_schema:
+        problems = _check_schema_minimal(output, task["output_schema"])
+        if problems:
+            entry["status"] = "schema_mismatch"
+            entry["error"] = "输出不满足 schema 最小检查: %s" % "; ".join(problems)
+            print("[%s] SCHEMA_MISMATCH %s" % (_now(), task["id"]), flush=True)
+            return entry
+    entry["output"] = output
+    entry["status"] = "ok"
+    print("[%s] OK    %s (%.1fs)" % (_now(), task["id"], entry["duration_s"]),
+          flush=True)
+    return entry
+
+
+async def run_workflow(spec, run_dir, prefix, timeout_override=None):
     """按 stage 顺序执行;stage 内任务并发(共享信号量);写 summary.json 并返回 summary。"""
     run_dir = Path(run_dir)
     try:
@@ -1142,6 +1370,7 @@ async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
         json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     timeout_s = timeout_override if timeout_override is not None \
         else spec["timeout_seconds"]
+    backend = spec.get("backend", "codex")
     sem = asyncio.Semaphore(spec["max_concurrency"])
     results = {}
     entries = []
@@ -1149,7 +1378,7 @@ async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
     for stage in spec["stages"]:
         coros = [_run_task(t, stage["name"], sem=sem, run_dir=run_dir,
                            workdir=spec["workdir"], timeout_s=timeout_s,
-                           codex_prefix=codex_prefix, results=results)
+                           backend=backend, prefix=prefix, results=results)
                  for t in stage["tasks"]]
         stage_entries = await asyncio.gather(*coros)
         # stage 全部结束后统一合并结果,避免共享 dict 在并发期间被边跑边写
@@ -1161,6 +1390,7 @@ async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):
     summary = {
         "name": spec["name"],
         "run_dir": str(run_dir),
+        "backend": backend,
         "started": started,
         "finished": _dt.datetime.now().isoformat(timespec="seconds"),
         "ok": sum(1 for e in entries if e["status"] == "ok"),
@@ -1192,6 +1422,29 @@ def resolve_codex_prefix(user_prefix):
     return [str(exe)]
 
 
+def resolve_claude_prefix(user_prefix):
+    """决定 claude 子代理用什么命令启动。优先 --claude-cmd(测试注入);
+    否则优先 PATH 上的 claude,找不到回退 DEFAULT_CLAUDE_CMD。claude 是原生 exe,无 .cmd 垫片问题。"""
+    if user_prefix:
+        return list(user_prefix)
+    exe = shutil.which("claude")
+    if not exe and Path(DEFAULT_CLAUDE_CMD).exists():
+        exe = DEFAULT_CLAUDE_CMD
+    if not exe:
+        raise WorkflowError(
+            "找不到 claude 命令(PATH 无 claude 且默认路径不存在): %s" % DEFAULT_CLAUDE_CMD)
+    return [str(exe)]
+
+
+def resolve_backend_cmd(backend, user_prefix):
+    """按 backend 分发到对应的命令前缀解析器。两后端都先认显式 user_prefix。"""
+    if backend == "codex":
+        return resolve_codex_prefix(user_prefix)
+    if backend == "claude":
+        return resolve_claude_prefix(user_prefix)
+    raise WorkflowError("未知 backend: %r" % (backend,))
+
+
 def _runs_root():
     """运行产物根目录。默认 DEFAULT_RUNS_ROOT;可用环境变量 DYNWF_RUNS_ROOT 覆盖。
     --run-dir 必须落在该根下,堵住把产物写到项目/同步盘的越界路径。"""
@@ -1208,11 +1461,23 @@ def _main_read(argv):
                     help="运行目录(默认 DYNWF_RUNS_ROOT 或 D:\\.codex-tmp\\workflows 下)")
     ap.add_argument("--allowed-root", action="append", default=None,
                     help="限制 workdir 必须在这些根目录之一下(可重复;默认只拒敏感目录)")
+    ap.add_argument("--backend", choices=["codex", "claude"], default=None,
+                    help="覆盖 spec 的 backend;CLI 优先于 spec(默认随 spec,spec 默认 codex)")
     ap.add_argument("--codex-cmd", action="append", default=None,
                     help="子代理命令前缀,可重复传多段(测试用,默认 codex)")
+    ap.add_argument("--claude-cmd", action="append", default=None,
+                    help="claude 子代理命令前缀,可重复传多段(测试用,默认解析本机 claude)")
     ap.add_argument("--timeout-override", type=int, default=None,
                     help="覆盖每任务超时秒数(测试用;只允许 1..%d,不得放大护栏)" % MAX_TIMEOUT_S)
+    ap.add_argument("--ack-external-model-export", action="store_true",
+                    help="标记主会话已由用户当轮启动请求授权本轮 Codex 自调度")
     args = ap.parse_args(argv)
+
+    if not args.ack_external_model_export:
+        print("无法开跑: 缺少 --ack-external-model-export;"
+              "必须由主会话在用户当轮要求启动 cli-runner 后自动添加",
+              file=sys.stderr)
+        return 1
 
     if args.timeout_override is not None \
             and not (1 <= args.timeout_override <= MAX_TIMEOUT_S):
@@ -1227,7 +1492,11 @@ def _main_read(argv):
         return 1
     try:
         spec = validate_spec(raw, allowed_roots=args.allowed_root)
-        codex_prefix = resolve_codex_prefix(args.codex_cmd)
+        if args.backend:
+            spec["backend"] = args.backend          # CLI 优先于 spec
+        backend = spec["backend"]
+        user_prefix = args.claude_cmd if backend == "claude" else args.codex_cmd
+        prefix = resolve_backend_cmd(backend, user_prefix)
     except WorkflowError as e:
         print("无法开跑: %s" % e, file=sys.stderr)
         return 1
@@ -1250,7 +1519,7 @@ def _main_read(argv):
                                              secrets.token_hex(3)))
 
     try:
-        summary = asyncio.run(run_workflow(spec, run_dir, codex_prefix,
+        summary = asyncio.run(run_workflow(spec, run_dir, prefix,
                                            timeout_override=args.timeout_override))
     except WorkflowError as e:
         print("无法开跑: %s" % e, file=sys.stderr)
@@ -1321,7 +1590,15 @@ def _cmd_dispatch(argv):
                     help="agent.log 连续无新增多少秒判卡死并杀进程树(%d..%d,默认 %d)"
                          % (MIN_DISPATCH_STALL_S, MAX_DISPATCH_STALL_S,
                             DEFAULT_DISPATCH_STALL_S))
+    ap.add_argument("--ack-external-model-export", action="store_true",
+                    help="标记主会话已由用户当轮启动请求授权本轮 Codex 自调度")
     args = ap.parse_args(argv)
+
+    if not args.ack_external_model_export:
+        print("无法派工: 缺少 --ack-external-model-export;"
+              "必须由主会话在用户当轮要求启动 dispatch 后自动添加",
+              file=sys.stderr)
+        return 1
 
     # 生产不接受任意 --codex-cmd:写模式落笔写的命令必须定死(CLAUDE.md 模板定死红线);
     # 只有显式测试模式(DYNWF_TEST_MODE)才放行注入 mock。读模式 -s read-only 低危,沿用 v0.1 不在此限。

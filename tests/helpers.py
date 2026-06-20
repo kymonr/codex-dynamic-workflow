@@ -16,6 +16,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 MOCK_PREFIX = [sys.executable, str(ROOT / "tests" / "mock_codex.py")]
+MOCK_CLAUDE_PREFIX = [sys.executable, str(ROOT / "tests" / "mock_claude.py")]
 
 import runner  # noqa: E402
 
@@ -70,11 +71,12 @@ def task(tid, prompt="干活", **kw):
     return {"id": tid, "prompt": prompt, **kw}
 
 
-def run_wf(raw, **kw):
-    """校验 spec 并在临时运行目录里用 mock 替身跑完整个 workflow。"""
+def run_wf(raw, prefix=None, **kw):
+    """校验 spec 并在临时运行目录里用 mock 替身跑完整个 workflow。
+    prefix 缺省 codex mock;claude 后端测试传 MOCK_CLAUDE_PREFIX。"""
     spec = runner.validate_spec(raw)
     rd = mktemp("dynwf-test-") / "run"
-    summary = asyncio.run(runner.run_workflow(spec, rd, MOCK_PREFIX, **kw))
+    summary = asyncio.run(runner.run_workflow(spec, rd, prefix or MOCK_PREFIX, **kw))
     return summary, rd
 
 
@@ -112,7 +114,12 @@ def write_spec_dict(tasks, workdir, **over):
     return d
 
 
-def wtask(tid, prompt="改文件", scope=None, **kw):
-    """构造一个写模式 task dict。scope 仅在 truthy 时注入;其余关键字原样并入。"""
+_SCOPE_DEFAULT = object()
+
+
+def wtask(tid, prompt="改文件", scope=_SCOPE_DEFAULT, **kw):
+    """构造一个写模式 task dict。默认显式 scope=['.'];scope=None 用于构造缺 scope 反例。"""
+    if scope is _SCOPE_DEFAULT:
+        scope = ["."]
     return {"id": tid, "prompt": prompt,
-            **({"scope": scope} if scope else {}), **kw}
+            **({} if scope is None else {"scope": scope}), **kw}

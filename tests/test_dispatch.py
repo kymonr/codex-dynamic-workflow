@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Task 5 + 复核加固 测试:dispatch 子命令 + mock_codex 写扩展(全离线,临时 git 仓库)。"""
 import json
+import hashlib
 import os
 import shutil
 import sys
@@ -78,6 +79,26 @@ class DispatchTest(unittest.TestCase):
         self.assertTrue((wt / "new1.txt").is_file())
         self.assertTrue((wt / "sub" / "new2.txt").is_file())
         self.assertTrue((Path(run_dir) / "tasks" / "a" / "agent.log").is_file())
+
+    def test_dispatch_json_echoes_prepare_nonce_and_prompt_hash(self):
+        """dispatch.json 必须回填 prepare 骨架的 nonce/hash/worktree,供 collect 做一致性校验。"""
+        run_dir = self._prepare([
+            wtask("a", prompt="改文件 [MOCK:writes=new1.txt]", scope=["."]),
+        ])
+        skel = json.loads((Path(run_dir) / "summary.json").read_text(encoding="utf-8"))
+        task = next(t for t in skel["tasks"] if t["id"] == "a")
+        runner.dispatch(run_dir, "a", MOCK_PREFIX)
+        disp = json.loads(
+            (Path(run_dir) / "tasks" / "a" / "dispatch.json").read_text(
+                encoding="utf-8"))
+        prompt_text = (Path(run_dir) / "tasks" / "a" / "prompt.txt").read_text(
+            encoding="utf-8")
+        self.assertEqual(disp["dispatch_nonce"], task["dispatch_nonce"])
+        self.assertEqual(disp["prompt_sha256"], task["prompt_sha256"])
+        self.assertEqual(
+            disp["prompt_sha256"],
+            hashlib.sha256(prompt_text.encode("utf-8")).hexdigest())
+        self.assertEqual(disp["worktree"], task["worktree"])
 
     def test_unknown_task_id_raises(self):
         """run_dir 里没有这个 task_id → WorkflowError。"""
@@ -186,6 +207,15 @@ class DispatchTest(unittest.TestCase):
             "x" * (runner.MAX_PROMPT_CHARS + 1), encoding="utf-8")
         with self.assertRaises(runner.WorkflowError):
             runner.dispatch(run_dir, "a", MOCK_PREFIX)
+
+    def test_prompt_hash_tamper_before_dispatch_rejected(self):
+        """prepare 后 prompt.txt 被改 → dispatch 落笔前拒绝。"""
+        run_dir = self._prepare([wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])])
+        (Path(run_dir) / "tasks" / "a" / "prompt.txt").write_text(
+            "篡改后的 prompt", encoding="utf-8")
+        with self.assertRaises(runner.WorkflowError):
+            runner.dispatch(run_dir, "a", MOCK_PREFIX)
+        self.assertFalse((Path(run_dir) / "tasks" / "a" / "dispatch.json").exists())
 
 
 if __name__ == "__main__":

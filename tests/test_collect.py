@@ -2,7 +2,7 @@
 """写模式 collect 测试:prepare -> dispatch(mock 写文件) -> collect,全离线。
 覆盖:patch 非空 + untracked + status=ok;空改动 -> no_changes;
 两块撞同一文件 -> overlaps + clean=false;[MOCK:commit] -> head_changed + clean=false;
-scope 外改动 -> out_of_scope 非空但 clean 仍可 true;run-dir 归属/骨架校验。
+scope 外改动 -> out_of_scope 非空且 clean=false;run-dir 归属/骨架校验。
 """
 import json
 import os
@@ -198,6 +198,26 @@ class TestCollectGuards(CollectBase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_worktree_outside_run_dir_wt_marks_error_not_clean(self):
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])], self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        skel_p = rd / "summary.json"
+        skel = json.loads(skel_p.read_text(encoding="utf-8"))
+        original_wt = skel["tasks"][0]["worktree"]
+        skel["tasks"][0]["worktree"] = str(self.repo)
+        skel_p.write_text(json.dumps(skel, ensure_ascii=False), encoding="utf-8")
+        try:
+            summary = runner.collect(rd)
+            ta = next(t for t in summary["tasks"] if t["id"] == "a")
+            self.assertEqual(ta["status"], "error")
+            self.assertIn("wt/", ta["error"])
+            self.assertFalse(summary["clean"])
+        finally:
+            skel["tasks"][0]["worktree"] = original_wt
+            skel_p.write_text(json.dumps(skel, ensure_ascii=False), encoding="utf-8")
+
 
 class TestCollectDrift(CollectBase):
     """主仓库自基线以来漂移 → main_drift True、clean False(红线:集成前主 HEAD/status 须一致)。"""
@@ -293,6 +313,22 @@ class TestCollectUntrackedBundle(CollectBase):
         recs = {r["file"]: r for r in ta["untracked_bundle"]}
         self.assertTrue(recs["newdir/n.txt"]["bundled"])
 
+    def test_ignored_only_output_marks_not_clean(self):
+        (self.repo / ".gitignore").write_text("ignored.log\n", encoding="utf-8")
+        runner._run_git(["git", "-C", str(self.repo), "add", ".gitignore"])
+        runner._run_git(["git", "-C", str(self.repo), "commit", "-m", "ignore"])
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=ignored.log]", scope=["."])],
+            self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        summary = runner.collect(rd)
+        ta = next(t for t in summary["tasks"] if t["id"] == "a")
+        self.assertEqual(ta["status"], "ok")
+        self.assertEqual(ta["untracked_files"], [])
+        self.assertIn("ignored.log", ta["ignored_files"])
+        self.assertFalse(summary["clean"])
+
 
 class TestCollectDispatchState(CollectBase):
     """collect 必须反映派工真相:没派工 / 派工失败 / 偷偷 git add 都不得判 clean。"""
@@ -318,6 +354,84 @@ class TestCollectDispatchState(CollectBase):
         ta = next(t for t in summary["tasks"] if t["id"] == "a")
         self.assertEqual(ta["status"], "dispatch_failed")
         self.assertEqual(ta["dispatch_exit_code"], 3)
+        self.assertFalse(summary["clean"])
+
+    def test_dispatch_nonce_mismatch_marks_not_clean(self):
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])], self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        disp_p = rd / "tasks" / "a" / "dispatch.json"
+        disp = json.loads(disp_p.read_text(encoding="utf-8"))
+        disp["dispatch_nonce"] = "0" * 32
+        disp_p.write_text(json.dumps(disp, ensure_ascii=False), encoding="utf-8")
+
+        summary = runner.collect(rd)
+        ta = next(t for t in summary["tasks"] if t["id"] == "a")
+        self.assertEqual(ta["status"], "dispatch_failed")
+        self.assertIn("dispatch_nonce", ta["dispatch_error"])
+        self.assertFalse(summary["clean"])
+
+    def test_prompt_hash_mismatch_marks_not_clean(self):
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])], self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        (rd / "tasks" / "a" / "prompt.txt").write_text(
+            "篡改后的 prompt", encoding="utf-8")
+
+        summary = runner.collect(rd)
+        ta = next(t for t in summary["tasks"] if t["id"] == "a")
+        self.assertEqual(ta["status"], "dispatch_failed")
+        self.assertIn("prompt_sha256", ta["dispatch_error"])
+        self.assertFalse(summary["clean"])
+
+    def test_dispatch_json_prompt_hash_mismatch_marks_not_clean(self):
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])], self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        disp_p = rd / "tasks" / "a" / "dispatch.json"
+        disp = json.loads(disp_p.read_text(encoding="utf-8"))
+        disp["prompt_sha256"] = "0" * 64
+        disp_p.write_text(json.dumps(disp, ensure_ascii=False), encoding="utf-8")
+
+        summary = runner.collect(rd)
+        ta = next(t for t in summary["tasks"] if t["id"] == "a")
+        self.assertEqual(ta["status"], "dispatch_failed")
+        self.assertIn("prompt_sha256", ta["dispatch_error"])
+        self.assertFalse(summary["clean"])
+
+    def test_dispatch_json_worktree_mismatch_marks_not_clean(self):
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])], self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        disp_p = rd / "tasks" / "a" / "dispatch.json"
+        disp = json.loads(disp_p.read_text(encoding="utf-8"))
+        disp["worktree"] = str(self.repo)
+        disp_p.write_text(json.dumps(disp, ensure_ascii=False), encoding="utf-8")
+
+        summary = runner.collect(rd)
+        ta = next(t for t in summary["tasks"] if t["id"] == "a")
+        self.assertEqual(ta["status"], "dispatch_failed")
+        self.assertIn("worktree", ta["dispatch_error"])
+        self.assertFalse(summary["clean"])
+
+    def test_dispatch_json_base_head_mismatch_marks_not_clean(self):
+        spec = write_spec_dict(
+            [wtask("a", prompt="改 [MOCK:writes=a.txt]", scope=["."])], self.repo)
+        rd = self._prepare(spec)
+        _dispatch_all(rd)
+        disp_p = rd / "tasks" / "a" / "dispatch.json"
+        disp = json.loads(disp_p.read_text(encoding="utf-8"))
+        disp["base_head"] = "0" * 40
+        disp_p.write_text(json.dumps(disp, ensure_ascii=False), encoding="utf-8")
+
+        summary = runner.collect(rd)
+        ta = next(t for t in summary["tasks"] if t["id"] == "a")
+        self.assertEqual(ta["status"], "dispatch_failed")
+        self.assertIn("base_head", ta["dispatch_error"])
         self.assertFalse(summary["clean"])
 
     def test_staged_changes_marks_index_changed_not_clean(self):

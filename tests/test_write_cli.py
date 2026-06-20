@@ -157,20 +157,28 @@ class TestDispatchSubcommand(WriteCliBase):
     def test_dispatch_runs_mock_and_returns_0(self):
         run_dir = self._prepared([wtask("a", prompt="[MOCK:writes=a.txt] 改",
                                         scope=["."])])
-        code = runner.main(["dispatch", str(run_dir), "a",
+        code = runner.main(["dispatch", str(run_dir), "--ack-external-model-export", "a",
                             "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
         self.assertEqual(code, 0)
         self.assertTrue((run_dir / "wt" / "a" / "a.txt").exists())
 
+    def test_dispatch_without_external_model_ack_exit_1(self):
+        run_dir = self._prepared([wtask("a", prompt="[MOCK:writes=a.txt] 改",
+                                        scope=["."])])
+        code = runner.main(["dispatch", str(run_dir), "a",
+                            "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
+        self.assertEqual(code, 1)
+        self.assertFalse((run_dir / "wt" / "a" / "a.txt").exists())
+
     def test_dispatch_unknown_task_id_exit_1(self):
         run_dir = self._prepared([wtask("a")])
-        code = runner.main(["dispatch", str(run_dir), "nope",
+        code = runner.main(["dispatch", str(run_dir), "--ack-external-model-export", "nope",
                             "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
         self.assertEqual(code, 1)
 
     def test_dispatch_passes_through_codex_nonzero(self):
         run_dir = self._prepared([wtask("a", prompt="[MOCK:exit=3] 改")])
-        code = runner.main(["dispatch", str(run_dir), "a",
+        code = runner.main(["dispatch", str(run_dir), "--ack-external-model-export", "a",
                             "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
         self.assertEqual(code, 1)  # codex 非 0 → CLI 失败码 1
 
@@ -178,7 +186,7 @@ class TestDispatchSubcommand(WriteCliBase):
         # 生产模式(无 DYNWF_TEST_MODE)拒绝 --codex-cmd:写命令必须定死,不接受任意前缀
         run_dir = self._prepared([wtask("a", prompt="改", scope=["."])])
         os.environ.pop("DYNWF_TEST_MODE", None)
-        code = runner.main(["dispatch", str(run_dir), "a",
+        code = runner.main(["dispatch", str(run_dir), "--ack-external-model-export", "a",
                             "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
         self.assertEqual(code, 1)
 
@@ -190,7 +198,7 @@ class TestCollectSubcommand(WriteCliBase):
         self.assertEqual(runner.main(["prepare", str(self._spec_json(raw))]), 0)
         run_dir = self._only_run_dir()
         for t in tasks:
-            runner.main(["dispatch", str(run_dir), t["id"],
+            runner.main(["dispatch", str(run_dir), "--ack-external-model-export", t["id"],
                          "--codex-cmd", sys.executable, "--codex-cmd", MOCK])
         return repo, run_dir
 
@@ -246,7 +254,7 @@ class TestReadModeBackCompat(_TempTracking):
         run_dir = runs_root / "run"
         argv = [str(spec_path), "--run-dir", str(run_dir),
                 "--codex-cmd", sys.executable, "--codex-cmd", MOCK,
-                "--timeout-override", "5"]
+                "--timeout-override", "5", "--ack-external-model-export"]
         argv += list(extra)
         return runner.main(argv), run_dir
 

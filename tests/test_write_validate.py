@@ -35,8 +35,8 @@ class ValidateWriteSpecTest(unittest.TestCase):
         t = out["tasks"][0]
         self.assertEqual(t["id"], "a")
         self.assertEqual(t["prompt"], "改文件")
-        # scope 缺省归一化为 []
-        self.assertEqual(t["scope"], [])
+        # 测试 helper 默认显式 scope=["."],真实 spec 缺 scope 会被拒绝
+        self.assertEqual(t["scope"], ["."])
         # reasoning_effort 缺省为 None
         self.assertIsNone(t["reasoning_effort"])
 
@@ -165,6 +165,11 @@ class ValidateWriteSpecTest(unittest.TestCase):
             runner.validate_write_spec(raw)
 
     # ---- scope ----
+    def test_scope_missing_rejected(self):
+        raw = write_spec_dict([{"id": "a", "prompt": "改文件"}], self.repo)
+        with self.assertRaises(runner.SpecError):
+            runner.validate_write_spec(raw)
+
     def test_scope_not_list_rejected(self):
         raw = self._spec([wtask("a", scope="src/x")])  # 必须是列表
         with self.assertRaises(runner.SpecError):

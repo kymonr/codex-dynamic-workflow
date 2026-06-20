@@ -112,6 +112,20 @@ class TestValidateSpec(unittest.TestCase):
             with self.assertRaises(runner.SpecError):
                 runner.validate_spec(d)
 
+    def test_backend_defaults_codex(self):
+        spec = runner.validate_spec(spec_dict([stage("s1", task("a"))]))
+        self.assertEqual(spec["backend"], "codex")
+
+    def test_backend_claude_accepted(self):
+        spec = runner.validate_spec(
+            spec_dict([stage("s1", task("a"))], backend="claude"))
+        self.assertEqual(spec["backend"], "claude")
+
+    def test_backend_invalid_rejected(self):
+        d = spec_dict([stage("s1", task("a"))], backend="gpt")
+        with self.assertRaises(runner.SpecError):
+            runner.validate_spec(d)
+
 
 if __name__ == "__main__":
     unittest.main()
