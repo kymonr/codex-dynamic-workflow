@@ -861,6 +861,38 @@ def _message_text(message: Mapping[str, Any]) -> str:
     return ""
 
 
+def _message_first_line(message: Mapping[str, Any]) -> str:
+    text = _message_text(message).lstrip()
+    return text.splitlines()[0].strip() if text else ""
+
+
+def _message_kind(message: Mapping[str, Any]) -> str:
+    value = _first_str(message, ("type", "role", "senderRole", "authorRole"))
+    return (value or "").replace("_", "").replace("-", "").lower()
+
+
+def _is_anchor_request_message(message: Mapping[str, Any]) -> bool:
+    kind = _message_kind(message)
+    if kind in {"user", "human", "usermessage"}:
+        return True
+    return _message_first_line(message).startswith((
+        "TEAM_ROUTER_PLAN_REQUEST",
+        "TEAM_ROUTER_DISPATCH",
+        "TEAM_ROUTER_VERIFY",
+    ))
+
+
+def _is_same_timestamp_response_message(message: Mapping[str, Any]) -> bool:
+    kind = _message_kind(message)
+    if kind in {"agent", "assistant", "model", "agentmessage", "assistantmessage"}:
+        return True
+    return _message_first_line(message).startswith((
+        "TEAM_ROUTER_PLAN taskId=",
+        "TEAM_ROUTER_CALLBACK taskId=",
+        "TEAM_ROUTER_VERDICT taskId=",
+    ))
+
+
 def _messages_after_anchor(messages: list[Mapping[str, Any]],
                            anchor: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
     if not anchor:
@@ -879,7 +911,15 @@ def _messages_after_anchor(messages: list[Mapping[str, Any]],
         ts = _parse_thread_timestamp(
             message.get("sentAt") or message.get("createdAt") or message.get("timestamp")
         )
-        if ts is not None and ts > anchor_time:
+        if ts is None:
+            continue
+        if ts > anchor_time:
+            filtered.append(message)
+        elif (
+            ts == anchor_time
+            and _is_same_timestamp_response_message(message)
+            and not _is_anchor_request_message(message)
+        ):
             filtered.append(message)
     return filtered
 

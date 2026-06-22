@@ -690,6 +690,46 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["observations"][-1]["type"], "callback_raw")
         self.assertEqual(updated["observations"][-1]["threadId"], "thread-executor")
 
+    def test_callback_capture_accepts_same_timestamp_response_for_time_only_anchor(self):
+        ledger = self._planned_ledger()
+        dispatch_prompt = team_router.make_executor_dispatch_message(
+            ledger["taskId"],
+            ledger["plan"]["fields"],
+            "read-only",
+            {"messageId": None, "sentAt": "2026-06-22T20:02:00+08:00"},
+        )
+        ledger = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id=None,
+        )
+        messages = [
+            {
+                "type": "userMessage",
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "text": dispatch_prompt,
+            },
+            {
+                "type": "agentMessage",
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: same second\nevidence: tests\nrisks: none\nnext: none",
+            },
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["observations"][-1]["parsedFields"]["summary"], "same second")
+
     def test_callback_capture_preserves_multiline_summary(self):
         ledger = self._awaiting_callback_ledger()
         messages = [
@@ -778,6 +818,46 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "done")
         self.assertEqual(updated["verification"]["verdict"]["fields"]["result"], "pass")
         self.assertEqual(updated["closeout"]["status"], "done")
+
+    def test_verifier_capture_accepts_same_timestamp_response_for_time_only_anchor(self):
+        ledger = self._verifying_ledger()
+        verify_prompt = team_router.make_verifier_request_message(
+            ledger["taskId"],
+            ledger["observations"][-1]["content"],
+            "read-only",
+            "src",
+        )
+        ledger = team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id=None,
+        )
+        messages = [
+            {
+                "type": "userMessage",
+                "sentAt": "2026-06-22T20:05:00+08:00",
+                "text": verify_prompt,
+            },
+            {
+                "type": "agentMessage",
+                "sentAt": "2026-06-22T20:05:00+08:00",
+                "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: same second\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none",
+            },
+        ]
+
+        updated = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "done")
+        self.assertEqual(updated["closeout"]["summary"], "same second")
 
     def test_verifier_needs_rework_respects_max_rework(self):
         ledger = self._verifying_ledger(max_rework=0)
@@ -1076,7 +1156,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(updated["status"], "verifying")
 
-    def test_same_timestamp_callback_without_message_id_keeps_waiting(self):
+    def test_same_timestamp_callback_without_message_id_is_captured(self):
         self._planned_ledger()
         team_router.record_executor_dispatch_sent(
             self.root,
@@ -1101,7 +1181,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             captured_at="2026-06-22T20:04:00+08:00",
         )
 
-        self.assertEqual(updated["status"], "awaiting_callback")
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["observations"][-1]["parsedFields"]["summary"], "same timestamp")
 
     def test_rework_redispatch_can_finish_with_fresh_closeout(self):
         ledger = self._verifying_ledger(max_rework=2)
