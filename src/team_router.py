@@ -7,7 +7,7 @@ thread tools; callers pass thread/tool observations in as plain data.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import os
@@ -38,6 +38,8 @@ TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 MAX_OBSERVATION_CONTENT_CHARS = 8192
 REGISTRY_VERSION = 1
 TASK_LEDGER_VERSION = 1
+ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
+THREAD_PERMISSIONS = frozenset({"read-only", "design-only"})
 _FORBIDDEN_STATE_ROOT_PARTS = {".codex-tmp"}
 
 TERMINAL_STATUSES = frozenset({
@@ -363,7 +365,12 @@ def _normalize_task_ledger(data: Mapping[str, Any], state_root: str | Path,
     ledger["maxRework"] = _as_int(ledger.get("maxRework"), 3, "ledger.maxRework")
     ledger["dispatches"] = _as_list(ledger.get("dispatches"), "ledger.dispatches")
     ledger["observations"] = _as_list(ledger.get("observations"), "ledger.observations")
-    ledger.setdefault("verification", None)
+    plan_request = ledger.get("planRequest")
+    ledger["planRequest"] = None if plan_request is None else _as_mapping(plan_request, "ledger.planRequest", default_empty=False)
+    plan = ledger.get("plan")
+    ledger["plan"] = None if plan is None else _as_mapping(plan, "ledger.plan", default_empty=False)
+    verification = ledger.get("verification")
+    ledger["verification"] = None if verification is None else _as_mapping(verification, "ledger.verification", default_empty=False)
     ledger.setdefault("closeout", None)
     return ledger
 
@@ -405,6 +412,454 @@ def save_task_ledger(state_root: str | Path,
     normalized = _normalize_task_ledger(ledger, state_root, project_id, task_id)
     _atomic_write_json(task_path(state_root, project_id, task_id), normalized)
     return normalized
+
+
+
+
+def create_task_id(now: datetime | None = None) -> str:
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return "ctr-%s-%s" % (now.strftime("%Y%m%d-%H%M%S"), uuid.uuid4().hex[:8])
+
+
+def _validate_role(role: str) -> None:
+    if role not in ROLE_NAMES:
+        raise StateStoreError("invalid role: %s" % role)
+
+
+def _validate_permission(permission: str) -> None:
+    if permission not in THREAD_PERMISSIONS:
+        raise StateStoreError("invalid Team Router permission: %s" % permission)
+
+
+def _required_str(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise StateStoreError("%s must be a non-empty string" % field)
+    return value
+
+
+def _search_anchor(message_id: str | None, sent_at: str) -> dict[str, Any]:
+    return {"messageId": message_id, "sentAt": sent_at}
+
+
+def _normalize_role_record(role: str, data: Mapping[str, Any],
+                           observed_at: str) -> dict[str, Any]:
+    _validate_role(role)
+    record = dict(_as_mapping(data, "roles.%s" % role, default_empty=False))
+    record["threadId"] = _required_str(record.get("threadId"), "roles.%s.threadId" % role)
+    record["title"] = str(record.get("title") or "TeamRouter %s" % role)
+    record["status"] = str(record.get("status") or "active")
+    record.setdefault("createdAt", observed_at)
+    record["lastObservedAt"] = observed_at
+    return record
+
+
+def update_registry_roles(state_root: str | Path,
+                          project_id: str,
+                          roles: Mapping[str, Mapping[str, Any]],
+                          observed_at: str) -> dict[str, Any]:
+    registry = load_registry(state_root, project_id)
+    project = registry["projects"][project_id]
+    project_roles = _as_mapping(project.get("roles"), "registry.project.roles")
+    for role, data in roles.items():
+        project_roles[role] = _normalize_role_record(role, data, observed_at)
+    project["roles"] = project_roles
+    registry["projects"][project_id] = project
+    return save_registry(state_root, project_id, registry)
+
+
+def create_team_task(state_root: str | Path,
+                     project_id: str,
+                     task_id: str,
+                     *,
+                     objective: str,
+                     project_local_path: str | Path,
+                     roles: Mapping[str, Mapping[str, Any]],
+                     observed_at: str,
+                     max_rework: int = 3) -> dict[str, Any]:
+    missing = sorted(ROLE_NAMES.difference(roles.keys()))
+    if missing:
+        raise StateStoreError("missing role bindings: %s" % ", ".join(missing))
+    update_registry_roles(state_root, project_id, roles, observed_at)
+    ledger = new_task_ledger(
+        state_root,
+        project_id,
+        task_id,
+        objective=objective,
+        project_local_path=project_local_path,
+        max_rework=max_rework,
+    )
+    ledger["status"] = "roles_ready"
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def make_plan_request_message(task_id: str, objective: str, permission: str) -> str:
+    _validate_task_id(task_id)
+    _required_str(objective, "objective")
+    _validate_permission(permission)
+    return "\n".join((
+        "TEAM_ROUTER_PLAN_REQUEST taskId=%s" % task_id,
+        "objective: %s" % objective,
+        "permission: %s" % permission,
+        "",
+        "Please reply in this thread with:",
+        "TEAM_ROUTER_PLAN taskId=%s" % task_id,
+        "status: planned | blocked",
+        "acknowledgedPermission: read-only | design-only | escalation-required",
+        "scope: <clear scope>",
+        "stopWhen: <done or blocked condition>",
+        "riskBoundary: <permission/data/external-system boundary>",
+        "executorPrompt: <prompt for executor>",
+        "notes: <none or notes>",
+    ))
+
+
+def record_plan_request_sent(state_root: str | Path,
+                             project_id: str,
+                             task_id: str,
+                             *,
+                             manager_thread_id: str,
+                             sent_at: str,
+                             message_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    ledger["planRequest"] = {
+        "role": "manager",
+        "threadId": _required_str(manager_thread_id, "managerThreadId"),
+        "messageId": message_id,
+        "sentAt": _required_str(sent_at, "sentAt"),
+        "searchAnchor": _search_anchor(message_id, sent_at),
+        "expectedCallback": "TEAM_ROUTER_PLAN taskId=%s" % task_id,
+    }
+    ledger["status"] = "awaiting_plan"
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def make_executor_dispatch_message(task_id: str,
+                                   plan_fields: Mapping[str, Any],
+                                   permission: str,
+                                   search_anchor: Mapping[str, Any]) -> str:
+    _validate_task_id(task_id)
+    _validate_permission(permission)
+    scope = _required_str(plan_fields.get("scope"), "plan.scope")
+    stop_when = _required_str(plan_fields.get("stopWhen"), "plan.stopWhen")
+    executor_prompt = _required_str(plan_fields.get("executorPrompt"), "plan.executorPrompt")
+    return "\n".join((
+        "TEAM_ROUTER_DISPATCH taskId=%s" % task_id,
+        "role: executor",
+        "callbackMode: self-thread-marker",
+        "callbackMarker: TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
+        "permission: %s" % permission,
+        "scope: %s" % scope,
+        "stopWhen: %s" % stop_when,
+        "searchAnchor: %s" % dict(search_anchor),
+        "",
+        "Goal:",
+        executor_prompt,
+        "",
+        "Delivery format:",
+        "TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
+        "status: done | blocked",
+        "final: true",
+        "summary: <3-7 lines>",
+        "evidence: <paths, command summaries, or thread observations>",
+        "risks: <none or risks>",
+        "next: <none or next step>",
+    ))
+
+
+def record_executor_dispatch_sent(state_root: str | Path,
+                                  project_id: str,
+                                  task_id: str,
+                                  *,
+                                  executor_thread_id: str,
+                                  sent_at: str,
+                                  message_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if ledger["status"] == "needs_rework":
+        status, rework_count = next_rework_dispatch(ledger["reworkCount"], ledger["maxRework"])
+        if status == "blocked":
+            ledger["status"] = "blocked"
+            ledger["closeout"] = {
+                "status": "blocked",
+                "capturedAt": sent_at,
+                "summary": "maximum rework attempts reached",
+                "requiredChanges": "none",
+                "evidenceChecked": "reworkCount",
+                "risks": "none",
+                "nextAction": "none",
+            }
+            return save_task_ledger(state_root, project_id, task_id, ledger)
+        ledger["reworkCount"] = rework_count
+    attempt = len(ledger["dispatches"]) + 1
+    ledger["dispatches"].append({
+        "role": "executor",
+        "threadId": _required_str(executor_thread_id, "executorThreadId"),
+        "messageId": message_id,
+        "sentAt": _required_str(sent_at, "sentAt"),
+        "searchAnchor": _search_anchor(message_id, sent_at),
+        "expectedCallback": "TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
+        "attempt": attempt,
+    })
+    ledger["status"] = "awaiting_callback"
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _message_text(message: Mapping[str, Any]) -> str:
+    for key in ("text", "content", "summary"):
+        value = message.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _messages_after_anchor(messages: list[Mapping[str, Any]],
+                           anchor: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    if not anchor:
+        return list(messages)
+    message_id = anchor.get("messageId")
+    if message_id:
+        for index, message in enumerate(messages):
+            if message.get("messageId") == message_id:
+                return list(messages[index + 1:])
+    sent_at = anchor.get("sentAt")
+    anchor_time = _parse_thread_timestamp(sent_at)
+    if anchor_time is None:
+        return list(messages)
+    filtered = []
+    for message in messages:
+        ts = _parse_thread_timestamp(
+            message.get("sentAt") or message.get("createdAt") or message.get("timestamp")
+        )
+        if ts is not None and ts > anchor_time:
+            filtered.append(message)
+    return filtered
+
+
+def _messages_text(messages: list[Mapping[str, Any]]) -> str:
+    return "\n\n".join(_message_text(message) for message in messages if _message_text(message))
+
+
+def _project_roles_from_registry(registry: Mapping[str, Any], project_id: str) -> dict[str, Any]:
+    projects = _as_mapping(registry.get("projects"), "registry.projects")
+    project = _as_mapping(projects.get(project_id), "registry.project", default_empty=False)
+    return _as_mapping(project.get("roles"), "registry.project.roles")
+
+
+def recovery_read_request(ledger: Mapping[str, Any],
+                          registry: Mapping[str, Any],
+                          role: str) -> dict[str, Any]:
+    _validate_role(role)
+    project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
+    source: Mapping[str, Any] | None
+    if role == "manager":
+        source = ledger.get("planRequest") if isinstance(ledger.get("planRequest"), Mapping) else None
+    elif role == "executor":
+        dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+        source = dispatches[-1] if dispatches else None
+    else:
+        verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+        request = verification.get("request") if isinstance(verification, Mapping) else None
+        source = request if isinstance(request, Mapping) else None
+    if source is None:
+        raise StateStoreError("no read request anchor for role: %s" % role)
+    roles = _project_roles_from_registry(registry, project_id)
+    role_record = _as_mapping(roles.get(role), "registry.roles.%s" % role, default_empty=False)
+    thread_id = source.get("threadId") or role_record.get("threadId")
+    return {
+        "role": role,
+        "threadId": _required_str(thread_id, "%s.threadId" % role),
+        "searchAnchor": _as_mapping(source.get("searchAnchor"), "%s.searchAnchor" % role, default_empty=False),
+        "expectedCallback": source.get("expectedCallback"),
+    }
+
+
+def capture_manager_plan_from_read(state_root: str | Path,
+                                   project_id: str,
+                                   task_id: str,
+                                   messages: list[Mapping[str, Any]],
+                                   *,
+                                   captured_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    request = ledger.get("planRequest") if isinstance(ledger.get("planRequest"), Mapping) else None
+    anchor = request.get("searchAnchor") if isinstance(request, Mapping) else None
+    if anchor is None:
+        raise StateStoreError("missing plan request searchAnchor for task: %s" % task_id)
+    if not read_window_covers_anchor(messages, anchor):
+        ledger["status"] = "plan_unreachable"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    text = _messages_text(_messages_after_anchor(messages, anchor))
+    try:
+        msg = parse_plan(text, task_id)
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            ledger["status"] = "awaiting_plan"
+        else:
+            ledger["status"] = "malformed_callback"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    ledger["plan"] = {
+        "threadId": request.get("threadId") if isinstance(request, Mapping) else None,
+        "capturedAt": captured_at,
+        "raw": msg.raw,
+        "fields": dict(msg.fields),
+    }
+    if msg.fields["status"] == "planned" and msg.fields["acknowledgedPermission"] != "escalation-required":
+        ledger["status"] = "planned"
+    else:
+        ledger["status"] = "blocked"
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def capture_executor_callback_from_read(state_root: str | Path,
+                                        project_id: str,
+                                        task_id: str,
+                                        messages: list[Mapping[str, Any]],
+                                        *,
+                                        captured_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    dispatch = ledger["dispatches"][-1] if ledger["dispatches"] else None
+    if dispatch is None:
+        raise StateStoreError("no executor dispatch recorded for task: %s" % task_id)
+    anchor = dispatch.get("searchAnchor")
+    if not read_window_covers_anchor(messages, anchor):
+        ledger["status"] = "callback_unreachable"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    text = _messages_text(_messages_after_anchor(messages, anchor))
+    try:
+        msg = parse_callback(text, task_id)
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            ledger["status"] = "awaiting_callback"
+        else:
+            ledger["status"] = "malformed_callback"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    ledger["observations"].append(make_observation(
+        "callback_raw",
+        "executor",
+        dispatch["threadId"],
+        captured_at,
+        msg.raw,
+        msg.fields,
+    ))
+    ledger["status"] = "verifying"
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def make_verifier_request_message(task_id: str,
+                                  callback_block: str,
+                                  permission: str,
+                                  scope: str) -> str:
+    _validate_task_id(task_id)
+    _validate_permission(permission)
+    _required_str(callback_block, "callbackBlock")
+    _required_str(scope, "scope")
+    return "\n".join((
+        "TEAM_ROUTER_VERIFY taskId=%s" % task_id,
+        "callbackMarker: TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+        "permission: %s" % permission,
+        "scope: %s" % scope,
+        "",
+        "Executor callback follows verbatim:",
+        callback_block,
+        "",
+        "Please reply in this thread with:",
+        "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+        "result: pass | needs_rework | blocked",
+        "summary: <verdict summary>",
+        "requiredChanges: <none or changes>",
+        "evidenceChecked: <checked evidence>",
+        "risks: <none or risks>",
+    ))
+
+
+def record_verifier_request_sent(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 *,
+                                 verifier_thread_id: str,
+                                 sent_at: str,
+                                 message_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    verification = dict(ledger.get("verification") or {})
+    verification["request"] = {
+        "role": "verifier",
+        "threadId": _required_str(verifier_thread_id, "verifierThreadId"),
+        "messageId": message_id,
+        "sentAt": _required_str(sent_at, "sentAt"),
+        "searchAnchor": _search_anchor(message_id, sent_at),
+        "expectedCallback": "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+    }
+    ledger["verification"] = verification
+    ledger["status"] = "verifying"
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _make_closeout(ledger: Mapping[str, Any],
+                   verdict_fields: Mapping[str, Any],
+                   captured_at: str) -> dict[str, Any]:
+    return {
+        "status": ledger.get("status"),
+        "capturedAt": captured_at,
+        "summary": verdict_fields.get("summary", ""),
+        "requiredChanges": verdict_fields.get("requiredChanges", ""),
+        "evidenceChecked": verdict_fields.get("evidenceChecked", ""),
+        "risks": verdict_fields.get("risks", ""),
+        "nextAction": "none" if ledger.get("status") == "done" else verdict_fields.get("requiredChanges", ""),
+    }
+
+
+def capture_verifier_verdict_from_read(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       messages: list[Mapping[str, Any]],
+                                       *,
+                                       captured_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    verification = dict(ledger.get("verification") or {})
+    request = verification.get("request") if isinstance(verification.get("request"), Mapping) else None
+    anchor = request.get("searchAnchor") if isinstance(request, Mapping) else None
+    if anchor is None:
+        raise StateStoreError("missing verifier request searchAnchor for task: %s" % task_id)
+    if not read_window_covers_anchor(messages, anchor):
+        ledger["status"] = "callback_unreachable"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    text = _messages_text(_messages_after_anchor(messages, anchor))
+    try:
+        msg = parse_verdict(text, task_id)
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            ledger["status"] = "verifying"
+        else:
+            ledger["status"] = "malformed_callback"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    thread_id = request.get("threadId") if isinstance(request, Mapping) else ""
+    if thread_id:
+        ledger["observations"].append(make_observation(
+            "verdict_raw",
+            "verifier",
+            thread_id,
+            captured_at,
+            msg.raw,
+            msg.fields,
+        ))
+    verification["verdict"] = {
+        "threadId": thread_id,
+        "capturedAt": captured_at,
+        "raw": msg.raw,
+        "fields": dict(msg.fields),
+    }
+    ledger["verification"] = verification
+    result = msg.fields["result"]
+    if result == "pass":
+        ledger["status"] = "done"
+    elif result == "needs_rework":
+        if ledger["reworkCount"] >= ledger["maxRework"]:
+            ledger["status"] = "blocked"
+        else:
+            ledger["status"] = "needs_rework"
+    else:
+        ledger["status"] = "blocked"
+    ledger["closeout"] = _make_closeout(ledger, msg.fields, captured_at)
+    return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
 def _parse_thread_timestamp(value: Any) -> datetime | None:

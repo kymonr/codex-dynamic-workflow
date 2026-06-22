@@ -101,6 +101,19 @@ risks: <none or risks>
 
 Natural-language verdicts do not move state.
 
+## Local Manager State Helpers
+
+The implementation keeps the manager flow deterministic and local. Thread tools are an adapter layer: they send messages and pass plain send/read results back into helper functions. The helper layer performs registry role persistence, task ledger updates, protocol parsing, and recovery anchor selection.
+
+Registry role persistence uses `update_registry_roles()` and `create_team_task()` to record the `manager`, `executor`, and `verifier` thread ids under the project registry before task dispatch. Task creation writes `tasks/<taskId>.json` immediately and moves the ledger to `roles_ready`.
+
+The ledger stores read recovery anchors in three places:
+
+- `planRequest.searchAnchor` for manager `TEAM_ROUTER_PLAN` reads.
+- The latest `dispatches[]` entry for executor `TEAM_ROUTER_CALLBACK` reads.
+- `verification.request.searchAnchor` for verifier `TEAM_ROUTER_VERDICT` reads.
+
+Use `recovery_read_request()` to derive the role thread id and `searchAnchor` from the ledger plus registry before calling `read_thread`. Do not infer recovery state from the current conversation alone.
 ## State Machine
 
 ```text
