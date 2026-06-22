@@ -1447,6 +1447,37 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", messages[1]["text"])
         self.assertIn("summary: ok", messages[1]["text"])
 
+    def test_normalize_thread_read_messages_accepts_live_codex_numeric_turn_timestamps(self):
+        messages = team_router.normalize_thread_read_messages({
+            "schemaVersion": 1,
+            "thread": {"id": "thread-live", "status": {"type": "idle"}},
+            "turns": [
+                {
+                    "id": "turn-live",
+                    "startedAt": 1767225600,
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "item-user",
+                            "content": [{"type": "text", "text": "TEAM_ROUTER_VERDICT request"}],
+                        },
+                        {
+                            "type": "agentMessage",
+                            "id": "item-agent",
+                            "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: live smoke\nevidenceChecked: thread tools\nrisks: none",
+                        },
+                    ],
+                },
+            ],
+        })
+
+        self.assertEqual(messages[0]["sentAt"], 1767225600)
+        self.assertEqual(messages[1]["sentAt"], 1767225600)
+        anchor = {"messageId": None, "sentAt": "2026-01-01T00:00:00+00:00"}
+        self.assertTrue(team_router.read_window_covers_anchor(messages, anchor))
+        filtered = team_router._messages_after_anchor(messages, anchor)
+        self.assertEqual([msg["messageId"] for msg in filtered], ["item-agent"])
+
     def test_adapter_send_wrappers_do_not_send_for_terminal_or_max_rework(self):
         adapter = FakeThreadAdapter()
         blocked = self._awaiting_plan_ledger()
@@ -1802,6 +1833,79 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("read_thread anchors", handoff)
         self.assertIn("msg-verify", handoff)
         self.assertIn("verification", handoff)
+
+    def test_format_task_update_for_user_uses_closeout_only_for_terminal_closeout(self):
+        awaiting = self._awaiting_callback_ledger()
+        registry = team_router.load_registry(self.root, self.project_id)
+
+        handoff = team_router.format_task_update_for_user(awaiting, registry)
+
+        self.assertIn("Team Router Handoff", handoff)
+        self.assertIn("read_thread anchors", handoff)
+        self.assertIn("executor.dispatch[1]", handoff)
+
+        done = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            awaiting["taskId"],
+            [
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+                {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: none"},
+            ],
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            done["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            done["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: complete\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        closeout = team_router.format_task_update_for_user(done, registry)
+
+        self.assertIn("Team Router Closeout", closeout)
+        self.assertIn("summary: complete", closeout)
+        self.assertNotIn("read_thread anchors", closeout)
+
+    def test_read_verifier_verdict_update_with_adapter_returns_user_output(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        adapter.messages["thread-verifier"] = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+            {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: adapter done\nrequiredChanges: none\nevidenceChecked: fake adapter\nrisks: none"},
+        ]
+
+        update = team_router.read_verifier_verdict_update_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["ledger"]["status"], "done")
+        self.assertIn("Team Router Closeout", update["userOutput"])
+        self.assertIn("summary: adapter done", update["userOutput"])
 
 
 class TestTeamRouterSkillDoc(unittest.TestCase):

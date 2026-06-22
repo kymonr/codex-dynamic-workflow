@@ -524,6 +524,24 @@ def _first_str(mapping: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def _optional_timestamp_value(value: Any) -> str | int | float | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    return None
+
+
+def _first_timestamp(mapping: Mapping[str, Any], keys: tuple[str, ...]) -> str | int | float | None:
+    for key in keys:
+        value = _optional_timestamp_value(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
 def _candidate_mappings(result: Any) -> list[Mapping[str, Any]]:
     if not isinstance(result, Mapping):
         return []
@@ -572,7 +590,7 @@ def _content_blocks_text(value: Any) -> str:
 def _normalize_thread_message(message: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(message)
     message_id = _first_str(message, ("messageId", "message_id", "id", "turnId"))
-    sent_at = _first_str(message, (
+    sent_at = _first_timestamp(message, (
         "sentAt", "sent_at", "createdAt", "created_at", "timestamp",
     ))
     text = _first_str(message, ("text",)) or ""
@@ -614,7 +632,7 @@ def _turn_item_messages(turns: list[Any]) -> list[dict[str, Any]] | None:
         if not isinstance(items, list):
             continue
         saw_turn_items = True
-        turn_time = _first_str(turn, (
+        turn_time = _first_timestamp(turn, (
             "sentAt", "sent_at", "createdAt", "created_at",
             "startedAt", "started_at", "timestamp",
         ))
@@ -625,9 +643,9 @@ def _turn_item_messages(turns: list[Any]) -> list[dict[str, Any]] | None:
                     % (turn_index, item_index)
                 )
             message = dict(item)
-            if turn_time is not None and not _first_str(message, (
+            if turn_time is not None and _first_timestamp(message, (
                 "sentAt", "sent_at", "createdAt", "created_at", "timestamp",
-            )):
+            )) is None:
                 message["sentAt"] = turn_time
             out.append(message)
     return out if saw_turn_items else None
@@ -1352,6 +1370,28 @@ def read_verifier_verdict_with_adapter(state_root: str | Path,
     )
 
 
+def read_verifier_verdict_update_with_adapter(state_root: str | Path,
+                                              project_id: str,
+                                              task_id: str,
+                                              *,
+                                              thread_adapter: Any,
+                                              captured_at: str,
+                                              turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = read_verifier_verdict_with_adapter(
+        state_root,
+        project_id,
+        task_id,
+        thread_adapter=thread_adapter,
+        captured_at=captured_at,
+        turn_limit=turn_limit,
+    )
+    registry = load_registry(state_root, project_id)
+    return {
+        "ledger": ledger,
+        "userOutput": format_task_update_for_user(ledger, registry),
+    }
+
+
 def _role_thread_lines(registry: Mapping[str, Any], project_id: str) -> list[str]:
     roles = _project_roles_from_registry(registry, project_id)
     lines = []
@@ -1401,6 +1441,13 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
     return "\n".join(lines)
 
 
+def format_task_update_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
+    closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else None
+    if ledger.get("status") in TERMINAL_STATUSES and closeout is not None:
+        return format_closeout_for_user(ledger, registry)
+    return format_handoff_for_user(ledger, registry)
+
+
 def format_handoff_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
     project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
     lines = [
@@ -1423,10 +1470,23 @@ def format_handoff_for_user(ledger: Mapping[str, Any], registry: Mapping[str, An
     ))
     return "\n".join(lines)
 
+
 def _parse_thread_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
     if not isinstance(value, str) or not value.strip():
         return None
     raw = value.strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        try:
+            return datetime.fromtimestamp(float(raw), timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
     try:
