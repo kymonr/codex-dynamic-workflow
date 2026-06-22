@@ -7,6 +7,7 @@ thread tools; callers pass thread/tool observations in as plain data.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -27,6 +28,7 @@ class ProtocolMessage:
 MARKER_RE = re.compile(r"^(TEAM_ROUTER_[A-Z_]+)\s+taskId=([^\s]+)\s*$")
 FIELD_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*):\s*(.*)$")
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+MAX_OBSERVATION_CONTENT_CHARS = 8192
 
 TERMINAL_STATUSES = frozenset({
     "blocked",
@@ -95,10 +97,11 @@ def _iter_marker_blocks(text: str) -> list[ProtocolMessage]:
     current_marker: str | None = None
     current_task_id: str | None = None
     current_fields: dict[str, str] = {}
+    current_field: str | None = None
     raw_lines: list[str] = []
 
     def flush() -> None:
-        nonlocal current_marker, current_task_id, current_fields, raw_lines
+        nonlocal current_marker, current_task_id, current_fields, current_field, raw_lines
         if current_marker is None or current_task_id is None:
             return
         out.append(ProtocolMessage(
@@ -110,10 +113,12 @@ def _iter_marker_blocks(text: str) -> list[ProtocolMessage]:
         current_marker = None
         current_task_id = None
         current_fields = {}
+        current_field = None
         raw_lines = []
 
     for line in lines:
-        marker_match = MARKER_RE.match(line.strip())
+        stripped = line.strip()
+        marker_match = MARKER_RE.match(stripped)
         if marker_match:
             flush()
             current_marker = marker_match.group(1)
@@ -121,13 +126,22 @@ def _iter_marker_blocks(text: str) -> list[ProtocolMessage]:
             _validate_task_id(current_task_id)
             raw_lines = [line]
             current_fields = {}
+            current_field = None
             continue
+        if stripped.startswith("TEAM_ROUTER_"):
+            raise ProtocolError("malformed marker line: %s" % stripped)
         if current_marker is None:
             continue
         raw_lines.append(line)
         field_match = FIELD_RE.match(line)
         if field_match:
-            current_fields[field_match.group(1)] = field_match.group(2).strip()
+            current_field = field_match.group(1)
+            current_fields[current_field] = field_match.group(2).strip()
+            continue
+        if current_field is not None and stripped:
+            current_fields[current_field] = (
+                current_fields[current_field] + "\n" + stripped
+            ).strip()
     flush()
     return out
 
@@ -148,6 +162,9 @@ def parse_message(text: str, marker: str, task_id: str) -> ProtocolMessage:
     missing = [field for field in required if field not in msg.fields]
     if missing:
         raise ProtocolError("%s missing fields: %s" % (marker, ", ".join(missing)))
+    blank = [field for field in required if not msg.fields[field]]
+    if blank:
+        raise ProtocolError("%s blank fields: %s" % (marker, ", ".join(blank)))
     for field, allowed in _ALLOWED_BY_MARKER.get(marker, {}).items():
         value = msg.fields.get(field)
         if value not in allowed:
@@ -208,6 +225,21 @@ def task_path(state_root: str | Path, project_id: str, task_id: str) -> Path:
     return Path(state_root).resolve() / "projects" / project_id / "tasks" / (task_id + ".json")
 
 
+def _parse_thread_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
 def read_window_covers_anchor(messages: list[Mapping[str, Any]],
                               anchor: Mapping[str, Any]) -> bool:
     """Whether read_thread output proves it covers the anchor point.
@@ -223,12 +255,19 @@ def read_window_covers_anchor(messages: list[Mapping[str, Any]],
         return any(msg.get("messageId") == message_id for msg in messages)
     if not sent_at:
         return False
-    timestamps = [msg.get("sentAt") or msg.get("createdAt") or msg.get("timestamp")
-                  for msg in messages]
-    timestamps = [ts for ts in timestamps if isinstance(ts, str) and ts]
+    anchor_time = _parse_thread_timestamp(sent_at)
+    if anchor_time is None:
+        return False
+    timestamps = [
+        _parse_thread_timestamp(
+            msg.get("sentAt") or msg.get("createdAt") or msg.get("timestamp")
+        )
+        for msg in messages
+    ]
+    timestamps = [ts for ts in timestamps if ts is not None]
     if not timestamps:
         return False
-    return min(timestamps) <= sent_at
+    return min(timestamps) <= anchor_time
 
 
 def make_observation(obs_type: str,
@@ -248,6 +287,10 @@ def make_observation(obs_type: str,
     }.items():
         if not isinstance(value, str) or not value:
             raise ValueError("%s must be a non-empty string" % name)
+    if len(content) > MAX_OBSERVATION_CONTENT_CHARS:
+        raise ProtocolError(
+            "content exceeds %d characters" % MAX_OBSERVATION_CONTENT_CHARS
+        )
     if not isinstance(parsed_fields, Mapping):
         raise ValueError("parsedFields must be a mapping")
     return {

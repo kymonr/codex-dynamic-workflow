@@ -17,6 +17,26 @@ summary: ok
         with self.assertRaises(team_router.ProtocolError):
             team_router.parse_callback(text, "ctr-1")
 
+    def test_callback_parser_rejects_malformed_marker_after_valid_block(self):
+        text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
+status: done
+final: true
+summary: old
+evidence: old
+risks: none
+next: none
+
+TEAM_ROUTER_CALLBACK taskId: ctr-1
+status: blocked
+final: true
+summary: new
+evidence: new
+risks: none
+next: none
+"""
+        with self.assertRaises(team_router.ProtocolError):
+            team_router.parse_callback(text, "ctr-1")
+
     def test_callback_parser_uses_last_final_message(self):
         text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
 status: done
@@ -38,6 +58,23 @@ next: retry
         self.assertEqual(msg.fields["status"], "blocked")
         self.assertEqual(msg.fields["summary"], "final")
 
+    def test_callback_parser_keeps_multiline_summary(self):
+        text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
+status: done
+final: true
+summary:
+checked protocol parser
+confirmed no missing fields
+evidence: tests
+risks: none
+next: none
+"""
+        msg = team_router.parse_callback(text, "ctr-1")
+        self.assertEqual(
+            msg.fields["summary"],
+            "checked protocol parser\nconfirmed no missing fields",
+        )
+
     def test_plan_requires_acknowledged_permission(self):
         text = """TEAM_ROUTER_PLAN taskId=ctr-1
 status: planned
@@ -45,6 +82,19 @@ scope: docs
 stopWhen: done
 riskBoundary: read only
 executorPrompt: inspect docs
+notes: none
+"""
+        with self.assertRaises(team_router.ProtocolError):
+            team_router.parse_plan(text, "ctr-1")
+
+    def test_plan_rejects_empty_required_fields(self):
+        text = """TEAM_ROUTER_PLAN taskId=ctr-1
+status: planned
+acknowledgedPermission: read-only
+scope:
+stopWhen: done
+riskBoundary: read only
+executorPrompt:
 notes: none
 """
         with self.assertRaises(team_router.ProtocolError):
@@ -104,6 +154,11 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
         anchor = {"messageId": None, "sentAt": "2026-06-22T00:00:00+08:00"}
         self.assertFalse(team_router.read_window_covers_anchor(messages, anchor))
 
+    def test_read_window_compares_timestamp_offsets_by_instant(self):
+        messages = [{"sentAt": "2026-06-22T00:30:00+09:00"}]
+        anchor = {"messageId": None, "sentAt": "2026-06-21T23:45:00+08:00"}
+        self.assertTrue(team_router.read_window_covers_anchor(messages, anchor))
+
     def test_observation_schema_requires_bounded_fields(self):
         obs = team_router.make_observation(
             "callback_raw",
@@ -115,6 +170,17 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
         )
         self.assertEqual(obs["type"], "callback_raw")
         self.assertEqual(obs["parsedFields"]["status"], "done")
+
+    def test_observation_rejects_oversized_content(self):
+        with self.assertRaises(team_router.ProtocolError):
+            team_router.make_observation(
+                "callback_raw",
+                "executor",
+                "thread-1",
+                "2026-06-22T00:00:00+08:00",
+                "x" * (team_router.MAX_OBSERVATION_CONTENT_CHARS + 1),
+                {"status": "done"},
+            )
 
 
 class TestTeamRouterSkillDoc(unittest.TestCase):
