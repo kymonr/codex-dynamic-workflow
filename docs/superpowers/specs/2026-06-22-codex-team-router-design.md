@@ -3,7 +3,7 @@
 - 日期：2026-06-22
 - 状态：已设计，待用户审阅
 - 范围：新增一个 Codex Skill 级控制平面，用 Codex app thread 工具管理长期 Agent 团队；不改 `dynamic-workflow` runner，不做 UI，不做本地常驻服务。
-- 涉及文件（实现阶段预计）：`skill/`（新增 skill 正文）、`src/`（可选的本地 ledger/protocol helper）、`tests/`（协议与 ledger 单测）、`README.md`（使用说明）。
+- 涉及文件（实现阶段预计）：`skills/codex-team-router/SKILL.md`（新增独立 skill 正文）、`src/team_router/`（可选的本地 ledger/protocol helper）、`tests/`（协议与 ledger 单测）、`README.md`（使用说明）。
 
 ---
 
@@ -38,7 +38,7 @@ register roles -> dispatch task -> await callback -> verify result -> close out 
 1. 读取或创建一个项目作用域内的 `manager`、`executor`、`verifier` 线程。
 2. 给每个线程设置可识别标题，并在本地 registry 记录 `threadId`、角色、项目、创建时间、最后观察时间。
 3. 为用户任务生成唯一 `taskId`，写入 task ledger。
-4. 向目标线程发送标准派工消息，消息里强制包含回传目标、回传格式、停止条件、权限边界。
+4. 向目标线程发送标准派工消息，消息里强制包含自线程回传 marker、回传格式、停止条件、权限边界。
 5. 读取线程最近状态，判断是否有符合协议的回传。
 6. 将执行结果交给 verifier 线程验收，或在缺回传/异常时标记 `blocked`。
 7. 最终向用户输出一段短 closeout：成功、失败、缺回传、未覆盖范围和下一步。
@@ -76,11 +76,13 @@ codex-team-router
 
 ### 4.2 Agent Registry
 
-Registry 是本地 JSON 文件，用于记录角色线程。建议路径：
+Registry 是本地 JSON 文件，用于记录角色线程。第一版默认使用项目内持久 runtime 目录：
 
 ```text
-D:\.codex-tmp\team-router\registry.json
+<projectRoot>\.codex-team-router\registry.json
 ```
+
+该目录是长期状态源，不得放在 `D:\.codex-tmp`。实现阶段必须确保 `.codex-team-router/` 不被误提交；如果目标项目不可写，先要求用户指定一个 `D:\codex\...` 下的持久状态目录。
 
 记录结构：
 
@@ -89,6 +91,9 @@ D:\.codex-tmp\team-router\registry.json
   "version": 1,
   "projects": {
     "<projectKey>": {
+      "projectId": "<codexProjectId>",
+      "target": {"type": "project", "environment": {"type": "local"}},
+      "hostId": "local",
       "roles": {
         "manager": {
           "threadId": "<threadId>",
@@ -105,12 +110,14 @@ D:\.codex-tmp\team-router\registry.json
 
 `projectKey` 第一版用当前项目路径归一化后的短 hash 或 slug。不要用“当前线程”推断；必须来自当前工作目录、用户指定项目或 `list_projects` 返回值。
 
+Registry 还必须保存创建线程所需的 `projectId`、`target.environment` 和可选 `hostId`，否则线程丢失后无法稳定重建。
+
 ### 4.3 Task Ledger
 
 Ledger 是任务级事实表。建议路径：
 
 ```text
-D:\.codex-tmp\team-router\tasks\<taskId>.json
+<projectRoot>\.codex-team-router\tasks\<taskId>.json
 ```
 
 状态机：
@@ -121,8 +128,12 @@ created
   -> dispatched
   -> awaiting_callback
   -> verifying
+  -> needs_rework
   -> done
   -> blocked
+  -> malformed_callback
+  -> tool_error
+  -> missing_role
 ```
 
 任务记录最小结构：
@@ -159,9 +170,9 @@ created
 TEAM_ROUTER_DISPATCH
 taskId: <taskId>
 role: executor
-replyToThread: <managerThreadId or callingThreadId>
+callbackMode: self-thread-marker
 callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>
-permission: read-only | workspace-write | design-only
+permission: read-only | design-only
 scope: <明确路径或业务范围>
 stopWhen: <完成条件或阻塞条件>
 
@@ -169,7 +180,7 @@ stopWhen: <完成条件或阻塞条件>
 <用户目标>
 
 交付格式：
-请在完成时发送一条包含以下字段的回传：
+请在本线程完成时发送一条包含以下字段的回传。不要尝试给其他线程发消息；总控会读取本线程并按 marker 收取结果：
 TEAM_ROUTER_CALLBACK taskId=<taskId>
 status: done | blocked
 summary: <3-7 行>
@@ -191,12 +202,14 @@ next: <建议下一步；无则写 none>
 
 总控只把含 `TEAM_ROUTER_CALLBACK taskId=<taskId>` 的内容视为有效回传。普通聊天、解释、工具日志都只能作为观察，不得自动判完成。
 
+第一版采用**自线程 marker 回传**模型：executor/verifier 只在自己的线程回复，主会话负责用 `read_thread` 拉取结果。不要要求子线程主动调用 `send_message_to_thread` 给 manager 回传；这会把工具权限和回传责任扩散到子线程，MVP 不做。
+
 ## 6. Thread 工具适配
 
 当前 Codex app 已暴露以下能力，第一版只依赖这些工具：
 
 - `list_projects`：查项目，创建项目线程前使用。
-- `create_thread`：创建角色线程。只在用户明确要求系统版或角色缺失时使用。
+- `create_thread`：创建角色线程。只在用户明确要求系统版或角色缺失时使用；创建前必须通过 `list_projects` 取得 `projectId` 和 target。
 - `list_threads`：按标题/关键词查已有角色线程。
 - `read_thread`：读取近期状态和 turn summaries。
 - `send_message_to_thread`：派工、验收、返工。
@@ -249,11 +262,12 @@ next: <建议下一步；无则写 none>
 
 ## 8. 错误处理
 
-- **线程不存在**：标记角色 `missing`，尝试 `list_threads`，仍失败则创建新线程并记录替换。
+- **线程不存在**：标记角色 `missing_role`，尝试 `list_threads`，仍失败则创建新线程并记录替换。
 - **线程无回传**：不判完成；输出“awaiting_callback”，给用户一条可复制催办消息。
-- **回传格式不合格**：记录为 `malformed_callback`，要求原线程按格式重发。
-- **工具调用失败**：ledger 记录 `tool_error`，不继续派下一个角色。
-- **权限越界**：如果任务包含 commit/push/PR/merge/deploy/真实 API，必须停下要求用户明确授权对应 package。
+- **回传格式不合格**：ledger 状态变为 `malformed_callback`，要求原线程按格式重发。
+- **工具调用失败**：ledger 状态变为 `tool_error`，不继续派下一个角色。
+- **角色缺失**：无法创建或绑定必需角色时，ledger 状态变为 `missing_role`。
+- **权限越界**：第一版只允许 `read-only` 与 `design-only` 派工。如果任务包含写文件、commit/push/PR/merge/deploy/真实 API，必须停下要求用户明确授权对应 package，并转入后续版本或现有 `dynamic-workflow`/worktree 写模式。
 - **状态漂移**：如果 registry 的 thread title 与读到的线程不一致，保留 `threadId` 为真，title 只作为提示字段。
 
 ## 9. 与 dynamic-workflow 的关系
@@ -278,7 +292,8 @@ next: <建议下一步；无则写 none>
 3. 协议解析：识别合法 `TEAM_ROUTER_CALLBACK`，拒绝缺 `taskId` 或不匹配的回传。
 4. 派工模板：必须含 `taskId`、`callbackMarker`、`permission`、`scope`、`stopWhen`。
 5. 线程适配层：用 mock 工具结果模拟创建、读取、发消息、缺回传。
-6. 安全边界：含 push/merge/deploy/真实 API 的目标必须要求显式授权，不得自动发送给执行线程。
+6. 安全边界：含写文件、push/merge/deploy/真实 API 的目标必须要求显式授权，不得自动发送给执行线程。
+7. thread 创建输入：registry 必须记录并复用 `projectId`、target environment 和 role title；缺失时要求重新发现或创建。
 
 若第一版只落 Skill 文档而不写 Python helper，则测试改为文档静态检查脚本：确认协议模板和必填字段存在。
 
@@ -289,6 +304,7 @@ next: <建议下一步；无则写 none>
 3. **线程过多后管理成本上升**：第一版限制三角色，不支持任意扩员。
 4. **长期日志可能泄露敏感上下文**：ledger 只存摘要、threadId、状态和证据路径，不存大段私密内容或完整工具输出。
 5. **用户授权边界容易被跨线程稀释**：每条派工消息都必须重申权限边界，子线程不能继承未写明的 publish/release 权限。
+6. **写权限声明可能被误解为沙箱**：MVP 不提供 `workspace-write` 派工字段；写入任务必须走单独授权和可验证 worktree/runner 边界。
 
 ## 12. 验收标准
 
