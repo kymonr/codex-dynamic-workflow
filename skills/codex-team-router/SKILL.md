@@ -20,6 +20,29 @@ Before doing any work, probe that these Codex app tools are available:
 
 If required tools are missing, stop with `tool_error`. This Skill is for Codex app thread tools; do not pretend it works in a plain CLI or Claude-only host.
 
+## Parent Thread Entry Flow
+
+The parent thread is the orchestrator. The role threads only reply in their own threads with marker blocks. The required live-tool order is:
+
+```text
+list_projects -> create_thread -> send_message_to_thread -> read_thread
+```
+
+Use this sequence for a new task:
+
+1. Probe the required tools and run `list_projects`; choose the current `projectId` and a project `target` with a local or worktree environment.
+2. Resolve `stateRoot` and load the project registry.
+3. Create or bind the three role threads. For missing roles, call `create_thread` with the role prompt, then persist the returned `threadId` with `start_team_task_with_adapter()` or the equivalent lower-level registry helpers.
+4. Send the manager plan request with `send_manager_plan_request_with_adapter()`. This records the send anchor for later `read_thread` recovery.
+5. Call `read_thread` for the manager thread, then pass the plain result through `read_manager_plan_with_adapter()` or `normalize_thread_read_messages()` plus the manager capture helper. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
+6. Send executor work with `send_executor_dispatch_with_adapter()`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`.
+7. Call `read_thread` for the executor thread and capture the callback with `read_executor_callback_with_adapter()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
+8. Send verifier work with `send_verifier_request_with_adapter()`. Forward the raw executor callback block; do not summarize it first.
+9. Call `read_thread` for the verifier thread and use `read_verifier_verdict_update_with_adapter()` so the parent gets both the updated ledger and the exact user-facing output payload.
+10. Parent thread rule: emit `update["userOutput"]` to the user. Do not replace it with an unstructured summary. If the task is not terminal, the helper returns a handoff with recovery anchors; if it is terminal with closeout, the helper returns a closeout.
+
+See `docs/runbooks/codex-team-router-live-orchestration.md` for a replayable live smoke procedure and fixture expectations.
+
 ## State Root
 
 Use a shared `stateRoot`, not the current worktree root:

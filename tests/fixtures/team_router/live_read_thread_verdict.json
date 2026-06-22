@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "thread": {
+    "id": "thread-verifier-fixture",
+    "hostId": "local",
+    "title": "Verify team router smoke",
+    "status": {"type": "idle"},
+    "cwd": "D:\\codex\\codex-dynamic-workflow",
+    "createdAt": 1767225540,
+    "updatedAt": 1767225600
+  },
+  "page": {
+    "order": "newest_first",
+    "limit": 5,
+    "nextCursor": null,
+    "hasMore": false
+  },
+  "turns": [
+    {
+      "id": "turn-verdict",
+      "status": "completed",
+      "error": null,
+      "startedAt": 1767225600,
+      "completedAt": 1767225606,
+      "durationMs": 5591,
+      "items": [
+        {
+          "type": "userMessage",
+          "id": "item-verify-request",
+          "content": [
+            {
+              "type": "text",
+              "text": "Smoke protocol request. Reply only with TEAM_ROUTER_VERDICT taskId=ctr-live-smoke-fixture-1."
+            }
+          ]
+        },
+        {
+          "type": "agentMessage",
+          "id": "item-verdict",
+          "text": "TEAM_ROUTER_VERDICT taskId=ctr-live-smoke-fixture-1\nresult: pass\nsummary: live verifier verdict observed\nrequiredChanges: none\nevidenceChecked: create_thread, send_message_to_thread, and read_thread smoke\nrisks: none",
+          "phase": "final_answer"
+        }
+      ]
+    }
+  ]
+}

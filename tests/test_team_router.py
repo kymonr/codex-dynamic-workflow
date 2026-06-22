@@ -1478,6 +1478,20 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         filtered = team_router._messages_after_anchor(messages, anchor)
         self.assertEqual([msg["messageId"] for msg in filtered], ["item-agent"])
 
+    def test_live_read_thread_fixture_matches_normalizer_contract(self):
+        path = ROOT / "tests" / "fixtures" / "team_router" / "live_read_thread_verdict.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+
+        messages = team_router.normalize_thread_read_messages(raw)
+        marker_messages = [
+            msg for msg in messages
+            if "TEAM_ROUTER_VERDICT taskId=ctr-live-smoke-fixture-1" in msg["text"]
+        ]
+
+        self.assertTrue(marker_messages)
+        self.assertEqual(marker_messages[-1]["messageId"], "item-verdict")
+        self.assertEqual(marker_messages[-1]["sentAt"], 1767225600)
+
     def test_adapter_send_wrappers_do_not_send_for_terminal_or_max_rework(self):
         adapter = FakeThreadAdapter()
         blocked = self._awaiting_plan_ledger()
@@ -1926,6 +1940,37 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         self.assertNotIn("workspace-write", text)
+
+    def test_skill_doc_contains_parent_thread_operating_flow(self):
+        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "## Parent Thread Entry Flow",
+            "list_projects -> create_thread -> send_message_to_thread -> read_thread",
+            "start_team_task_with_adapter()",
+            "send_manager_plan_request_with_adapter()",
+            "read_manager_plan_with_adapter()",
+            "send_executor_dispatch_with_adapter()",
+            "read_executor_callback_with_adapter()",
+            "send_verifier_request_with_adapter()",
+            "read_verifier_verdict_update_with_adapter()",
+            "emit `update[\"userOutput\"]`",
+        ):
+            self.assertIn(needle, text)
+
+    def test_live_orchestration_runbook_exists(self):
+        path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "# Codex Team Router Live Orchestration Runbook",
+            "create_thread",
+            "send_message_to_thread",
+            "read_thread",
+            "read_verifier_verdict_update_with_adapter()",
+            "tests/fixtures/team_router/live_read_thread_verdict.json",
+            "Team Router Closeout",
+        ):
+            self.assertIn(needle, text)
 
 
 if __name__ == "__main__":
