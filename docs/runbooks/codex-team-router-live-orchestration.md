@@ -22,17 +22,37 @@ Use `src/team_router.py` helpers to keep state deterministic around those host-t
 
 1. Call `list_projects` and select the target project.
 2. Resolve a shared `stateRoot` and `projectId`.
-3. Create missing role threads with `create_thread`:
+3. Choose exactly one role-thread creation path for the task. Do not mix the adapter-created and pre-created paths.
+
+### Adapter-created roles path
+
+Use this path when the parent host can pass Codex thread tool callables into Python.
+
+1. Call `start_team_task_with_adapter()`.
+2. Let the helper call `create_thread` through the adapter for manager/executor/verifier role threads.
+3. Let the helper persist registry role bindings and create the task ledger.
+4. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
+
+### Pre-created roles path
+
+Use this path when the parent thread manually calls Codex app tools or the host cannot pass tool callables into Python.
+
+1. Create missing role threads with `create_thread`:
    - manager prompt: role `manager`, wait for `TEAM_ROUTER_PLAN`.
    - executor prompt: role `executor`, wait for `TEAM_ROUTER_CALLBACK`.
    - verifier prompt: role `verifier`, wait for `TEAM_ROUTER_VERDICT`.
-4. Persist role bindings and create the task ledger with `start_team_task_with_adapter()` or the equivalent `create_team_task()` registry path when the host cannot pass tool callables into Python directly.
-5. Send the manager request with `send_message_to_thread`, record the send anchor, then call `read_thread` for the manager. Feed the read result through `normalize_thread_read_messages()` and `read_manager_plan_with_adapter()`/capture helpers.
-6. If the manager plan is valid and does not require escalation, send executor dispatch with `send_message_to_thread`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`.
-7. Call `read_thread` for the executor. Capture the final callback with `read_executor_callback_with_adapter()` or the equivalent capture helper.
-8. Send verifier request with `send_message_to_thread`. Forward the raw executor callback block.
-9. Call `read_thread` for the verifier and finish with `read_verifier_verdict_update_with_adapter()`.
-10. Emit `update["userOutput"]` exactly:
+2. Build a `roles` mapping with each returned thread id, title, creation time, and observation time.
+3. Persist role bindings and create the task ledger with `create_team_task()` or the equivalent lower-level registry helpers.
+4. Do not call `start_team_task_with_adapter()` after manually creating role threads.
+
+After either path, continue:
+
+1. Send the manager request with `send_message_to_thread`, record the send anchor, then call `read_thread` for the manager. Feed the read result through `normalize_thread_read_messages()` and `read_manager_plan_with_adapter()`/capture helpers.
+2. If the manager plan is valid and does not require escalation, send executor dispatch with `send_message_to_thread`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`.
+3. Call `read_thread` for the executor. Capture the final callback with `read_executor_callback_with_adapter()` or the equivalent capture helper.
+4. Send verifier request with `send_message_to_thread`. Forward the raw executor callback block.
+5. Call `read_thread` for the verifier and finish with `read_verifier_verdict_update_with_adapter()`.
+6. Emit `update["userOutput"]` exactly:
     - `Team Router Closeout` for terminal tasks with closeout.
     - `Team Router Handoff` for waiting, unreachable, interrupted, or non-terminal tasks.
 

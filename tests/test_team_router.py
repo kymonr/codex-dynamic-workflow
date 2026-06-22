@@ -1923,6 +1923,17 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
 
 class TestTeamRouterSkillDoc(unittest.TestCase):
+    def _section(self, text, heading):
+        start = text.index(heading)
+        candidates = [
+            text.find("\n## ", start + len(heading)),
+            text.find("\n### ", start + len(heading)),
+        ]
+        ends = [candidate for candidate in candidates if candidate != -1]
+        if not ends:
+            return text[start:]
+        return text[start:min(ends)]
+
     def test_skill_doc_contains_required_boundaries(self):
         path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
         text = path.read_text(encoding="utf-8")
@@ -1958,6 +1969,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
 
+    def test_skill_doc_separates_adapter_created_and_precreated_role_paths(self):
+        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
+        text = path.read_text(encoding="utf-8")
+
+        adapter_created = self._section(text, "### Adapter-created roles path")
+        pre_created = self._section(text, "### Pre-created roles path")
+
+        self.assertIn("start_team_task_with_adapter()", adapter_created)
+        self.assertIn("Do not pre-call `create_thread`", adapter_created)
+        self.assertIn("create_team_task()", pre_created)
+        self.assertIn(
+            "Do not call `start_team_task_with_adapter()` after manually creating role threads",
+            pre_created,
+        )
+
     def test_live_orchestration_runbook_exists(self):
         path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
         text = path.read_text(encoding="utf-8")
@@ -1971,6 +1997,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Team Router Closeout",
         ):
             self.assertIn(needle, text)
+
+    def test_live_orchestration_runbook_separates_adapter_created_and_precreated_role_paths(self):
+        path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        text = path.read_text(encoding="utf-8")
+
+        adapter_created = self._section(text, "### Adapter-created roles path")
+        pre_created = self._section(text, "### Pre-created roles path")
+
+        self.assertIn("start_team_task_with_adapter()", adapter_created)
+        self.assertIn("Do not pre-call `create_thread`", adapter_created)
+        self.assertIn("create_team_task()", pre_created)
+        self.assertIn(
+            "Do not call `start_team_task_with_adapter()` after manually creating role threads",
+            pre_created,
+        )
 
 
 if __name__ == "__main__":
