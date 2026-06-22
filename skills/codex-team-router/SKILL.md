@@ -114,6 +114,16 @@ The ledger stores read recovery anchors in three places:
 - `verification.request.searchAnchor` for verifier `TEAM_ROUTER_VERDICT` reads.
 
 Use `recovery_read_request()` to derive the role thread id and `searchAnchor` from the ledger plus registry before calling `read_thread`. Do not infer recovery state from the current conversation alone.
+
+The adapter-facing entrypoints are:
+
+- `start_team_task_with_adapter()` to create manager/executor/verifier role threads and write the initial task ledger.
+- `send_manager_plan_request_with_adapter()` and `read_manager_plan_with_adapter()` for manager planning.
+- `send_executor_dispatch_with_adapter()` and `read_executor_callback_with_adapter()` for executor work and callback capture.
+- `send_verifier_request_with_adapter()` and `read_verifier_verdict_with_adapter()` for verification and closeout.
+- `format_closeout_for_user()` and `format_handoff_for_user()` for user-visible summaries.
+
+Adapter functions must accept plain keyword arguments matching the Codex app tool names: `create_thread(prompt=..., target=...)`, `send_message_to_thread(threadId=..., prompt=...)`, and `read_thread(threadId=...)`. Normalize send/read tool results through `thread_send_anchor()` and `normalize_thread_read_messages()` before updating ledger state.
 ## State Machine
 
 ```text

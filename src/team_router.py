@@ -502,6 +502,243 @@ def create_team_task(state_root: str | Path,
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
+def _adapter_call(thread_adapter: Any, method_name: str, **kwargs: Any) -> Any:
+    if isinstance(thread_adapter, Mapping):
+        method = thread_adapter.get(method_name)
+    else:
+        method = getattr(thread_adapter, method_name, None)
+    if not callable(method):
+        raise StateStoreError("thread adapter missing callable: %s" % method_name)
+    return method(**kwargs)
+
+
+def _optional_nonempty_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _first_str(mapping: Mapping[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = _optional_nonempty_str(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _candidate_mappings(result: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(result, Mapping):
+        return []
+    candidates: list[Mapping[str, Any]] = [result]
+    for key in ("message", "data", "result", "thread"):
+        nested = result.get(key)
+        if isinstance(nested, Mapping):
+            candidates.append(nested)
+    return candidates
+
+
+def thread_send_anchor(send_result: Any, *, fallback_sent_at: str) -> dict[str, Any]:
+    sent_at_fallback = _required_str(fallback_sent_at, "fallbackSentAt")
+    message_id: str | None = None
+    sent_at: str | None = None
+    for candidate in _candidate_mappings(send_result):
+        if message_id is None:
+            message_id = _first_str(candidate, ("messageId", "message_id", "id"))
+        if sent_at is None:
+            sent_at = _first_str(candidate, (
+                "sentAt", "sent_at", "createdAt", "created_at", "timestamp",
+            ))
+    return {"messageId": message_id, "sentAt": sent_at or sent_at_fallback}
+
+
+def _content_blocks_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, Mapping):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, Mapping):
+        text = value.get("text") or value.get("content")
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _normalize_thread_message(message: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(message)
+    message_id = _first_str(message, ("messageId", "message_id", "id", "turnId"))
+    sent_at = _first_str(message, (
+        "sentAt", "sent_at", "createdAt", "created_at", "timestamp",
+    ))
+    text = _first_str(message, ("text",)) or ""
+    if not text:
+        for key in ("content", "output", "response"):
+            text = _content_blocks_text(message.get(key))
+            if text:
+                break
+    if not text:
+        text = _first_str(message, ("summary",)) or ""
+    normalized["messageId"] = message_id
+    if sent_at is not None:
+        normalized["sentAt"] = sent_at
+    normalized["text"] = text
+    return normalized
+
+
+def _read_messages_from_mapping(read_result: Mapping[str, Any]) -> Any:
+    for key in ("messages", "turns", "items"):
+        value = read_result.get(key)
+        if value is not None:
+            return value
+    for key in ("thread", "data", "result"):
+        nested = read_result.get(key)
+        if isinstance(nested, Mapping):
+            value = _read_messages_from_mapping(nested)
+            if value is not None:
+                return value
+    return None
+
+
+def _turn_item_messages(turns: list[Any]) -> list[dict[str, Any]] | None:
+    out: list[dict[str, Any]] = []
+    saw_turn_items = False
+    for turn_index, turn in enumerate(turns):
+        if not isinstance(turn, Mapping):
+            return None
+        items = turn.get("items")
+        if not isinstance(items, list):
+            continue
+        saw_turn_items = True
+        turn_time = _first_str(turn, (
+            "sentAt", "sent_at", "createdAt", "created_at",
+            "startedAt", "started_at", "timestamp",
+        ))
+        for item_index, item in enumerate(items):
+            if not isinstance(item, Mapping):
+                raise StateStoreError(
+                    "read_thread turn %d item %d must be a JSON object"
+                    % (turn_index, item_index)
+                )
+            message = dict(item)
+            if turn_time is not None and not _first_str(message, (
+                "sentAt", "sent_at", "createdAt", "created_at", "timestamp",
+            )):
+                message["sentAt"] = turn_time
+            out.append(message)
+    return out if saw_turn_items else None
+
+
+def normalize_thread_read_messages(read_result: Any) -> list[dict[str, Any]]:
+    if isinstance(read_result, list):
+        raw_messages = _turn_item_messages(read_result) or read_result
+    elif isinstance(read_result, Mapping):
+        raw_messages = _read_messages_from_mapping(read_result)
+        if isinstance(raw_messages, list):
+            raw_messages = _turn_item_messages(raw_messages) or raw_messages
+    else:
+        raise StateStoreError("read_thread result must be a JSON object or array")
+    if not isinstance(raw_messages, list):
+        raise StateStoreError("read_thread result does not contain a messages array")
+    out: list[dict[str, Any]] = []
+    for index, message in enumerate(raw_messages):
+        if not isinstance(message, Mapping):
+            raise StateStoreError("read_thread message %d must be a JSON object" % index)
+        out.append(_normalize_thread_message(message))
+    return out
+
+
+def _thread_id_from_create_result(create_result: Any, role: str) -> str:
+    for candidate in _candidate_mappings(create_result):
+        thread_id = _first_str(candidate, ("threadId", "thread_id", "id"))
+        if thread_id is not None:
+            return thread_id
+    raise StateStoreError("create_thread result missing thread id for role: %s" % role)
+
+
+def _role_thread_id(state_root: str | Path, project_id: str, role: str) -> str:
+    registry = load_registry(state_root, project_id)
+    roles = _project_roles_from_registry(registry, project_id)
+    role_record = _as_mapping(roles.get(role), "registry.roles.%s" % role, default_empty=False)
+    return _required_str(role_record.get("threadId"), "registry.roles.%s.threadId" % role)
+
+
+def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
+    _validate_task_id(project_id)
+    _validate_role(role)
+    _required_str(objective, "objective")
+    return "\n".join((
+        "Codex Team Router role thread",
+        "projectId: %s" % project_id,
+        "role: %s" % role,
+        "objective: %s" % objective,
+        "Wait for TEAM_ROUTER_* protocol messages before acting.",
+    ))
+
+
+def create_role_threads_with_adapter(thread_adapter: Any,
+                                     *,
+                                     project_id: str,
+                                     objective: str,
+                                     target: Mapping[str, Any],
+                                     observed_at: str) -> dict[str, dict[str, Any]]:
+    roles: dict[str, dict[str, Any]] = {}
+    for role in sorted(ROLE_NAMES):
+        prompt = make_role_thread_prompt(project_id, role, objective)
+        result = _adapter_call(
+            thread_adapter,
+            "create_thread",
+            prompt=prompt,
+            target=dict(target),
+        )
+        thread_id = _thread_id_from_create_result(result, role)
+        title = "TeamRouter %s - %s" % (role, project_id)
+        for candidate in _candidate_mappings(result):
+            found_title = _optional_nonempty_str(candidate.get("title"))
+            if found_title:
+                title = found_title
+                break
+        roles[role] = {
+            "threadId": thread_id,
+            "title": title,
+            "createdAt": observed_at,
+            "lastObservedAt": observed_at,
+        }
+    return roles
+
+
+def start_team_task_with_adapter(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 *,
+                                 objective: str,
+                                 project_local_path: str | Path,
+                                 thread_adapter: Any,
+                                 target: Mapping[str, Any],
+                                 observed_at: str,
+                                 max_rework: int = 3) -> dict[str, Any]:
+    roles = create_role_threads_with_adapter(
+        thread_adapter,
+        project_id=project_id,
+        objective=objective,
+        target=target,
+        observed_at=observed_at,
+    )
+    return create_team_task(
+        state_root,
+        project_id,
+        task_id,
+        objective=objective,
+        project_local_path=project_local_path,
+        roles=roles,
+        observed_at=observed_at,
+        max_rework=max_rework,
+    )
+
 def make_plan_request_message(task_id: str, objective: str, permission: str) -> str:
     _validate_task_id(task_id)
     _required_str(objective, "objective")
@@ -881,6 +1118,270 @@ def capture_verifier_verdict_from_read(state_root: str | Path,
     ledger["closeout"] = _make_closeout(ledger, msg.fields, captured_at)
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
+
+def _read_thread_messages_with_adapter(thread_adapter: Any,
+                                       thread_id: str,
+                                       *,
+                                       turn_limit: int | None = None) -> list[dict[str, Any]]:
+    kwargs: dict[str, Any] = {"threadId": thread_id}
+    if turn_limit is not None:
+        kwargs["turnLimit"] = turn_limit
+    result = _adapter_call(thread_adapter, "read_thread", **kwargs)
+    return normalize_thread_read_messages(result)
+
+
+def send_manager_plan_request_with_adapter(state_root: str | Path,
+                                           project_id: str,
+                                           task_id: str,
+                                           *,
+                                           thread_adapter: Any,
+                                           permission: str,
+                                           sent_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "send manager plan request for")
+    manager_thread_id = _role_thread_id(state_root, project_id, "manager")
+    prompt = make_plan_request_message(task_id, ledger["objective"], permission)
+    result = _adapter_call(
+        thread_adapter,
+        "send_message_to_thread",
+        threadId=manager_thread_id,
+        prompt=prompt,
+    )
+    anchor = thread_send_anchor(result, fallback_sent_at=sent_at)
+    return record_plan_request_sent(
+        state_root,
+        project_id,
+        task_id,
+        manager_thread_id=manager_thread_id,
+        sent_at=anchor["sentAt"],
+        message_id=anchor["messageId"],
+    )
+
+
+def read_manager_plan_with_adapter(state_root: str | Path,
+                                   project_id: str,
+                                   task_id: str,
+                                   *,
+                                   thread_adapter: Any,
+                                   captured_at: str,
+                                   turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    registry = load_registry(state_root, project_id)
+    request = recovery_read_request(ledger, registry, "manager")
+    messages = _read_thread_messages_with_adapter(
+        thread_adapter,
+        request["threadId"],
+        turn_limit=turn_limit,
+    )
+    return capture_manager_plan_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+    )
+
+
+def send_executor_dispatch_with_adapter(state_root: str | Path,
+                                        project_id: str,
+                                        task_id: str,
+                                        *,
+                                        thread_adapter: Any,
+                                        permission: str,
+                                        sent_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "send executor dispatch for")
+    plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
+    plan_fields = plan.get("fields") if isinstance(plan, Mapping) else None
+    if not isinstance(plan_fields, Mapping):
+        raise StateStoreError("missing manager plan fields for task: %s" % task_id)
+    executor_thread_id = _role_thread_id(state_root, project_id, "executor")
+    provisional_anchor = {"messageId": None, "sentAt": sent_at}
+    prompt = make_executor_dispatch_message(
+        task_id,
+        plan_fields,
+        permission,
+        provisional_anchor,
+    )
+    result = _adapter_call(
+        thread_adapter,
+        "send_message_to_thread",
+        threadId=executor_thread_id,
+        prompt=prompt,
+    )
+    anchor = thread_send_anchor(result, fallback_sent_at=sent_at)
+    return record_executor_dispatch_sent(
+        state_root,
+        project_id,
+        task_id,
+        executor_thread_id=executor_thread_id,
+        sent_at=anchor["sentAt"],
+        message_id=anchor["messageId"],
+    )
+
+
+def read_executor_callback_with_adapter(state_root: str | Path,
+                                        project_id: str,
+                                        task_id: str,
+                                        *,
+                                        thread_adapter: Any,
+                                        captured_at: str,
+                                        turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    registry = load_registry(state_root, project_id)
+    request = recovery_read_request(ledger, registry, "executor")
+    messages = _read_thread_messages_with_adapter(
+        thread_adapter,
+        request["threadId"],
+        turn_limit=turn_limit,
+    )
+    return capture_executor_callback_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+    )
+
+
+def send_verifier_request_with_adapter(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       *,
+                                       thread_adapter: Any,
+                                       permission: str,
+                                       sent_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "send verifier request for")
+    callback_observation = ledger["observations"][-1] if ledger["observations"] else None
+    if (
+        not isinstance(callback_observation, Mapping)
+        or callback_observation.get("role") != "executor"
+        or callback_observation.get("type") != "callback_raw"
+    ):
+        raise StateStoreError("missing latest executor callback observation for task: %s" % task_id)
+    callback_content = _required_str(callback_observation.get("content"), "executorCallback.content")
+    plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
+    plan_fields = plan.get("fields") if isinstance(plan, Mapping) else {}
+    scope = str(plan_fields.get("scope") or "unknown")
+    verifier_thread_id = _role_thread_id(state_root, project_id, "verifier")
+    prompt = make_verifier_request_message(
+        task_id,
+        callback_content,
+        permission,
+        scope,
+    )
+    result = _adapter_call(
+        thread_adapter,
+        "send_message_to_thread",
+        threadId=verifier_thread_id,
+        prompt=prompt,
+    )
+    anchor = thread_send_anchor(result, fallback_sent_at=sent_at)
+    return record_verifier_request_sent(
+        state_root,
+        project_id,
+        task_id,
+        verifier_thread_id=verifier_thread_id,
+        sent_at=anchor["sentAt"],
+        message_id=anchor["messageId"],
+    )
+
+
+def read_verifier_verdict_with_adapter(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       *,
+                                       thread_adapter: Any,
+                                       captured_at: str,
+                                       turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    registry = load_registry(state_root, project_id)
+    request = recovery_read_request(ledger, registry, "verifier")
+    messages = _read_thread_messages_with_adapter(
+        thread_adapter,
+        request["threadId"],
+        turn_limit=turn_limit,
+    )
+    return capture_verifier_verdict_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+    )
+
+
+def _role_thread_lines(registry: Mapping[str, Any], project_id: str) -> list[str]:
+    roles = _project_roles_from_registry(registry, project_id)
+    lines = []
+    for role in ("manager", "executor", "verifier"):
+        record = roles.get(role) if isinstance(roles.get(role), Mapping) else {}
+        thread_id = record.get("threadId") if isinstance(record, Mapping) else None
+        lines.append("%s: %s" % (role, thread_id or "<missing>"))
+    return lines
+
+
+def _anchor_lines(ledger: Mapping[str, Any]) -> list[str]:
+    lines: list[str] = []
+    plan_request = ledger.get("planRequest") if isinstance(ledger.get("planRequest"), Mapping) else None
+    if plan_request is not None:
+        lines.append("manager.planRequest: %s" % json.dumps(plan_request.get("searchAnchor"), ensure_ascii=False, sort_keys=True))
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    if dispatches:
+        latest = dispatches[-1]
+        if isinstance(latest, Mapping):
+            lines.append("executor.dispatch[%s]: %s" % (
+                latest.get("attempt", len(dispatches)),
+                json.dumps(latest.get("searchAnchor"), ensure_ascii=False, sort_keys=True),
+            ))
+    verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+    request = verification.get("request") if isinstance(verification, Mapping) else None
+    if isinstance(request, Mapping):
+        lines.append("verification.request: %s" % json.dumps(request.get("searchAnchor"), ensure_ascii=False, sort_keys=True))
+    return lines
+
+
+def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
+    project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
+    closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else {}
+    lines = [
+        "Team Router Closeout",
+        "taskId: %s" % ledger.get("taskId"),
+        "status: %s" % ledger.get("status"),
+        "threads:",
+    ]
+    lines.extend("  " + line for line in _role_thread_lines(registry, project_id))
+    lines.extend((
+        "summary: %s" % closeout.get("summary", ""),
+        "evidenceChecked: %s" % closeout.get("evidenceChecked", ""),
+        "risks: %s" % closeout.get("risks", ""),
+        "nextAction: %s" % closeout.get("nextAction", ""),
+    ))
+    return "\n".join(lines)
+
+
+def format_handoff_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
+    project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
+    lines = [
+        "Team Router Handoff",
+        "taskId: %s" % ledger.get("taskId"),
+        "projectId: %s" % project_id,
+        "status: %s" % ledger.get("status"),
+        "stateRoot: %s" % ledger.get("stateRoot"),
+        "threads:",
+    ]
+    lines.extend("  " + line for line in _role_thread_lines(registry, project_id))
+    lines.append("read_thread anchors:")
+    anchor_lines = _anchor_lines(ledger)
+    lines.extend("  " + line for line in (anchor_lines or ["<none>"]))
+    closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else {}
+    lines.extend((
+        "summary: %s" % closeout.get("summary", ""),
+        "risks: %s" % closeout.get("risks", ""),
+        "nextAction: %s" % closeout.get("nextAction", ""),
+    ))
+    return "\n".join(lines)
 
 def _parse_thread_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():

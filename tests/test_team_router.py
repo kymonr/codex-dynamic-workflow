@@ -9,6 +9,51 @@ from helpers import ROOT
 import team_router
 
 
+class FakeThreadAdapter:
+    def __init__(self):
+        self.created = []
+        self.sent = []
+        self.messages = {}
+        self._thread_count = 0
+        self._message_count = 0
+
+    def create_thread(self, **kwargs):
+        prompt = kwargs["prompt"]
+        role = "role"
+        for candidate in ("manager", "executor", "verifier"):
+            if candidate in prompt:
+                role = candidate
+                break
+        self._thread_count += 1
+        thread_id = "thread-%s" % role
+        self.messages[thread_id] = []
+        record = {"threadId": thread_id, "title": "TeamRouter %s" % role}
+        self.created.append({"kwargs": kwargs, "result": record})
+        return record
+
+    def send_message_to_thread(self, **kwargs):
+        self._message_count += 1
+        message_id = "msg-%02d" % self._message_count
+        sent_at = "2026-06-22T20:%02d:00+08:00" % self._message_count
+        message = {
+            "messageId": message_id,
+            "sentAt": sent_at,
+            "text": kwargs["prompt"],
+        }
+        self.messages.setdefault(kwargs["threadId"], []).append(message)
+        self.sent.append({"kwargs": kwargs, "result": message})
+        return {"message": {"id": message_id, "createdAt": sent_at}}
+
+    def read_thread(self, **kwargs):
+        return {"thread": {"messages": list(self.messages.get(kwargs["threadId"], []))}}
+
+    def append_reply(self, thread_id, text, *, message_id, sent_at):
+        self.messages.setdefault(thread_id, []).append({
+            "messageId": message_id,
+            "sentAt": sent_at,
+            "text": text,
+        })
+
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
@@ -1218,6 +1263,466 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(read_request["threadId"], "thread-manager")
         self.assertEqual(read_request["searchAnchor"]["messageId"], "msg-plan")
+
+    def test_thread_send_anchor_normalizes_common_tool_shapes(self):
+        direct = team_router.thread_send_anchor(
+            {"messageId": "msg-direct", "sentAt": "2026-06-22T20:01:00+08:00"},
+            fallback_sent_at="fallback",
+        )
+        nested = team_router.thread_send_anchor(
+            {"message": {"id": "msg-nested", "createdAt": "2026-06-22T20:02:00+08:00"}},
+            fallback_sent_at="fallback",
+        )
+        fallback = team_router.thread_send_anchor({}, fallback_sent_at="2026-06-22T20:03:00+08:00")
+
+        self.assertEqual(direct, {"messageId": "msg-direct", "sentAt": "2026-06-22T20:01:00+08:00"})
+        self.assertEqual(nested, {"messageId": "msg-nested", "sentAt": "2026-06-22T20:02:00+08:00"})
+        self.assertEqual(fallback, {"messageId": None, "sentAt": "2026-06-22T20:03:00+08:00"})
+
+    def test_normalize_thread_read_messages_accepts_lists_nested_messages_and_turns(self):
+        raw_list = team_router.normalize_thread_read_messages([
+            {"id": "m1", "createdAt": "2026-06-22T20:01:00+08:00", "content": "hello"},
+        ])
+        nested = team_router.normalize_thread_read_messages({
+            "thread": {"messages": [
+                {"message_id": "m2", "timestamp": "2026-06-22T20:02:00+08:00", "summary": "nested"},
+            ]},
+        })
+        turns = team_router.normalize_thread_read_messages({
+            "turns": [
+                {"id": "turn-1", "createdAt": "2026-06-22T20:03:00+08:00", "summary": "turn summary"},
+            ],
+        })
+
+        self.assertEqual(raw_list[0]["messageId"], "m1")
+        self.assertEqual(raw_list[0]["text"], "hello")
+        self.assertEqual(nested[0]["messageId"], "m2")
+        self.assertEqual(nested[0]["text"], "nested")
+        self.assertEqual(turns[0]["messageId"], "turn-1")
+        self.assertEqual(turns[0]["text"], "turn summary")
+
+    def test_normalize_thread_read_messages_unwraps_result_and_content_blocks(self):
+        messages = team_router.normalize_thread_read_messages({
+            "result": {
+                "messages": [
+                    {
+                        "id": "m1",
+                        "createdAt": "2026-06-22T20:03:00+08:00",
+                        "content": [
+                            {"type": "text", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3"},
+                            {"type": "text", "text": "status: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: none"},
+                        ],
+                    },
+                ],
+            },
+        })
+
+        self.assertEqual(messages[0]["messageId"], "m1")
+        self.assertIn("TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", messages[0]["text"])
+        self.assertIn("summary: ok", messages[0]["text"])
+
+    def test_normalize_thread_read_messages_prefers_content_blocks_over_summary(self):
+        messages = team_router.normalize_thread_read_messages({
+            "messages": [
+                {
+                    "id": "m1",
+                    "summary": "model summary without protocol marker",
+                    "content": [
+                        {"type": "text", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3"},
+                        {"type": "text", "text": "status: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: none"},
+                    ],
+                },
+            ],
+        })
+
+        self.assertIn("TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", messages[0]["text"])
+        self.assertIn("summary: ok", messages[0]["text"])
+        self.assertNotEqual(messages[0]["text"], "model summary without protocol marker")
+
+    def test_normalize_thread_read_messages_flattens_codex_turn_items(self):
+        messages = team_router.normalize_thread_read_messages({
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": "2026-06-22T20:03:00+08:00",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "item-user",
+                            "content": [{"type": "text", "text": "request"}],
+                        },
+                        {
+                            "type": "agentMessage",
+                            "id": "item-agent",
+                            "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: none",
+                        },
+                    ],
+                },
+            ],
+        })
+
+        self.assertEqual([msg["messageId"] for msg in messages], ["item-user", "item-agent"])
+        self.assertEqual(messages[0]["sentAt"], "2026-06-22T20:03:00+08:00")
+        self.assertIn("TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", messages[1]["text"])
+        self.assertIn("summary: ok", messages[1]["text"])
+
+    def test_adapter_send_wrappers_do_not_send_for_terminal_or_max_rework(self):
+        adapter = FakeThreadAdapter()
+        blocked = self._awaiting_plan_ledger()
+        blocked["status"] = "blocked"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, blocked)
+
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.send_manager_plan_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:09:00+08:00",
+            )
+        self.assertEqual(adapter.sent, [])
+
+        self.tearDown()
+        self.setUp()
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger(max_rework=0)
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        needs_rework = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: needs_rework\nsummary: missing\nrequiredChanges: fix docs\nevidenceChecked: callback\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        self.assertEqual(needs_rework["status"], "blocked")
+
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.send_executor_dispatch_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:08:00+08:00",
+            )
+        self.assertEqual(adapter.sent, [])
+
+    def test_create_role_threads_uses_nested_title_from_create_result(self):
+        class NestedTitleAdapter(FakeThreadAdapter):
+            def create_thread(self, **kwargs):
+                prompt = kwargs["prompt"]
+                role = "role"
+                for candidate in ("manager", "executor", "verifier"):
+                    if candidate in prompt:
+                        role = candidate
+                        break
+                thread_id = "thread-%s" % role
+                self.messages[thread_id] = []
+                return {"thread": {"id": thread_id, "title": "Nested %s title" % role}}
+
+        roles = team_router.create_role_threads_with_adapter(
+            NestedTitleAdapter(),
+            project_id=self.project_id,
+            objective="inspect docs",
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(roles["manager"]["title"], "Nested manager title")
+        self.assertEqual(roles["executor"]["title"], "Nested executor title")
+        self.assertEqual(roles["verifier"]["title"], "Nested verifier title")
+
+    def test_verifier_request_requires_latest_executor_callback_observation(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        ledger["observations"].append(team_router.make_observation(
+            "system_event",
+            "system",
+            "thread-system",
+            "2026-06-22T20:04:30+08:00",
+            "manual note after executor callback",
+            {"status": "not-callback"},
+        ))
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.send_verifier_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:05:00+08:00",
+            )
+        self.assertEqual(adapter.sent, [])
+
+    def test_fake_thread_adapter_runs_manager_executor_verifier_smoke(self):
+        adapter = FakeThreadAdapter()
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+        self.assertEqual(ledger["status"], "roles_ready")
+
+        awaiting_plan = team_router.send_manager_plan_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:01:00+08:00",
+        )
+        manager_thread = awaiting_plan["planRequest"]["threadId"]
+        adapter.append_reply(
+            manager_thread,
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: src\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect src\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+        planned = team_router.read_manager_plan_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+        self.assertEqual(planned["status"], "planned")
+
+        awaiting_callback = team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        executor_thread = awaiting_callback["dispatches"][-1]["threadId"]
+        adapter.append_reply(
+            executor_thread,
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: ok\nevidence: fake adapter\nrisks: none\nnext: none" % self.task_id,
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+        verifying = team_router.read_executor_callback_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        self.assertEqual(verifying["status"], "verifying")
+
+        verifying = team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+        verifier_thread = verifying["verification"]["request"]["threadId"]
+        adapter.append_reply(
+            verifier_thread,
+            "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: fake adapter\nrisks: none" % self.task_id,
+            message_id="msg-verdict",
+            sent_at="2026-06-22T20:06:00+08:00",
+        )
+        done = team_router.read_verifier_verdict_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(done["status"], "done")
+        self.assertEqual(done["closeout"]["summary"], "ok")
+        self.assertEqual(len(adapter.created), 3)
+        self.assertEqual(len(adapter.sent), 3)
+
+    def test_fake_thread_adapter_runs_rework_cycle_smoke(self):
+        adapter = FakeThreadAdapter()
+        team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+        awaiting_plan = team_router.send_manager_plan_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:01:00+08:00",
+        )
+        manager_thread = awaiting_plan["planRequest"]["threadId"]
+        adapter.append_reply(
+            manager_thread,
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: src\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect src\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+        team_router.read_manager_plan_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        first_dispatch = team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        executor_thread = first_dispatch["dispatches"][-1]["threadId"]
+        adapter.append_reply(
+            executor_thread,
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: first attempt\nevidence: fake adapter\nrisks: none\nnext: verifier" % self.task_id,
+            message_id="msg-callback-1",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+        team_router.read_executor_callback_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        first_verify = team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+        verifier_thread = first_verify["verification"]["request"]["threadId"]
+        adapter.append_reply(
+            verifier_thread,
+            "TEAM_ROUTER_VERDICT taskId=%s\nresult: needs_rework\nsummary: missing evidence\nrequiredChanges: add evidence\nevidenceChecked: fake adapter\nrisks: none" % self.task_id,
+            message_id="msg-verdict-1",
+            sent_at="2026-06-22T20:06:00+08:00",
+        )
+        needs_rework = team_router.read_verifier_verdict_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        self.assertEqual(needs_rework["status"], "needs_rework")
+
+        second_dispatch = team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:08:00+08:00",
+        )
+        self.assertEqual(second_dispatch["reworkCount"], 1)
+        self.assertIsNone(second_dispatch["closeout"])
+        adapter.append_reply(
+            executor_thread,
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: second attempt\nevidence: added evidence\nrisks: none\nnext: none" % self.task_id,
+            message_id="msg-callback-2",
+            sent_at="2026-06-22T20:09:00+08:00",
+        )
+        team_router.read_executor_callback_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:10:00+08:00",
+        )
+        second_verify = team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:11:00+08:00",
+        )
+        self.assertEqual(second_verify["verification"]["request"]["threadId"], verifier_thread)
+        adapter.append_reply(
+            verifier_thread,
+            "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: fake adapter\nrisks: none" % self.task_id,
+            message_id="msg-verdict-2",
+            sent_at="2026-06-22T20:12:00+08:00",
+        )
+        done = team_router.read_verifier_verdict_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:13:00+08:00",
+        )
+
+        self.assertEqual(done["status"], "done")
+        self.assertEqual(done["reworkCount"], 1)
+        self.assertEqual(len(done["dispatches"]), 2)
+        self.assertEqual(len(adapter.sent), 5)
+
+    def test_closeout_and_handoff_user_formats_include_threads_and_anchors(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        registry = team_router.load_registry(self.root, self.project_id)
+
+        closeout = team_router.format_closeout_for_user(done, registry)
+        handoff = team_router.format_handoff_for_user(done, registry)
+
+        self.assertIn("taskId: ctr-20260622-160000-a7f3", closeout)
+        self.assertIn("status: done", closeout)
+        self.assertIn("manager: thread-manager", closeout)
+        self.assertIn("summary: ok", closeout)
+        self.assertIn("read_thread anchors", handoff)
+        self.assertIn("msg-verify", handoff)
+        self.assertIn("verification", handoff)
+
+
 class TestTeamRouterSkillDoc(unittest.TestCase):
     def test_skill_doc_contains_required_boundaries(self):
         path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
