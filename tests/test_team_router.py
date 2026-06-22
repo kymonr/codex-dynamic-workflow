@@ -2,6 +2,7 @@
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from helpers import ROOT
@@ -151,10 +152,21 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
             )
 
     def test_state_root_rejects_codex_tmp(self):
+        with tempfile.TemporaryDirectory() as td:
+            forbidden_root = Path(td) / ".codex-tmp" / "team-router"
+            project_root = Path(td) / "repo"
+
+            with self.assertRaises(team_router.StateStoreError):
+                team_router.resolve_state_root(
+                    project_root,
+                    explicit_state_root=forbidden_root,
+                )
+
+    def test_state_root_rejects_windows_codex_tmp(self):
         with self.assertRaises(team_router.StateStoreError):
             team_router.resolve_state_root(
-                "D:\\codex\\repo",
-                explicit_state_root="D:\\.codex-tmp\\team-router",
+                r"D:\codex\repo",
+                explicit_state_root=r"D:\.codex-tmp\team-router",
             )
 
     def test_read_window_without_time_or_message_id_is_unreachable(self):
@@ -252,6 +264,61 @@ class TestTeamRouterJsonState(unittest.TestCase):
                 "awaiting_callback",
             )
 
+    def test_missing_task_ledger_raises_state_store_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "ctr-20260622-160000-a7f3"
+
+            with self.assertRaises(team_router.StateStoreError) as caught:
+                team_router.load_task_ledger(root, project_id, task_id)
+
+            self.assertIn("missing JSON file", str(caught.exception))
+
+    def test_new_task_ledger_rejects_invalid_inputs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "ctr-20260622-160000-a7f3"
+
+            invalid_calls = [
+                {
+                    "objective": "",
+                    "project_local_path": ".",
+                    "max_rework": 3,
+                    "message": "objective must be a non-empty string",
+                },
+                {
+                    "objective": object(),
+                    "project_local_path": ".",
+                    "max_rework": 3,
+                    "message": "objective must be a non-empty string",
+                },
+                {
+                    "objective": "inspect docs",
+                    "project_local_path": ".",
+                    "max_rework": True,
+                    "message": "maxRework must be a non-negative integer",
+                },
+                {
+                    "objective": "inspect docs",
+                    "project_local_path": ".",
+                    "max_rework": -1,
+                    "message": "maxRework must be a non-negative integer",
+                },
+            ]
+            for kwargs in invalid_calls:
+                message = kwargs.pop("message")
+                with self.subTest(message=message):
+                    with self.assertRaises(team_router.StateStoreError) as caught:
+                        team_router.new_task_ledger(
+                            root,
+                            project_id,
+                            task_id,
+                            **kwargs,
+                        )
+                    self.assertIn(message, str(caught.exception))
+
     def test_bad_registry_json_raises_state_store_error(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "state"
@@ -264,6 +331,32 @@ class TestTeamRouterJsonState(unittest.TestCase):
                 team_router.load_registry(root, project_id)
 
             self.assertIn("invalid JSON", str(caught.exception))
+
+    def test_bad_task_ledger_json_raises_state_store_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "ctr-20260622-160000-a7f3"
+            path = team_router.task_path(root, project_id, task_id)
+            path.parent.mkdir(parents=True)
+            path.write_text("{bad json", encoding="utf-8")
+
+            with self.assertRaises(team_router.StateStoreError) as caught:
+                team_router.load_task_ledger(root, project_id, task_id)
+
+            self.assertIn("invalid JSON", str(caught.exception))
+
+    def test_task_ledger_read_permission_error_raises_state_store_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "ctr-20260622-160000-a7f3"
+
+            with mock.patch.object(Path, "open", side_effect=PermissionError("denied")):
+                with self.assertRaises(team_router.StateStoreError) as caught:
+                    team_router.load_task_ledger(root, project_id, task_id)
+
+            self.assertIn("cannot read JSON file", str(caught.exception))
 
     def test_atomic_save_leaves_no_temp_file(self):
         with tempfile.TemporaryDirectory() as td:

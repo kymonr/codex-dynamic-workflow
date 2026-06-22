@@ -248,6 +248,7 @@ def task_path(state_root: str | Path, project_id: str, task_id: str) -> Path:
         / "projects" / project_id / "tasks" / (task_id + ".json")
     )
 
+
 def _as_mapping(value: Any, field: str, *, default_empty: bool = True) -> dict[str, Any]:
     if value is None and default_empty:
         return {}
@@ -278,6 +279,8 @@ def _read_json_object(path: Path) -> dict[str, Any]:
             data = json.load(handle)
     except FileNotFoundError as exc:
         raise StateStoreError("missing JSON file: %s" % path) from exc
+    except PermissionError as exc:
+        raise StateStoreError("cannot read JSON file: %s: %s" % (path, exc)) from exc
     except json.JSONDecodeError as exc:
         raise StateStoreError("invalid JSON in %s: %s" % (path, exc.msg)) from exc
     return _as_mapping(data, str(path), default_empty=False)
