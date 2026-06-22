@@ -10,3 +10,6 @@ __pycache__/
 
 # codegraph 索引（不进 git）
 .codegraph/
+
+# Superpowers 本地流程状态（不进 git）
+.superpowers/
