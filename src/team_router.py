@@ -9,12 +9,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import json
+import os
 import re
+import uuid
 from typing import Any, Mapping
 
 
 class ProtocolError(ValueError):
     """Raised when a TEAM_ROUTER_* marker block is missing or invalid."""
+
+
+class StateStoreError(ValueError):
+    """Raised when registry or task ledger JSON cannot be read safely."""
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,9 @@ MARKER_RE = re.compile(r"^(TEAM_ROUTER_[A-Z_]+)\s+taskId=([^\s]+)\s*$")
 FIELD_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*):\s*(.*)$")
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 MAX_OBSERVATION_CONTENT_CHARS = 8192
+REGISTRY_VERSION = 1
+TASK_LEDGER_VERSION = 1
+_FORBIDDEN_STATE_ROOT_PARTS = {".codex-tmp"}
 
 TERMINAL_STATUSES = frozenset({
     "blocked",
@@ -87,6 +97,14 @@ _REQUIRED_BY_MARKER = {
 def _validate_task_id(task_id: str) -> None:
     if not isinstance(task_id, str) or not TASK_ID_RE.match(task_id):
         raise ProtocolError("invalid taskId: %r" % (task_id,))
+
+
+def _resolve_persistent_state_root(root: str | Path) -> Path:
+    resolved = Path(root).resolve()
+    parts = {part.lower() for part in resolved.parts}
+    if parts.intersection(_FORBIDDEN_STATE_ROOT_PARTS):
+        raise StateStoreError("stateRoot must not be under .codex-tmp: %s" % resolved)
+    return resolved
 
 
 def _iter_marker_blocks(text: str) -> list[ProtocolMessage]:
@@ -209,20 +227,181 @@ def resolve_state_root(current_root: str | Path,
                        canonical_root: str | Path | None = None,
                        explicit_state_root: str | Path | None = None) -> Path:
     if explicit_state_root is not None:
-        return Path(explicit_state_root).resolve()
+        return _resolve_persistent_state_root(explicit_state_root)
     root = Path(canonical_root if canonical_root is not None else current_root)
-    return root.resolve() / ".codex-team-router"
+    return _resolve_persistent_state_root(root / ".codex-team-router")
 
 
 def registry_path(state_root: str | Path, project_id: str) -> Path:
     _validate_task_id(project_id)
-    return Path(state_root).resolve() / "projects" / project_id / "registry.json"
+    return (
+        _resolve_persistent_state_root(state_root)
+        / "projects" / project_id / "registry.json"
+    )
 
 
 def task_path(state_root: str | Path, project_id: str, task_id: str) -> Path:
     _validate_task_id(project_id)
     _validate_task_id(task_id)
-    return Path(state_root).resolve() / "projects" / project_id / "tasks" / (task_id + ".json")
+    return (
+        _resolve_persistent_state_root(state_root)
+        / "projects" / project_id / "tasks" / (task_id + ".json")
+    )
+
+def _as_mapping(value: Any, field: str, *, default_empty: bool = True) -> dict[str, Any]:
+    if value is None and default_empty:
+        return {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise StateStoreError("%s must be a JSON object" % field)
+
+
+def _as_list(value: Any, field: str) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return list(value)
+    raise StateStoreError("%s must be a JSON array" % field)
+
+
+def _as_int(value: Any, default: int, field: str) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise StateStoreError("%s must be an integer" % field)
+    return value
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError as exc:
+        raise StateStoreError("missing JSON file: %s" % path) from exc
+    except json.JSONDecodeError as exc:
+        raise StateStoreError("invalid JSON in %s: %s" % (path, exc.msg)) from exc
+    return _as_mapping(data, str(path), default_empty=False)
+
+
+def _atomic_write_json(path: Path, data: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name("%s.%s.tmp" % (path.name, uuid.uuid4().hex))
+    try:
+        with tmp_path.open("w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _normalize_registry(data: Mapping[str, Any], state_root: str | Path,
+                        project_id: str) -> dict[str, Any]:
+    _validate_task_id(project_id)
+    root = str(_resolve_persistent_state_root(state_root))
+    registry = dict(data)
+    projects = _as_mapping(registry.get("projects"), "registry.projects")
+    project = _as_mapping(
+        projects.get(project_id),
+        "registry.projects.%s" % project_id,
+    )
+    roles = _as_mapping(project.get("roles"), "registry.projects.%s.roles" % project_id)
+
+    registry["version"] = REGISTRY_VERSION
+    registry["stateRoot"] = root
+    project.setdefault("projectName", "")
+    project.setdefault("canonicalRoot", "")
+    project.setdefault("localPathHash", "")
+    project.setdefault("target", {})
+    project.setdefault("targetFingerprint", "")
+    project.setdefault("hostId", "")
+    project["projectId"] = project_id
+    project["roles"] = roles
+    projects[project_id] = project
+    registry["projects"] = projects
+    return registry
+
+
+def load_registry(state_root: str | Path, project_id: str) -> dict[str, Any]:
+    path = registry_path(state_root, project_id)
+    if path.exists():
+        data = _read_json_object(path)
+    else:
+        data = {}
+    return _normalize_registry(data, state_root, project_id)
+
+
+def save_registry(state_root: str | Path, project_id: str,
+                  registry: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_registry(registry, state_root, project_id)
+    _atomic_write_json(registry_path(state_root, project_id), normalized)
+    return normalized
+
+
+def _normalize_task_ledger(data: Mapping[str, Any], state_root: str | Path,
+                           project_id: str, task_id: str) -> dict[str, Any]:
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    ledger = dict(data)
+    ledger["version"] = TASK_LEDGER_VERSION
+    ledger["taskId"] = task_id
+    ledger["projectId"] = project_id
+    ledger["stateRoot"] = str(_resolve_persistent_state_root(state_root))
+    ledger["projectLocalPath"] = str(ledger.get("projectLocalPath") or "")
+    ledger["objective"] = str(ledger.get("objective") or "")
+    ledger["status"] = str(ledger.get("status") or "created")
+    ledger["reworkCount"] = _as_int(ledger.get("reworkCount"), 0, "ledger.reworkCount")
+    ledger["maxRework"] = _as_int(ledger.get("maxRework"), 3, "ledger.maxRework")
+    ledger["dispatches"] = _as_list(ledger.get("dispatches"), "ledger.dispatches")
+    ledger["observations"] = _as_list(ledger.get("observations"), "ledger.observations")
+    ledger.setdefault("verification", None)
+    ledger.setdefault("closeout", None)
+    return ledger
+
+
+def new_task_ledger(state_root: str | Path,
+                    project_id: str,
+                    task_id: str,
+                    *,
+                    objective: str,
+                    project_local_path: str | Path,
+                    max_rework: int = 3) -> dict[str, Any]:
+    if not isinstance(objective, str) or not objective:
+        raise StateStoreError("objective must be a non-empty string")
+    if not isinstance(max_rework, int) or isinstance(max_rework, bool) or max_rework < 0:
+        raise StateStoreError("maxRework must be a non-negative integer")
+    return _normalize_task_ledger({
+        "projectLocalPath": str(Path(project_local_path).resolve()),
+        "objective": objective,
+        "status": "created",
+        "reworkCount": 0,
+        "maxRework": max_rework,
+        "dispatches": [],
+        "observations": [],
+        "verification": None,
+        "closeout": None,
+    }, state_root, project_id, task_id)
+
+
+def load_task_ledger(state_root: str | Path, project_id: str,
+                     task_id: str) -> dict[str, Any]:
+    data = _read_json_object(task_path(state_root, project_id, task_id))
+    return _normalize_task_ledger(data, state_root, project_id, task_id)
+
+
+def save_task_ledger(state_root: str | Path,
+                     project_id: str,
+                     task_id: str,
+                     ledger: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_task_ledger(ledger, state_root, project_id, task_id)
+    _atomic_write_json(task_path(state_root, project_id, task_id), normalized)
+    return normalized
 
 
 def _parse_thread_timestamp(value: Any) -> datetime | None:

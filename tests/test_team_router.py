@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -149,6 +150,13 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
                 canonical / ".codex-team-router" / "projects" / "project-123" / "registry.json",
             )
 
+    def test_state_root_rejects_codex_tmp(self):
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.resolve_state_root(
+                "D:\\codex\\repo",
+                explicit_state_root="D:\\.codex-tmp\\team-router",
+            )
+
     def test_read_window_without_time_or_message_id_is_unreachable(self):
         messages = [{"text": "summary only"}]
         anchor = {"messageId": None, "sentAt": "2026-06-22T00:00:00+08:00"}
@@ -182,6 +190,124 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
                 {"status": "done"},
             )
 
+
+class TestTeamRouterJsonState(unittest.TestCase):
+    def test_registry_round_trip_normalizes_missing_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            path = team_router.registry_path(root, project_id)
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps({
+                    "projects": {
+                        project_id: {
+                            "roles": {
+                                "manager": {"threadId": "thread-1"},
+                            },
+                        },
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            registry = team_router.load_registry(root, project_id)
+
+            self.assertEqual(registry["version"], 1)
+            self.assertEqual(registry["stateRoot"], str(root.resolve()))
+            project = registry["projects"][project_id]
+            self.assertEqual(project["projectId"], project_id)
+            self.assertEqual(project["roles"]["manager"]["threadId"], "thread-1")
+
+            saved = team_router.save_registry(root, project_id, registry)
+            self.assertEqual(saved, registry)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), registry)
+
+    def test_task_ledger_round_trip_normalizes_missing_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "ctr-20260622-160000-a7f3"
+            path = team_router.task_path(root, project_id, task_id)
+            path.parent.mkdir(parents=True)
+            path.write_text('{"objective":"inspect docs"}', encoding="utf-8")
+
+            ledger = team_router.load_task_ledger(root, project_id, task_id)
+
+            self.assertEqual(ledger["version"], 1)
+            self.assertEqual(ledger["taskId"], task_id)
+            self.assertEqual(ledger["projectId"], project_id)
+            self.assertEqual(ledger["stateRoot"], str(root.resolve()))
+            self.assertEqual(ledger["objective"], "inspect docs")
+            self.assertEqual(ledger["status"], "created")
+            self.assertEqual(ledger["reworkCount"], 0)
+            self.assertEqual(ledger["maxRework"], 3)
+            self.assertEqual(ledger["dispatches"], [])
+            self.assertEqual(ledger["observations"], [])
+
+            ledger["status"] = "awaiting_callback"
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+            self.assertEqual(
+                team_router.load_task_ledger(root, project_id, task_id)["status"],
+                "awaiting_callback",
+            )
+
+    def test_bad_registry_json_raises_state_store_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            path = team_router.registry_path(root, project_id)
+            path.parent.mkdir(parents=True)
+            path.write_text("{bad json", encoding="utf-8")
+
+            with self.assertRaises(team_router.StateStoreError) as caught:
+                team_router.load_registry(root, project_id)
+
+            self.assertIn("invalid JSON", str(caught.exception))
+
+    def test_atomic_save_leaves_no_temp_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "ctr-20260622-160000-a7f3"
+            ledger = team_router.new_task_ledger(
+                root,
+                project_id,
+                task_id,
+                objective="inspect docs",
+                project_local_path="D:\\codex\\codex-dynamic-workflow",
+            )
+
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+
+            path = team_router.task_path(root, project_id, task_id)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), ledger)
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
+    def test_two_worktrees_share_registry_via_canonical_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            canonical = base / "repo"
+            worktree = base / "repo-wt"
+            canonical.mkdir()
+            worktree.mkdir()
+            project_id = "project-123"
+            state_a = team_router.resolve_state_root(worktree, canonical_root=canonical)
+            state_b = team_router.resolve_state_root(canonical, canonical_root=canonical)
+            self.assertEqual(state_a, state_b)
+
+            registry = team_router.load_registry(state_a, project_id)
+            registry["projects"][project_id]["roles"]["manager"] = {
+                "threadId": "thread-1",
+                "title": "TeamRouter manager - repo",
+            }
+            team_router.save_registry(state_a, project_id, registry)
+
+            reloaded = team_router.load_registry(state_b, project_id)
+            self.assertEqual(
+                reloaded["projects"][project_id]["roles"]["manager"]["threadId"],
+                "thread-1",
+            )
 
 class TestTeamRouterSkillDoc(unittest.TestCase):
     def test_skill_doc_contains_required_boundaries(self):
