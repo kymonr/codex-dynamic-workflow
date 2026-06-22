@@ -43,6 +43,7 @@ THREAD_PERMISSIONS = frozenset({"read-only", "design-only"})
 _FORBIDDEN_STATE_ROOT_PARTS = {".codex-tmp"}
 
 TERMINAL_STATUSES = frozenset({
+    "done",
     "blocked",
     "malformed_callback",
     "tool_error",
@@ -432,6 +433,14 @@ def _validate_permission(permission: str) -> None:
         raise StateStoreError("invalid Team Router permission: %s" % permission)
 
 
+def _raise_if_terminal(ledger: Mapping[str, Any], action: str) -> None:
+    status = ledger.get("status")
+    if status in TERMINAL_STATUSES:
+        raise StateStoreError(
+            "cannot %s terminal task status: %s" % (action, status)
+        )
+
+
 def _required_str(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise StateStoreError("%s must be a non-empty string" % field)
@@ -522,6 +531,7 @@ def record_plan_request_sent(state_root: str | Path,
                              sent_at: str,
                              message_id: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "record plan request for")
     ledger["planRequest"] = {
         "role": "manager",
         "threadId": _required_str(manager_thread_id, "managerThreadId"),
@@ -551,7 +561,7 @@ def make_executor_dispatch_message(task_id: str,
         "permission: %s" % permission,
         "scope: %s" % scope,
         "stopWhen: %s" % stop_when,
-        "searchAnchor: %s" % dict(search_anchor),
+        "searchAnchor: %s" % json.dumps(dict(search_anchor), sort_keys=True),
         "",
         "Goal:",
         executor_prompt,
@@ -575,6 +585,7 @@ def record_executor_dispatch_sent(state_root: str | Path,
                                   sent_at: str,
                                   message_id: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "dispatch")
     if ledger["status"] == "needs_rework":
         status, rework_count = next_rework_dispatch(ledger["reworkCount"], ledger["maxRework"])
         if status == "blocked":
@@ -590,6 +601,7 @@ def record_executor_dispatch_sent(state_root: str | Path,
             }
             return save_task_ledger(state_root, project_id, task_id, ledger)
         ledger["reworkCount"] = rework_count
+        ledger["closeout"] = None
     attempt = len(ledger["dispatches"]) + 1
     ledger["dispatches"].append({
         "role": "executor",
@@ -680,6 +692,7 @@ def capture_manager_plan_from_read(state_root: str | Path,
                                    *,
                                    captured_at: str) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "capture manager plan for")
     request = ledger.get("planRequest") if isinstance(ledger.get("planRequest"), Mapping) else None
     anchor = request.get("searchAnchor") if isinstance(request, Mapping) else None
     if anchor is None:
@@ -716,6 +729,7 @@ def capture_executor_callback_from_read(state_root: str | Path,
                                         *,
                                         captured_at: str) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "capture executor callback for")
     dispatch = ledger["dispatches"][-1] if ledger["dispatches"] else None
     if dispatch is None:
         raise StateStoreError("no executor dispatch recorded for task: %s" % task_id)
@@ -779,6 +793,7 @@ def record_verifier_request_sent(state_root: str | Path,
                                  sent_at: str,
                                  message_id: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "record verifier request for")
     verification = dict(ledger.get("verification") or {})
     verification["request"] = {
         "role": "verifier",
@@ -815,6 +830,11 @@ def capture_verifier_verdict_from_read(state_root: str | Path,
                                        captured_at: str) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
     verification = dict(ledger.get("verification") or {})
+    verdict = verification.get("verdict") if isinstance(verification.get("verdict"), Mapping) else None
+    closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else None
+    if ledger.get("status") == "done" and verdict is not None and closeout is not None and closeout.get("status") == "done":
+        return ledger
+    _raise_if_terminal(ledger, "capture verifier verdict for")
     request = verification.get("request") if isinstance(verification.get("request"), Mapping) else None
     anchor = request.get("searchAnchor") if isinstance(request, Mapping) else None
     if anchor is None:

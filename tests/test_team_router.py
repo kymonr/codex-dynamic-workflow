@@ -535,6 +535,54 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(planned["status"], "planned")
         self.assertEqual(planned["plan"]["fields"]["executorPrompt"], "inspect src")
 
+    def test_plan_capture_marks_unreachable_when_read_window_misses_anchor(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [{"text": "plan without ids or timestamps"}]
+
+        updated = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(updated["status"], "plan_unreachable")
+
+    def test_plan_capture_keeps_waiting_when_window_covers_but_marker_missing(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [
+            {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+            {"messageId": "msg-later", "sentAt": "2026-06-22T20:01:30+08:00", "text": "still planning"},
+        ]
+
+        updated = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_plan")
+
+    def test_plan_capture_blocks_escalation_required(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [
+            {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+            {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: escalation-required\nscope: src\nstopWhen: done\nriskBoundary: needs write access\nexecutorPrompt: inspect src\nnotes: none" % ledger["taskId"]},
+        ]
+
+        updated = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(updated["status"], "blocked")
+
     def test_executor_dispatch_records_attempt_and_recovery_anchor(self):
         ledger = self._planned_ledger()
         message = team_router.make_executor_dispatch_message(
@@ -545,6 +593,10 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertIn("callbackMode: self-thread-marker", message)
         self.assertIn("callbackMarker: TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", message)
+        anchor_line = next(line for line in message.splitlines() if line.startswith("searchAnchor: "))
+        self.assertEqual(anchor_line, "searchAnchor: {\"messageId\": \"msg-dispatch\", \"sentAt\": \"2026-06-22T20:02:00+08:00\"}")
+        anchor_json = anchor_line.removeprefix("searchAnchor: ")
+        self.assertEqual(json.loads(anchor_json), {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00"})
 
         updated = team_router.record_executor_dispatch_sent(
             self.root,
@@ -560,6 +612,19 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         read_request = team_router.recovery_read_request(updated, registry, "executor")
         self.assertEqual(read_request["threadId"], "thread-executor")
         self.assertEqual(read_request["searchAnchor"]["messageId"], "msg-dispatch")
+
+    def test_executor_dispatch_search_anchor_serializes_null_message_id(self):
+        ledger = self._planned_ledger()
+
+        message = team_router.make_executor_dispatch_message(
+            ledger["taskId"],
+            ledger["plan"]["fields"],
+            "read-only",
+            {"messageId": None, "sentAt": "2026-06-22T20:02:00+08:00"},
+        )
+
+        anchor_line = next(line for line in message.splitlines() if line.startswith("searchAnchor: "))
+        self.assertEqual(anchor_line, "searchAnchor: {\"messageId\": null, \"sentAt\": \"2026-06-22T20:02:00+08:00\"}")
 
     def test_callback_capture_uses_dispatch_anchor_from_ledger(self):
         ledger = self._awaiting_callback_ledger()
@@ -579,6 +644,26 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "verifying")
         self.assertEqual(updated["observations"][-1]["type"], "callback_raw")
         self.assertEqual(updated["observations"][-1]["threadId"], "thread-executor")
+
+    def test_callback_capture_preserves_multiline_summary(self):
+        ledger = self._awaiting_callback_ledger()
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: first line\nsecond line\nthird line\nevidence: tests\nrisks: none\nnext: none"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(
+            updated["observations"][-1]["parsedFields"]["summary"],
+            "first line\nsecond line\nthird line",
+        )
 
     def test_callback_capture_marks_unreachable_when_read_window_misses_anchor(self):
         ledger = self._awaiting_callback_ledger()
@@ -676,6 +761,178 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "blocked")
         self.assertEqual(updated["closeout"]["status"], "blocked")
 
+    def test_terminal_task_cannot_be_redispatched(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.record_executor_dispatch_sent(
+                self.root,
+                self.project_id,
+                ledger["taskId"],
+                executor_thread_id="thread-executor",
+                sent_at="2026-06-22T20:08:00+08:00",
+                message_id="msg-again",
+            )
+
+        saved = team_router.load_task_ledger(self.root, self.project_id, ledger["taskId"])
+        self.assertEqual(saved["status"], "done")
+        self.assertEqual(len(saved["dispatches"]), 1)
+
+    def test_done_verifier_capture_is_idempotent(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        messages = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+            {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+        ]
+        done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        observation_count = len(done["observations"])
+
+        repeated = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:08:00+08:00",
+        )
+
+        self.assertEqual(repeated["status"], "done")
+        self.assertEqual(len(repeated["observations"]), observation_count)
+        self.assertEqual(repeated["closeout"]["capturedAt"], "2026-06-22T20:07:00+08:00")
+
+    def test_blocked_terminal_task_rejects_guarded_manager_executor_verifier_actions(self):
+        plan_ledger = self._awaiting_plan_ledger()
+        plan_ledger["status"] = "blocked"
+        team_router.save_task_ledger(self.root, self.project_id, plan_ledger["taskId"], plan_ledger)
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.record_plan_request_sent(
+                self.root,
+                self.project_id,
+                plan_ledger["taskId"],
+                manager_thread_id="thread-manager",
+                sent_at="2026-06-22T20:09:00+08:00",
+                message_id="msg-plan-again",
+            )
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.capture_manager_plan_from_read(
+                self.root,
+                self.project_id,
+                plan_ledger["taskId"],
+                [{"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"}],
+                captured_at="2026-06-22T20:09:00+08:00",
+            )
+
+        self.tearDown()
+        self.setUp()
+        callback_ledger = self._awaiting_callback_ledger()
+        callback_ledger["status"] = "blocked"
+        team_router.save_task_ledger(self.root, self.project_id, callback_ledger["taskId"], callback_ledger)
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.record_executor_dispatch_sent(
+                self.root,
+                self.project_id,
+                callback_ledger["taskId"],
+                executor_thread_id="thread-executor",
+                sent_at="2026-06-22T20:09:00+08:00",
+                message_id="msg-dispatch-again",
+            )
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.capture_executor_callback_from_read(
+                self.root,
+                self.project_id,
+                callback_ledger["taskId"],
+                [{"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"}],
+                captured_at="2026-06-22T20:09:00+08:00",
+            )
+
+        self.tearDown()
+        self.setUp()
+        verifier_ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            verifier_ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        verifier_ledger = team_router.load_task_ledger(self.root, self.project_id, verifier_ledger["taskId"])
+        verifier_ledger["status"] = "blocked"
+        team_router.save_task_ledger(self.root, self.project_id, verifier_ledger["taskId"], verifier_ledger)
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.record_verifier_request_sent(
+                self.root,
+                self.project_id,
+                verifier_ledger["taskId"],
+                verifier_thread_id="thread-verifier",
+                sent_at="2026-06-22T20:09:00+08:00",
+                message_id="msg-verify-again",
+            )
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.capture_verifier_verdict_from_read(
+                self.root,
+                self.project_id,
+                verifier_ledger["taskId"],
+                [{"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"}],
+                captured_at="2026-06-22T20:09:00+08:00",
+            )
+
+    def test_escalation_required_blocks_executor_dispatch(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [
+            {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+            {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: escalation-required\nscope: src\nstopWhen: done\nriskBoundary: needs write access\nexecutorPrompt: inspect src\nnotes: none" % ledger["taskId"]},
+        ]
+        blocked = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.record_executor_dispatch_sent(
+                self.root,
+                self.project_id,
+                ledger["taskId"],
+                executor_thread_id="thread-executor",
+                sent_at="2026-06-22T20:02:00+08:00",
+                message_id="msg-dispatch",
+            )
+        self.assertEqual(blocked["dispatches"], [])
+
     def test_sent_at_fallback_ignores_anchor_message_template(self):
         self._planned_ledger()
         team_router.record_executor_dispatch_sent(
@@ -706,6 +963,166 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         self.assertEqual(updated["status"], "awaiting_callback")
+
+    def test_plan_sent_at_fallback_ignores_request_template(self):
+        ledger = self._ready_ledger()
+        team_router.record_plan_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            manager_thread_id="thread-manager",
+            sent_at="2026-06-22T20:01:00+08:00",
+            message_id=None,
+        )
+        messages = [
+            {
+                "sentAt": "2026-06-22T20:01:00+08:00",
+                "text": team_router.make_plan_request_message(ledger["taskId"], ledger["objective"], "read-only"),
+            },
+            {
+                "sentAt": "2026-06-22T20:01:30+08:00",
+                "text": "still planning",
+            },
+        ]
+
+        updated = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_plan")
+
+    def test_verifier_sent_at_fallback_ignores_request_template(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id=None,
+        )
+        messages = [
+            {
+                "sentAt": "2026-06-22T20:05:00+08:00",
+                "text": team_router.make_verifier_request_message(
+                    ledger["taskId"],
+                    ledger["observations"][-1]["content"],
+                    "read-only",
+                    "src",
+                ),
+            },
+            {
+                "sentAt": "2026-06-22T20:05:30+08:00",
+                "text": "still verifying",
+            },
+        ]
+
+        updated = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:06:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+
+    def test_same_timestamp_callback_without_message_id_keeps_waiting(self):
+        self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id=None,
+        )
+        messages = [
+            {
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: same timestamp\nevidence: tests\nrisks: none\nnext: none",
+            },
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_callback")
+
+    def test_rework_redispatch_can_finish_with_fresh_closeout(self):
+        ledger = self._verifying_ledger(max_rework=2)
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        needs_rework = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: needs_rework\nsummary: missing\nrequiredChanges: fix docs\nevidenceChecked: callback\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        self.assertEqual(needs_rework["closeout"]["status"], "needs_rework")
+
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:08:00+08:00",
+            message_id="msg-rework",
+        )
+        verifying = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-rework", "sentAt": "2026-06-22T20:08:00+08:00", "text": "dispatch"},
+                {"messageId": "msg-callback-2", "sentAt": "2026-06-22T20:09:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: fixed\nevidence: tests\nrisks: none\nnext: none"},
+            ],
+            captured_at="2026-06-22T20:09:30+08:00",
+        )
+        self.assertEqual(verifying["status"], "verifying")
+        self.assertIsNone(verifying["closeout"])
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:10:00+08:00",
+            message_id="msg-verify-2",
+        )
+
+        done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify-2", "sentAt": "2026-06-22T20:10:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict-2", "sentAt": "2026-06-22T20:11:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok after rework\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:11:30+08:00",
+        )
+
+        self.assertEqual(done["status"], "done")
+        self.assertEqual(done["closeout"]["status"], "done")
+        self.assertEqual(done["closeout"]["summary"], "ok after rework")
 
     def test_manager_capture_requires_plan_request_anchor(self):
         ledger = self._ready_ledger()
@@ -776,6 +1193,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(dispatched["status"], "awaiting_callback")
         self.assertEqual(dispatched["reworkCount"], 1)
         self.assertEqual(dispatched["dispatches"][-1]["attempt"], 2)
+        self.assertIsNone(dispatched["closeout"])
 
     def test_old_task_ledger_normalizes_plan_fields(self):
         path = team_router.task_path(self.root, self.project_id, self.task_id)
