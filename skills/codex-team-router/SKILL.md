@@ -32,7 +32,9 @@ Use exactly one role-thread creation path per task. Do not mix the adapter-creat
 
 ### Recommended adapter runner
 
-Use `run_team_task_with_adapter()` when the parent host can provide adapter callables. The helper starts a missing task, reuses existing registry role bindings, creates only missing role threads, sends or reads the next required manager/executor/verifier step, and returns `action`, `status`, `ledger`, and `userOutput`.
+Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, and `projectTarget`.
+
+Use `run_team_task_with_adapter()` only when the parent has already probed tools and resolved the project target. It is the lower-level runner behind the orchestration entry.
 
 Call it once per parent turn or after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Parent thread rule: emit `update["userOutput"]` to the user when the returned payload contains closeout or handoff content.
 
@@ -44,7 +46,7 @@ Use this path when the parent host can provide adapter callables whose functions
 
 1. Probe the required tools and run `list_projects`; choose the current `projectId` and a project `target` with a local or worktree environment.
 2. Resolve `stateRoot` and load the project registry.
-3. Prefer `run_team_task_with_adapter()` for normal parent orchestration.
+3. Prefer `orchestrate_team_task_with_adapter()` for normal parent orchestration.
 4. Use `start_team_task_with_adapter()` only when you need the lower-level start primitive. It reuses registry role bindings, calls `create_thread` only for missing manager/executor/verifier roles, then writes the registry role bindings and task ledger.
 5. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
 
@@ -183,7 +185,8 @@ Use `recovery_read_request()` to derive the role thread id and `searchAnchor` fr
 The adapter-facing entrypoints are:
 
 - `probe_thread_adapter_capabilities()` to check the parent host exposes the required Codex app thread tools before live orchestration.
-- `run_team_task_with_adapter()` as the recommended parent entry. It starts missing task state, reuses registry role bindings, advances the next send/read step, and returns `userOutput`.
+- `orchestrate_team_task_with_adapter()` as the recommended parent entry. It probes tools, resolves the project target, discovers/reuses role threads, advances the next send/read step, and returns `userOutput`.
+- `run_team_task_with_adapter()` as the lower-level runner for hosts that already resolved the target and role-thread boundary.
 - `start_team_task_with_adapter()` to create manager/executor/verifier role threads and write the initial task ledger.
 - `send_manager_plan_request_with_adapter()` and `read_manager_plan_with_adapter()` for manager planning.
 - `send_executor_dispatch_with_adapter()` and `read_executor_callback_with_adapter()` for executor work and callback capture.

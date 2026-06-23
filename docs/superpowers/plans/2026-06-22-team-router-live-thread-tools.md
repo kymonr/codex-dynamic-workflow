@@ -39,6 +39,15 @@ Smoke evidence collected on 2026-06-22:
 - verifier thread: `019eefe8-68e1-7a03-8a29-01e3569e15f8`; observed `TEAM_ROUTER_VERDICT taskId=ctr-live-smoke-20260622-1`.
 - `read_thread` returned Codex desktop shape `turns[].items[]` with `agentMessage.text` and numeric `turn.startedAt`; `normalize_thread_read_messages()` now preserves numeric timestamps and `_parse_thread_timestamp()` accepts numeric epoch seconds for anchor filtering.
 
+Regression smoke evidence collected on 2026-06-23:
+
+- reused manager thread: `019ef253-8f71-7111-b794-27154c77ed2e`; observed `TEAM_ROUTER_PLAN taskId=ctr-live-regression-20260623-1103-anchor-fix`.
+- reused executor thread: `019ef254-07ef-7710-a0c4-adcb7004c101`; observed `TEAM_ROUTER_CALLBACK taskId=ctr-live-regression-20260623-1103-anchor-fix` with a two-line `summary` preserved.
+- reused verifier thread: `019ef254-44df-7121-b2ad-423fd34a2183`; observed `TEAM_ROUTER_VERDICT taskId=ctr-live-regression-20260623-1103-anchor-fix` with `result: pass`.
+- `send_message_to_thread` returned only `{ "threadId": ... }`, not a stable sent-message id.
+- `read_thread` returned `page.order: newest_first` and item ids such as `item-5` / `item-6`; anchor recovery must use the persisted `sentAt` fallback when the send result has no matching read item id.
+- The regression covered manager -> executor -> verifier marker transport, multiline callback summary preservation, and the verifier closeout path after the message-id fallback/newest-first fix.
+
 ### Task 3: Verification And Commit
 
 **Files:**

@@ -1927,6 +1927,84 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 {"type": "worktree", "path": "D:\\codex\\codex-dynamic-workflow"},
             )
 
+    def test_orchestrate_team_task_with_adapter_discovers_reuses_and_advances(self):
+        class ParentAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.listed_projects = 0
+                self.listed_threads = 0
+                self.renamed = []
+                self.thread_list = [
+                    {
+                        "threadId": "live-manager",
+                        "title": "Old manager title",
+                        "role": "manager",
+                        "projectId": "project-123",
+                    },
+                    {
+                        "threadId": "live-executor",
+                        "title": "TeamRouter executor - project-123",
+                    },
+                    {
+                        "threadId": "live-verifier",
+                        "title": "TeamRouter verifier - project-123",
+                    },
+                ]
+
+            def list_projects(self, **kwargs):
+                self.listed_projects += 1
+                return {
+                    "projects": [
+                        {
+                            "projectId": "project-123",
+                            "target": {
+                                "type": "project",
+                                "projectId": "project-123",
+                                "environment": {"type": "local"},
+                            },
+                        },
+                    ],
+                }
+
+            def list_threads(self, **kwargs):
+                self.listed_threads += 1
+                return {"threads": list(self.thread_list)}
+
+            def set_thread_title(self, **kwargs):
+                self.renamed.append(dict(kwargs))
+                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
+        adapter = ParentAdapter()
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "sent_manager_plan_request")
+        self.assertEqual(update["ledger"]["status"], "awaiting_plan")
+        self.assertEqual(adapter.listed_projects, 1)
+        self.assertEqual(adapter.listed_threads, 1)
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(len(adapter.sent), 1)
+        self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "live-manager")
+        self.assertEqual(
+            adapter.renamed,
+            [{"threadId": "live-manager", "title": "TeamRouter manager - project-123"}],
+        )
+        self.assertEqual(update["projectTarget"]["environment"], {"type": "local"})
+        registry = team_router.load_registry(self.root, self.project_id)
+        project_roles = registry["projects"][self.project_id]["roles"]
+        self.assertEqual(project_roles["manager"]["threadId"], "live-manager")
+        self.assertEqual(project_roles["executor"]["threadId"], "live-executor")
+        self.assertEqual(project_roles["verifier"]["threadId"], "live-verifier")
+
     def test_verifier_request_requires_latest_executor_callback_observation(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()
@@ -2663,6 +2741,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for needle in (
             "## Parent Thread Entry Flow",
             "list_projects -> create_thread -> send_message_to_thread -> read_thread",
+            "orchestrate_team_task_with_adapter()",
             "run_team_task_with_adapter()",
             "start_team_task_with_adapter()",
             "send_manager_plan_request_with_adapter()",
@@ -2725,6 +2804,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "create_thread",
             "send_message_to_thread",
             "read_thread",
+            "orchestrate_team_task_with_adapter()",
             "run_team_task_with_adapter()",
             "read_verifier_verdict_update_with_adapter()",
             "tests/fixtures/team_router/live_read_thread_verdict.json",

@@ -27,7 +27,9 @@ Use `src/team_router.py` helpers to keep state deterministic around those host-t
 
 ### Recommended adapter runner
 
-Use `run_team_task_with_adapter()` when the parent host can pass Codex thread tool callables into Python. The helper starts a missing task, reuses existing registry role bindings, creates only missing role threads, advances the next send/read step, and returns `action`, `status`, `ledger`, and `userOutput`.
+Use `orchestrate_team_task_with_adapter()` when the parent host can pass Codex thread tool callables into Python. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes titles with `set_thread_title`, starts a missing task, advances the next send/read step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, and `projectTarget`.
+
+Use `run_team_task_with_adapter()` only when the parent has already probed tools and resolved the project target. It is the lower-level runner behind the orchestration entry.
 
 Call it again after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Emit `update["userOutput"]` exactly when the helper returns closeout or handoff content.
 
@@ -37,7 +39,7 @@ When the verifier returns `needs_rework`, the runner stops with `action: needs_r
 
 Use this path when the parent host can pass Codex thread tool callables into Python.
 
-1. Prefer `run_team_task_with_adapter()` for normal parent orchestration.
+1. Prefer `orchestrate_team_task_with_adapter()` for normal parent orchestration.
 2. Use `start_team_task_with_adapter()` only when testing or manually driving the lower-level start primitive.
 3. Let the helper reuse registry role bindings and call `create_thread` through the adapter only for missing manager/executor/verifier role threads.
 4. Let the helper persist registry role bindings and create the task ledger.

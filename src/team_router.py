@@ -1829,6 +1829,44 @@ def run_team_task_with_adapter(state_root: str | Path,
         return _adapter_task_update("no_action", state_root, project_id, ledger)
 
 
+def orchestrate_team_task_with_adapter(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       *,
+                                       objective: str,
+                                       project_local_path: str | Path,
+                                       thread_adapter: Any,
+                                       permission: str,
+                                       observed_at: str,
+                                       target: Mapping[str, Any] | None = None,
+                                       max_rework: int = 3,
+                                       turn_limit: int | None = None,
+                                       confirm_rework: bool = False) -> dict[str, Any]:
+    capabilities = probe_thread_adapter_capabilities(thread_adapter)
+    project_target = (
+        dict(target)
+        if target is not None
+        else resolve_project_target_with_adapter(thread_adapter, project_id=project_id)
+    )
+    update = run_team_task_with_adapter(
+        state_root,
+        project_id,
+        task_id,
+        objective=objective,
+        project_local_path=project_local_path,
+        thread_adapter=thread_adapter,
+        permission=permission,
+        observed_at=observed_at,
+        target=project_target,
+        max_rework=max_rework,
+        turn_limit=turn_limit,
+        confirm_rework=confirm_rework,
+    )
+    update["capabilities"] = capabilities
+    update["projectTarget"] = project_target
+    return update
+
+
 def _role_thread_lines(registry: Mapping[str, Any], project_id: str) -> list[str]:
     roles = _project_roles_from_registry(registry, project_id)
     lines = []
