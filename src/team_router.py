@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import html
 from pathlib import Path
 import json
 import os
@@ -35,6 +36,13 @@ class ProtocolMessage:
 MARKER_RE = re.compile(r"^(TEAM_ROUTER_[A-Z_]+)\s+taskId=([^\s]+)\s*$")
 FIELD_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*):\s*(.*)$")
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+CODEX_DELEGATION_RE = re.compile(
+    r"<codex_delegation>\s*"
+    r"<source_thread_id>(?P<source>.*?)</source_thread_id>\s*"
+    r"<input>(?P<input>.*?)</input>\s*"
+    r"</codex_delegation>",
+    re.DOTALL,
+)
 MAX_OBSERVATION_CONTENT_CHARS = 8192
 REGISTRY_VERSION = 1
 TASK_LEDGER_VERSION = 1
@@ -643,6 +651,17 @@ def _content_blocks_text(value: Any) -> str:
     return ""
 
 
+def _unwrap_codex_delegation_text(text: str) -> tuple[str | None, str]:
+    if not isinstance(text, str):
+        return None, ""
+    match = CODEX_DELEGATION_RE.search(text)
+    if not match:
+        return None, text
+    source_thread_id = match.group("source").strip() or None
+    inner_text = html.unescape(match.group("input")).strip()
+    return source_thread_id, inner_text
+
+
 def _normalize_thread_message(message: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(message)
     message_id = _first_str(message, ("messageId", "message_id", "id", "turnId"))
@@ -657,9 +676,17 @@ def _normalize_thread_message(message: Mapping[str, Any]) -> dict[str, Any]:
                 break
     if not text:
         text = _first_str(message, ("summary",)) or ""
+    source_thread_id = _first_str(message, ("sourceThreadId", "source_thread_id"))
+    delegated_source_thread_id, delegated_text = _unwrap_codex_delegation_text(text)
+    if delegated_source_thread_id is not None:
+        source_thread_id = delegated_source_thread_id
+        normalized["delegatedText"] = delegated_text
+        text = delegated_text
     normalized["messageId"] = message_id
     if sent_at is not None:
         normalized["sentAt"] = sent_at
+    if source_thread_id is not None:
+        normalized["sourceThreadId"] = source_thread_id
     normalized["text"] = text
     return normalized
 
@@ -1229,6 +1256,7 @@ def record_executor_dispatch_sent(state_root: str | Path,
         dispatch["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
         dispatch["callbackDelivery"] = callback_delivery or "direct-send"
         dispatch["callbackFallback"] = "self-thread-marker"
+        dispatch["returnSearchAnchor"] = {"messageId": None, "sentAt": dispatch["sentAt"]}
     ledger["dispatches"].append(dispatch)
     ledger["status"] = "awaiting_callback"
     return save_task_ledger(state_root, project_id, task_id, ledger)
@@ -1310,6 +1338,72 @@ def _messages_text(messages: list[Mapping[str, Any]]) -> str:
     return "\n\n".join(_message_text(message) for message in messages if _message_text(message))
 
 
+def _has_observation_content(ledger: Mapping[str, Any],
+                             obs_type: str,
+                             role: str,
+                             thread_id: str,
+                             content: str) -> bool:
+    observations = ledger.get("observations") if isinstance(ledger.get("observations"), list) else []
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        if (
+            observation.get("type") == obs_type
+            and observation.get("role") == role
+            and observation.get("threadId") == thread_id
+            and observation.get("content") == content
+        ):
+            return True
+    return False
+
+
+def _direct_return_record(ledger: Mapping[str, Any],
+                          role: str) -> Mapping[str, Any] | None:
+    if role == "executor":
+        dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+        record = dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else None
+        if not isinstance(record, Mapping):
+            return None
+        if not record.get("returnThreadId") or record.get("callbackDelivery") != "direct-send":
+            return None
+        return record
+    verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+    request = verification.get("request") if isinstance(verification, Mapping) else None
+    if not isinstance(request, Mapping):
+        return None
+    if not request.get("returnThreadId") or request.get("verdictDelivery") != "direct-send":
+        return None
+    return request
+
+
+def _direct_return_candidate_messages(messages: list[Mapping[str, Any]],
+                                      anchor: Mapping[str, Any] | None,
+                                      source_thread_id: str) -> list[Mapping[str, Any]]:
+    out: list[Mapping[str, Any]] = []
+    for message in _messages_after_anchor(messages, anchor):
+        if message.get("sourceThreadId") != source_thread_id:
+            continue
+        out.append(message)
+    return out
+
+
+def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
+                                    *,
+                                    marker: str,
+                                    task_id: str,
+                                    source_thread_id: str,
+                                    anchor: Mapping[str, Any] | None) -> ProtocolMessage | None:
+    text = _messages_text(_direct_return_candidate_messages(messages, anchor, source_thread_id))
+    if not text:
+        return None
+    try:
+        return parse_message(text, marker, task_id)
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            return None
+        raise
+
+
 def _project_roles_from_registry(registry: Mapping[str, Any], project_id: str) -> dict[str, Any]:
     projects = _as_mapping(registry.get("projects"), "registry.projects")
     project = _as_mapping(projects.get(project_id), "registry.project", default_empty=False)
@@ -1381,6 +1475,25 @@ def capture_manager_plan_from_read(state_root: str | Path,
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
+def _apply_executor_callback_message(ledger: dict[str, Any],
+                                     dispatch: Mapping[str, Any],
+                                     msg: ProtocolMessage,
+                                     *,
+                                     captured_at: str) -> dict[str, Any]:
+    thread_id = _required_str(dispatch.get("threadId"), "executorDispatch.threadId")
+    if not _has_observation_content(ledger, "callback_raw", "executor", thread_id, msg.raw):
+        ledger["observations"].append(make_observation(
+            "callback_raw",
+            "executor",
+            thread_id,
+            captured_at,
+            msg.raw,
+            msg.fields,
+        ))
+    ledger["status"] = "verifying"
+    return ledger
+
+
 def capture_executor_callback_from_read(state_root: str | Path,
                                         project_id: str,
                                         task_id: str,
@@ -1405,15 +1518,7 @@ def capture_executor_callback_from_read(state_root: str | Path,
         else:
             ledger["status"] = "malformed_callback"
         return save_task_ledger(state_root, project_id, task_id, ledger)
-    ledger["observations"].append(make_observation(
-        "callback_raw",
-        "executor",
-        dispatch["threadId"],
-        captured_at,
-        msg.raw,
-        msg.fields,
-    ))
-    ledger["status"] = "verifying"
+    ledger = _apply_executor_callback_message(ledger, dispatch, msg, captured_at=captured_at)
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
@@ -1480,6 +1585,7 @@ def record_verifier_request_sent(state_root: str | Path,
         request["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
         request["verdictDelivery"] = verdict_delivery or "direct-send"
         request["verdictFallback"] = "self-thread-marker"
+        request["returnSearchAnchor"] = {"messageId": None, "sentAt": request["sentAt"]}
     verification["request"] = request
     ledger["verification"] = verification
     ledger["status"] = "verifying"
@@ -1500,6 +1606,43 @@ def _make_closeout(ledger: Mapping[str, Any],
         "nextAction": next_action,
         "remainingTodos": "none" if ledger.get("status") == "done" else next_action,
     }
+
+
+def _apply_verifier_verdict_message(ledger: dict[str, Any],
+                                    verification: dict[str, Any],
+                                    request: Mapping[str, Any],
+                                    msg: ProtocolMessage,
+                                    *,
+                                    captured_at: str) -> dict[str, Any]:
+    thread_id = request.get("threadId") if isinstance(request, Mapping) else ""
+    if thread_id and not _has_observation_content(ledger, "verdict_raw", "verifier", str(thread_id), msg.raw):
+        ledger["observations"].append(make_observation(
+            "verdict_raw",
+            "verifier",
+            str(thread_id),
+            captured_at,
+            msg.raw,
+            msg.fields,
+        ))
+    verification["verdict"] = {
+        "threadId": thread_id,
+        "capturedAt": captured_at,
+        "raw": msg.raw,
+        "fields": dict(msg.fields),
+    }
+    ledger["verification"] = verification
+    result = msg.fields["result"]
+    if result == "pass":
+        ledger["status"] = "done"
+    elif result == "needs_rework":
+        if ledger["reworkCount"] >= ledger["maxRework"]:
+            ledger["status"] = "blocked"
+        else:
+            ledger["status"] = "needs_rework"
+    else:
+        ledger["status"] = "blocked"
+    ledger["closeout"] = _make_closeout(ledger, msg.fields, captured_at)
+    return ledger
 
 
 def capture_verifier_verdict_from_read(state_root: str | Path,
@@ -1531,34 +1674,13 @@ def capture_verifier_verdict_from_read(state_root: str | Path,
         else:
             ledger["status"] = "malformed_callback"
         return save_task_ledger(state_root, project_id, task_id, ledger)
-    thread_id = request.get("threadId") if isinstance(request, Mapping) else ""
-    if thread_id:
-        ledger["observations"].append(make_observation(
-            "verdict_raw",
-            "verifier",
-            thread_id,
-            captured_at,
-            msg.raw,
-            msg.fields,
-        ))
-    verification["verdict"] = {
-        "threadId": thread_id,
-        "capturedAt": captured_at,
-        "raw": msg.raw,
-        "fields": dict(msg.fields),
-    }
-    ledger["verification"] = verification
-    result = msg.fields["result"]
-    if result == "pass":
-        ledger["status"] = "done"
-    elif result == "needs_rework":
-        if ledger["reworkCount"] >= ledger["maxRework"]:
-            ledger["status"] = "blocked"
-        else:
-            ledger["status"] = "needs_rework"
-    else:
-        ledger["status"] = "blocked"
-    ledger["closeout"] = _make_closeout(ledger, msg.fields, captured_at)
+    ledger = _apply_verifier_verdict_message(
+        ledger,
+        verification,
+        request,
+        msg,
+        captured_at=captured_at,
+    )
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
@@ -1783,6 +1905,76 @@ def read_verifier_verdict_update_with_adapter(state_root: str | Path,
     }
 
 
+def _manager_direct_return_messages_with_adapter(thread_adapter: Any,
+                                                 record: Mapping[str, Any],
+                                                 *,
+                                                 turn_limit: int | None = None) -> list[dict[str, Any]]:
+    return_thread_id = _required_str(record.get("returnThreadId"), "returnThreadId")
+    return _read_thread_messages_with_adapter(
+        thread_adapter,
+        return_thread_id,
+        turn_limit=turn_limit,
+    )
+
+
+def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
+                                                  project_id: str,
+                                                  task_id: str,
+                                                  messages: list[Mapping[str, Any]],
+                                                  *,
+                                                  captured_at: str) -> dict[str, Any] | None:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    dispatch = _direct_return_record(ledger, "executor")
+    if dispatch is None:
+        return None
+    msg = _direct_return_protocol_message(
+        messages,
+        marker="TEAM_ROUTER_CALLBACK",
+        task_id=task_id,
+        source_thread_id=_required_str(dispatch.get("threadId"), "executorDispatch.threadId"),
+        anchor=_as_mapping(dispatch.get("returnSearchAnchor"), "executorDispatch.returnSearchAnchor", default_empty=False),
+    )
+    if msg is None:
+        return None
+    ledger = _apply_executor_callback_message(
+        ledger,
+        dispatch,
+        msg,
+        captured_at=captured_at,
+    )
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
+                                                 project_id: str,
+                                                 task_id: str,
+                                                 messages: list[Mapping[str, Any]],
+                                                 *,
+                                                 captured_at: str) -> dict[str, Any] | None:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    request = _direct_return_record(ledger, "verifier")
+    if request is None:
+        return None
+    msg = _direct_return_protocol_message(
+        messages,
+        marker="TEAM_ROUTER_VERDICT",
+        task_id=task_id,
+        source_thread_id=_required_str(request.get("threadId"), "verifierRequest.threadId"),
+        anchor=_as_mapping(request.get("returnSearchAnchor"), "verifierRequest.returnSearchAnchor", default_empty=False),
+    )
+    if msg is None:
+        return None
+    verification = dict(ledger.get("verification") or {})
+    ledger = _apply_verifier_verdict_message(
+        ledger,
+        verification,
+        request,
+        msg,
+        captured_at=captured_at,
+    )
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
 def _ledger_has_verifier_request(ledger: Mapping[str, Any]) -> bool:
     verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
     request = verification.get("request") if isinstance(verification, Mapping) else None
@@ -1896,6 +2088,31 @@ def watch_team_task_with_adapter(state_root: str | Path,
         status == "awaiting_callback"
         or (status == "callback_unreachable" and not _ledger_has_verifier_request(ledger))
     ):
+        dispatch = _direct_return_record(ledger, "executor")
+        if dispatch is not None:
+            manager_messages = _manager_direct_return_messages_with_adapter(
+                thread_adapter,
+                dispatch,
+                turn_limit=turn_limit,
+            )
+            direct_ledger = _capture_executor_callback_from_manager_inbox(
+                state_root,
+                project_id,
+                task_id,
+                manager_messages,
+                captured_at=observed_at,
+            )
+            if direct_ledger is not None and direct_ledger["status"] == "verifying":
+                direct_ledger = send_verifier_request_with_adapter(
+                    state_root,
+                    project_id,
+                    task_id,
+                    thread_adapter=thread_adapter,
+                    permission=permission,
+                    sent_at=observed_at,
+                    return_thread_id=dispatch.get("returnThreadId") or return_thread_id,
+                )
+                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger)
         ledger = read_executor_callback_with_adapter(
             state_root,
             project_id,
@@ -1920,6 +2137,22 @@ def watch_team_task_with_adapter(state_root: str | Path,
         status == "verifying"
         or (status == "callback_unreachable" and _ledger_has_verifier_request(ledger))
     ):
+        request = _direct_return_record(ledger, "verifier")
+        if request is not None:
+            manager_messages = _manager_direct_return_messages_with_adapter(
+                thread_adapter,
+                request,
+                turn_limit=turn_limit,
+            )
+            direct_ledger = _capture_verifier_verdict_from_manager_inbox(
+                state_root,
+                project_id,
+                task_id,
+                manager_messages,
+                captured_at=observed_at,
+            )
+            if direct_ledger is not None:
+                return _watch_task_update("watch_read_verifier_verdict", state_root, project_id, direct_ledger)
         if _ledger_has_verifier_request(ledger):
             update = read_verifier_verdict_update_with_adapter(
                 state_root,

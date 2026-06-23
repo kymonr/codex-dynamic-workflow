@@ -2645,6 +2645,142 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["nextWakeup"]["reason"], "awaiting TEAM_ROUTER_VERDICT")
         self.assertIn("host watcher", update["automationBoundary"])
 
+    def test_watch_team_task_prefers_manager_inbox_direct_return_callback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: direct return callback\n"
+                    "evidence: manager inbox\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "direct return callback")
+        self.assertEqual(len(adapter.sent), 1)
+        self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
+
+    def test_watch_team_task_ignores_manager_inbox_callback_with_wrong_source_thread_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>wrong-executor-thread</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: wrong source\n"
+                    "evidence: manager inbox\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_executor_callback")
+        self.assertEqual(update["status"], "callback_unreachable")
+        self.assertEqual(update["ledger"]["observations"], [])
+        self.assertEqual(adapter.sent, [])
+
+    def test_watch_team_task_ignores_manager_inbox_callback_with_wrong_task_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=ctr-wrong-task\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: wrong task\n"
+                    "evidence: manager inbox\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>"
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_executor_callback")
+        self.assertEqual(update["status"], "callback_unreachable")
+        self.assertEqual(update["ledger"]["observations"], [])
+        self.assertEqual(adapter.sent, [])
+
     def test_watch_team_task_reads_verifier_pass_and_returns_closeout(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()
@@ -2688,6 +2824,208 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("summary: watcher closeout", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
         self.assertEqual(len(adapter.sent), 0)
+
+    def test_watch_team_task_prefers_manager_inbox_direct_return_verdict(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-verdict",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-verifier</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "result: pass\n"
+                    "summary: direct return closeout\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: manager inbox\n"
+                    "risks: none</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_verifier_verdict")
+        self.assertEqual(update["status"], "done")
+        self.assertIn("summary: direct return closeout", update["userOutput"])
+        self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertEqual(len(adapter.sent), 0)
+
+    def test_watch_team_task_ignores_manager_inbox_verdict_with_wrong_source_thread_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-verdict",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>wrong-verifier-thread</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "result: pass\n"
+                    "summary: wrong source\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: manager inbox\n"
+                    "risks: none</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_verifier_verdict")
+        self.assertEqual(update["status"], "callback_unreachable")
+        self.assertIsNone(update["ledger"]["closeout"])
+        self.assertEqual(len(adapter.sent), 0)
+
+    def test_watch_team_task_ignores_manager_inbox_verdict_with_wrong_task_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-verdict",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-verifier</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_VERDICT taskId=ctr-wrong-task\n"
+                    "result: pass\n"
+                    "summary: wrong task\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: manager inbox\n"
+                    "risks: none</input>\n"
+                    "</codex_delegation>"
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_verifier_verdict")
+        self.assertEqual(update["status"], "callback_unreachable")
+        self.assertIsNone(update["ledger"]["closeout"])
+        self.assertEqual(len(adapter.sent), 0)
+
+    def test_fallback_self_thread_does_not_redispatch_after_direct_return_callback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: direct return callback\n"
+                    "evidence: manager inbox\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+
+        first = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+        self.assertEqual(first["action"], "watch_sent_verifier_request")
+        self.assertEqual(len(first["ledger"]["observations"]), 1)
+        self.assertEqual(len(adapter.sent), 1)
+
+        adapter.messages["parent-manager-thread"] = []
+        adapter.messages["thread-verifier"] = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:04:00+08:00", "text": "verify"},
+        ]
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: direct return callback\nevidence: manager inbox\nrisks: none\nnext: verifier" % self.task_id,
+            },
+        ]
+
+        second = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:05:00+08:00",
+        )
+
+        self.assertEqual(second["action"], "watch_read_verifier_verdict")
+        self.assertEqual(len(second["ledger"]["observations"]), 1)
+        self.assertEqual(len(adapter.sent), 1)
 
     def test_run_team_task_with_adapter_waits_for_rework_confirmation(self):
         ledger = self._verifying_ledger()
