@@ -19,6 +19,29 @@
 - `cli-runner`：只有需要 `summary.json`、`agent.log`、结构化输出、token 汇总、runner stage 屏障、真实 `codex exec` smoke，写模式 `prepare` / `dispatch` / `collect` 的隔离副本与 clean gates，当前会话没有 native 工具，或用户明确点名 `cli-runner` / `codex exec` 路径时使用。`runner.py` 是普通 Python 子进程，不能调用主会话里的 `spawn_agent`/MCP 工具。
 - 两种后端都必须先报子代理数量、阶段、并发、耗时和用量风险。用户当轮明确要求启动 `native-subagent` / `cli-runner` 即视为允许本轮 Codex 自调度和目录传递，不再额外追问外部模型导出确认。
 
+## Team Router 快速使用
+
+`codex-team-router` 是 `dynamic-workflow` 之外的 Codex desktop thread-tools 控制面：它不直接跑子代理命令，也不替代 `src/runner.py` 的 `cli-runner`；它把一个父线程调度者的任务拆给长期可见 core role thread，并可按条件接入 reviewer，并用本地 registry/ledger 记录状态。
+
+角色分工固定为：
+
+- 父线程调度者：理解用户目标、选择下一步、调用 Codex thread tools，并输出 `Team Router Handoff` 或 `Team Router Closeout`。
+- 状态控制器：在父线程侧维护 registry、task ledger、recovery anchors、direct-return 捕获和状态转移；它不是单独 thread。
+- 规划者：只回复 `TEAM_ROUTER_PLAN`，定义 scope、stopWhen、riskBoundary 和 executorPrompt。
+- 执行者：按 `TEAM_ROUTER_DISPATCH` 做 read-only/design-only 工作，并回复 `TEAM_ROUTER_CALLBACK`。
+- 审查者：conditional reviewer；只在 router/manager/orchestration policy、权限/安全边界、流程规则、role protocol、shared/high-risk logic 等任务中介入，做 read-only/adversarial 挑刺并回复 `TEAM_ROUTER_REVIEW`；普通小修/明确低风险任务跳过。
+- 验证者：检查 callback、reviewer 要求、证据和边界，并回复 `TEAM_ROUTER_VERDICT`；verifier remains final acceptance。
+
+当前 Team Router 能力边界仅为 `read-only/design-only`；不支持 `workspace-write`、commit、push、PR、merge、deploy、真实 API、账号或生产数据操作。需要写代码时，应回到明确授权的普通本地实现流程，或使用 `dynamic-workflow` 写模式的 `prepare` / `dispatch` / `collect` 隔离 worktree 流程。
+
+Manager Mode 是当前任务内的粘性角色：用户说“你作为管理者”后，该角色会一直持续到明确角色切换；后续无称呼或同类实现命令，例如 `修`、`继续`、`处理`、`先修`、`开始修`、`修这个`、`开始处理`、`先处理`、`按刚才说的修`、`go`、`do it`，只能触发计划细化、规则更新建议或 dispatch/prepare executor work，不代表 manager 可以亲自改文件或跑测试；退出该边界需要用户明确说“切回执行者”“你亲自改代码”或“按这个 plan 落地”。
+
+父线程入口先用 `parent_entry_guard()` 判定路径：有完整 callable adapter 时才走 `orchestrate_team_task_with_adapter()`；没有 callable adapter 或 thread tools 时，只能走 manual/pre-created continuation，并且必须已经有 `manager`、`executor`、`verifier` 三个 core role thread 绑定；conditional reviewer 只在 gate 适用时创建或复用。manual/pre-created continuation 由父线程直接调用 app tools 和 manual helper/record/capture functions 续跑，不把 pre-created roles 送进 adapter runner；`parent_entry_guard(...precreated_roles...)` 只做边界判定/提示。协议/角色/状态快照由 `protocol_contract_snapshot()` 提供给测试和文档对齐；三角色可见模式 fixture 在 `tests/fixtures/team_router/three_role_visible_smoke_scenarios.json`。
+
+Direct return 规则：当父线程/manager thread id 可用时，executor dispatch 必须包含 `returnThreadId`、`callbackDelivery: direct-send`、`callbackFallback: self-thread-marker`，并要求执行者写完 `TEAM_ROUTER_CALLBACK` 后调用 `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>)` 主动返回父线程；reviewer request 必须包含 `returnThreadId`、`reviewDelivery: direct-send`、`reviewFallback: self-thread-marker`，并要求审查者写完 `TEAM_ROUTER_REVIEW` 后调用 `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)`；verifier request 同理必须包含 `returnThreadId`、`verdictDelivery: direct-send`、`verdictFallback: self-thread-marker`，并要求验证者写完 `TEAM_ROUTER_VERDICT` 后调用 `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)`。保留 self-thread marker 作为 fallback/audit 路径。
+
+管理者 orchestration policy：等待 executor/reviewer/verifier 时，`read_thread` 轮询只能是 low-frequency、event-driven；初次可短等，之后默认 30-60s 或按任务规模放宽，只有状态变化、timeout、blocked 或 completion 才给用户可见汇报。Role reuse policy：同一 `taskId` 或同一 task family 默认 reuse existing executor、existing reviewer（当 conditional reviewer gate 适用）和 existing verifier thread；返工继续发给 original executor，审查返工继续发给 original reviewer，复核返工继续发给 original verifier；只有 role、permission、workspace、task-family boundary 或 isolation requirement 变化时才 `create_thread` 新 role thread。conditional reviewer gate：普通小修/明确低风险任务保持 executor -> verifier；router/manager/orchestration policy、权限/安全边界、流程规则、role protocol、shared/high-risk logic 必须走 executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance)。reviewer 独立挑设计风险、规则漏洞、遗漏和新坏模式，不做实现，not final acceptance；verifier remains final acceptance。runtime gate 使用 `send_reviewer_request_with_adapter()`、`read_reviewer_review_update_with_adapter()` 和 `capture_reviewer_review_from_read()` 执行 reviewer step：reviewer `pass` 后才进入 verifier，`needs_rework` 回到 executor rework，`blocked` 进入 blocked。用户点名 `reviewer` 审核 Team Router 自身改动时，manager 必须使用 reviewer role conversation/thread；没有 existing reviewer thread 时必须显式 create/register reviewer role conversation，或说明缺口并等待确认，subagent fallback is not allowed。Trigger logic covers `runtime gate`, `reviewer gate`, `Team Router self changes`, and `Team Router` combined with reviewer/runtime/protocol/policy/permission/safety/process/shared/high-risk semantics; a plain `team_router.py` filename or low-risk docs-only/single-file cleanup does not trigger reviewer by itself。
+
 ## 运行环境结论（任务 1 探针填写）
 
 ### 1. `codex exec` 非交互可用，但当前沙箱内会失败

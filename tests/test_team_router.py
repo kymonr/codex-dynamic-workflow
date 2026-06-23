@@ -20,7 +20,7 @@ class FakeThreadAdapter:
     def create_thread(self, **kwargs):
         prompt = kwargs["prompt"]
         role = "role"
-        for candidate in ("manager", "executor", "verifier"):
+        for candidate in ("manager", "executor", "verifier", "reviewer"):
             if candidate in prompt:
                 role = candidate
                 break
@@ -53,6 +53,18 @@ class FakeThreadAdapter:
             "sentAt": sent_at,
             "text": text,
         })
+
+
+class FullThreadAdapter(FakeThreadAdapter):
+    def list_projects(self, **kwargs):
+        return {"projects": []}
+
+    def list_threads(self, **kwargs):
+        return {"threads": []}
+
+    def set_thread_title(self, **kwargs):
+        return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
 
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_callback_parser_rejects_colon_marker(self):
@@ -170,6 +182,10 @@ class TestTeamRouterState(unittest.TestCase):
             team_router.manual_recovery_target("plan_unreachable"),
             "planned",
         )
+        self.assertEqual(
+            team_router.manual_recovery_target("review_unreachable"),
+            "reviewing",
+        )
 
     def test_rework_limit_blocks_without_incrementing(self):
         status, count = team_router.next_rework_dispatch(rework_count=3, max_rework=3)
@@ -179,6 +195,132 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertEqual(status, "dispatched")
         self.assertEqual(count, 3)
 
+
+    def test_review_parser_accepts_adversarial_review_marker(self):
+        text = """TEAM_ROUTER_REVIEW taskId=ctr-1
+result: needs_rework
+summary: risky
+findings: missing direct-return fallback
+requiredChanges: add reviewer gate tests
+evidenceChecked: protocol snapshot
+risks: none
+"""
+
+        msg = team_router.parse_review(text, "ctr-1")
+
+        self.assertEqual(msg.fields["result"], "needs_rework")
+        self.assertEqual(msg.fields["findings"], "missing direct-return fallback")
+    def test_reviewer_gate_required_for_runtime_gate_reviewer_gate_and_team_router_self_changes(self):
+        cases = (
+            ("Team Router reviewer runtime gate rework", {"scope": "runtime gate"}),
+            ("repair reviewer gate trigger policy", {"riskBoundary": "reviewer gate must run"}),
+            ("Team Router self changes", {"executorPrompt": "review routing policy"}),
+            ("Team Router manager orchestration policy update", {"scope": "docs"}),
+            ("Team Router permission boundary change", {"scope": "src"}),
+            ("ordinary task", {"requiresReviewer": "true"}),
+            ("ordinary task", {"riskClass": "high"}),
+        )
+        for objective, fields in cases:
+            with self.subTest(objective=objective, fields=fields):
+                ledger = {"objective": objective, "plan": {"fields": fields}}
+                self.assertTrue(team_router.reviewer_gate_required_for_ledger(ledger))
+
+    def test_reviewer_gate_required_does_not_trigger_on_team_router_filename_only(self):
+        ledger = {
+            "objective": "low-risk docs-only single-file cleanup",
+            "plan": {
+                "fields": {
+                    "scope": "src/team_router.py",
+                    "riskBoundary": "low-risk docs-only single-file fix",
+                    "executorPrompt": "adjust a typo in src/team_router.py",
+                    "notes": "typo-only cleanup",
+                }
+            },
+        }
+
+        self.assertFalse(team_router.reviewer_gate_required_for_ledger(ledger))
+    def test_protocol_contract_snapshot_centralizes_roles_states_and_markers(self):
+        snapshot = team_router.protocol_contract_snapshot()
+
+        self.assertEqual(snapshot["parentSideRoles"]["parent_orchestrator"]["displayName"], "父线程调度者")
+        self.assertFalse(snapshot["parentSideRoles"]["state_controller"]["thread"])
+        self.assertEqual(snapshot["roleThreads"]["manager"]["displayName"], "规划者")
+        self.assertEqual(snapshot["roleThreads"]["reviewer"]["displayName"], "审查者")
+        self.assertEqual(snapshot["roleThreads"]["reviewer"]["englishAlias"], "Reviewer")
+        self.assertTrue(snapshot["roleThreads"]["reviewer"]["conditional"])
+        self.assertTrue(snapshot["roleThreads"]["executor"]["thread"])
+        self.assertEqual(snapshot["threadPermissions"], ["design-only", "read-only"])
+        self.assertIn("send_message_to_thread", snapshot["threadToolNames"])
+        self.assertEqual(
+            snapshot["markers"]["TEAM_ROUTER_CALLBACK"]["requiredFields"],
+            ["status", "final", "summary", "evidence", "risks", "next"],
+        )
+        self.assertEqual(
+            snapshot["markers"]["TEAM_ROUTER_VERDICT"]["allowedValues"]["result"],
+            ["blocked", "needs_rework", "pass"],
+        )
+        self.assertEqual(
+            snapshot["markers"]["TEAM_ROUTER_REVIEW"]["requiredFields"],
+            ["result", "summary", "findings", "requiredChanges", "evidenceChecked", "risks"],
+        )
+        self.assertEqual(
+            snapshot["markers"]["TEAM_ROUTER_REVIEW"]["allowedValues"]["result"],
+            ["blocked", "needs_rework", "pass"],
+        )
+        self.assertIn("awaiting_callback", snapshot["stateMachine"]["main"])
+        self.assertIn("reviewing", snapshot["stateMachine"]["main"])
+        self.assertEqual(snapshot["recoverableStatuses"]["callback_unreachable"], "verifying")
+        self.assertEqual(snapshot["recoverableStatuses"]["review_unreachable"], "reviewing")
+        self.assertEqual(snapshot["stateMachine"]["manual_recovery"]["review_unreachable"], "reviewing")
+
+
+
+    def test_protocol_contract_snapshot_includes_manager_orchestration_policy(self):
+        policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
+
+        self.assertIn("low-frequency", policy["polling"]["mode"])
+        self.assertIn("event-driven", policy["polling"]["mode"])
+        self.assertIn("read_thread", policy["polling"]["mode"])
+        self.assertIn("30-60s", policy["polling"]["steadyCadence"])
+        self.assertIn("status changes", policy["polling"]["userVisibleUpdates"])
+        self.assertIn("reuse existing executor", policy["roleReuse"]["default"])
+        self.assertIn("existing verifier", policy["roleReuse"]["default"])
+        self.assertIn("same taskId or task family", policy["roleReuse"]["default"])
+        self.assertIn("original executor", policy["roleReuse"]["reworkExecutor"])
+        self.assertIn("original verifier", policy["roleReuse"]["reworkVerifier"])
+        self.assertIn("isolation requirement changes", policy["roleReuse"]["newThreadOnlyWhen"])
+        self.assertIn("verdictDelivery: direct-send", policy["verifierDirectReturn"]["requiredFields"])
+        self.assertIn("verdictFallback: self-thread-marker", policy["verifierDirectReturn"]["requiredFields"])
+        self.assertEqual(
+            policy["verifierDirectReturn"]["sendInstruction"],
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
+        )
+
+        reviewer_gate = policy["conditionalReviewerGate"]
+        self.assertIn("executor -> verifier", reviewer_gate["defaultFlow"])
+        self.assertIn("reviewer(read-only/adversarial)", reviewer_gate["reviewerFlow"])
+        self.assertIn("router/manager/orchestration policy", reviewer_gate["requiredFor"])
+        self.assertIn("role protocol changes", reviewer_gate["requiredFor"])
+        self.assertIn("runtime gate or reviewer gate changes", reviewer_gate["requiredFor"])
+        self.assertIn("Team Router self changes", "\n".join(reviewer_gate["requiredFor"]))
+        self.assertIn("ordinary small fixes", reviewer_gate["skipWhen"])
+        self.assertIn("not final acceptance", reviewer_gate["reviewerResponsibility"])
+        self.assertIn("final acceptance", reviewer_gate["verifierResponsibility"])
+        self.assertIn("reuse existing reviewer", reviewer_gate["roleReuse"])
+        self.assertIn("original reviewer", reviewer_gate["roleReuse"])
+        self.assertIn("send_reviewer_request_with_adapter()", reviewer_gate["runtimeImplementation"])
+        self.assertIn("read_reviewer_review_update_with_adapter()", reviewer_gate["runtimeImplementation"])
+        self.assertIn("capture_reviewer_review_from_read()", reviewer_gate["runtimeImplementation"])
+        self.assertIn("needs_rework -> executor rework", reviewer_gate["runtimeImplementation"])
+        self.assertIn("reviewer role conversation/thread", reviewer_gate["namedReviewerRequirement"])
+        self.assertIn("create/register reviewer role conversation", reviewer_gate["namedReviewerRequirement"])
+        self.assertIn("subagent fallback is not allowed", reviewer_gate["namedReviewerRequirement"])
+        self.assertIn("reviewDelivery: direct-send", policy["reviewerDirectReturn"]["requiredFields"])
+        self.assertIn("reviewFallback: self-thread-marker", policy["reviewerDirectReturn"]["requiredFields"])
+        self.assertEqual(
+            policy["reviewerDirectReturn"]["sendInstruction"],
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
+        )
 
 class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
     def test_registry_path_uses_shared_state_root_not_worktree_root(self):
@@ -628,6 +770,12 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(updated["status"], "blocked")
 
+    def _high_risk_awaiting_callback_ledger(self):
+        ledger = self._awaiting_callback_ledger()
+        ledger["objective"] = "update role protocol and orchestration policy"
+        ledger["plan"]["fields"]["scope"] = "role protocol and orchestration policy"
+        return team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
     def test_executor_dispatch_records_attempt_and_recovery_anchor(self):
         ledger = self._planned_ledger()
         message = team_router.make_executor_dispatch_message(
@@ -673,7 +821,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
         self.assertIn(
-            "send_message_to_thread(threadId=parent-manager-thread, prompt=<TEAM_ROUTER_CALLBACK block>)",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>)",
             message,
         )
         self.assertIn("callbackMarker: TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", message)
@@ -691,6 +839,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(latest["returnThreadId"], "parent-manager-thread")
         self.assertEqual(latest["callbackDelivery"], "direct-send")
         self.assertEqual(latest["callbackFallback"], "self-thread-marker")
+        self.assertEqual(latest["fallbackSearchAnchor"], latest["searchAnchor"])
+        self.assertEqual(
+            latest["returnSearchAnchor"],
+            {"messageId": None, "sentAt": "2026-06-22T20:02:00+08:00"},
+        )
 
     def test_executor_dispatch_search_anchor_serializes_null_message_id(self):
         ledger = self._planned_ledger()
@@ -877,6 +1030,368 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(updated["status"], "awaiting_callback")
 
+    def test_high_risk_executor_callback_enters_reviewer_gate_instead_of_verifier(self):
+        ledger = self._high_risk_awaiting_callback_ledger()
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: protocol changed\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "reviewing")
+        self.assertIsNone(updated["verification"])
+
+    def test_low_risk_executor_callback_still_enters_verifier_gate(self):
+        ledger = self._awaiting_callback_ledger()
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: verifier"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+
+    def test_watch_sends_reviewer_request_for_high_risk_callback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        adapter.messages.setdefault("thread-executor", []).append({
+            "messageId": "msg-dispatch",
+            "sentAt": "2026-06-22T20:02:00+08:00",
+            "text": "TEAM_ROUTER_DISPATCH taskId=%s" % self.task_id,
+        })
+        adapter.append_reply(
+            ledger["dispatches"][-1]["threadId"],
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer" % self.task_id,
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_reviewer_request")
+        self.assertEqual(update["status"], "reviewing")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-reviewer")
+        prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("reviewDelivery: direct-send", prompt)
+        self.assertIn("reviewFallback: self-thread-marker", prompt)
+        self.assertNotIn("verdictDelivery: direct-send", prompt)
+        self.assertEqual(update["nextWakeup"]["role"], "reviewer")
+        self.assertEqual(update["nextWakeup"]["reason"], "awaiting TEAM_ROUTER_REVIEW")
+        self.assertEqual(
+            update["nextWakeup"]["searchAnchor"],
+            update["ledger"]["review"]["request"]["fallbackSearchAnchor"],
+        )
+
+    def test_review_unreachable_next_wakeup_points_to_reviewer_fallback_anchor(self):
+        self._high_risk_awaiting_callback_ledger()
+        callback_messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer" % self.task_id},
+        ]
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            callback_messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        reviewing = team_router.record_reviewer_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            reviewer_thread_id="thread-reviewer",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-review",
+            return_thread_id="parent-manager-thread",
+        )
+        reviewing["status"] = "review_unreachable"
+        reviewing = team_router.save_task_ledger(self.root, self.project_id, self.task_id, reviewing)
+
+        wakeup = team_router._watch_next_wakeup(reviewing)
+
+        self.assertIsNotNone(wakeup)
+        self.assertEqual(wakeup["role"], "reviewer")
+        self.assertEqual(wakeup["reason"], "awaiting TEAM_ROUTER_REVIEW")
+        self.assertEqual(wakeup["searchAnchor"], reviewing["review"]["request"]["fallbackSearchAnchor"])
+
+    def test_watch_reviewer_request_inherits_return_thread_id_after_executor_fallback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        ledger["objective"] = "Team Router reviewer runtime gate rework"
+        ledger["plan"]["fields"]["scope"] = "role protocol and orchestration policy"
+        ledger["plan"]["fields"]["riskBoundary"] = "runtime gate change"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        ledger = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-runtime-gate"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer" % ledger["taskId"],
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_reviewer_request")
+        self.assertIn("returnThreadId: parent-manager-thread", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertEqual(update["ledger"]["review"]["request"]["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(update["nextWakeup"]["role"], "reviewer")
+
+    def test_watch_verifier_request_inherits_return_thread_id_after_executor_fallback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        ledger = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: verifier" % ledger["taskId"],
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertIn("returnThreadId: parent-manager-thread", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertEqual(update["ledger"]["verification"]["request"]["returnThreadId"], "parent-manager-thread")
+
+    def test_watch_verifier_request_inherits_return_thread_id_after_reviewer_fallback(self):
+        adapter = FakeThreadAdapter()
+        self._high_risk_awaiting_callback_ledger()
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+                {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer" % self.task_id},
+            ],
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-runtime-gate"}},
+            "2026-06-22T20:04:30+08:00",
+        )
+        team_router.record_reviewer_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            reviewer_thread_id="thread-reviewer",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-review",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["thread-reviewer"] = [
+            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review request"},
+            {
+                "messageId": "msg-review-pass",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": "TEAM_ROUTER_REVIEW taskId=%s\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none" % self.task_id,
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertIn("returnThreadId: parent-manager-thread", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertEqual(update["ledger"]["verification"]["request"]["returnThreadId"], "parent-manager-thread")
+
+    def test_watch_captures_reviewer_direct_return_and_sends_verifier(self):
+        adapter = FakeThreadAdapter()
+        self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+                {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer" % self.task_id},
+            ],
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        reviewing = team_router.record_reviewer_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            reviewer_thread_id="thread-reviewer",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-review",
+            return_thread_id="parent-manager-thread",
+        )
+        request = reviewing["review"]["request"]
+        self.assertEqual(request["reviewDelivery"], "direct-send")
+        self.assertEqual(request["reviewFallback"], "self-thread-marker")
+        self.assertNotIn("verdictDelivery", request)
+        self.assertNotIn("verdictFallback", request)
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "sourceThreadId": "thread-reviewer",
+                "text": "TEAM_ROUTER_REVIEW taskId=%s\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none" % self.task_id,
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["result"], "pass")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
+        self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
+    def test_reviewer_pass_sends_verifier_request_and_needs_rework_or_blocked_stops(self):
+        ledger = self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        callback_messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+        reviewing = team_router.capture_executor_callback_from_read(
+            self.root, self.project_id, self.task_id, callback_messages, captured_at="2026-06-22T20:04:00+08:00"
+        )
+        self.assertEqual(reviewing["status"], "reviewing")
+        reviewing = team_router.record_reviewer_request_sent(
+            self.root, self.project_id, self.task_id, reviewer_thread_id="thread-reviewer", sent_at="2026-06-22T20:05:00+08:00", message_id="msg-review"
+        )
+        pass_messages = [
+            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review"},
+            {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+        ]
+        passed = team_router.capture_reviewer_review_from_read(
+            self.root, self.project_id, self.task_id, pass_messages, captured_at="2026-06-22T20:07:00+08:00"
+        )
+        self.assertEqual(passed["status"], "verifying")
+        self.assertEqual(passed["review"]["result"]["fields"]["result"], "pass")
+
+        self.tearDown(); self.setUp()
+        self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(self.root, self.project_id, {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}}, "2026-06-22T20:02:30+08:00")
+        team_router.capture_executor_callback_from_read(self.root, self.project_id, self.task_id, callback_messages, captured_at="2026-06-22T20:04:00+08:00")
+        team_router.record_reviewer_request_sent(self.root, self.project_id, self.task_id, reviewer_thread_id="thread-reviewer", sent_at="2026-06-22T20:05:00+08:00", message_id="msg-review")
+        rework = team_router.capture_reviewer_review_from_read(
+            self.root, self.project_id, self.task_id, [pass_messages[0], {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: needs_rework\nsummary: gap\nfindings: missing test\nrequiredChanges: add test\nevidenceChecked: tests\nrisks: none"}], captured_at="2026-06-22T20:07:00+08:00"
+        )
+        self.assertEqual(rework["status"], "needs_rework")
+
+        self.tearDown(); self.setUp()
+        self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(self.root, self.project_id, {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}}, "2026-06-22T20:02:30+08:00")
+        team_router.capture_executor_callback_from_read(self.root, self.project_id, self.task_id, callback_messages, captured_at="2026-06-22T20:04:00+08:00")
+        team_router.record_reviewer_request_sent(self.root, self.project_id, self.task_id, reviewer_thread_id="thread-reviewer", sent_at="2026-06-22T20:05:00+08:00", message_id="msg-review")
+        blocked = team_router.capture_reviewer_review_from_read(
+            self.root, self.project_id, self.task_id, [pass_messages[0], {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: blocked\nsummary: blocked\nfindings: unsafe\nrequiredChanges: redesign\nevidenceChecked: tests\nrisks: high"}], captured_at="2026-06-22T20:07:00+08:00"
+        )
+        self.assertEqual(blocked["status"], "blocked")
+
+    def test_reviewer_gate_without_role_thread_requires_role_conversation_not_subagent(self):
+        adapter = FakeThreadAdapter()
+        self._high_risk_awaiting_callback_ledger()
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+        team_router.capture_executor_callback_from_read(self.root, self.project_id, self.task_id, messages, captured_at="2026-06-22T20:04:00+08:00")
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_reviewer_request_with_adapter(
+                self.root, self.project_id, self.task_id, thread_adapter=adapter, permission="read-only", sent_at="2026-06-22T20:05:00+08:00"
+            )
+        self.assertIn("reviewer role conversation", str(ctx.exception))
+        self.assertIn("subagent fallback is not allowed", str(ctx.exception))
+
     def test_verifier_pass_writes_verification_and_closeout(self):
         ledger = self._verifying_ledger()
         verify_message = team_router.make_verifier_request_message(
@@ -931,7 +1446,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
         self.assertIn(
-            "send_message_to_thread(threadId=parent-manager-thread, prompt=<TEAM_ROUTER_VERDICT block>)",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
             verify_message,
         )
         self.assertIn("callbackMarker: TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3", verify_message)
@@ -949,7 +1464,66 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(request["returnThreadId"], "parent-manager-thread")
         self.assertEqual(request["verdictDelivery"], "direct-send")
         self.assertEqual(request["verdictFallback"], "self-thread-marker")
+        self.assertEqual(request["fallbackSearchAnchor"], request["searchAnchor"])
+        self.assertEqual(
+            request["returnSearchAnchor"],
+            {"messageId": None, "sentAt": "2026-06-22T20:05:00+08:00"},
+        )
 
+
+    def test_reviewer_request_supports_direct_return_delivery_metadata(self):
+        ledger = self._verifying_ledger()
+
+        review_message = team_router.make_reviewer_request_message(
+            ledger["taskId"],
+            ledger["observations"][-1]["content"],
+            "read-only",
+            "src",
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertIn("returnThreadId: parent-manager-thread", review_message)
+        self.assertIn("reviewDelivery: direct-send", review_message)
+        self.assertIn("reviewFallback: self-thread-marker", review_message)
+        self.assertIn(
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
+            review_message,
+        )
+        self.assertIn("reviewMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
+        self.assertIn("reviewerMode: read-only/adversarial", review_message)
+
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {
+                "reviewer": {
+                    "threadId": "thread-reviewer",
+                    "title": "审查者-test",
+                }
+            },
+            "2026-06-22T20:04:30+08:00",
+        )
+        requested = team_router.record_reviewer_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            reviewer_thread_id="thread-reviewer",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-review",
+            return_thread_id="parent-manager-thread",
+        )
+        request = requested["review"]["request"]
+        self.assertEqual(request["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(request["reviewDelivery"], "direct-send")
+        self.assertEqual(request["reviewFallback"], "self-thread-marker")
+        self.assertEqual(request["fallbackSearchAnchor"], request["searchAnchor"])
+        self.assertEqual(requested["status"], "reviewing")
+
+        registry = team_router.load_registry(self.root, self.project_id)
+        read_request = team_router.recovery_read_request(requested, registry, "reviewer")
+        self.assertEqual(read_request["threadId"], "thread-reviewer")
+        self.assertEqual(read_request["searchAnchor"]["messageId"], "msg-review")
+        self.assertEqual(read_request["expectedCallback"], "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3")
     def test_verifier_capture_accepts_same_timestamp_response_for_time_only_anchor(self):
         ledger = self._verifying_ledger()
         verify_prompt = team_router.make_verifier_request_message(
@@ -1501,21 +2075,47 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("set_thread_title", str(ctx.exception))
         self.assertNotIn("host adapter wrapper", str(ctx.exception))
 
-        class FullAdapter(FakeThreadAdapter):
-            def list_projects(self, **kwargs):
-                return {"projects": []}
-
-            def list_threads(self, **kwargs):
-                return {"threads": []}
-
-            def set_thread_title(self, **kwargs):
-                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
-
-        capabilities = team_router.probe_thread_adapter_capabilities(FullAdapter())
+        capabilities = team_router.probe_thread_adapter_capabilities(FullThreadAdapter())
         self.assertTrue(capabilities["create_thread"])
         self.assertTrue(capabilities["list_projects"])
         self.assertTrue(capabilities["list_threads"])
         self.assertTrue(capabilities["set_thread_title"])
+
+    def test_parent_entry_guard_blocks_adapter_runner_without_callable_tools(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.parent_entry_guard(FakeThreadAdapter())
+
+        self.assertIn("adapter-created path unavailable", str(ctx.exception))
+        self.assertIn("manual/pre-created continuation", str(ctx.exception))
+
+    def test_parent_entry_guard_allows_manual_precreated_when_adapter_unusable(self):
+        entry = team_router.parent_entry_guard(
+            FakeThreadAdapter(),
+            precreated_roles=self.roles,
+        )
+
+        self.assertEqual(entry["path"], "manual-precreated")
+        self.assertFalse(entry["adapterUsable"])
+        self.assertIn("list_projects", entry["reason"])
+
+    def test_parent_entry_guard_rejects_manual_precreated_without_thread_ids(self):
+        invalid_roles = {
+            "manager": {"title": "TeamRouter manager"},
+            "executor": {"threadId": "thread-executor"},
+            "verifier": {"threadId": "thread-verifier"},
+        }
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.parent_entry_guard(precreated_roles=invalid_roles)
+
+        self.assertIn("roles.manager.threadId", str(ctx.exception))
+
+    def test_parent_entry_guard_accepts_full_callable_adapter_path(self):
+        entry = team_router.parent_entry_guard(FullThreadAdapter())
+
+        self.assertEqual(entry["path"], "adapter-created")
+        self.assertTrue(entry["adapterUsable"])
+        self.assertTrue(entry["capabilities"]["send_message_to_thread"])
 
     def test_thread_adapter_capability_probe_rejects_model_tool_descriptors(self):
         descriptor_adapter = {
@@ -1648,6 +2248,22 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         filtered = team_router._messages_after_anchor(messages, anchor)
         self.assertEqual([msg["messageId"] for msg in filtered], ["item-agent"])
 
+    def test_live_manager_inbox_direct_return_fixture_normalizes_source_thread(self):
+        path = ROOT / "tests" / "fixtures" / "team_router" / "live_manager_inbox_direct_return.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+
+        messages = team_router.normalize_thread_read_messages(raw)
+        marker_messages = [
+            msg for msg in messages
+            if "TEAM_ROUTER_CALLBACK taskId=ctr-live-direct-fixture-1" in msg["text"]
+        ]
+
+        self.assertTrue(marker_messages)
+        self.assertEqual(marker_messages[-1]["messageId"], "item-direct-callback")
+        self.assertEqual(marker_messages[-1]["sentAt"], 1767225660)
+        self.assertEqual(marker_messages[-1]["sourceThreadId"], "thread-executor-fixture")
+        self.assertEqual(marker_messages[-1]["delegatedText"], marker_messages[-1]["text"])
+
     def test_live_read_thread_fixture_matches_normalizer_contract(self):
         path = ROOT / "tests" / "fixtures" / "team_router" / "live_read_thread_verdict.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -1719,7 +2335,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             def create_thread(self, **kwargs):
                 prompt = kwargs["prompt"]
                 role = "role"
-                for candidate in ("manager", "executor", "verifier"):
+                for candidate in ("manager", "executor", "verifier", "reviewer"):
                     if candidate in prompt:
                         role = candidate
                         break
@@ -1739,6 +2355,31 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(roles["executor"]["title"], "Nested executor title")
         self.assertEqual(roles["verifier"]["title"], "Nested verifier title")
 
+
+    def test_reviewer_role_is_first_class_but_not_default_created(self):
+        default_adapter = FakeThreadAdapter()
+        default_roles = team_router.create_role_threads_with_adapter(
+            default_adapter,
+            project_id=self.project_id,
+            objective="inspect docs",
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+        self.assertEqual(sorted(default_roles), ["executor", "manager", "verifier"])
+        self.assertNotIn("reviewer", default_roles)
+
+        reviewer_adapter = FakeThreadAdapter()
+        reviewer_roles = team_router.create_role_threads_with_adapter(
+            reviewer_adapter,
+            project_id=self.project_id,
+            objective="inspect router protocol",
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+            role_names=["reviewer"],
+        )
+        self.assertEqual(sorted(reviewer_roles), ["reviewer"])
+        self.assertEqual(reviewer_roles["reviewer"]["threadId"], "thread-reviewer")
+        self.assertTrue(team_router.role_thread_title(self.project_id, "reviewer", "协议审查").startswith("审查者-"))
     def test_role_thread_title_supports_chinese_visible_task_titles_and_legacy_default(self):
         self.assertEqual(
             team_router.role_thread_title(
@@ -2402,7 +3043,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertEqual(updates[-1]["codexProjectId"], "D:\\codex\\codex-dynamic-workflow")
 
-    def test_verifier_request_requires_latest_executor_callback_observation(self):
+    def test_verifier_request_uses_recent_executor_callback_observation(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()
         ledger["observations"].append(team_router.make_observation(
@@ -2415,16 +3056,18 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         ))
         team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
 
-        with self.assertRaises(team_router.StateStoreError):
-            team_router.send_verifier_request_with_adapter(
-                self.root,
-                self.project_id,
-                self.task_id,
-                thread_adapter=adapter,
-                permission="read-only",
-                sent_at="2026-06-22T20:05:00+08:00",
-            )
-        self.assertEqual(adapter.sent, [])
+        updated = team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
+        self.assertIn("TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", adapter.sent[-1]["kwargs"]["prompt"])
 
     def test_fake_thread_adapter_runs_manager_executor_verifier_smoke(self):
         adapter = FakeThreadAdapter()
@@ -2606,6 +3249,167 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(fourth["ledger"]["status"], "done")
         self.assertTrue(fourth["userOutput"].startswith("Team Router Closeout"))
 
+    def test_run_team_task_with_adapter_routes_high_risk_callback_through_reviewer_pass(self):
+        adapter = FakeThreadAdapter()
+        first = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:01:00+08:00",
+        )
+        manager_thread = first["ledger"]["planRequest"]["threadId"]
+        adapter.append_reply(
+            manager_thread,
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: Team Router reviewer runtime gate\nstopWhen: done\nriskBoundary: runtime gate and reviewer gate change\nexecutorPrompt: inspect Team Router self changes\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+        second = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:02:00+08:00",
+        )
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-runtime-gate"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        executor_thread = second["ledger"]["dispatches"][-1]["threadId"]
+        adapter.append_reply(
+            executor_thread,
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: runtime gate fixed\nevidence: tests\nrisks: none\nnext: reviewer" % self.task_id,
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        third = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(third["action"], "sent_reviewer_request")
+        self.assertEqual(third["ledger"]["status"], "reviewing")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-reviewer")
+        self.assertIn("TEAM_ROUTER_REVIEW_REQUEST taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
+
+        adapter.append_reply(
+            "thread-reviewer",
+            "TEAM_ROUTER_REVIEW taskId=%s\nresult: pass\nsummary: reviewer passed\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none" % self.task_id,
+            message_id="msg-review-pass",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+        fourth = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:06:00+08:00",
+        )
+
+        self.assertEqual(fourth["action"], "sent_verifier_request")
+        self.assertEqual(fourth["ledger"]["status"], "verifying")
+        self.assertEqual(fourth["ledger"]["review"]["result"]["fields"]["result"], "pass")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
+
+    def test_run_team_task_with_adapter_stops_for_reviewer_needs_rework(self):
+        adapter = FakeThreadAdapter()
+        first = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:01:00+08:00",
+        )
+        adapter.append_reply(
+            first["ledger"]["planRequest"]["threadId"],
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: Team Router reviewer gate\nstopWhen: done\nriskBoundary: runtime gate change\nexecutorPrompt: inspect Team Router self changes\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+        second = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:02:00+08:00",
+        )
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-runtime-gate"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        adapter.append_reply(
+            second["ledger"]["dispatches"][-1]["threadId"],
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: runtime gate fixed\nevidence: tests\nrisks: none\nnext: reviewer" % self.task_id,
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+        third = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+        self.assertEqual(third["action"], "sent_reviewer_request")
+        adapter.append_reply(
+            "thread-reviewer",
+            "TEAM_ROUTER_REVIEW taskId=%s\nresult: needs_rework\nsummary: gap remains\nfindings: trigger missing\nrequiredChanges: expand reviewer gate trigger tests\nevidenceChecked: tests\nrisks: none" % self.task_id,
+            message_id="msg-review-rework",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+
+        fourth = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="Team Router reviewer runtime gate rework",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:06:00+08:00",
+        )
+
+        self.assertEqual(fourth["action"], "needs_rework_pending")
+        self.assertEqual(fourth["ledger"]["status"], "needs_rework")
+        self.assertEqual(fourth["ledger"]["review"]["result"]["fields"]["result"], "needs_rework")
     def test_watch_team_task_reads_executor_callback_and_sends_verifier(self):
         adapter = FakeThreadAdapter()
         awaiting = self._awaiting_callback_ledger()
@@ -2781,6 +3585,40 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["ledger"]["observations"], [])
         self.assertEqual(adapter.sent, [])
 
+    def test_executor_role_fallback_read_uses_fallback_search_anchor(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        awaiting = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        awaiting["dispatches"][-1]["searchAnchor"] = {"messageId": "manager-direct-callback"}
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, awaiting)
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: fallback callback\nevidence: executor self-thread\nrisks: none\nnext: verifier" % self.task_id,
+            },
+        ]
+
+        update = team_router.read_executor_callback_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["observations"][-1]["parsedFields"]["summary"], "fallback callback")
+
     def test_watch_team_task_reads_verifier_pass_and_returns_closeout(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()
@@ -2824,6 +3662,40 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("summary: watcher closeout", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
         self.assertEqual(len(adapter.sent), 0)
+
+    def test_verifier_role_fallback_read_uses_fallback_search_anchor(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        requested = team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        requested["verification"]["request"]["searchAnchor"] = {"messageId": "manager-direct-verdict"}
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, requested)
+        adapter.messages["thread-verifier"] = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+            {
+                "messageId": "msg-verdict",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: fallback closeout\nrequiredChanges: none\nevidenceChecked: verifier self-thread\nrisks: none" % self.task_id,
+            },
+        ]
+
+        update = team_router.read_verifier_verdict_update_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["ledger"]["status"], "done")
+        self.assertIn("summary: fallback closeout", update["userOutput"])
 
     def test_watch_team_task_prefers_manager_inbox_direct_return_verdict(self):
         adapter = FakeThreadAdapter()
@@ -3564,6 +4436,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for needle in (
             "## Parent Thread Entry Flow",
             "list_projects -> create_thread -> send_message_to_thread -> read_thread",
+            "parent_entry_guard()",
+            "protocol_contract_snapshot()",
             "orchestrate_team_task_with_adapter()",
             "run_team_task_with_adapter()",
             "watch_team_task_with_adapter()",
@@ -3609,8 +4483,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`manager thread`",
             "`manager parser`",
             "`manager integration`",
-            "Manager Mode 禁止直接改文件、跑测试、执行实现命令、commit、push、PR 或 merge",
+            "continues an already-active Manager Mode task with terse follow-ups",
+            "Manager Mode is sticky for the current task",
+            "A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution authorization",
+            "`先修`",
+            "`开始修`",
+            "`修这个`",
+            "`开始处理`",
+            "`先处理`",
+            "`按刚才说的修`",
+            "propose rule updates",
+            "Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge",
+            "If implementation is requested during active Manager Mode",
+            "Do not personally edit files or run project commands from Manager Mode",
             "除非用户明确说“切回执行者”",
+            "“你亲自改代码”",
         ):
             self.assertIn(needle, text)
         manager_mode = self._section(text, "### Manager Mode Hard Rule")
@@ -3618,6 +4505,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`manager`, or `team manager`, the assistant enters Manager Mode",
             manager_mode,
         )
+        self.assertNotIn("“" + "直接" + "改”", manager_mode)
+        self.assertNotIn("你" + "来执行", manager_mode)
+        self.assertNotIn("while the user is still addressing" + " the agent as manager", manager_mode)
+        self.assertNotIn("update the rules", manager_mode)
 
     def test_skill_doc_separates_adapter_created_and_precreated_role_paths(self):
         path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
@@ -3660,6 +4551,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, manual_continuation)
         self.assertNotIn("send_manager_plan_request_with_adapter()", manual_continuation)
         self.assertNotIn("read_verifier_verdict_update_with_adapter()", manual_continuation)
+        self.assertIn("does not continue through `orchestrate_team_task_with_adapter()`", manual_continuation)
+        self.assertIn("not an end-to-end adapter-runner entrypoint", manual_continuation)
 
     def test_live_orchestration_runbook_exists(self):
         path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
@@ -3669,14 +4562,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "create_thread",
             "send_message_to_thread",
             "read_thread",
+            "parent_entry_guard()",
             "orchestrate_team_task_with_adapter()",
             "run_team_task_with_adapter()",
             "watch_team_task_with_adapter()",
             "read_verifier_verdict_update_with_adapter()",
             "tests/fixtures/team_router/live_read_thread_verdict.json",
+            "tests/fixtures/team_router/live_manager_inbox_direct_return.json",
+            "tests/fixtures/team_router/three_role_visible_smoke_scenarios.json",
             "Emit `update[\"userOutput\"]` exactly",
             "Team Router Closeout",
             "Team Router Handoff",
+            "direct-send-callback-success",
+            "direct-send-missed-self-thread-fallback",
+            "verifier-needs-rework",
+            "verifier-blocked-closeout",
             "remainingTodos",
             "callbackDelivery: direct-send",
             "verdictDelivery: direct-send",
@@ -3700,8 +4600,23 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`manager thread`",
             "`manager parser`",
             "`manager integration`",
+            "Manager Mode is sticky for the current task",
+            "A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution authorization",
+            "`先修`",
+            "`开始修`",
+            "`修这个`",
+            "`开始处理`",
+            "`先处理`",
+            "`按刚才说的修`",
+            "propose rule updates",
+            "Do not personally edit files or run project commands from Manager Mode",
+            "“你亲自改代码”",
         ):
             self.assertIn(needle, text)
+        self.assertNotIn("“" + "直接" + "改”", text)
+        self.assertNotIn("你" + "来执行", text)
+        self.assertNotIn("while the user is still addressing" + " the agent as manager", text)
+        self.assertNotIn("update the rules", text)
 
     def test_live_orchestration_runbook_separates_adapter_created_and_precreated_role_paths(self):
         path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
@@ -3732,7 +4647,138 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, manual_continuation)
         self.assertIn("read_verifier_verdict_update_with_adapter()", adapter_continuation)
         self.assertNotIn("send_manager_plan_request_with_adapter()", manual_continuation)
+        self.assertIn("does not continue through `orchestrate_team_task_with_adapter()`", manual_continuation)
+        self.assertIn("not an end-to-end adapter-runner entrypoint", manual_continuation)
 
+    def test_three_role_visible_smoke_fixture_covers_required_paths(self):
+        path = ROOT / "tests" / "fixtures" / "team_router" / "three_role_visible_smoke_scenarios.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        names = {scenario["name"] for scenario in raw["scenarios"]}
+
+        self.assertEqual(raw["roles"]["manager"], "规划者")
+        self.assertIn("父线程调度者", raw["parentSideConcepts"])
+        self.assertEqual(
+            names,
+            {
+                "direct-send-callback-success",
+                "direct-send-missed-self-thread-fallback",
+                "verifier-needs-rework",
+                "verifier-blocked-closeout",
+            },
+        )
+        direct = next(s for s in raw["scenarios"] if s["name"] == "direct-send-callback-success")
+        self.assertIn("returnThreadId", direct["requiredLedgerFields"])
+        self.assertIn("fallbackSearchAnchor", direct["requiredLedgerFields"])
+
+    def test_readme_documents_team_router_quick_start_and_boundaries(self):
+        path = ROOT / "README.md"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "## Team Router 快速使用",
+            "`codex-team-router`",
+            "`dynamic-workflow`",
+            "read-only/design-only",
+            "不支持 `workspace-write`",
+            "父线程调度者",
+            "规划者",
+            "执行者",
+            "验证者",
+            "审查者",
+            "TEAM_ROUTER_REVIEW",
+            "reviewDelivery: direct-send",
+            "reviewFallback: self-thread-marker",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
+            "parent_entry_guard()",
+            "protocol_contract_snapshot()",
+            "tests/fixtures/team_router/three_role_visible_smoke_scenarios.json",
+            "Manager Mode 是当前任务内的粘性角色",
+            "规则更新建议或 dispatch/prepare executor work",
+            "`先修`",
+            "`开始修`",
+            "`修这个`",
+            "`开始处理`",
+            "`先处理`",
+            "`按刚才说的修`",
+            "dispatch/prepare executor work",
+            "一直持续到明确角色切换",
+            "manual helper/record/capture functions",
+            "不把 pre-created roles 送进 adapter runner",
+            "returnThreadId",
+            "callbackDelivery: direct-send",
+            "callbackFallback: self-thread-marker",
+            "verdictDelivery: direct-send",
+            "verdictFallback: self-thread-marker",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>)",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
+            "切回执行者",
+            "你亲自改代码",
+        ):
+            self.assertIn(needle, text)
+        self.assertNotIn("你" + "来执行", text)
+        self.assertNotIn("直接" + "改", text)
+        self.assertNotIn("while the user is still addressing" + " the agent as manager", text)
+
+
+
+    def test_manager_orchestration_policy_docs_cover_polling_reuse_and_verifier_return(self):
+        paths = (
+            ROOT / "README.md",
+            ROOT / "skills" / "codex-team-router" / "SKILL.md",
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md",
+        )
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                for needle in (
+                    "low-frequency",
+                    "event-driven",
+                    "read_thread",
+                    "30-60s",
+                    "Role reuse policy",
+                    "reuse existing executor",
+                    "existing verifier",
+                    "original executor",
+                    "original verifier",
+                    "isolation requirement",
+                    "verdictDelivery: direct-send",
+                    "verdictFallback: self-thread-marker",
+                    "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
+                ):
+                    self.assertIn(needle, text)
+
+
+
+    def test_conditional_reviewer_docs_cover_role_policy_reuse_and_direct_return(self):
+        paths = (
+            ROOT / "README.md",
+            ROOT / "skills" / "codex-team-router" / "SKILL.md",
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md",
+        )
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                for needle in (
+                    "conditional reviewer",
+                    "reviewer",
+                    "TEAM_ROUTER_REVIEW",
+                    "read-only/adversarial",
+                    "not final acceptance",
+                    "verifier remains final acceptance",
+                    "existing reviewer",
+                    "original reviewer",
+                    "reviewDelivery: direct-send",
+                    "reviewFallback: self-thread-marker",
+                    "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
+                    "send_reviewer_request_with_adapter()",
+                    "read_reviewer_review_update_with_adapter()",
+                    "capture_reviewer_review_from_read()",
+                    "create/register reviewer role conversation",
+                    "subagent fallback is not allowed",
+                    "router/manager/orchestration policy",
+                    "role protocol",
+                    "shared/high-risk logic",
+                ):
+                    self.assertIn(needle, text)
 
 if __name__ == "__main__":
     unittest.main()

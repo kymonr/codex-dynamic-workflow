@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "thread": {
+    "id": "parent-manager-thread-fixture",
+    "hostId": "local",
+    "title": "Team Router parent manager inbox",
+    "status": {"type": "idle"},
+    "cwd": "D:\\codex\\codex-dynamic-workflow",
+    "createdAt": 1767225600,
+    "updatedAt": 1767225660
+  },
+  "page": {
+    "order": "newest_first",
+    "limit": 5,
+    "nextCursor": null,
+    "hasMore": false
+  },
+  "turns": [
+    {
+      "id": "turn-direct-callback",
+      "status": "completed",
+      "error": null,
+      "startedAt": 1767225660,
+      "completedAt": 1767225664,
+      "durationMs": 4120,
+      "items": [
+        {
+          "type": "userMessage",
+          "id": "item-direct-callback",
+          "text": "<codex_delegation>\n  <source_thread_id>thread-executor-fixture</source_thread_id>\n  <input>TEAM_ROUTER_CALLBACK taskId=ctr-live-direct-fixture-1\nstatus: done\nfinal: true\nsummary: live direct-return callback observed\nevidence: manager inbox direct-send smoke\nrisks: none\nnext: verifier</input>\n</codex_delegation>"
+        }
+      ]
+    }
+  ]
+}
