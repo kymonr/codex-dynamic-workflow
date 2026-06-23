@@ -39,6 +39,11 @@ MAX_OBSERVATION_CONTENT_CHARS = 8192
 REGISTRY_VERSION = 1
 TASK_LEDGER_VERSION = 1
 ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
+ROLE_DISPLAY_NAMES = {
+    "manager": "规划者",
+    "executor": "执行者",
+    "verifier": "验证者",
+}
 THREAD_PERMISSIONS = frozenset({"read-only", "design-only"})
 THREAD_TOOL_NAMES = (
     "list_projects",
@@ -749,10 +754,35 @@ def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
     ))
 
 
-def role_thread_title(project_id: str, role: str) -> str:
+def _task_title_from_objective(objective: str) -> str:
+    title = _required_str(objective, "objective")
+    return " ".join(title.split())
+
+
+def legacy_role_thread_title(project_id: str, role: str) -> str:
     _validate_task_id(project_id)
     _validate_role(role)
     return "TeamRouter %s - %s" % (role, project_id)
+
+
+def role_thread_title(project_id: str, role: str, task_title: str | None = None) -> str:
+    _validate_task_id(project_id)
+    _validate_role(role)
+    if task_title is None:
+        return legacy_role_thread_title(project_id, role)
+    visible_task_title = _task_title_from_objective(task_title)
+    return "%s-%s" % (ROLE_DISPLAY_NAMES[role], visible_task_title)
+
+
+def _role_thread_title_matches(project_id: str,
+                               role: str,
+                               title: str,
+                               task_title: str | None = None) -> bool:
+    if title == legacy_role_thread_title(project_id, role):
+        return True
+    if task_title is not None and title == role_thread_title(project_id, role, task_title):
+        return True
+    return False
 
 
 def _project_list_items(value: Any) -> list[Mapping[str, Any]]:
@@ -852,7 +882,9 @@ def _listed_thread_id_and_title(item: Mapping[str, Any]) -> tuple[str | None, st
     return thread_id, title
 
 
-def _listed_thread_role(project_id: str, item: Mapping[str, Any]) -> str | None:
+def _listed_thread_role(project_id: str,
+                        item: Mapping[str, Any],
+                        task_title: str | None = None) -> str | None:
     for candidate in _candidate_mappings(item):
         role = _first_str(candidate, ("teamRouterRole", "role"))
         candidate_project_id = _first_str(candidate, ("projectId", "project_id"))
@@ -861,13 +893,13 @@ def _listed_thread_role(project_id: str, item: Mapping[str, Any]) -> str | None:
                 return role
             if candidate_project_id is None:
                 _, title = _listed_thread_id_and_title(item)
-                if title == role_thread_title(project_id, role):
+                if title is not None and _role_thread_title_matches(project_id, role, title, task_title):
                     return role
     _, title = _listed_thread_id_and_title(item)
     if title is None:
         return None
     for role in sorted(ROLE_NAMES):
-        if title == role_thread_title(project_id, role):
+        if _role_thread_title_matches(project_id, role, title, task_title):
             return role
     return None
 
@@ -876,6 +908,7 @@ def discover_role_threads_with_adapter(thread_adapter: Any,
                                        *,
                                        project_id: str,
                                        observed_at: str,
+                                       task_title: str | None = None,
                                        role_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
     result = _optional_adapter_call(thread_adapter, "list_threads")
     if result is None:
@@ -883,7 +916,7 @@ def discover_role_threads_with_adapter(thread_adapter: Any,
     selected_roles = set(_sorted_role_selection(role_names))
     matches: dict[str, list[dict[str, Any]]] = {role: [] for role in selected_roles}
     for item in _thread_list_items(result):
-        role = _listed_thread_role(project_id, item)
+        role = _listed_thread_role(project_id, item, task_title)
         if role is None or role not in selected_roles:
             continue
         thread_id, title = _listed_thread_id_and_title(item)
@@ -891,7 +924,7 @@ def discover_role_threads_with_adapter(thread_adapter: Any,
             continue
         matches[role].append({
             "threadId": thread_id,
-            "title": title or role_thread_title(project_id, role),
+            "title": title or role_thread_title(project_id, role, task_title),
             "createdAt": observed_at,
             "lastObservedAt": observed_at,
         })
@@ -907,8 +940,9 @@ def discover_role_threads_with_adapter(thread_adapter: Any,
 def _normalize_adapter_role_title(thread_adapter: Any,
                                   project_id: str,
                                   role: str,
-                                  record: dict[str, Any]) -> dict[str, Any]:
-    expected_title = role_thread_title(project_id, role)
+                                  record: dict[str, Any],
+                                  task_title: str | None = None) -> dict[str, Any]:
+    expected_title = role_thread_title(project_id, role, task_title)
     if record.get("title") == expected_title:
         return record
     result = _optional_adapter_call(
@@ -956,8 +990,10 @@ def create_role_threads_with_adapter(thread_adapter: Any,
                                      objective: str,
                                      target: Mapping[str, Any],
                                      observed_at: str,
+                                     task_title: str | None = None,
                                      role_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
     roles: dict[str, dict[str, Any]] = {}
+    resolved_task_title = task_title or _task_title_from_objective(objective)
     for role in _sorted_role_selection(role_names):
         prompt = make_role_thread_prompt(project_id, role, objective)
         result = _adapter_call(
@@ -967,7 +1003,7 @@ def create_role_threads_with_adapter(thread_adapter: Any,
             target=dict(target),
         )
         thread_id = _thread_id_from_create_result(result, role)
-        title = "TeamRouter %s - %s" % (role, project_id)
+        title = role_thread_title(project_id, role, resolved_task_title)
         for candidate in _candidate_mappings(result):
             found_title = _optional_nonempty_str(candidate.get("title"))
             if found_title:
@@ -989,6 +1025,7 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
                                       thread_adapter: Any,
                                       target: Mapping[str, Any] | None,
                                       observed_at: str) -> dict[str, dict[str, Any]]:
+    task_title = _task_title_from_objective(objective)
     roles = _existing_role_threads_from_registry(
         state_root,
         project_id,
@@ -1000,6 +1037,7 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
             thread_adapter,
             project_id=project_id,
             observed_at=observed_at,
+            task_title=task_title,
             role_names=missing_roles,
         )
         for role in missing_roles:
@@ -1009,6 +1047,7 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
                     project_id,
                     role,
                     discovered[role],
+                    task_title,
                 )
         missing_roles = sorted(ROLE_NAMES.difference(roles.keys()))
     if missing_roles:
@@ -1019,6 +1058,7 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
             objective=objective,
             target=resolved_target,
             observed_at=observed_at,
+            task_title=task_title,
             role_names=missing_roles,
         )
         for role, record in created_roles.items():
@@ -1027,6 +1067,7 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
                 project_id,
                 role,
                 record,
+                task_title,
             )
     return roles
 
@@ -1105,13 +1146,14 @@ def record_plan_request_sent(state_root: str | Path,
 def make_executor_dispatch_message(task_id: str,
                                    plan_fields: Mapping[str, Any],
                                    permission: str,
-                                   search_anchor: Mapping[str, Any]) -> str:
+                                   search_anchor: Mapping[str, Any],
+                                   return_thread_id: str | None = None) -> str:
     _validate_task_id(task_id)
     _validate_permission(permission)
     scope = _required_str(plan_fields.get("scope"), "plan.scope")
     stop_when = _required_str(plan_fields.get("stopWhen"), "plan.stopWhen")
     executor_prompt = _required_str(plan_fields.get("executorPrompt"), "plan.executorPrompt")
-    return "\n".join((
+    lines = [
         "TEAM_ROUTER_DISPATCH taskId=%s" % task_id,
         "role: executor",
         "callbackMode: self-thread-marker",
@@ -1120,6 +1162,16 @@ def make_executor_dispatch_message(task_id: str,
         "scope: %s" % scope,
         "stopWhen: %s" % stop_when,
         "searchAnchor: %s" % json.dumps(dict(search_anchor), sort_keys=True),
+    ]
+    if return_thread_id is not None:
+        return_thread_id = _required_str(return_thread_id, "returnThreadId")
+        lines.extend((
+            "returnThreadId: %s" % return_thread_id,
+            "callbackDelivery: direct-send",
+            "callbackFallback: self-thread-marker",
+            "Direct return: after writing the TEAM_ROUTER_CALLBACK block, call send_message_to_thread(threadId=%s, prompt=<TEAM_ROUTER_CALLBACK block>) so the manager thread receives the result." % return_thread_id,
+        ))
+    lines.extend((
         "",
         "Goal:",
         executor_prompt,
@@ -1133,6 +1185,7 @@ def make_executor_dispatch_message(task_id: str,
         "risks: <none or risks>",
         "next: <none or next step>",
     ))
+    return "\n".join(lines)
 
 
 def record_executor_dispatch_sent(state_root: str | Path,
@@ -1141,7 +1194,9 @@ def record_executor_dispatch_sent(state_root: str | Path,
                                   *,
                                   executor_thread_id: str,
                                   sent_at: str,
-                                  message_id: str | None = None) -> dict[str, Any]:
+                                  message_id: str | None = None,
+                                  return_thread_id: str | None = None,
+                                  callback_delivery: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "dispatch")
     if ledger["status"] == "needs_rework":
@@ -1161,7 +1216,7 @@ def record_executor_dispatch_sent(state_root: str | Path,
         ledger["reworkCount"] = rework_count
         ledger["closeout"] = None
     attempt = len(ledger["dispatches"]) + 1
-    ledger["dispatches"].append({
+    dispatch = {
         "role": "executor",
         "threadId": _required_str(executor_thread_id, "executorThreadId"),
         "messageId": message_id,
@@ -1169,7 +1224,12 @@ def record_executor_dispatch_sent(state_root: str | Path,
         "searchAnchor": _search_anchor(message_id, sent_at),
         "expectedCallback": "TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
         "attempt": attempt,
-    })
+    }
+    if return_thread_id is not None:
+        dispatch["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
+        dispatch["callbackDelivery"] = callback_delivery or "direct-send"
+        dispatch["callbackFallback"] = "self-thread-marker"
+    ledger["dispatches"].append(dispatch)
     ledger["status"] = "awaiting_callback"
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
@@ -1360,16 +1420,27 @@ def capture_executor_callback_from_read(state_root: str | Path,
 def make_verifier_request_message(task_id: str,
                                   callback_block: str,
                                   permission: str,
-                                  scope: str) -> str:
+                                  scope: str,
+                                  return_thread_id: str | None = None) -> str:
     _validate_task_id(task_id)
     _validate_permission(permission)
     _required_str(callback_block, "callbackBlock")
     _required_str(scope, "scope")
-    return "\n".join((
+    lines = [
         "TEAM_ROUTER_VERIFY taskId=%s" % task_id,
         "callbackMarker: TEAM_ROUTER_VERDICT taskId=%s" % task_id,
         "permission: %s" % permission,
         "scope: %s" % scope,
+    ]
+    if return_thread_id is not None:
+        return_thread_id = _required_str(return_thread_id, "returnThreadId")
+        lines.extend((
+            "returnThreadId: %s" % return_thread_id,
+            "verdictDelivery: direct-send",
+            "verdictFallback: self-thread-marker",
+            "Direct return: after writing the TEAM_ROUTER_VERDICT block, call send_message_to_thread(threadId=%s, prompt=<TEAM_ROUTER_VERDICT block>) so the manager thread receives the result." % return_thread_id,
+        ))
+    lines.extend((
         "",
         "Executor callback follows verbatim:",
         callback_block,
@@ -1382,6 +1453,7 @@ def make_verifier_request_message(task_id: str,
         "evidenceChecked: <checked evidence>",
         "risks: <none or risks>",
     ))
+    return "\n".join(lines)
 
 
 def record_verifier_request_sent(state_root: str | Path,
@@ -1390,11 +1462,13 @@ def record_verifier_request_sent(state_root: str | Path,
                                  *,
                                  verifier_thread_id: str,
                                  sent_at: str,
-                                 message_id: str | None = None) -> dict[str, Any]:
+                                 message_id: str | None = None,
+                                 return_thread_id: str | None = None,
+                                 verdict_delivery: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "record verifier request for")
     verification = dict(ledger.get("verification") or {})
-    verification["request"] = {
+    request = {
         "role": "verifier",
         "threadId": _required_str(verifier_thread_id, "verifierThreadId"),
         "messageId": message_id,
@@ -1402,6 +1476,11 @@ def record_verifier_request_sent(state_root: str | Path,
         "searchAnchor": _search_anchor(message_id, sent_at),
         "expectedCallback": "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
     }
+    if return_thread_id is not None:
+        request["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
+        request["verdictDelivery"] = verdict_delivery or "direct-send"
+        request["verdictFallback"] = "self-thread-marker"
+    verification["request"] = request
     ledger["verification"] = verification
     ledger["status"] = "verifying"
     return save_task_ledger(state_root, project_id, task_id, ledger)
@@ -1410,6 +1489,7 @@ def record_verifier_request_sent(state_root: str | Path,
 def _make_closeout(ledger: Mapping[str, Any],
                    verdict_fields: Mapping[str, Any],
                    captured_at: str) -> dict[str, Any]:
+    next_action = "none" if ledger.get("status") == "done" else verdict_fields.get("requiredChanges", "")
     return {
         "status": ledger.get("status"),
         "capturedAt": captured_at,
@@ -1417,7 +1497,8 @@ def _make_closeout(ledger: Mapping[str, Any],
         "requiredChanges": verdict_fields.get("requiredChanges", ""),
         "evidenceChecked": verdict_fields.get("evidenceChecked", ""),
         "risks": verdict_fields.get("risks", ""),
-        "nextAction": "none" if ledger.get("status") == "done" else verdict_fields.get("requiredChanges", ""),
+        "nextAction": next_action,
+        "remainingTodos": "none" if ledger.get("status") == "done" else next_action,
     }
 
 
@@ -1550,7 +1631,8 @@ def send_executor_dispatch_with_adapter(state_root: str | Path,
                                         *,
                                         thread_adapter: Any,
                                         permission: str,
-                                        sent_at: str) -> dict[str, Any]:
+                                        sent_at: str,
+                                        return_thread_id: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "send executor dispatch for")
     plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
@@ -1564,6 +1646,7 @@ def send_executor_dispatch_with_adapter(state_root: str | Path,
         plan_fields,
         permission,
         provisional_anchor,
+        return_thread_id=return_thread_id,
     )
     result = _adapter_call(
         thread_adapter,
@@ -1579,6 +1662,7 @@ def send_executor_dispatch_with_adapter(state_root: str | Path,
         executor_thread_id=executor_thread_id,
         sent_at=anchor["sentAt"],
         message_id=anchor["messageId"],
+        return_thread_id=return_thread_id,
     )
 
 
@@ -1612,7 +1696,8 @@ def send_verifier_request_with_adapter(state_root: str | Path,
                                        *,
                                        thread_adapter: Any,
                                        permission: str,
-                                       sent_at: str) -> dict[str, Any]:
+                                       sent_at: str,
+                                       return_thread_id: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "send verifier request for")
     callback_observation = ledger["observations"][-1] if ledger["observations"] else None
@@ -1632,6 +1717,7 @@ def send_verifier_request_with_adapter(state_root: str | Path,
         callback_content,
         permission,
         scope,
+        return_thread_id=return_thread_id,
     )
     result = _adapter_call(
         thread_adapter,
@@ -1647,6 +1733,7 @@ def send_verifier_request_with_adapter(state_root: str | Path,
         verifier_thread_id=verifier_thread_id,
         sent_at=anchor["sentAt"],
         message_id=anchor["messageId"],
+        return_thread_id=return_thread_id,
     )
 
 
@@ -1715,6 +1802,154 @@ def _adapter_task_update(action: str,
     }
 
 
+def _watch_next_wakeup(ledger: Mapping[str, Any]) -> dict[str, Any] | None:
+    status = ledger.get("status")
+    if status in TERMINAL_STATUSES or status == "needs_rework":
+        return None
+    if status in {"awaiting_plan", "plan_unreachable"}:
+        request = ledger.get("planRequest") if isinstance(ledger.get("planRequest"), Mapping) else {}
+        return {
+            "role": "manager",
+            "reason": "awaiting TEAM_ROUTER_PLAN",
+            "searchAnchor": request.get("searchAnchor"),
+        }
+    if status == "awaiting_callback":
+        dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+        latest = dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else {}
+        return {
+            "role": "executor",
+            "reason": "awaiting TEAM_ROUTER_CALLBACK",
+            "searchAnchor": latest.get("searchAnchor"),
+        }
+    if status in {"verifying", "callback_unreachable"}:
+        verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else {}
+        request = verification.get("request") if isinstance(verification.get("request"), Mapping) else {}
+        if request:
+            return {
+                "role": "verifier",
+                "reason": "awaiting TEAM_ROUTER_VERDICT",
+                "searchAnchor": request.get("searchAnchor"),
+            }
+        dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+        latest = dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else {}
+        return {
+            "role": "executor",
+            "reason": "awaiting TEAM_ROUTER_CALLBACK",
+            "searchAnchor": latest.get("searchAnchor"),
+        }
+    return None
+
+
+def _watch_task_update(action: str,
+                       state_root: str | Path,
+                       project_id: str,
+                       ledger: Mapping[str, Any]) -> dict[str, Any]:
+    update = _adapter_task_update(action, state_root, project_id, ledger)
+    update["nextWakeup"] = _watch_next_wakeup(ledger)
+    update["automationBoundary"] = (
+        "host watcher must call watch_team_task_with_adapter again when nextWakeup is not null"
+    )
+    return update
+
+
+def watch_team_task_with_adapter(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 *,
+                                 thread_adapter: Any,
+                                 permission: str,
+                                 observed_at: str,
+                                 return_thread_id: str | None = None,
+                                 turn_limit: int | None = None) -> dict[str, Any]:
+    """Advance an existing task from a host-side watcher invocation.
+
+    This helper does not create role threads or run unattended by itself. A host
+    scheduler/automation calls it when `nextWakeup` says a role thread may have
+    replied; the helper reads the appropriate thread and performs any immediate
+    parent-side continuation that does not require user approval.
+    """
+    _validate_permission(permission)
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    status = ledger["status"]
+    if status in {"awaiting_plan", "plan_unreachable"}:
+        ledger = read_manager_plan_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            thread_adapter=thread_adapter,
+            captured_at=observed_at,
+            turn_limit=turn_limit,
+        )
+        if ledger["status"] == "planned":
+            ledger = send_executor_dispatch_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                permission=permission,
+                sent_at=observed_at,
+                return_thread_id=return_thread_id,
+            )
+            return _watch_task_update("watch_sent_executor_dispatch", state_root, project_id, ledger)
+        return _watch_task_update("watch_read_manager_plan", state_root, project_id, ledger)
+    if (
+        status == "awaiting_callback"
+        or (status == "callback_unreachable" and not _ledger_has_verifier_request(ledger))
+    ):
+        ledger = read_executor_callback_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            thread_adapter=thread_adapter,
+            captured_at=observed_at,
+            turn_limit=turn_limit,
+        )
+        if ledger["status"] == "verifying":
+            ledger = send_verifier_request_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                permission=permission,
+                sent_at=observed_at,
+                return_thread_id=return_thread_id,
+            )
+            return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger)
+        return _watch_task_update("watch_read_executor_callback", state_root, project_id, ledger)
+    if (
+        status == "verifying"
+        or (status == "callback_unreachable" and _ledger_has_verifier_request(ledger))
+    ):
+        if _ledger_has_verifier_request(ledger):
+            update = read_verifier_verdict_update_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                captured_at=observed_at,
+                turn_limit=turn_limit,
+            )
+            ledger = update["ledger"]
+            update["action"] = "watch_read_verifier_verdict"
+            update["status"] = ledger.get("status")
+            update["nextWakeup"] = _watch_next_wakeup(ledger)
+            update["automationBoundary"] = (
+                "host watcher must call watch_team_task_with_adapter again when nextWakeup is not null"
+            )
+            return update
+        ledger = send_verifier_request_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            thread_adapter=thread_adapter,
+            permission=permission,
+            sent_at=observed_at,
+            return_thread_id=return_thread_id,
+        )
+        return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger)
+    return _watch_task_update("watch_no_action", state_root, project_id, ledger)
+
+
 def run_team_task_with_adapter(state_root: str | Path,
                                project_id: str,
                                task_id: str,
@@ -1727,7 +1962,8 @@ def run_team_task_with_adapter(state_root: str | Path,
                                target: Mapping[str, Any] | None = None,
                                max_rework: int = 3,
                                turn_limit: int | None = None,
-                               confirm_rework: bool = False) -> dict[str, Any]:
+                               confirm_rework: bool = False,
+                               return_thread_id: str | None = None) -> dict[str, Any]:
     if not task_path(state_root, project_id, task_id).exists():
         start_team_task_with_adapter(
             state_root,
@@ -1790,6 +2026,7 @@ def run_team_task_with_adapter(state_root: str | Path,
                 thread_adapter=thread_adapter,
                 permission=permission,
                 sent_at=observed_at,
+                return_thread_id=return_thread_id,
             )
             return _adapter_task_update(
                 "sent_executor_dispatch",
@@ -1837,10 +2074,11 @@ def run_team_task_with_adapter(state_root: str | Path,
                 state_root,
                 project_id,
                 task_id,
-                thread_adapter=thread_adapter,
-                permission=permission,
-                sent_at=observed_at,
-            )
+            thread_adapter=thread_adapter,
+            permission=permission,
+            sent_at=observed_at,
+            return_thread_id=return_thread_id,
+        )
             return _adapter_task_update(
                 "sent_verifier_request",
                 state_root,
@@ -1863,7 +2101,8 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        codex_project_id: str | None = None,
                                        max_rework: int = 3,
                                        turn_limit: int | None = None,
-                                       confirm_rework: bool = False) -> dict[str, Any]:
+                                       confirm_rework: bool = False,
+                                       return_thread_id: str | None = None) -> dict[str, Any]:
     capabilities = probe_thread_adapter_capabilities(thread_adapter)
     project_lookup_id = codex_project_id or project_id
     project_target = (
@@ -1884,6 +2123,7 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
         max_rework=max_rework,
         turn_limit=turn_limit,
         confirm_rework=confirm_rework,
+        return_thread_id=return_thread_id,
     )
     update["capabilities"] = capabilities
     update["codexProjectId"] = project_lookup_id
@@ -1936,6 +2176,7 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
         "evidenceChecked: %s" % closeout.get("evidenceChecked", ""),
         "risks: %s" % closeout.get("risks", ""),
         "nextAction: %s" % closeout.get("nextAction", ""),
+        "remainingTodos: %s" % closeout.get("remainingTodos", closeout.get("nextAction", "")),
     ))
     return "\n".join(lines)
 
@@ -1966,6 +2207,7 @@ def format_handoff_for_user(ledger: Mapping[str, Any], registry: Mapping[str, An
         "summary: %s" % closeout.get("summary", ""),
         "risks: %s" % closeout.get("risks", ""),
         "nextAction: %s" % closeout.get("nextAction", ""),
+        "remainingTodos: %s" % closeout.get("remainingTodos", closeout.get("nextAction", "")),
     ))
     return "\n".join(lines)
 

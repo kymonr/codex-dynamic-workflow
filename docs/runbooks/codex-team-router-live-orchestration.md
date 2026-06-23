@@ -59,6 +59,10 @@ Use `run_team_task_with_adapter()` only when the parent has already probed tools
 
 Call it again after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Emit `update["userOutput"]` exactly when the helper returns closeout or handoff content.
 
+For direct return, pass the current manager/parent thread id as `returnThreadId` when sending executor dispatches and verifier requests. The role prompt should include `callbackDelivery: direct-send` or `verdictDelivery: direct-send` and instruct the role to call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)` after it writes the marker in its own thread. This is possible when the role thread has `send_message_to_thread` access.
+
+For hosts without direct return, missed direct delivery, or recovery audits, run `watch_team_task_with_adapter()` from scheduler/automation. The watcher reads the ledger/registry recovery anchor, calls `read_thread`, captures role-thread replies, sends the next safe parent-side message when possible, and returns `action`, `status`, `userOutput`, `nextWakeup`, and `automationBoundary`. When `nextWakeup` is not null, schedule another watcher call for that role/anchor. Watcher polling is the fallback path, not the only possible Desktop thread-to-thread return path.
+
 When the verifier returns `needs_rework`, the runner stops with `action: needs_rework_pending`. Call it with `confirm_rework=True` only after the user approves another executor dispatch.
 
 ### Adapter-created roles path
@@ -139,6 +143,7 @@ summary: <verifier summary>
 evidenceChecked: <checked evidence>
 risks: <none or risks>
 nextAction: none
+remainingTodos: none
 ```
 
-For a non-terminal task, display the handoff so the next parent turn can resume from ledger/registry anchors.
+For a non-terminal task, display the handoff so the next parent turn can resume from ledger/registry anchors. All closeout or handoff user output must include `remainingTodos`; passing verifier closeouts use `remainingTodos: none`, while `needs_rework` and `blocked` use the verifier `requiredChanges` or derived `nextAction`.

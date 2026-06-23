@@ -658,6 +658,40 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(read_request["threadId"], "thread-executor")
         self.assertEqual(read_request["searchAnchor"]["messageId"], "msg-dispatch")
 
+    def test_executor_dispatch_supports_direct_return_delivery_metadata(self):
+        ledger = self._planned_ledger()
+
+        message = team_router.make_executor_dispatch_message(
+            ledger["taskId"],
+            ledger["plan"]["fields"],
+            "read-only",
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00"},
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertIn("returnThreadId: parent-manager-thread", message)
+        self.assertIn("callbackDelivery: direct-send", message)
+        self.assertIn("callbackFallback: self-thread-marker", message)
+        self.assertIn(
+            "send_message_to_thread(threadId=parent-manager-thread, prompt=<TEAM_ROUTER_CALLBACK block>)",
+            message,
+        )
+        self.assertIn("callbackMarker: TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", message)
+
+        updated = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        latest = updated["dispatches"][-1]
+        self.assertEqual(latest["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(latest["callbackDelivery"], "direct-send")
+        self.assertEqual(latest["callbackFallback"], "self-thread-marker")
+
     def test_executor_dispatch_search_anchor_serializes_null_message_id(self):
         ledger = self._planned_ledger()
 
@@ -880,6 +914,41 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "done")
         self.assertEqual(updated["verification"]["verdict"]["fields"]["result"], "pass")
         self.assertEqual(updated["closeout"]["status"], "done")
+        self.assertEqual(updated["closeout"]["remainingTodos"], "none")
+
+    def test_verifier_request_supports_direct_return_delivery_metadata(self):
+        ledger = self._verifying_ledger()
+
+        verify_message = team_router.make_verifier_request_message(
+            ledger["taskId"],
+            ledger["observations"][-1]["content"],
+            "read-only",
+            "src",
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertIn("returnThreadId: parent-manager-thread", verify_message)
+        self.assertIn("verdictDelivery: direct-send", verify_message)
+        self.assertIn("verdictFallback: self-thread-marker", verify_message)
+        self.assertIn(
+            "send_message_to_thread(threadId=parent-manager-thread, prompt=<TEAM_ROUTER_VERDICT block>)",
+            verify_message,
+        )
+        self.assertIn("callbackMarker: TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3", verify_message)
+
+        requested = team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        request = requested["verification"]["request"]
+        self.assertEqual(request["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(request["verdictDelivery"], "direct-send")
+        self.assertEqual(request["verdictFallback"], "self-thread-marker")
 
     def test_verifier_capture_accepts_same_timestamp_response_for_time_only_anchor(self):
         ledger = self._verifying_ledger()
@@ -947,6 +1016,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(updated["status"], "blocked")
         self.assertEqual(updated["closeout"]["status"], "blocked")
+        self.assertEqual(updated["closeout"]["nextAction"], "fix docs")
+        self.assertEqual(updated["closeout"]["remainingTodos"], "fix docs")
 
     def test_terminal_task_cannot_be_redispatched(self):
         ledger = self._verifying_ledger()
@@ -1668,6 +1739,28 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(roles["executor"]["title"], "Nested executor title")
         self.assertEqual(roles["verifier"]["title"], "Nested verifier title")
 
+    def test_role_thread_title_supports_chinese_visible_task_titles_and_legacy_default(self):
+        self.assertEqual(
+            team_router.role_thread_title(
+                self.project_id,
+                "manager",
+                "Team Router 自动化入口与待办提醒",
+            ),
+            "规划者-Team Router 自动化入口与待办提醒",
+        )
+        self.assertEqual(
+            team_router.role_thread_title(
+                self.project_id,
+                "executor",
+                "  Team   Router   自动化入口与待办提醒  ",
+            ),
+            "执行者-Team Router 自动化入口与待办提醒",
+        )
+        self.assertEqual(
+            team_router.role_thread_title(self.project_id, "verifier"),
+            "TeamRouter verifier - project-123",
+        )
+
     def test_start_team_task_with_adapter_reuses_existing_registry_roles(self):
         adapter = FakeThreadAdapter()
         existing_roles = {
@@ -1805,7 +1898,15 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(project_roles["executor"]["threadId"], "live-executor")
         self.assertEqual(project_roles["verifier"]["threadId"], "thread-verifier")
         self.assertIn(
-            {"threadId": "live-manager", "title": "TeamRouter manager - project-123"},
+            {"threadId": "live-manager", "title": "规划者-inspect docs"},
+            adapter.renamed,
+        )
+        self.assertIn(
+            {"threadId": "live-executor", "title": "执行者-inspect docs"},
+            adapter.renamed,
+        )
+        self.assertIn(
+            {"threadId": "thread-verifier", "title": "验证者-inspect docs"},
             adapter.renamed,
         )
 
@@ -2010,7 +2111,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "live-manager")
         self.assertEqual(
             adapter.renamed,
-            [{"threadId": "live-manager", "title": "TeamRouter manager - project-123"}],
+            [
+                {"threadId": "live-executor", "title": "执行者-inspect docs"},
+                {"threadId": "live-manager", "title": "规划者-inspect docs"},
+                {"threadId": "live-verifier", "title": "验证者-inspect docs"},
+            ],
         )
         self.assertEqual(update["projectTarget"]["environment"], {"type": "local"})
         registry = team_router.load_registry(self.root, self.project_id)
@@ -2198,9 +2303,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 return {
                     "schemaVersion": 1,
                     "threads": [
-                        {"id": "thread-manager", "title": "TeamRouter manager - project-123"},
-                        {"id": "thread-executor", "title": "TeamRouter executor - project-123"},
-                        {"id": "thread-verifier", "title": "TeamRouter verifier - project-123"},
+                        {"id": "thread-manager", "title": "规划者-inspect docs"},
+                        {"id": "thread-executor", "title": "执行者-inspect docs"},
+                        {"id": "thread-verifier", "title": "验证者-inspect docs"},
                     ],
                 }
 
@@ -2500,6 +2605,89 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(fourth["action"], "read_verifier_verdict")
         self.assertEqual(fourth["ledger"]["status"], "done")
         self.assertTrue(fourth["userOutput"].startswith("Team Router Closeout"))
+
+    def test_watch_team_task_reads_executor_callback_and_sends_verifier(self):
+        adapter = FakeThreadAdapter()
+        awaiting = self._awaiting_callback_ledger()
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: callback ready\n"
+                    "evidence: fake adapter\n"
+                    "risks: none\n"
+                    "next: verifier" % awaiting["taskId"]
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["observations"][-1]["type"], "callback_raw")
+        self.assertEqual(len(adapter.sent), 1)
+        self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
+        self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[0]["kwargs"]["prompt"])
+        self.assertEqual(update["nextWakeup"]["role"], "verifier")
+        self.assertEqual(update["nextWakeup"]["reason"], "awaiting TEAM_ROUTER_VERDICT")
+        self.assertIn("host watcher", update["automationBoundary"])
+
+    def test_watch_team_task_reads_verifier_pass_and_returns_closeout(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        requested = team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        adapter.messages["thread-verifier"] = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+            {
+                "messageId": "msg-verdict",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "result: pass\n"
+                    "summary: watcher closeout\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: fake adapter\n"
+                    "risks: none" % requested["taskId"]
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_verifier_verdict")
+        self.assertEqual(update["status"], "done")
+        self.assertIsNone(update["nextWakeup"])
+        self.assertIn("Team Router Closeout", update["userOutput"])
+        self.assertIn("summary: watcher closeout", update["userOutput"])
+        self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertEqual(len(adapter.sent), 0)
 
     def test_run_team_task_with_adapter_waits_for_rework_confirmation(self):
         ledger = self._verifying_ledger()
@@ -2919,9 +3107,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("status: done", closeout)
         self.assertIn("manager: thread-manager", closeout)
         self.assertIn("summary: ok", closeout)
+        self.assertIn("remainingTodos: none", closeout)
         self.assertIn("read_thread anchors", handoff)
         self.assertIn("msg-verify", handoff)
         self.assertIn("verification", handoff)
+        self.assertIn("remainingTodos: none", handoff)
 
     def test_format_task_update_for_user_uses_closeout_only_for_terminal_closeout(self):
         awaiting = self._awaiting_callback_ledger()
@@ -2966,6 +3156,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertIn("Team Router Closeout", closeout)
         self.assertIn("summary: complete", closeout)
+        self.assertIn("remainingTodos: none", closeout)
         self.assertNotIn("read_thread anchors", closeout)
 
     def test_read_verifier_verdict_update_with_adapter_returns_user_output(self):
@@ -2995,6 +3186,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["ledger"]["status"], "done")
         self.assertIn("Team Router Closeout", update["userOutput"])
         self.assertIn("summary: adapter done", update["userOutput"])
+        self.assertIn("remainingTodos: none", update["userOutput"])
 
 
 class TestTeamRouterSkillDoc(unittest.TestCase):
@@ -3023,6 +3215,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "recovery_read_request",
             "registry role persistence",
             "read-only/design-only 不是沙箱",
+            "remainingTodos",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("workspace-write", text)
@@ -3035,6 +3228,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "list_projects -> create_thread -> send_message_to_thread -> read_thread",
             "orchestrate_team_task_with_adapter()",
             "run_team_task_with_adapter()",
+            "watch_team_task_with_adapter()",
             "start_team_task_with_adapter()",
             "send_manager_plan_request_with_adapter()",
             "read_manager_plan_with_adapter()",
@@ -3043,6 +3237,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "send_verifier_request_with_adapter()",
             "read_verifier_verdict_update_with_adapter()",
             "emit `update[\"userOutput\"]`",
+            "callbackDelivery: direct-send",
+            "verdictDelivery: direct-send",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)",
+            "watcher/scheduler polling is the fallback",
         ):
             self.assertIn(needle, text)
 
@@ -3135,11 +3333,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "read_thread",
             "orchestrate_team_task_with_adapter()",
             "run_team_task_with_adapter()",
+            "watch_team_task_with_adapter()",
             "read_verifier_verdict_update_with_adapter()",
             "tests/fixtures/team_router/live_read_thread_verdict.json",
             "Emit `update[\"userOutput\"]` exactly",
             "Team Router Closeout",
             "Team Router Handoff",
+            "remainingTodos",
+            "callbackDelivery: direct-send",
+            "verdictDelivery: direct-send",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)",
+            "Watcher polling is the fallback path",
             "父线程调度者 (Parent Orchestrator)",
             "规划者 (Manager)",
             "执行者 (Executor)",

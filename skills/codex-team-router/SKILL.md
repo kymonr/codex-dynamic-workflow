@@ -81,6 +81,10 @@ Use `run_team_task_with_adapter()` only when the parent has already probed tools
 
 Call it once per parent turn or after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Parent thread rule: emit `update["userOutput"]` to the user when the returned payload contains closeout or handoff content.
 
+For direct return, pass the current manager/parent thread id as `returnThreadId` when building executor dispatches and verifier requests. The role prompt must include `callbackDelivery: direct-send` or `verdictDelivery: direct-send` and tell the role to call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)` after it writes the marker in its own thread. Keep `self-thread-marker` as the fallback/audit path.
+
+For hosts without direct return, missed direct delivery, or recovery audits, use `watch_team_task_with_adapter()` from a real scheduler/automation. The watcher reads the ledger/registry recovery anchor, calls `read_thread`, captures a manager plan, executor callback, or verifier verdict, and immediately performs the next safe parent continuation such as sending executor work, sending verifier work, or returning closeout `userOutput`. It returns `action`, `status`, `userOutput`, `nextWakeup`, and `automationBoundary`. If `nextWakeup` is not null, the host automation must schedule another watcher call for that role/anchor. Direct return is possible when role threads are instructed with `returnThreadId` and can call `send_message_to_thread`; watcher/scheduler polling is the fallback when that is unavailable or misses delivery.
+
 When the verifier returns `needs_rework`, the runner stops with `action: needs_rework_pending`. Call it with `confirm_rework=True` only after the user approves another executor dispatch.
 
 ### Adapter-created roles path
@@ -110,7 +114,7 @@ Use this continuation when the parent host can pass tool callables into Python.
 
 1. Send the manager plan request with `send_manager_plan_request_with_adapter()`. This records the send anchor for later `read_thread` recovery.
 2. Call `read_thread` for the manager thread through `read_manager_plan_with_adapter()`. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
-3. Send executor work with `send_executor_dispatch_with_adapter()`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`.
+3. Send executor work with `send_executor_dispatch_with_adapter()`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`. When `returnThreadId` is available, also include `callbackDelivery: direct-send`.
 4. Call `read_thread` for the executor thread through `read_executor_callback_with_adapter()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
 5. Send verifier work with `send_verifier_request_with_adapter()`. Forward the raw executor callback block; do not summarize it first.
 6. Call `read_thread` for the verifier thread through `read_verifier_verdict_update_with_adapter()` so the parent gets both the updated ledger and the exact user-facing output payload.
@@ -177,6 +181,9 @@ TEAM_ROUTER_DISPATCH taskId=<taskId>
 role: executor
 callbackMode: self-thread-marker
 callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>
+returnThreadId: <manager thread id when direct return is available>
+callbackDelivery: direct-send
+callbackFallback: self-thread-marker
 permission: read-only | design-only
 scope: <manager scope>
 stopWhen: <manager stopWhen>
@@ -191,13 +198,16 @@ risks: <none or risks>
 next: <none or next step>
 ```
 
-Only `callbackMode: self-thread-marker` is valid in MVP. Use the last matching final callback.
+Use `callbackDelivery: direct-send` when a manager/parent `returnThreadId` is available and the role can call `send_message_to_thread`; keep `callbackMode: self-thread-marker` so the role thread remains recoverable by `read_thread`. Use the last matching final callback for fallback/audit reads.
 
 ### Verifier Verdict
 
 ```text
 TEAM_ROUTER_VERIFY taskId=<taskId>
 callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>
+returnThreadId: <manager thread id when direct return is available>
+verdictDelivery: direct-send
+verdictFallback: self-thread-marker
 permission: read-only | design-only
 scope: <executor scope>
 
@@ -230,6 +240,7 @@ The adapter-facing entrypoints are:
 - `probe_thread_adapter_capabilities()` to check the parent host exposes the required Codex app thread tools before live orchestration.
 - `orchestrate_team_task_with_adapter()` as the recommended parent entry. It probes tools, resolves the project target, discovers/reuses role threads, advances the next send/read step, and returns `userOutput`.
 - `run_team_task_with_adapter()` as the lower-level runner for hosts that already resolved the target and role-thread boundary.
+- `watch_team_task_with_adapter()` for host automation that polls role-thread anchors, advances callback/verdict capture, returns `nextWakeup`, and produces closeout `userOutput` without a manual parent turn.
 - `start_team_task_with_adapter()` to create manager/executor/verifier role threads and write the initial task ledger.
 - `send_manager_plan_request_with_adapter()` and `read_manager_plan_with_adapter()` for manager planning.
 - `send_executor_dispatch_with_adapter()` and `read_executor_callback_with_adapter()` for executor work and callback capture.
@@ -257,4 +268,4 @@ Do not add any write-capable permission value to Team Router dispatch messages.
 
 ## Closeout
 
-Report the final status, relevant task id, last observed thread ids, state transitions, evidence summary, uncovered risk, and next action. Do not claim a child thread is currently active unless a fresh `read_thread` result proves that exact fact.
+Report the final status, relevant task id, last observed thread ids, state transitions, evidence summary, uncovered risk, next action, and `remainingTodos`. For a passing verifier closeout, `remainingTodos: none`; for `needs_rework` or `blocked`, set `remainingTodos` from `nextAction` or `requiredChanges`. Do not claim a child thread is currently active unless a fresh `read_thread` result proves that exact fact.
