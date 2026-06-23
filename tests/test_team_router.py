@@ -1360,6 +1360,29 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(nested, {"messageId": "msg-nested", "sentAt": "2026-06-22T20:02:00+08:00"})
         self.assertEqual(fallback, {"messageId": None, "sentAt": "2026-06-22T20:03:00+08:00"})
 
+    def test_thread_adapter_capability_probe_reports_missing_tools(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.probe_thread_adapter_capabilities(FakeThreadAdapter())
+        self.assertIn("list_projects", str(ctx.exception))
+        self.assertIn("list_threads", str(ctx.exception))
+        self.assertIn("set_thread_title", str(ctx.exception))
+
+        class FullAdapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": []}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+            def set_thread_title(self, **kwargs):
+                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
+        capabilities = team_router.probe_thread_adapter_capabilities(FullAdapter())
+        self.assertTrue(capabilities["create_thread"])
+        self.assertTrue(capabilities["list_projects"])
+        self.assertTrue(capabilities["list_threads"])
+        self.assertTrue(capabilities["set_thread_title"])
+
     def test_normalize_thread_read_messages_accepts_lists_nested_messages_and_turns(self):
         raw_list = team_router.normalize_thread_read_messages([
             {"id": "m1", "createdAt": "2026-06-22T20:01:00+08:00", "content": "hello"},
@@ -1569,6 +1592,279 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(roles["executor"]["title"], "Nested executor title")
         self.assertEqual(roles["verifier"]["title"], "Nested verifier title")
 
+    def test_start_team_task_with_adapter_reuses_existing_registry_roles(self):
+        adapter = FakeThreadAdapter()
+        existing_roles = {
+            role: dict(record, createdAt="2026-06-22T19:00:00+08:00")
+            for role, record in self.roles.items()
+        }
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            existing_roles,
+            "2026-06-22T19:00:00+08:00",
+        )
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        self.assertEqual(adapter.created, [])
+        registry = team_router.load_registry(self.root, self.project_id)
+        for role in ("manager", "executor", "verifier"):
+            self.assertEqual(
+                registry["projects"][self.project_id]["roles"][role]["threadId"],
+                self.roles[role]["threadId"],
+            )
+
+    def test_start_team_task_with_adapter_reuses_registry_without_target_lookup(self):
+        adapter = FakeThreadAdapter()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            self.roles,
+            "2026-06-22T19:00:00+08:00",
+        )
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        self.assertEqual(adapter.created, [])
+
+    def test_start_team_task_with_adapter_creates_only_missing_registry_roles(self):
+        adapter = FakeThreadAdapter()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"manager": self.roles["manager"]},
+            "2026-06-22T19:00:00+08:00",
+        )
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        created_prompts = [record["kwargs"]["prompt"] for record in adapter.created]
+        self.assertEqual(len(created_prompts), 2)
+        self.assertFalse(any("role: manager" in prompt for prompt in created_prompts))
+        self.assertTrue(any("role: executor" in prompt for prompt in created_prompts))
+        self.assertTrue(any("role: verifier" in prompt for prompt in created_prompts))
+        registry = team_router.load_registry(self.root, self.project_id)
+        project_roles = registry["projects"][self.project_id]["roles"]
+        self.assertEqual(project_roles["manager"]["threadId"], "thread-manager")
+        self.assertEqual(project_roles["executor"]["threadId"], "thread-executor")
+        self.assertEqual(project_roles["verifier"]["threadId"], "thread-verifier")
+
+    def test_start_team_task_with_adapter_discovers_existing_role_threads(self):
+        class DiscoveryAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.listed = 0
+                self.renamed = []
+                self.thread_list = [
+                    {
+                        "threadId": "live-manager",
+                        "title": "Old manager title",
+                        "role": "manager",
+                        "projectId": "project-123",
+                    },
+                    {
+                        "threadId": "live-executor",
+                        "title": "TeamRouter executor - project-123",
+                    },
+                ]
+
+            def list_threads(self, **kwargs):
+                self.listed += 1
+                return {"threads": list(self.thread_list)}
+
+            def set_thread_title(self, **kwargs):
+                self.renamed.append(dict(kwargs))
+                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
+        adapter = DiscoveryAdapter()
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        self.assertEqual(adapter.listed, 1)
+        self.assertEqual(len(adapter.created), 1)
+        self.assertIn("role: verifier", adapter.created[0]["kwargs"]["prompt"])
+        registry = team_router.load_registry(self.root, self.project_id)
+        project_roles = registry["projects"][self.project_id]["roles"]
+        self.assertEqual(project_roles["manager"]["threadId"], "live-manager")
+        self.assertEqual(project_roles["executor"]["threadId"], "live-executor")
+        self.assertEqual(project_roles["verifier"]["threadId"], "thread-verifier")
+        self.assertIn(
+            {"threadId": "live-manager", "title": "TeamRouter manager - project-123"},
+            adapter.renamed,
+        )
+
+    def test_start_team_task_with_adapter_ignores_ambiguous_bound_registry_roles(self):
+        class DuplicateManagerAdapter(FakeThreadAdapter):
+            def list_threads(self, **kwargs):
+                return {
+                    "threads": [
+                        {"threadId": "manager-a", "title": "TeamRouter manager - project-123"},
+                        {"threadId": "manager-b", "title": "TeamRouter manager - project-123"},
+                    ],
+                }
+
+        adapter = DuplicateManagerAdapter()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"manager": self.roles["manager"]},
+            "2026-06-22T19:00:00+08:00",
+        )
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        self.assertEqual(len(adapter.created), 2)
+        registry = team_router.load_registry(self.root, self.project_id)
+        self.assertEqual(
+            registry["projects"][self.project_id]["roles"]["manager"]["threadId"],
+            "thread-manager",
+        )
+
+    def test_start_team_task_with_adapter_does_not_bind_bare_role_from_other_project(self):
+        class ForeignRoleAdapter(FakeThreadAdapter):
+            def list_threads(self, **kwargs):
+                return {
+                    "threads": [
+                        {
+                            "threadId": "foreign-manager",
+                            "title": "Other project manager",
+                            "role": "manager",
+                        },
+                    ],
+                }
+
+        adapter = ForeignRoleAdapter()
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        registry = team_router.load_registry(self.root, self.project_id)
+        self.assertEqual(
+            registry["projects"][self.project_id]["roles"]["manager"]["threadId"],
+            "thread-manager",
+        )
+
+    def test_start_team_task_with_adapter_blocks_ambiguous_discovered_role_threads(self):
+        class AmbiguousAdapter(FakeThreadAdapter):
+            def list_threads(self, **kwargs):
+                return {
+                    "threads": [
+                        {"threadId": "manager-a", "title": "TeamRouter manager - project-123"},
+                        {"threadId": "manager-b", "title": "TeamRouter manager - project-123"},
+                    ],
+                }
+
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.start_team_task_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                objective="inspect docs",
+                project_local_path="D:\\codex\\codex-dynamic-workflow",
+                thread_adapter=AmbiguousAdapter(),
+                target={"type": "projectless"},
+                observed_at="2026-06-22T20:00:00+08:00",
+            )
+
+    def test_start_team_task_with_adapter_resolves_target_from_list_projects(self):
+        class ProjectListAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.listed_projects = 0
+
+            def list_projects(self, **kwargs):
+                self.listed_projects += 1
+                return {
+                    "projects": [
+                        {
+                            "projectId": "project-123",
+                            "target": {
+                                "type": "worktree",
+                                "path": "D:\\codex\\codex-dynamic-workflow",
+                            },
+                        },
+                    ],
+                }
+
+        adapter = ProjectListAdapter()
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        self.assertEqual(adapter.listed_projects, 1)
+        for record in adapter.created:
+            self.assertEqual(
+                record["kwargs"]["target"],
+                {"type": "worktree", "path": "D:\\codex\\codex-dynamic-workflow"},
+            )
+
     def test_verifier_request_requires_latest_executor_callback_observation(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()
@@ -1682,6 +1978,275 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(done["closeout"]["summary"], "ok")
         self.assertEqual(len(adapter.created), 3)
         self.assertEqual(len(adapter.sent), 3)
+
+    def test_run_team_task_with_adapter_orchestrates_until_external_waits(self):
+        adapter = FakeThreadAdapter()
+
+        first = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:01:00+08:00",
+        )
+        self.assertEqual(first["action"], "sent_manager_plan_request")
+        self.assertEqual(first["ledger"]["status"], "awaiting_plan")
+        self.assertTrue(first["userOutput"].startswith("Team Router Handoff"))
+        self.assertEqual(len(adapter.created), 3)
+        self.assertEqual(len(adapter.sent), 1)
+
+        manager_thread = first["ledger"]["planRequest"]["threadId"]
+        adapter.append_reply(
+            manager_thread,
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: src\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect src\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+        second = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:02:00+08:00",
+        )
+        self.assertEqual(second["action"], "sent_executor_dispatch")
+        self.assertEqual(second["ledger"]["status"], "awaiting_callback")
+        self.assertEqual(len(adapter.sent), 2)
+
+        executor_thread = second["ledger"]["dispatches"][-1]["threadId"]
+        adapter.append_reply(
+            executor_thread,
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: line one\nline two\nevidence: fake adapter\nrisks: none\nnext: verifier" % self.task_id,
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+        third = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+        self.assertEqual(third["action"], "sent_verifier_request")
+        self.assertEqual(third["ledger"]["status"], "verifying")
+        self.assertEqual(
+            third["ledger"]["observations"][-1]["parsedFields"]["summary"],
+            "line one\nline two",
+        )
+        self.assertEqual(len(adapter.sent), 3)
+
+        verifier_thread = third["ledger"]["verification"]["request"]["threadId"]
+        adapter.append_reply(
+            verifier_thread,
+            "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: fake adapter\nrisks: none" % self.task_id,
+            message_id="msg-verdict",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+        fourth = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:06:00+08:00",
+        )
+        self.assertEqual(fourth["action"], "read_verifier_verdict")
+        self.assertEqual(fourth["ledger"]["status"], "done")
+        self.assertTrue(fourth["userOutput"].startswith("Team Router Closeout"))
+
+    def test_run_team_task_with_adapter_retries_plan_unreachable_reads(self):
+        adapter = FakeThreadAdapter()
+        first = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:01:00+08:00",
+        )
+        manager_thread = first["ledger"]["planRequest"]["threadId"]
+        original_messages = list(adapter.messages[manager_thread])
+        adapter.messages[manager_thread] = [{"text": "summary-only window"}]
+
+        unreachable = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:02:00+08:00",
+        )
+        self.assertEqual(unreachable["ledger"]["status"], "plan_unreachable")
+
+        adapter.messages[manager_thread] = original_messages
+        adapter.append_reply(
+            manager_thread,
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: src\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect src\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+        retried = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(retried["action"], "sent_executor_dispatch")
+        self.assertEqual(retried["ledger"]["status"], "awaiting_callback")
+
+    def test_manual_precreated_flow_uses_direct_send_read_and_capture_helpers(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._ready_ledger()
+
+        manager_prompt = team_router.make_plan_request_message(
+            ledger["taskId"],
+            ledger["objective"],
+            "read-only",
+        )
+        manager_send = adapter.send_message_to_thread(
+            threadId="thread-manager",
+            prompt=manager_prompt,
+        )
+        manager_anchor = team_router.thread_send_anchor(
+            manager_send,
+            fallback_sent_at="2026-06-22T20:01:00+08:00",
+        )
+        awaiting_plan = team_router.record_plan_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            manager_thread_id="thread-manager",
+            sent_at=manager_anchor["sentAt"],
+            message_id=manager_anchor["messageId"],
+        )
+        adapter.append_reply(
+            awaiting_plan["planRequest"]["threadId"],
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: src\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect src\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+        planned = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            team_router.normalize_thread_read_messages(
+                adapter.read_thread(threadId="thread-manager")
+            ),
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+        self.assertEqual(planned["status"], "planned")
+
+        executor_prompt = team_router.make_executor_dispatch_message(
+            self.task_id,
+            planned["plan"]["fields"],
+            "read-only",
+            {"messageId": None, "sentAt": "2026-06-22T20:02:00+08:00"},
+        )
+        executor_send = adapter.send_message_to_thread(
+            threadId="thread-executor",
+            prompt=executor_prompt,
+        )
+        executor_anchor = team_router.thread_send_anchor(
+            executor_send,
+            fallback_sent_at="2026-06-22T20:02:00+08:00",
+        )
+        awaiting_callback = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            executor_thread_id="thread-executor",
+            sent_at=executor_anchor["sentAt"],
+            message_id=executor_anchor["messageId"],
+        )
+        adapter.append_reply(
+            awaiting_callback["dispatches"][-1]["threadId"],
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: first line\nsecond line\nevidence: direct tools\nrisks: none\nnext: verifier" % self.task_id,
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+        verifying = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            team_router.normalize_thread_read_messages(
+                adapter.read_thread(threadId="thread-executor")
+            ),
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        self.assertEqual(
+            verifying["observations"][-1]["parsedFields"]["summary"],
+            "first line\nsecond line",
+        )
+
+        verifier_prompt = team_router.make_verifier_request_message(
+            self.task_id,
+            verifying["observations"][-1]["content"],
+            "read-only",
+            verifying["plan"]["fields"]["scope"],
+        )
+        verifier_send = adapter.send_message_to_thread(
+            threadId="thread-verifier",
+            prompt=verifier_prompt,
+        )
+        verifier_anchor = team_router.thread_send_anchor(
+            verifier_send,
+            fallback_sent_at="2026-06-22T20:05:00+08:00",
+        )
+        verifying = team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            verifier_thread_id="thread-verifier",
+            sent_at=verifier_anchor["sentAt"],
+            message_id=verifier_anchor["messageId"],
+        )
+        adapter.append_reply(
+            verifying["verification"]["request"]["threadId"],
+            "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: direct tools\nrisks: none" % self.task_id,
+            message_id="msg-verdict",
+            sent_at="2026-06-22T20:06:00+08:00",
+        )
+        done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            team_router.normalize_thread_read_messages(
+                adapter.read_thread(threadId="thread-verifier")
+            ),
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        registry = team_router.load_registry(self.root, self.project_id)
+
+        self.assertEqual(done["status"], "done")
+        self.assertEqual(len(adapter.sent), 3)
+        self.assertIn("Team Router Closeout", team_router.format_task_update_for_user(done, registry))
 
     def test_fake_thread_adapter_runs_rework_cycle_smoke(self):
         adapter = FakeThreadAdapter()
@@ -1958,6 +2523,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for needle in (
             "## Parent Thread Entry Flow",
             "list_projects -> create_thread -> send_message_to_thread -> read_thread",
+            "run_team_task_with_adapter()",
             "start_team_task_with_adapter()",
             "send_manager_plan_request_with_adapter()",
             "read_manager_plan_with_adapter()",
@@ -2019,6 +2585,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "create_thread",
             "send_message_to_thread",
             "read_thread",
+            "run_team_task_with_adapter()",
             "read_verifier_verdict_update_with_adapter()",
             "tests/fixtures/team_router/live_read_thread_verdict.json",
             "Emit `update[\"userOutput\"]` exactly",

@@ -22,16 +22,24 @@ Use `src/team_router.py` helpers to keep state deterministic around those host-t
 
 1. Call `list_projects` and select the target project.
 2. Resolve a shared `stateRoot` and `projectId`.
-3. Choose exactly one role-thread creation path for the task. Do not mix the adapter-created and pre-created paths.
+3. Run `probe_thread_adapter_capabilities()` if the parent host is using adapter callables.
+4. Choose exactly one role-thread creation path for the task. Do not mix the adapter-created and pre-created paths.
+
+### Recommended adapter runner
+
+Use `run_team_task_with_adapter()` when the parent host can pass Codex thread tool callables into Python. The helper starts a missing task, reuses existing registry role bindings, creates only missing role threads, advances the next send/read step, and returns `action`, `status`, `ledger`, and `userOutput`.
+
+Call it again after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Emit `update["userOutput"]` exactly when the helper returns closeout or handoff content.
 
 ### Adapter-created roles path
 
 Use this path when the parent host can pass Codex thread tool callables into Python.
 
-1. Call `start_team_task_with_adapter()`.
-2. Let the helper call `create_thread` through the adapter for manager/executor/verifier role threads.
-3. Let the helper persist registry role bindings and create the task ledger.
-4. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
+1. Prefer `run_team_task_with_adapter()` for normal parent orchestration.
+2. Use `start_team_task_with_adapter()` only when testing or manually driving the lower-level start primitive.
+3. Let the helper reuse registry role bindings and call `create_thread` through the adapter only for missing manager/executor/verifier role threads.
+4. Let the helper persist registry role bindings and create the task ledger.
+5. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
 
 ### Pre-created roles path
 

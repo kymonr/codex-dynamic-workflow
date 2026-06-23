@@ -13,7 +13,7 @@ import json
 import os
 import re
 import uuid
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 class ProtocolError(ValueError):
@@ -40,6 +40,14 @@ REGISTRY_VERSION = 1
 TASK_LEDGER_VERSION = 1
 ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
 THREAD_PERMISSIONS = frozenset({"read-only", "design-only"})
+THREAD_TOOL_NAMES = (
+    "list_projects",
+    "create_thread",
+    "list_threads",
+    "read_thread",
+    "send_message_to_thread",
+    "set_thread_title",
+)
 _FORBIDDEN_STATE_ROOT_PARTS = {".codex-tmp"}
 
 TERMINAL_STATUSES = frozenset({
@@ -502,13 +510,42 @@ def create_team_task(state_root: str | Path,
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
-def _adapter_call(thread_adapter: Any, method_name: str, **kwargs: Any) -> Any:
+def _adapter_method(thread_adapter: Any, method_name: str) -> Any:
     if isinstance(thread_adapter, Mapping):
-        method = thread_adapter.get(method_name)
-    else:
-        method = getattr(thread_adapter, method_name, None)
+        return thread_adapter.get(method_name)
+    return getattr(thread_adapter, method_name, None)
+
+
+def probe_thread_adapter_capabilities(
+    thread_adapter: Any,
+    required_tools: Iterable[str] = THREAD_TOOL_NAMES,
+) -> dict[str, bool]:
+    capabilities = {
+        tool_name: callable(_adapter_method(thread_adapter, tool_name))
+        for tool_name in THREAD_TOOL_NAMES
+    }
+    missing = [
+        tool_name for tool_name in required_tools
+        if not callable(_adapter_method(thread_adapter, tool_name))
+    ]
+    if missing:
+        raise StateStoreError(
+            "thread adapter missing callable(s): %s" % ", ".join(sorted(missing))
+        )
+    return capabilities
+
+
+def _adapter_call(thread_adapter: Any, method_name: str, **kwargs: Any) -> Any:
+    method = _adapter_method(thread_adapter, method_name)
     if not callable(method):
         raise StateStoreError("thread adapter missing callable: %s" % method_name)
+    return method(**kwargs)
+
+
+def _optional_adapter_call(thread_adapter: Any, method_name: str, **kwargs: Any) -> Any:
+    method = _adapter_method(thread_adapter, method_name)
+    if not callable(method):
+        return None
     return method(**kwargs)
 
 
@@ -698,14 +735,209 @@ def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
     ))
 
 
+def role_thread_title(project_id: str, role: str) -> str:
+    _validate_task_id(project_id)
+    _validate_role(role)
+    return "TeamRouter %s - %s" % (role, project_id)
+
+
+def _project_list_items(value: Any) -> list[Mapping[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, Mapping)]
+    if not isinstance(value, Mapping):
+        return []
+    for key in ("projects", "items"):
+        nested = value.get(key)
+        if isinstance(nested, list):
+            return [item for item in nested if isinstance(item, Mapping)]
+    for key in ("data", "result"):
+        nested = value.get(key)
+        items = _project_list_items(nested)
+        if items:
+            return items
+    return []
+
+
+def _listed_project_id(item: Mapping[str, Any]) -> str | None:
+    for candidate in _candidate_mappings(item):
+        project_id = _first_str(candidate, ("projectId", "project_id", "id"))
+        if project_id is not None:
+            return project_id
+    return None
+
+
+def _listed_project_target(item: Mapping[str, Any], project_id: str) -> dict[str, Any]:
+    for candidate in _candidate_mappings(item):
+        target = candidate.get("target")
+        if isinstance(target, Mapping):
+            return dict(target)
+        environment = candidate.get("environment")
+        if isinstance(environment, Mapping):
+            return {"environment": dict(environment)}
+    raise StateStoreError("list_projects result missing target for project: %s" % project_id)
+
+
+def resolve_project_target_with_adapter(thread_adapter: Any,
+                                        *,
+                                        project_id: str) -> dict[str, Any]:
+    result = _adapter_call(thread_adapter, "list_projects")
+    matches = [
+        item for item in _project_list_items(result)
+        if _listed_project_id(item) == project_id
+    ]
+    if not matches:
+        raise StateStoreError("list_projects did not return project: %s" % project_id)
+    if len(matches) > 1:
+        raise StateStoreError("list_projects returned multiple projects: %s" % project_id)
+    return _listed_project_target(matches[0], project_id)
+
+
+def _resolve_target_argument(thread_adapter: Any,
+                             project_id: str,
+                             target: Mapping[str, Any] | None) -> dict[str, Any]:
+    if target is not None:
+        return dict(target)
+    return resolve_project_target_with_adapter(
+        thread_adapter,
+        project_id=project_id,
+    )
+
+
+def _thread_list_items(value: Any) -> list[Mapping[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, Mapping)]
+    if not isinstance(value, Mapping):
+        return []
+    for key in ("threads", "items"):
+        nested = value.get(key)
+        if isinstance(nested, list):
+            return [item for item in nested if isinstance(item, Mapping)]
+    for key in ("data", "result"):
+        nested = value.get(key)
+        items = _thread_list_items(nested)
+        if items:
+            return items
+    return []
+
+
+def _listed_thread_id_and_title(item: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    thread_id: str | None = None
+    title: str | None = None
+    for candidate in _candidate_mappings(item):
+        if thread_id is None:
+            thread_id = _first_str(candidate, ("threadId", "thread_id", "id"))
+        if title is None:
+            title = _first_str(candidate, ("title", "name"))
+    return thread_id, title
+
+
+def _listed_thread_role(project_id: str, item: Mapping[str, Any]) -> str | None:
+    for candidate in _candidate_mappings(item):
+        role = _first_str(candidate, ("teamRouterRole", "role"))
+        candidate_project_id = _first_str(candidate, ("projectId", "project_id"))
+        if role in ROLE_NAMES:
+            if candidate_project_id == project_id:
+                return role
+            if candidate_project_id is None:
+                _, title = _listed_thread_id_and_title(item)
+                if title == role_thread_title(project_id, role):
+                    return role
+    _, title = _listed_thread_id_and_title(item)
+    if title is None:
+        return None
+    for role in sorted(ROLE_NAMES):
+        if title == role_thread_title(project_id, role):
+            return role
+    return None
+
+
+def discover_role_threads_with_adapter(thread_adapter: Any,
+                                       *,
+                                       project_id: str,
+                                       observed_at: str,
+                                       role_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
+    result = _optional_adapter_call(thread_adapter, "list_threads")
+    if result is None:
+        return {}
+    selected_roles = set(_sorted_role_selection(role_names))
+    matches: dict[str, list[dict[str, Any]]] = {role: [] for role in selected_roles}
+    for item in _thread_list_items(result):
+        role = _listed_thread_role(project_id, item)
+        if role is None or role not in selected_roles:
+            continue
+        thread_id, title = _listed_thread_id_and_title(item)
+        if thread_id is None:
+            continue
+        matches[role].append({
+            "threadId": thread_id,
+            "title": title or role_thread_title(project_id, role),
+            "createdAt": observed_at,
+            "lastObservedAt": observed_at,
+        })
+    discovered: dict[str, dict[str, Any]] = {}
+    for role, records in matches.items():
+        if len(records) > 1:
+            raise StateStoreError("multiple existing role threads matched role: %s" % role)
+        if records:
+            discovered[role] = records[0]
+    return discovered
+
+
+def _normalize_adapter_role_title(thread_adapter: Any,
+                                  project_id: str,
+                                  role: str,
+                                  record: dict[str, Any]) -> dict[str, Any]:
+    expected_title = role_thread_title(project_id, role)
+    if record.get("title") == expected_title:
+        return record
+    result = _optional_adapter_call(
+        thread_adapter,
+        "set_thread_title",
+        threadId=record["threadId"],
+        title=expected_title,
+    )
+    if result is not None:
+        record = dict(record)
+        record["title"] = expected_title
+    return record
+
+
+def _existing_role_threads_from_registry(state_root: str | Path,
+                                         project_id: str,
+                                         *,
+                                         observed_at: str) -> dict[str, dict[str, Any]]:
+    registry = load_registry(state_root, project_id)
+    project_roles = _project_roles_from_registry(registry, project_id)
+    roles: dict[str, dict[str, Any]] = {}
+    for role in sorted(ROLE_NAMES):
+        record = project_roles.get(role)
+        if record is None:
+            continue
+        if not isinstance(record, Mapping):
+            raise StateStoreError("registry.roles.%s must be a JSON object" % role)
+        roles[role] = _normalize_role_record(role, record, observed_at)
+    return roles
+
+
+def _sorted_role_selection(role_names: Iterable[str] | None) -> list[str]:
+    if role_names is None:
+        return sorted(ROLE_NAMES)
+    selected: list[str] = []
+    for role in role_names:
+        _validate_role(role)
+        selected.append(role)
+    return sorted(dict.fromkeys(selected))
+
+
 def create_role_threads_with_adapter(thread_adapter: Any,
                                      *,
                                      project_id: str,
                                      objective: str,
                                      target: Mapping[str, Any],
-                                     observed_at: str) -> dict[str, dict[str, Any]]:
+                                     observed_at: str,
+                                     role_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
     roles: dict[str, dict[str, Any]] = {}
-    for role in sorted(ROLE_NAMES):
+    for role in _sorted_role_selection(role_names):
         prompt = make_role_thread_prompt(project_id, role, objective)
         result = _adapter_call(
             thread_adapter,
@@ -729,6 +961,55 @@ def create_role_threads_with_adapter(thread_adapter: Any,
     return roles
 
 
+def resolve_role_threads_with_adapter(state_root: str | Path,
+                                      project_id: str,
+                                      *,
+                                      objective: str,
+                                      thread_adapter: Any,
+                                      target: Mapping[str, Any] | None,
+                                      observed_at: str) -> dict[str, dict[str, Any]]:
+    roles = _existing_role_threads_from_registry(
+        state_root,
+        project_id,
+        observed_at=observed_at,
+    )
+    missing_roles = sorted(ROLE_NAMES.difference(roles.keys()))
+    if missing_roles:
+        discovered = discover_role_threads_with_adapter(
+            thread_adapter,
+            project_id=project_id,
+            observed_at=observed_at,
+            role_names=missing_roles,
+        )
+        for role in missing_roles:
+            if role in discovered:
+                roles[role] = _normalize_adapter_role_title(
+                    thread_adapter,
+                    project_id,
+                    role,
+                    discovered[role],
+                )
+        missing_roles = sorted(ROLE_NAMES.difference(roles.keys()))
+    if missing_roles:
+        resolved_target = _resolve_target_argument(thread_adapter, project_id, target)
+        created_roles = create_role_threads_with_adapter(
+            thread_adapter,
+            project_id=project_id,
+            objective=objective,
+            target=resolved_target,
+            observed_at=observed_at,
+            role_names=missing_roles,
+        )
+        for role, record in created_roles.items():
+            roles[role] = _normalize_adapter_role_title(
+                thread_adapter,
+                project_id,
+                role,
+                record,
+            )
+    return roles
+
+
 def start_team_task_with_adapter(state_root: str | Path,
                                  project_id: str,
                                  task_id: str,
@@ -736,13 +1017,14 @@ def start_team_task_with_adapter(state_root: str | Path,
                                  objective: str,
                                  project_local_path: str | Path,
                                  thread_adapter: Any,
-                                 target: Mapping[str, Any],
                                  observed_at: str,
+                                 target: Mapping[str, Any] | None = None,
                                  max_rework: int = 3) -> dict[str, Any]:
-    roles = create_role_threads_with_adapter(
-        thread_adapter,
+    roles = resolve_role_threads_with_adapter(
+        state_root,
         project_id=project_id,
         objective=objective,
+        thread_adapter=thread_adapter,
         target=target,
         observed_at=observed_at,
     )
@@ -1390,6 +1672,152 @@ def read_verifier_verdict_update_with_adapter(state_root: str | Path,
         "ledger": ledger,
         "userOutput": format_task_update_for_user(ledger, registry),
     }
+
+
+def _ledger_has_verifier_request(ledger: Mapping[str, Any]) -> bool:
+    verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+    request = verification.get("request") if isinstance(verification, Mapping) else None
+    return isinstance(request, Mapping)
+
+
+def _adapter_task_update(action: str,
+                         state_root: str | Path,
+                         project_id: str,
+                         ledger: Mapping[str, Any]) -> dict[str, Any]:
+    registry = load_registry(state_root, project_id)
+    return {
+        "action": action,
+        "status": ledger.get("status"),
+        "ledger": dict(ledger),
+        "userOutput": format_task_update_for_user(ledger, registry),
+    }
+
+
+def run_team_task_with_adapter(state_root: str | Path,
+                               project_id: str,
+                               task_id: str,
+                               *,
+                               objective: str,
+                               project_local_path: str | Path,
+                               thread_adapter: Any,
+                               permission: str,
+                               observed_at: str,
+                               target: Mapping[str, Any] | None = None,
+                               max_rework: int = 3,
+                               turn_limit: int | None = None) -> dict[str, Any]:
+    if not task_path(state_root, project_id, task_id).exists():
+        start_team_task_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            objective=objective,
+            project_local_path=project_local_path,
+            thread_adapter=thread_adapter,
+            observed_at=observed_at,
+            target=target,
+            max_rework=max_rework,
+        )
+    while True:
+        ledger = load_task_ledger(state_root, project_id, task_id)
+        status = ledger["status"]
+        if status == "roles_ready":
+            ledger = send_manager_plan_request_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                permission=permission,
+                sent_at=observed_at,
+            )
+            return _adapter_task_update(
+                "sent_manager_plan_request",
+                state_root,
+                project_id,
+                ledger,
+            )
+        if status in {"awaiting_plan", "plan_unreachable"}:
+            ledger = read_manager_plan_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                captured_at=observed_at,
+                turn_limit=turn_limit,
+            )
+            if ledger["status"] == "planned":
+                continue
+            return _adapter_task_update(
+                "read_manager_plan",
+                state_root,
+                project_id,
+                ledger,
+            )
+        if status in {"planned", "needs_rework"}:
+            ledger = send_executor_dispatch_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                permission=permission,
+                sent_at=observed_at,
+            )
+            return _adapter_task_update(
+                "sent_executor_dispatch",
+                state_root,
+                project_id,
+                ledger,
+            )
+        if (
+            status == "awaiting_callback"
+            or (status == "callback_unreachable" and not _ledger_has_verifier_request(ledger))
+        ):
+            ledger = read_executor_callback_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                captured_at=observed_at,
+                turn_limit=turn_limit,
+            )
+            if ledger["status"] == "verifying":
+                continue
+            return _adapter_task_update(
+                "read_executor_callback",
+                state_root,
+                project_id,
+                ledger,
+            )
+        if (
+            status == "verifying"
+            or (status == "callback_unreachable" and _ledger_has_verifier_request(ledger))
+        ):
+            if _ledger_has_verifier_request(ledger):
+                update = read_verifier_verdict_update_with_adapter(
+                    state_root,
+                    project_id,
+                    task_id,
+                    thread_adapter=thread_adapter,
+                    captured_at=observed_at,
+                    turn_limit=turn_limit,
+                )
+                update["action"] = "read_verifier_verdict"
+                update["status"] = update["ledger"].get("status")
+                return update
+            ledger = send_verifier_request_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                permission=permission,
+                sent_at=observed_at,
+            )
+            return _adapter_task_update(
+                "sent_verifier_request",
+                state_root,
+                project_id,
+                ledger,
+            )
+        return _adapter_task_update("no_action", state_root, project_id, ledger)
 
 
 def _role_thread_lines(registry: Mapping[str, Any], project_id: str) -> list[str]:
