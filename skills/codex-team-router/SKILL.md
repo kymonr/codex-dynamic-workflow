@@ -20,6 +20,8 @@ Before doing any work, probe that these Codex app tools are available:
 
 If required tools are missing, stop with `tool_error`. This Skill is for Codex app thread tools; do not pretend it works in a plain CLI or Claude-only host.
 
+The adapter path requires in-process Python callables owned by the parent host. Model-side Codex app tools are not Python callables and cannot be passed into `src/team_router.py` directly; if no host adapter exists, use the manual/pre-created continuation and feed send/read results back into the helpers.
+
 ## Parent Thread Entry Flow
 
 The parent thread is the orchestrator. The role threads only reply in their own threads with marker blocks. The required live-tool order is:

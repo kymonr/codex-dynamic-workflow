@@ -1428,6 +1428,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("list_projects", str(ctx.exception))
         self.assertIn("list_threads", str(ctx.exception))
         self.assertIn("set_thread_title", str(ctx.exception))
+        self.assertNotIn("host adapter wrapper", str(ctx.exception))
 
         class FullAdapter(FakeThreadAdapter):
             def list_projects(self, **kwargs):
@@ -1444,6 +1445,19 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertTrue(capabilities["list_projects"])
         self.assertTrue(capabilities["list_threads"])
         self.assertTrue(capabilities["set_thread_title"])
+
+    def test_thread_adapter_capability_probe_rejects_model_tool_descriptors(self):
+        descriptor_adapter = {
+            tool_name: "codex_app.%s" % tool_name
+            for tool_name in team_router.THREAD_TOOL_NAMES
+        }
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.probe_thread_adapter_capabilities(descriptor_adapter)
+
+        self.assertIn("in-process Python callables", str(ctx.exception))
+        self.assertIn("model-side Codex app tool descriptors need a host adapter wrapper", str(ctx.exception))
+        self.assertIn("list_projects", str(ctx.exception))
 
     def test_normalize_thread_read_messages_accepts_lists_nested_messages_and_turns(self):
         raw_list = team_router.normalize_thread_read_messages([
@@ -2109,6 +2123,179 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "projectId": "D:\\codex\\codex-dynamic-workflow",
             "environment": {"type": "local"},
         })
+
+    def test_orchestrate_team_task_with_adapter_reaches_closeout_with_codex_desktop_shapes(self):
+        class CodexDesktopE2EAdapter(FakeThreadAdapter):
+            def __init__(self, task_id):
+                super().__init__()
+                self.task_id = task_id
+                self.created = []
+                self.reads = []
+                self.renamed = []
+                self.messages = {
+                    "thread-manager": [],
+                    "thread-executor": [],
+                    "thread-verifier": [],
+                }
+                self.reply_specs = {
+                    "thread-manager": (
+                        "msg-live-plan",
+                        "2026-06-23T11:40:30+08:00",
+                        "assistant",
+                        "TEAM_ROUTER_PLAN taskId=%s\n"
+                        "status: planned\n"
+                        "acknowledgedPermission: read-only\n"
+                        "scope: src/team_router.py tests/test_team_router.py\n"
+                        "stopWhen: closeout\n"
+                        "riskBoundary: read only\n"
+                        "executorPrompt: inspect adapter orchestration\n"
+                        "notes: desktop e2e" % task_id,
+                    ),
+                    "thread-executor": (
+                        "msg-live-callback",
+                        "2026-06-23T11:41:30+08:00",
+                        "assistant",
+                        "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                        "status: done\n"
+                        "final: true\n"
+                        "summary: first line\n"
+                        "second line\n"
+                        "evidence: codex desktop shape\n"
+                        "risks: none\n"
+                        "next: verifier" % task_id,
+                    ),
+                    "thread-verifier": (
+                        "msg-live-verdict",
+                        "2026-06-23T11:42:30+08:00",
+                        "assistant",
+                        "TEAM_ROUTER_VERDICT taskId=%s\n"
+                        "result: pass\n"
+                        "summary: verified closeout\n"
+                        "requiredChanges: none\n"
+                        "evidenceChecked: codex desktop shape\n"
+                        "risks: none" % task_id,
+                    ),
+                }
+
+            def create_thread(self, **kwargs):
+                raise AssertionError("pre-created role threads should be reused")
+
+            def list_projects(self, **kwargs):
+                return {
+                    "schemaVersion": 1,
+                    "projects": [
+                        {
+                            "projectId": "D:\\codex\\codex-dynamic-workflow",
+                            "projectKind": "local",
+                            "label": "codex-dynamic-workflow",
+                            "path": "D:\\codex\\codex-dynamic-workflow",
+                            "hostId": "local",
+                        },
+                    ],
+                }
+
+            def list_threads(self, **kwargs):
+                return {
+                    "schemaVersion": 1,
+                    "threads": [
+                        {"id": "thread-manager", "title": "TeamRouter manager - project-123"},
+                        {"id": "thread-executor", "title": "TeamRouter executor - project-123"},
+                        {"id": "thread-verifier", "title": "TeamRouter verifier - project-123"},
+                    ],
+                }
+
+            def set_thread_title(self, **kwargs):
+                self.renamed.append(dict(kwargs))
+                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
+            def send_message_to_thread(self, **kwargs):
+                thread_id = kwargs["threadId"]
+                self.sent.append({"kwargs": kwargs, "result": {"threadId": thread_id}})
+                self.messages[thread_id].append({
+                    "id": "user-%02d" % len(self.sent),
+                    "sentAt": {
+                        "thread-manager": "2026-06-23T11:40:00+08:00",
+                        "thread-executor": "2026-06-23T11:41:00+08:00",
+                        "thread-verifier": "2026-06-23T11:42:00+08:00",
+                    }[thread_id],
+                    "role": "user",
+                    "content": [{"type": "text", "text": kwargs["prompt"]}],
+                })
+                reply_id, sent_at, role, text = self.reply_specs[thread_id]
+                self.messages[thread_id].append({
+                    "id": reply_id,
+                    "sentAt": sent_at,
+                    "role": role,
+                    "content": [{"type": "text", "text": text}],
+                })
+                return {"threadId": thread_id}
+
+            def read_thread(self, **kwargs):
+                thread_id = kwargs["threadId"]
+                self.reads.append(dict(kwargs))
+                return {
+                    "schemaVersion": 1,
+                    "page": {"order": "newest_first"},
+                    "thread": {"id": thread_id},
+                    "turns": [
+                        {
+                            "id": "turn-%s" % thread_id,
+                            "startedAt": "2026-06-23T11:40:00+08:00",
+                            "items": list(reversed(self.messages[thread_id])),
+                        },
+                    ],
+                }
+
+        adapter = CodexDesktopE2EAdapter(self.task_id)
+        observed_at = [
+            "2026-06-23T11:40:00+08:00",
+            "2026-06-23T11:41:00+08:00",
+            "2026-06-23T11:42:00+08:00",
+            "2026-06-23T11:43:00+08:00",
+        ]
+
+        updates = [
+            team_router.orchestrate_team_task_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                objective="inspect docs",
+                project_local_path="D:\\codex\\codex-dynamic-workflow",
+                thread_adapter=adapter,
+                permission="read-only",
+                observed_at=timestamp,
+                codex_project_id="D:\\codex\\codex-dynamic-workflow",
+            )
+            for timestamp in observed_at
+        ]
+
+        self.assertEqual(
+            [(update["action"], update["status"]) for update in updates],
+            [
+                ("sent_manager_plan_request", "awaiting_plan"),
+                ("sent_executor_dispatch", "awaiting_callback"),
+                ("sent_verifier_request", "verifying"),
+                ("read_verifier_verdict", "done"),
+            ],
+        )
+        self.assertEqual(adapter.created, [])
+        self.assertEqual([record["kwargs"]["threadId"] for record in adapter.sent], [
+            "thread-manager",
+            "thread-executor",
+            "thread-verifier",
+        ])
+        self.assertEqual([record["threadId"] for record in adapter.reads], [
+            "thread-manager",
+            "thread-executor",
+            "thread-verifier",
+        ])
+        self.assertEqual(adapter.renamed, [])
+        self.assertTrue(updates[-1]["userOutput"].startswith("Team Router Closeout"))
+        self.assertEqual(
+            updates[-1]["ledger"]["observations"][-2]["parsedFields"]["summary"],
+            "first line\nsecond line",
+        )
+        self.assertEqual(updates[-1]["codexProjectId"], "D:\\codex\\codex-dynamic-workflow")
 
     def test_verifier_request_requires_latest_executor_callback_observation(self):
         adapter = FakeThreadAdapter()

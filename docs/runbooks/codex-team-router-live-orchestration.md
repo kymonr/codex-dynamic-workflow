@@ -7,6 +7,7 @@ This runbook is the parent-thread entry point for a real Codex desktop smoke. It
 - The parent thread can call `list_projects`, `create_thread`, `send_message_to_thread`, and `read_thread`.
 - The target project is visible in `list_projects`.
 - The task is read-only or design-only. Write, commit, push, PR, merge, deploy, real API, account, or production-data work must route to a separately authorized workflow.
+- The adapter path requires in-process Python callables owned by the parent host. Model-side Codex app tools are not Python callables and cannot be passed into `src/team_router.py` directly; if no host adapter exists, use the manual/pre-created continuation and feed send/read results back into the helpers.
 
 ## Tool Sequence
 

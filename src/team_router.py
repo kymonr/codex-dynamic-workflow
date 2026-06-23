@@ -529,8 +529,22 @@ def probe_thread_adapter_capabilities(
         if not callable(_adapter_method(thread_adapter, tool_name))
     ]
     if missing:
+        non_callable = [
+            tool_name for tool_name in missing
+            if _adapter_method(thread_adapter, tool_name) is not None
+        ]
+        boundary = "thread adapter boundary requires in-process Python callables"
+        if non_callable:
+            boundary += (
+                "; non-callable adapter entries are not usable as Python callables; "
+                "model-side Codex app tool descriptors need a host adapter wrapper before use; "
+                "non-callable adapter entries: %s" % ", ".join(sorted(non_callable))
+            )
         raise StateStoreError(
-            "thread adapter missing callable(s): %s" % ", ".join(sorted(missing))
+            "thread adapter missing callable(s): %s; %s" % (
+                ", ".join(sorted(missing)),
+                boundary,
+            )
         )
     return capabilities
 

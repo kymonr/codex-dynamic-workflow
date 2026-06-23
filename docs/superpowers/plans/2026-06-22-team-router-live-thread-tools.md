@@ -59,6 +59,20 @@ Orchestrator first-step smoke evidence collected on 2026-06-23:
 - Real `send_message_to_thread` then sent `TEAM_ROUTER_PLAN_REQUEST taskId=ctr-orchestrate-smoke-20260623-1125` to the selected manager thread and returned only `{ "threadId": ... }`.
 - Real `read_thread` returned `page.order: newest_first`, user item `item-7`, and agent item `item-8` containing `TEAM_ROUTER_PLAN taskId=ctr-orchestrate-smoke-20260623-1125`.
 
+Happy-path full orchestrator e2e smoke evidence collected on 2026-06-23:
+
+- Local callable-adapter replay of `orchestrate_team_task_with_adapter()` reached terminal closeout in four parent turns with immediate role replies:
+  - step 1: `sent_manager_plan_request` -> `awaiting_plan`.
+  - step 2: `sent_executor_dispatch` -> `awaiting_callback`.
+  - step 3: `sent_verifier_request` -> `verifying`.
+  - step 4: `read_verifier_verdict` -> `done`, with `Team Router Closeout`.
+- The replay used real Codex desktop result shapes, returned only `{ "threadId": ... }` from send calls, reused all three role threads, and created no new role threads. Delayed/unreachable/retry paths remain covered by the existing targeted state-machine tests.
+- Real Codex desktop role-thread smoke then used the existing threads end to end:
+  - manager thread `019ef253-8f71-7111-b794-27154c77ed2e` returned `TEAM_ROUTER_PLAN taskId=ctr-orchestrate-e2e-live-20260623-1136`.
+  - executor thread `019ef254-07ef-7710-a0c4-adcb7004c101` returned `TEAM_ROUTER_CALLBACK taskId=ctr-orchestrate-e2e-live-20260623-1136`.
+  - verifier thread `019ef254-44df-7121-b2ad-423fd34a2183` returned `TEAM_ROUTER_VERDICT taskId=ctr-orchestrate-e2e-live-20260623-1136` with `result: pass`.
+- The current Codex app still exposes thread tools as model-side tools, not in-process Python callables. The adapter path now fails fast when non-callable tool descriptors are passed; hosts without a callable adapter must use the manual/pre-created continuation and feed actual send/read outputs back into the helpers.
+
 ### Task 3: Verification And Commit
 
 **Files:**
