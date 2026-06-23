@@ -3046,6 +3046,43 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
 
+    def test_skill_doc_contains_chinese_role_model(self):
+        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "## 角色模型 (Role Model)",
+            "父线程调度者 (Parent Orchestrator)",
+            "工具宿主边界 (Adapter Host Boundary)",
+            "状态控制器 (State Controller)",
+            "规划者 (Manager)",
+            "执行者 (Executor)",
+            "验证者 (Verifier)",
+            "只有规划者、执行者、验证者是长期 role thread",
+            "父线程侧状态控制器 (Parent-Side State Controller)",
+            "Visible Codex desktop role-thread titles use `角色-任务名`",
+            "`执行者-管理者模式触发词修复`",
+            "`验证者-管理者模式触发词修复`",
+            "Do not include the project name by default",
+            "explicit role-intent phrases",
+            "“你是管理者”",
+            "“你作为管理者”",
+            "“团队管理者”",
+            "“进入 Manager Mode”",
+            "`act as team manager`",
+            "裸 `manager` 不触发 Manager Mode",
+            "`manager thread`",
+            "`manager parser`",
+            "`manager integration`",
+            "Manager Mode 禁止直接改文件、跑测试、执行实现命令、commit、push、PR 或 merge",
+            "除非用户明确说“切回执行者”",
+        ):
+            self.assertIn(needle, text)
+        manager_mode = self._section(text, "### Manager Mode Hard Rule")
+        self.assertNotIn(
+            "`manager`, or `team manager`, the assistant enters Manager Mode",
+            manager_mode,
+        )
+
     def test_skill_doc_separates_adapter_created_and_precreated_role_paths(self):
         path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
         text = path.read_text(encoding="utf-8")
@@ -3103,6 +3140,24 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Emit `update[\"userOutput\"]` exactly",
             "Team Router Closeout",
             "Team Router Handoff",
+            "父线程调度者 (Parent Orchestrator)",
+            "规划者 (Manager)",
+            "执行者 (Executor)",
+            "验证者 (Verifier)",
+            "Visible Codex desktop role-thread titles use `角色-任务名`",
+            "`执行者-管理者模式触发词修复`",
+            "`验证者-管理者模式触发词修复`",
+            "Do not include the project name by default",
+            "explicit role-intent phrases",
+            "“你是管理者”",
+            "“你作为管理者”",
+            "“团队管理者”",
+            "“进入 Manager Mode”",
+            "`act as team manager`",
+            "裸 `manager` 不触发 Manager Mode",
+            "`manager thread`",
+            "`manager parser`",
+            "`manager integration`",
         ):
             self.assertIn(needle, text)
 

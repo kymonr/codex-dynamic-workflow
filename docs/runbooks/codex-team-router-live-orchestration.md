@@ -19,6 +19,29 @@ list_projects -> create_thread -> send_message_to_thread -> read_thread
 
 Use `src/team_router.py` helpers to keep state deterministic around those host-tool calls.
 
+## Role Names
+
+Use Chinese role names in user-facing planning and handoff text while preserving English protocol/code aliases:
+
+| 中文主名 | English alias | Thread? | Live responsibility |
+| --- | --- | --- | --- |
+| 父线程调度者 | Parent Orchestrator | no | Calls tools, advances the state machine, and emits helper output. |
+| 工具宿主边界 | Adapter Host Boundary | no | Provides in-process callable access to Codex thread tools. |
+| 状态控制器 | State Controller | no | Owns registry, ledger, recovery anchors, and state transitions. |
+| 规划者 | Manager | yes | Replies with `TEAM_ROUTER_PLAN`. |
+| 执行者 | Executor | yes | Does delegated work and replies with `TEAM_ROUTER_CALLBACK`. |
+| 验证者 | Verifier | yes | Checks callback/evidence/boundary and replies with `TEAM_ROUTER_VERDICT`. |
+
+Canonical aliases: 父线程调度者 (Parent Orchestrator), 工具宿主边界 (Adapter Host Boundary), 状态控制器 (State Controller), 规划者 (Manager), 执行者 (Executor), 验证者 (Verifier).
+
+Only 规划者 / 执行者 / 验证者 are long-lived role threads. The parent-side concepts must not create extra threads.
+
+Visible Codex desktop role-thread titles use `角色-任务名`, for example `执行者-管理者模式触发词修复` and `验证者-管理者模式触发词修复`. Do not include the project name by default unless the task name itself would be ambiguous.
+
+Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`.
+
+Bare `manager` or `team manager` does not trigger Manager Mode. 裸 `manager` 不触发 Manager Mode; this avoids accidental activation for ordinary implementation requests such as `manager thread`, `manager parser`, or `manager integration`.
+
 ## Steps
 
 1. Call `list_projects` and select the target project.

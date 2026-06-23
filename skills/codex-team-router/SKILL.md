@@ -22,6 +22,45 @@ If required tools are missing, stop with `tool_error`. This Skill is for Codex a
 
 The adapter path requires in-process Python callables owned by the parent host. Model-side Codex app tools are not Python callables and cannot be passed into `src/team_router.py` directly; if no host adapter exists, use the manual/pre-created continuation and feed send/read results back into the helpers.
 
+## 角色模型 (Role Model)
+
+Use Chinese role names as the reader-facing names. Keep the English names only as protocol/code aliases.
+
+| 中文主名 | English alias | Thread? | Responsibility |
+| --- | --- | --- | --- |
+| 父线程调度者 | Parent Orchestrator | no | Understand the user goal, choose the next state-machine step, call helpers/tools, and emit the exact handoff or closeout. |
+| 工具宿主边界 | Adapter Host Boundary | no | Own real callable access to `list_projects`, `create_thread`, `send_message_to_thread`, `read_thread`, and title/thread listing tools. |
+| 状态控制器 | State Controller | no | Persist registry, ledger, recovery anchors, state transitions, and user-visible `Team Router Handoff` / `Team Router Closeout`. |
+| 规划者 | Manager | yes | Reply only with `TEAM_ROUTER_PLAN`; define scope, stop condition, risk boundary, and executor prompt. |
+| 执行者 | Executor | yes | Follow the manager plan, do the delegated read-only/design-only work, and reply with evidence in `TEAM_ROUTER_CALLBACK`. |
+| 验证者 | Verifier | yes | Check the raw executor callback, evidence, permission boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`. |
+
+Canonical aliases: 父线程调度者 (Parent Orchestrator), 工具宿主边界 (Adapter Host Boundary), 状态控制器 (State Controller), 规划者 (Manager), 执行者 (Executor), 验证者 (Verifier).
+
+只有规划者、执行者、验证者是长期 role thread. 父线程调度者、工具宿主边界、状态控制器 are parent-side concepts and must not create extra role threads.
+
+Visible Codex desktop role-thread titles use `角色-任务名`, for example `规划者-管理者模式触发词修复`, `执行者-管理者模式触发词修复`, and `验证者-管理者模式触发词修复`. Do not include the project name by default unless the task name itself would be ambiguous.
+
+### Manager Mode Hard Rule
+
+Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`.
+
+Bare `manager` or `team manager` does not trigger Manager Mode. 裸 `manager` 不触发 Manager Mode; this avoids accidental activation for ordinary implementation requests such as `manager thread`, `manager parser`, or `manager integration`.
+
+Manager Mode responsibilities:
+
+1. Understand the objective.
+2. Define scope.
+3. Identify permission and safety boundaries.
+4. Split work across roles.
+5. Write `executorPrompt` and, when needed, `verifierPrompt`.
+6. Define acceptance criteria.
+7. Track status, identify blockers, and decide whether work needs rework.
+
+Manager Mode 禁止直接改文件、跑测试、执行实现命令、commit、push、PR 或 merge. It must not act as the executor, fabricate child-thread results, or switch back to execution without explicit user approval.
+
+If implementation is needed, Manager Mode must output a task for the executor instead of doing the work. 除非用户明确说“切回执行者”, “你来执行”, “直接改”, or “按这个 plan 落地”, keep the response in planning/review/orchestration mode only.
+
 ## Parent Thread Entry Flow
 
 The parent thread is the orchestrator. The role threads only reply in their own threads with marker blocks. The required live-tool order is:
@@ -172,9 +211,9 @@ risks: <none or risks>
 
 Natural-language verdicts do not move state.
 
-## Local Manager State Helpers
+## 父线程侧状态控制器 (Parent-Side State Controller)
 
-The implementation keeps the manager flow deterministic and local. Thread tools are an adapter layer: they send messages and pass plain send/read results back into helper functions. The helper layer performs registry role persistence, task ledger updates, protocol parsing, and recovery anchor selection.
+The implementation keeps the parent-side orchestration flow deterministic and local. Thread tools are an adapter layer: they send messages and pass plain send/read results back into helper functions. The helper layer performs registry role persistence, task ledger updates, protocol parsing, and recovery anchor selection. The 规划者 (Manager) thread does not own ledger or registry state.
 
 Registry role persistence uses `update_registry_roles()` and `create_team_task()` to record the `manager`, `executor`, and `verifier` thread ids under the project registry before task dispatch. Task creation writes `tasks/<taskId>.json` immediately and moves the ledger to `roles_ready`.
 
