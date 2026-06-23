@@ -730,6 +730,68 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "verifying")
         self.assertEqual(updated["observations"][-1]["parsedFields"]["summary"], "same second")
 
+    def test_callback_capture_falls_back_to_timestamp_when_send_message_id_missing_from_read(self):
+        ledger = self._awaiting_callback_ledger()
+        messages = [
+            {
+                "type": "userMessage",
+                "messageId": "item-dispatch",
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "text": "TEAM_ROUTER_DISPATCH taskId=ctr-20260622-160000-a7f3",
+            },
+            {
+                "type": "agentMessage",
+                "messageId": "item-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: id mismatch\nevidence: live thread\nrisks: none\nnext: none",
+            },
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["observations"][-1]["parsedFields"]["summary"], "id mismatch")
+
+    def test_callback_capture_uses_timestamp_when_read_thread_is_newest_first(self):
+        ledger = self._awaiting_callback_ledger()
+        messages = [
+            {
+                "type": "agentMessage",
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: newest first\nevidence: live thread\nrisks: none\nnext: none",
+            },
+            {
+                "type": "userMessage",
+                "messageId": "msg-dispatch",
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "text": "TEAM_ROUTER_DISPATCH taskId=ctr-20260622-160000-a7f3",
+            },
+            {
+                "type": "agentMessage",
+                "messageId": "msg-before-dispatch",
+                "sentAt": "2026-06-22T20:01:30+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: stale\nevidence: old\nrisks: stale\nnext: none",
+            },
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["observations"][-1]["parsedFields"]["summary"], "newest first")
+
     def test_callback_capture_preserves_multiline_summary(self):
         ledger = self._awaiting_callback_ledger()
         messages = [
@@ -2068,6 +2130,84 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(fourth["action"], "read_verifier_verdict")
         self.assertEqual(fourth["ledger"]["status"], "done")
         self.assertTrue(fourth["userOutput"].startswith("Team Router Closeout"))
+
+    def test_run_team_task_with_adapter_waits_for_rework_confirmation(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: needs_rework\nsummary: missing\nrequiredChanges: fix docs\nevidenceChecked: callback\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        adapter = FakeThreadAdapter()
+
+        update = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:08:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "needs_rework_pending")
+        self.assertEqual(update["ledger"]["status"], "needs_rework")
+        self.assertEqual(adapter.sent, [])
+
+    def test_run_team_task_with_adapter_dispatches_rework_when_confirmed(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: needs_rework\nsummary: missing\nrequiredChanges: fix docs\nevidenceChecked: callback\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        adapter = FakeThreadAdapter()
+
+        update = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:08:00+08:00",
+            confirm_rework=True,
+        )
+
+        self.assertEqual(update["action"], "sent_executor_dispatch")
+        self.assertEqual(update["ledger"]["status"], "awaiting_callback")
+        self.assertEqual(update["ledger"]["reworkCount"], 1)
+        self.assertEqual(len(adapter.sent), 1)
 
     def test_run_team_task_with_adapter_retries_plan_unreachable_reads(self):
         adapter = FakeThreadAdapter()

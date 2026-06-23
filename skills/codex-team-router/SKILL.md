@@ -36,6 +36,8 @@ Use `run_team_task_with_adapter()` when the parent host can provide adapter call
 
 Call it once per parent turn or after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Parent thread rule: emit `update["userOutput"]` to the user when the returned payload contains closeout or handoff content.
 
+When the verifier returns `needs_rework`, the runner stops with `action: needs_rework_pending`. Call it with `confirm_rework=True` only after the user approves another executor dispatch.
+
 ### Adapter-created roles path
 
 Use this path when the parent host can provide adapter callables whose functions invoke the real Codex app tools.

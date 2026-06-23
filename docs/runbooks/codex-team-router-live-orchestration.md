@@ -31,6 +31,8 @@ Use `run_team_task_with_adapter()` when the parent host can pass Codex thread to
 
 Call it again after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Emit `update["userOutput"]` exactly when the helper returns closeout or handoff content.
 
+When the verifier returns `needs_rework`, the runner stops with `action: needs_rework_pending`. Call it with `confirm_rework=True` only after the user approves another executor dispatch.
+
 ### Adapter-created roles path
 
 Use this path when the parent host can pass Codex thread tool callables into Python.

@@ -1197,14 +1197,14 @@ def _messages_after_anchor(messages: list[Mapping[str, Any]],
                            anchor: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
     if not anchor:
         return list(messages)
-    message_id = anchor.get("messageId")
-    if message_id:
-        for index, message in enumerate(messages):
-            if message.get("messageId") == message_id:
-                return list(messages[index + 1:])
     sent_at = anchor.get("sentAt")
     anchor_time = _parse_thread_timestamp(sent_at)
     if anchor_time is None:
+        message_id = anchor.get("messageId")
+        if message_id:
+            for index, message in enumerate(messages):
+                if message.get("messageId") == message_id:
+                    return list(messages[index + 1:])
         return list(messages)
     filtered = []
     for message in messages:
@@ -1214,14 +1214,15 @@ def _messages_after_anchor(messages: list[Mapping[str, Any]],
         if ts is None:
             continue
         if ts > anchor_time:
-            filtered.append(message)
+            filtered.append((ts, message))
         elif (
             ts == anchor_time
             and _is_same_timestamp_response_message(message)
             and not _is_anchor_request_message(message)
         ):
-            filtered.append(message)
-    return filtered
+            filtered.append((ts, message))
+    filtered.sort(key=lambda item: item[0])
+    return [message for _, message in filtered]
 
 
 def _messages_text(messages: list[Mapping[str, Any]]) -> str:
@@ -1704,7 +1705,8 @@ def run_team_task_with_adapter(state_root: str | Path,
                                observed_at: str,
                                target: Mapping[str, Any] | None = None,
                                max_rework: int = 3,
-                               turn_limit: int | None = None) -> dict[str, Any]:
+                               turn_limit: int | None = None,
+                               confirm_rework: bool = False) -> dict[str, Any]:
     if not task_path(state_root, project_id, task_id).exists():
         start_team_task_with_adapter(
             state_root,
@@ -1748,6 +1750,13 @@ def run_team_task_with_adapter(state_root: str | Path,
                 continue
             return _adapter_task_update(
                 "read_manager_plan",
+                state_root,
+                project_id,
+                ledger,
+            )
+        if status == "needs_rework" and not confirm_rework:
+            return _adapter_task_update(
+                "needs_rework_pending",
                 state_root,
                 project_id,
                 ledger,
@@ -1937,8 +1946,8 @@ def read_window_covers_anchor(messages: list[Mapping[str, Any]],
         return False
     message_id = anchor.get("messageId")
     sent_at = anchor.get("sentAt")
-    if message_id:
-        return any(msg.get("messageId") == message_id for msg in messages)
+    if message_id and any(msg.get("messageId") == message_id for msg in messages):
+        return True
     if not sent_at:
         return False
     anchor_time = _parse_thread_timestamp(sent_at)
