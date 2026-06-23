@@ -32,7 +32,9 @@ Use exactly one role-thread creation path per task. Do not mix the adapter-creat
 
 ### Recommended adapter runner
 
-Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, and `projectTarget`.
+Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`.
+
+Use a filesystem-safe Team Router `project_id` for local state, such as `codex-dynamic-workflow`. If Codex desktop `list_projects` returns a path-like project id such as `D:\codex\codex-dynamic-workflow`, pass it as `codex_project_id` so target lookup uses the real Codex id while registry and ledger paths stay safe.
 
 Use `run_team_task_with_adapter()` only when the parent has already probed tools and resolved the project target. It is the lower-level runner behind the orchestration entry.
 

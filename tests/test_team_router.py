@@ -2005,6 +2005,111 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(project_roles["executor"]["threadId"], "live-executor")
         self.assertEqual(project_roles["verifier"]["threadId"], "live-verifier")
 
+    def test_orchestrate_team_task_with_adapter_can_resolve_path_codex_project_id(self):
+        class PathProjectAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.listed_projects = 0
+                self.listed_threads = 0
+
+            def list_projects(self, **kwargs):
+                self.listed_projects += 1
+                return {
+                    "projects": [
+                        {
+                            "projectId": "D:\\codex\\codex-dynamic-workflow",
+                            "target": {
+                                "type": "project",
+                                "projectId": "D:\\codex\\codex-dynamic-workflow",
+                                "environment": {"type": "local"},
+                            },
+                        },
+                    ],
+                }
+
+            def list_threads(self, **kwargs):
+                self.listed_threads += 1
+                return {
+                    "threads": [
+                        {"threadId": "live-manager", "title": "TeamRouter manager - project-123"},
+                        {"threadId": "live-executor", "title": "TeamRouter executor - project-123"},
+                        {"threadId": "live-verifier", "title": "TeamRouter verifier - project-123"},
+                    ],
+                }
+
+            def set_thread_title(self, **kwargs):
+                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
+        adapter = PathProjectAdapter()
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+            codex_project_id="D:\\codex\\codex-dynamic-workflow",
+        )
+
+        self.assertEqual(update["action"], "sent_manager_plan_request")
+        self.assertEqual(update["ledger"]["projectId"], "project-123")
+        self.assertEqual(update["codexProjectId"], "D:\\codex\\codex-dynamic-workflow")
+        self.assertEqual(update["projectTarget"]["projectId"], "D:\\codex\\codex-dynamic-workflow")
+        self.assertEqual(adapter.listed_projects, 1)
+        self.assertEqual(adapter.listed_threads, 1)
+        self.assertEqual(adapter.created, [])
+
+    def test_orchestrate_team_task_with_adapter_accepts_codex_desktop_project_shape(self):
+        class CodexDesktopProjectAdapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {
+                    "schemaVersion": 1,
+                    "projects": [
+                        {
+                            "projectId": "D:\\codex\\codex-dynamic-workflow",
+                            "projectKind": "local",
+                            "label": "codex-dynamic-workflow",
+                            "path": "D:\\codex\\codex-dynamic-workflow",
+                            "hostId": "local",
+                        },
+                    ],
+                }
+
+            def list_threads(self, **kwargs):
+                return {
+                    "schemaVersion": 1,
+                    "threads": [
+                        {"id": "live-manager", "title": "TeamRouter manager - project-123"},
+                        {"id": "live-executor", "title": "TeamRouter executor - project-123"},
+                        {"id": "live-verifier", "title": "TeamRouter verifier - project-123"},
+                    ],
+                }
+
+            def set_thread_title(self, **kwargs):
+                return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=CodexDesktopProjectAdapter(),
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+            codex_project_id="D:\\codex\\codex-dynamic-workflow",
+        )
+
+        self.assertEqual(update["action"], "sent_manager_plan_request")
+        self.assertEqual(update["projectTarget"], {
+            "type": "project",
+            "projectId": "D:\\codex\\codex-dynamic-workflow",
+            "environment": {"type": "local"},
+        })
+
     def test_verifier_request_requires_latest_executor_callback_observation(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()

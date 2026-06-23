@@ -774,6 +774,13 @@ def _listed_project_target(item: Mapping[str, Any], project_id: str) -> dict[str
         environment = candidate.get("environment")
         if isinstance(environment, Mapping):
             return {"environment": dict(environment)}
+        project_kind = candidate.get("projectKind")
+        if project_kind == "local":
+            return {
+                "type": "project",
+                "projectId": project_id,
+                "environment": {"type": "local"},
+            }
     raise StateStoreError("list_projects result missing target for project: %s" % project_id)
 
 
@@ -1839,14 +1846,16 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        permission: str,
                                        observed_at: str,
                                        target: Mapping[str, Any] | None = None,
+                                       codex_project_id: str | None = None,
                                        max_rework: int = 3,
                                        turn_limit: int | None = None,
                                        confirm_rework: bool = False) -> dict[str, Any]:
     capabilities = probe_thread_adapter_capabilities(thread_adapter)
+    project_lookup_id = codex_project_id or project_id
     project_target = (
         dict(target)
         if target is not None
-        else resolve_project_target_with_adapter(thread_adapter, project_id=project_id)
+        else resolve_project_target_with_adapter(thread_adapter, project_id=project_lookup_id)
     )
     update = run_team_task_with_adapter(
         state_root,
@@ -1863,6 +1872,7 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
         confirm_rework=confirm_rework,
     )
     update["capabilities"] = capabilities
+    update["codexProjectId"] = project_lookup_id
     update["projectTarget"] = project_target
     return update
 

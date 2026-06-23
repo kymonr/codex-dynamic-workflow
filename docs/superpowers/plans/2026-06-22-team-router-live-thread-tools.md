@@ -48,6 +48,17 @@ Regression smoke evidence collected on 2026-06-23:
 - `read_thread` returned `page.order: newest_first` and item ids such as `item-5` / `item-6`; anchor recovery must use the persisted `sentAt` fallback when the send result has no matching read item id.
 - The regression covered manager -> executor -> verifier marker transport, multiline callback summary preservation, and the verifier closeout path after the message-id fallback/newest-first fix.
 
+Orchestrator first-step smoke evidence collected on 2026-06-23:
+
+- canonical role thread titles were set with Codex desktop `set_thread_title`:
+  - manager: `019ef253-8f71-7111-b794-27154c77ed2e` -> `TeamRouter manager - codex-dynamic-workflow`.
+  - executor: `019ef254-07ef-7710-a0c4-adcb7004c101` -> `TeamRouter executor - codex-dynamic-workflow`.
+  - verifier: `019ef254-44df-7121-b2ad-423fd34a2183` -> `TeamRouter verifier - codex-dynamic-workflow`.
+- `list_projects` returned Codex desktop project shape with path-like id `D:\codex\codex-dynamic-workflow`, `projectKind: local`, and no prebuilt `target` field.
+- `orchestrate_team_task_with_adapter()` was replayed against the real Codex desktop result shapes with local state id `codex-dynamic-workflow` and `codex_project_id: D:\codex\codex-dynamic-workflow`; it returned `action: sent_manager_plan_request`, `status: awaiting_plan`, `createdCount: 0`, and selected manager thread `019ef253-8f71-7111-b794-27154c77ed2e`.
+- Real `send_message_to_thread` then sent `TEAM_ROUTER_PLAN_REQUEST taskId=ctr-orchestrate-smoke-20260623-1125` to the selected manager thread and returned only `{ "threadId": ... }`.
+- Real `read_thread` returned `page.order: newest_first`, user item `item-7`, and agent item `item-8` containing `TEAM_ROUTER_PLAN taskId=ctr-orchestrate-smoke-20260623-1125`.
+
 ### Task 3: Verification And Commit
 
 **Files:**
