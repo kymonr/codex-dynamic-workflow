@@ -50,15 +50,29 @@ Use this path when the parent thread has already called `create_thread` manually
 5. Persist the pre-created role bindings with `create_team_task()` or the lower-level `update_registry_roles()` plus task-ledger helpers.
 6. Do not call `start_team_task_with_adapter()` after manually creating role threads.
 
-After either path, continue the orchestration sequence:
+### Adapter continuation
+
+Use this continuation when the parent host can pass tool callables into Python.
 
 1. Send the manager plan request with `send_manager_plan_request_with_adapter()`. This records the send anchor for later `read_thread` recovery.
-2. Call `read_thread` for the manager thread, then pass the plain result through `read_manager_plan_with_adapter()` or `normalize_thread_read_messages()` plus the manager capture helper. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
+2. Call `read_thread` for the manager thread through `read_manager_plan_with_adapter()`. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
 3. Send executor work with `send_executor_dispatch_with_adapter()`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`.
-4. Call `read_thread` for the executor thread and capture the callback with `read_executor_callback_with_adapter()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
+4. Call `read_thread` for the executor thread through `read_executor_callback_with_adapter()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
 5. Send verifier work with `send_verifier_request_with_adapter()`. Forward the raw executor callback block; do not summarize it first.
-6. Call `read_thread` for the verifier thread and use `read_verifier_verdict_update_with_adapter()` so the parent gets both the updated ledger and the exact user-facing output payload.
+6. Call `read_thread` for the verifier thread through `read_verifier_verdict_update_with_adapter()` so the parent gets both the updated ledger and the exact user-facing output payload.
 7. Parent thread rule: emit `update["userOutput"]` to the user. Do not replace it with an unstructured summary. If the task is not terminal, the helper returns a handoff with recovery anchors; if it is terminal with closeout, the helper returns a closeout.
+
+### Manual/pre-created continuation
+
+Use this continuation after the pre-created roles path when the parent thread directly invokes Codex app tools or the host cannot pass tool callables into Python.
+
+1. Build the manager request with `make_plan_request_message()`, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist the anchor with `record_plan_request_sent()`.
+2. Call `read_thread` for the manager thread, normalize the plain result with `normalize_thread_read_messages()`, then pass messages to `capture_manager_plan_from_read()`. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
+3. Build executor work with `make_executor_dispatch_message()`, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist the anchor with `record_executor_dispatch_sent()`.
+4. Call `read_thread` for the executor thread, normalize the result with `normalize_thread_read_messages()`, then pass messages to `capture_executor_callback_from_read()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
+5. Build verifier work with `make_verifier_request_message()` using the raw executor callback block, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist the anchor with `record_verifier_request_sent()`.
+6. Call `read_thread` for the verifier thread, normalize the result with `normalize_thread_read_messages()`, then pass messages to `capture_verifier_verdict_from_read()`.
+7. Load the project registry and emit `format_task_update_for_user()` to the user. Do not replace it with an unstructured summary.
 
 See `docs/runbooks/codex-team-router-live-orchestration.md` for a replayable live smoke procedure and fixture expectations.
 

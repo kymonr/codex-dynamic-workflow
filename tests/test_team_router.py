@@ -1975,6 +1975,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         adapter_created = self._section(text, "### Adapter-created roles path")
         pre_created = self._section(text, "### Pre-created roles path")
+        adapter_continuation = self._section(text, "### Adapter continuation")
+        manual_continuation = self._section(text, "### Manual/pre-created continuation")
 
         self.assertIn("start_team_task_with_adapter()", adapter_created)
         self.assertIn("Do not pre-call `create_thread`", adapter_created)
@@ -1983,6 +1985,31 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Do not call `start_team_task_with_adapter()` after manually creating role threads",
             pre_created,
         )
+        for needle in (
+            "send_manager_plan_request_with_adapter()",
+            "read_manager_plan_with_adapter()",
+            "send_executor_dispatch_with_adapter()",
+            "read_executor_callback_with_adapter()",
+            "send_verifier_request_with_adapter()",
+            "read_verifier_verdict_update_with_adapter()",
+        ):
+            self.assertIn(needle, adapter_continuation)
+        for needle in (
+            "send_message_to_thread",
+            "read_thread",
+            "thread_send_anchor()",
+            "normalize_thread_read_messages()",
+            "record_plan_request_sent()",
+            "capture_manager_plan_from_read()",
+            "record_executor_dispatch_sent()",
+            "capture_executor_callback_from_read()",
+            "record_verifier_request_sent()",
+            "capture_verifier_verdict_from_read()",
+            "format_task_update_for_user()",
+        ):
+            self.assertIn(needle, manual_continuation)
+        self.assertNotIn("send_manager_plan_request_with_adapter()", manual_continuation)
+        self.assertNotIn("read_verifier_verdict_update_with_adapter()", manual_continuation)
 
     def test_live_orchestration_runbook_exists(self):
         path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
@@ -1994,7 +2021,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "read_thread",
             "read_verifier_verdict_update_with_adapter()",
             "tests/fixtures/team_router/live_read_thread_verdict.json",
+            "Emit `update[\"userOutput\"]` exactly",
             "Team Router Closeout",
+            "Team Router Handoff",
         ):
             self.assertIn(needle, text)
 
@@ -2004,6 +2033,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         adapter_created = self._section(text, "### Adapter-created roles path")
         pre_created = self._section(text, "### Pre-created roles path")
+        adapter_continuation = self._section(text, "### Adapter continuation")
+        manual_continuation = self._section(text, "### Manual/pre-created continuation")
 
         self.assertIn("start_team_task_with_adapter()", adapter_created)
         self.assertIn("Do not pre-call `create_thread`", adapter_created)
@@ -2012,6 +2043,19 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Do not call `start_team_task_with_adapter()` after manually creating role threads",
             pre_created,
         )
+        for needle in (
+            "send_message_to_thread",
+            "read_thread",
+            "record_plan_request_sent()",
+            "capture_manager_plan_from_read()",
+            "record_executor_dispatch_sent()",
+            "capture_executor_callback_from_read()",
+            "record_verifier_request_sent()",
+            "capture_verifier_verdict_from_read()",
+        ):
+            self.assertIn(needle, manual_continuation)
+        self.assertIn("read_verifier_verdict_update_with_adapter()", adapter_continuation)
+        self.assertNotIn("send_manager_plan_request_with_adapter()", manual_continuation)
 
 
 if __name__ == "__main__":

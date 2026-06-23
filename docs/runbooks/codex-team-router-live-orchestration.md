@@ -45,16 +45,33 @@ Use this path when the parent thread manually calls Codex app tools or the host 
 3. Persist role bindings and create the task ledger with `create_team_task()` or the equivalent lower-level registry helpers.
 4. Do not call `start_team_task_with_adapter()` after manually creating role threads.
 
-After either path, continue:
+### Adapter continuation
 
-1. Send the manager request with `send_message_to_thread`, record the send anchor, then call `read_thread` for the manager. Feed the read result through `normalize_thread_read_messages()` and `read_manager_plan_with_adapter()`/capture helpers.
-2. If the manager plan is valid and does not require escalation, send executor dispatch with `send_message_to_thread`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`.
-3. Call `read_thread` for the executor. Capture the final callback with `read_executor_callback_with_adapter()` or the equivalent capture helper.
-4. Send verifier request with `send_message_to_thread`. Forward the raw executor callback block.
-5. Call `read_thread` for the verifier and finish with `read_verifier_verdict_update_with_adapter()`.
-6. Emit `update["userOutput"]` exactly:
+Use this continuation when the parent host can pass Codex thread tool callables into Python.
+
+1. Send the manager request with `send_manager_plan_request_with_adapter()`.
+2. Read and capture the manager plan with `read_manager_plan_with_adapter()`.
+3. If the manager plan is valid and does not require escalation, send executor dispatch with `send_executor_dispatch_with_adapter()`.
+4. Read and capture the final executor callback with `read_executor_callback_with_adapter()`.
+5. Send verifier request with `send_verifier_request_with_adapter()`. Forward the raw executor callback block.
+6. Read the verifier result and finish with `read_verifier_verdict_update_with_adapter()`.
+7. Emit `update["userOutput"]` exactly:
     - `Team Router Closeout` for terminal tasks with closeout.
     - `Team Router Handoff` for waiting, unreachable, interrupted, or non-terminal tasks.
+
+### Manual/pre-created continuation
+
+Use this continuation when the parent thread directly invokes Codex app tools or the host cannot pass tool callables into Python.
+
+1. Build the manager request with `make_plan_request_message()`, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist it with `record_plan_request_sent()`.
+2. Call `read_thread` for the manager, normalize the result with `normalize_thread_read_messages()`, then capture the plan with `capture_manager_plan_from_read()`.
+3. If the manager plan is valid and does not require escalation, build executor dispatch with `make_executor_dispatch_message()`, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist it with `record_executor_dispatch_sent()`.
+4. Call `read_thread` for the executor, normalize the result with `normalize_thread_read_messages()`, then capture the final callback with `capture_executor_callback_from_read()`.
+5. Build verifier request with `make_verifier_request_message()` and the raw executor callback block, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist it with `record_verifier_request_sent()`.
+6. Call `read_thread` for the verifier, normalize the result with `normalize_thread_read_messages()`, then capture the verdict with `capture_verifier_verdict_from_read()`.
+7. Emit `format_task_update_for_user()` exactly:
+   - `Team Router Closeout` for terminal tasks with closeout.
+   - `Team Router Handoff` for waiting, unreachable, interrupted, or non-terminal tasks.
 
 ## Fixture
 
