@@ -34,7 +34,7 @@
 **Interfaces:**
 - Produces: `runner.BACKENDS = {"codex", "claude"}`；`validate_spec(raw, allowed_roots=None)` 返回的 dict 新增键 `"backend"`（值 `"codex"` 或 `"claude"`，缺省 `"codex"`）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/test_validate.py` 的 `TestValidateSpec` 类内追加：
 
@@ -54,12 +54,12 @@
             runner.validate_spec(d)
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_validate.py" -v`
 Expected: FAIL，`test_backend_defaults_codex` 报 `KeyError: 'backend'`，`test_backend_claude_accepted` 同；`test_backend_invalid_rejected` 因未拒绝而 fail。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 在 `src/runner.py` 的 `ALLOWED_SPEC_KEYS` 定义处加入 `"backend"`：
 
@@ -90,12 +90,12 @@ BACKENDS = {"codex", "claude"}
             "backend": backend, "stages": stages}
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_validate.py" -v`
 Expected: PASS（含新 3 条与原有全部）。
 
-- [ ] **Step 5: 提交（需用户授权）**
+- [x] **Step 5: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py tests/test_validate.py
@@ -115,7 +115,7 @@ git commit -m "feat(read): validate_spec 支持 backend 字段(默认 codex)"
 - Produces: `runner.CLAUDE_READ_TOOLS = "Read,Grep,Glob"`；`build_claude_read_cmd(claude_prefix, prompt, schema_inline=None, reasoning_effort=None) -> list[str]`。
   - 注：相对 spec §4.1 去掉了无用的 `workdir` 参数（spec 注明它"仅用于校验/记录、不进 argv"，实际无校验需求；工作目录由 `_run_task` 用 subprocess `cwd` 设置）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `tests/test_claude_cmd.py`：
 
@@ -173,12 +173,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_claude_cmd.py" -v`
 Expected: FAIL，`AttributeError: module 'runner' has no attribute 'build_claude_read_cmd'`。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 在 `src/runner.py` 中 `build_cmd` 函数定义之后，新增常量与函数：
 
@@ -206,12 +206,12 @@ def build_claude_read_cmd(claude_prefix, prompt, schema_inline=None,
     return cmd
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_claude_cmd.py" -v`
 Expected: PASS（5 条）。
 
-- [ ] **Step 5: 提交（需用户授权）**
+- [x] **Step 5: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py tests/test_claude_cmd.py
@@ -230,7 +230,7 @@ git commit -m "feat(read): 新增 build_claude_read_cmd(工具集钉死 Read,Gre
 - Consumes: 现有 `resolve_codex_prefix(user_prefix)`。
 - Produces: `runner.DEFAULT_CLAUDE_CMD`（字符串路径）；`resolve_claude_prefix(user_prefix) -> list[str]`；`resolve_backend_cmd(backend, user_prefix) -> list[str]`（backend 未知抛 `WorkflowError`）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `tests/test_resolve_backend.py`：
 
@@ -265,12 +265,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_resolve_backend.py" -v`
 Expected: FAIL，`AttributeError: module 'runner' has no attribute 'resolve_backend_cmd'`。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 在 `src/runner.py` 顶部常量区（`DEFAULT_CODEX_CMD = ...` 之后）新增：
 
@@ -306,12 +306,12 @@ def resolve_backend_cmd(backend, user_prefix):
     raise WorkflowError("未知 backend: %r" % (backend,))
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_resolve_backend.py" -v`
 Expected: PASS（4 条）。
 
-- [ ] **Step 5: 提交（需用户授权）**
+- [x] **Step 5: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py tests/test_resolve_backend.py
@@ -334,7 +334,7 @@ git commit -m "feat(read): 新增 resolve_backend_cmd / resolve_claude_prefix"
   - `tokens`：`usage.output_tokens`（int）或 `None`
   - `error`：失败原因字符串或 `None`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `tests/test_claude_envelope.py`：
 
@@ -398,12 +398,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_claude_envelope.py" -v`
 Expected: FAIL，`AttributeError: module 'runner' has no attribute '_parse_claude_result'`。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 在 `src/runner.py` 的 `_extract_tokens` 函数之后新增：
 
@@ -436,12 +436,12 @@ def _parse_claude_result(raw_text, has_schema):
     return "ok", env.get("result", ""), tokens, None
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_claude_envelope.py" -v`
 Expected: PASS（7 条）。
 
-- [ ] **Step 5: 提交（需用户授权）**
+- [x] **Step 5: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py tests/test_claude_envelope.py
@@ -461,7 +461,7 @@ git commit -m "feat(read): 新增 _parse_claude_result 信封解析"
 - Consumes: `runner`（间接，经 run_wf）。
 - Produces: `helpers.MOCK_CLAUDE_PREFIX = [sys.executable, <tests/mock_claude.py>]`；`run_wf(raw, prefix=None, **kw)`（prefix 缺省 `MOCK_PREFIX`）；`mock_claude.py` 模拟 `claude -p --output-format json`，支持 `[MOCK:exit=N] / [MOCK:iserror] / [MOCK:badjson] / [MOCK:empty] / [MOCK:tokens=N] / [MOCK:cwdfile]`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `tests/test_mock_claude.py`：
 
@@ -511,12 +511,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_mock_claude.py" -v`
 Expected: FAIL，`ImportError: cannot import name 'MOCK_CLAUDE_PREFIX' from 'helpers'`。
 
-- [ ] **Step 3: 实现 mock_claude.py**
+- [x] **Step 3: 实现 mock_claude.py**
 
 新建 `tests/mock_claude.py`：
 
@@ -586,7 +586,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: 改 helpers.py 接入**
+- [x] **Step 4: 改 helpers.py 接入**
 
 在 `tests/helpers.py` 的 `MOCK_PREFIX = [...]` 一行之后新增：
 
@@ -606,17 +606,17 @@ def run_wf(raw, prefix=None, **kw):
     return summary, rd
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_mock_claude.py" -v`
 Expected: PASS（4 条）。
 
-- [ ] **Step 6: 回归确认 run_wf 改动没破坏现有读模式测试**
+- [x] **Step 6: 回归确认 run_wf 改动没破坏现有读模式测试**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_run.py" -v`
 Expected: PASS（原有全部）。
 
-- [ ] **Step 7: 提交（需用户授权）**
+- [x] **Step 7: 提交（需用户授权）**
 
 ```bash
 git add tests/mock_claude.py tests/helpers.py tests/test_mock_claude.py
@@ -635,7 +635,7 @@ git commit -m "test(read): 新增 mock_claude 替身与 helpers 接入"
 - Consumes: `build_claude_read_cmd`（Task 2）、`_parse_claude_result`（Task 4）、`_harden_schema`、`_check_schema_minimal`、`_kill_tree`（现有）、`MOCK_CLAUDE_PREFIX`、`run_wf(prefix=...)`（Task 5）。
 - Produces: `_run_task(task, stage_name, *, sem, run_dir, workdir, timeout_s, backend, prefix, results)`（codex_prefix 改名 prefix、新增 backend）；`_run_claude_task(...)`；`run_workflow(spec, run_dir, prefix, timeout_override=None)`（第三位置参数名 codex_prefix→prefix，语义=命令前缀）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `tests/test_claude_run.py`：
 
@@ -713,12 +713,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_claude_run.py" -v`
 Expected: FAIL（claude 走了 codex 路径或 `_run_task` 不认 backend，状态非预期 / TypeError）。
 
-- [ ] **Step 3: 改 _run_task 签名并接入分派**
+- [x] **Step 3: 改 _run_task 签名并接入分派**
 
 在 `src/runner.py` 中，将 `_run_task` 的签名行改为（把 `codex_prefix` 改名 `prefix`、新增 `backend`）：
 
@@ -744,7 +744,7 @@ async def _run_task(task, stage_name, *, sem, run_dir, workdir,
 
 （codex 路径其余代码——子进程 IO、超时、解析、token——保持不变。）
 
-- [ ] **Step 4: 新增 _run_claude_task 与常量**
+- [x] **Step 4: 新增 _run_claude_task 与常量**
 
 在 `_run_task` 函数之后新增常量与函数：
 
@@ -838,7 +838,7 @@ async def _run_claude_task(task, stage_name, tdir, workdir, prompt,
     return entry
 ```
 
-- [ ] **Step 5: 改 run_workflow 取 backend 并传入**
+- [x] **Step 5: 改 run_workflow 取 backend 并传入**
 
 在 `src/runner.py` 中，将 `run_workflow` 签名 `async def run_workflow(spec, run_dir, codex_prefix, timeout_override=None):` 改为：
 
@@ -861,7 +861,7 @@ async def run_workflow(spec, run_dir, prefix, timeout_override=None):
                  for t in stage["tasks"]]
 ```
 
-- [ ] **Step 6: 跑测试确认通过 + 回归**
+- [x] **Step 6: 跑测试确认通过 + 回归**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_claude_run.py" -v`
 Expected: PASS（8 条）。
@@ -869,7 +869,7 @@ Expected: PASS（8 条）。
 Run: `python -m unittest discover -s tests -t tests -p "test_run.py" -v`
 Expected: PASS（codex 路径回归全绿）。
 
-- [ ] **Step 7: 提交（需用户授权）**
+- [x] **Step 7: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py tests/test_claude_run.py
@@ -888,7 +888,7 @@ git commit -m "feat(read): _run_task 接入 claude 分支与 run_workflow backen
 - Consumes: `resolve_backend_cmd`（Task 3）、`run_workflow`（Task 6）。
 - Produces: CLI 新增 `--backend codex|claude` 与 `--claude-cmd`（可重复）；读模式 `summary.json` 与 `spec.resolved.json` 均含 `"backend"`；优先级 CLI > spec > 默认 codex。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/test_cli.py` 末尾、`if __name__` 之前，新增独立的 claude CLI 测试类：
 
@@ -928,12 +928,12 @@ class TestCliClaude(unittest.TestCase):
         self.assertEqual(summary["backend"], "claude")
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_cli.py" -v`
 Expected: FAIL，`test_backend_claude_persisted` 报 `KeyError: 'backend'`（summary 无该字段）或因仍用 codex 解析而非 0 退出。
 
-- [ ] **Step 3: 改 _main_read 加参数与分派**
+- [x] **Step 3: 改 _main_read 加参数与分派**
 
 在 `src/runner.py` 的 `_main_read` 中，`--codex-cmd` 参数定义之前新增：
 
@@ -971,7 +971,7 @@ Expected: FAIL，`test_backend_claude_persisted` 报 `KeyError: 'backend'`（sum
                                            timeout_override=args.timeout_override))
 ```
 
-- [ ] **Step 4: run_workflow 的 summary 加 backend 字段**
+- [x] **Step 4: run_workflow 的 summary 加 backend 字段**
 
 在 `src/runner.py` 的 `run_workflow` 内，构造 `summary = {...}` 处加入 `"backend"`（`backend` 已在 Task 6 Step 5 取出）：
 
@@ -991,12 +991,12 @@ Expected: FAIL，`test_backend_claude_persisted` 报 `KeyError: 'backend'`（sum
 
 （`spec.resolved.json` 在 run_workflow 开头已整体写出 spec，含 backend，无需额外改动。）
 
-- [ ] **Step 5: 跑测试确认通过 + 回归**
+- [x] **Step 5: 跑测试确认通过 + 回归**
 
 Run: `python -m unittest discover -s tests -t tests -p "test_cli.py" -v`
 Expected: PASS（含原有 codex CLI 用例与新 claude 用例）。
 
-- [ ] **Step 6: 提交（需用户授权）**
+- [x] **Step 6: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py tests/test_cli.py
@@ -1015,7 +1015,7 @@ git commit -m "feat(read): CLI --backend/--claude-cmd 接入与 backend 持久�
 - Consumes: 无。
 - Produces: 无（仅文档）。
 
-- [ ] **Step 1: 更新 docstring**
+- [x] **Step 1: 更新 docstring**
 
 把 `src/runner.py` 顶部模块 docstring 中"并行编排多个 `codex exec` 只读子代理"及其后的安全护栏段，更新为分后端表述。将开头两行与第一条护栏改为：
 
@@ -1036,12 +1036,12 @@ git commit -m "feat(read): CLI --backend/--claude-cmd 接入与 backend 持久�
 
 （保留原 docstring 中写模式相关说明，若有；仅替换上述读模式/隔离段落。）
 
-- [ ] **Step 2: 全量回归**
+- [x] **Step 2: 全量回归**
 
 Run: `python -m unittest discover -s tests -t tests -v`
 Expected: PASS（全部测试，含 codex 与 claude 两路、写模式不受影响）。
 
-- [ ] **Step 3: 提交（需用户授权）**
+- [x] **Step 3: 提交（需用户授权）**
 
 ```bash
 git add src/runner.py
