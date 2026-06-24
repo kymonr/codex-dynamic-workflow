@@ -13,3 +13,7 @@ __pycache__/
 
 # Superpowers 本地流程状态（不进 git）
 .superpowers/
+
+# 本地图片/动效生成产物（归档或跟踪前必须显式确认）
+/pet-runs/
+/ig_*.png

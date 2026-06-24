@@ -21,7 +21,7 @@ Use Team Router as a Codex desktop thread-tools control plane. It coordinates vi
 | 审查者 | Reviewer | conditional yes | For router/manager/orchestration policy, permission/safety boundaries, process rules, role protocol, and shared/high-risk logic; perform read-only/adversarial review and reply with `TEAM_ROUTER_REVIEW`. |
 | 验证者 | Verifier | yes | Check callback, reviewer requirements when present, evidence, boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`; verifier remains final acceptance. |
 
-Visible Codex desktop role-thread titles use `角色-任务名`, such as `执行者-管理者模式触发词修复`. Do not include the project name by default unless the task name itself would be ambiguous.
+Visible Codex desktop thread titles use `角色-任务名`, such as `调度者-Team Router role title 规范化` and `执行者-Team Router 管理者模式触发词修复`; normalize the parent/current manager-dispatcher title when the host UI exposes it, and normalize created/discovered role threads immediately with `set_thread_title`.
 
 ## Manager Mode Hard Rule
 
@@ -42,6 +42,10 @@ Use exactly one role-thread creation path per task. If callable adapter tools ar
 ## Direct Return
 
 When the parent/manager thread id is available, include `returnThreadId` in executor, reviewer, and verifier prompts. Executor uses `callbackDelivery: direct-send` plus `callbackFallback: self-thread-marker`; reviewer uses `reviewDelivery: direct-send` plus `reviewFallback: self-thread-marker`; verifier uses `verdictDelivery: direct-send` plus `verdictFallback: self-thread-marker`. After writing its marker block in its own thread, the role must call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT block>)`. Keep self-thread markers as fallback/audit anchors.
+
+## Fast Lane
+
+Fast Lane policy: classes are FAST, NORMAL, STRICT, PACKAGE. Completion is direct-return first with bounded read_thread fallback; FAST docs/BOM/single phrase rework and NORMAL small focused code/test work use executor -> verifier, while STRICT Team Router process/permission/safety/role protocol/shared-risk changes and PACKAGE same task family discipline hardening use executor -> reviewer -> verifier.
 
 ## Conditional Reviewer Gate
 

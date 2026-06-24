@@ -7,7 +7,7 @@ thread tools; callers pass thread/tool observations in as plain data.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import html
 from pathlib import Path
 import json
@@ -134,7 +134,60 @@ MANAGER_ORCHESTRATION_POLICY = {
         "mode": "low-frequency event-driven read_thread polling",
         "initialCadence": "one short initial wait when the role may have replied",
         "steadyCadence": "30-60s between watcher/read_thread checks unless a role event arrives",
+        "allowedReads": (
+            "user-triggered status check",
+            "after an agreed or explicit interval such as the default 30-60s cadence",
+            "after a known expected completion window",
+            "timeout or blocker handling",
+        ),
+        "zeroReadBoundary": "role threads do not actively push back, so bounded status reads are allowed; zero-read waiting is not required",
+        "forbidden": "continuous polling or mid-run instruction injection through read_thread follow-up messages",
         "userVisibleUpdates": "report only status changes, timeouts, blocked states, or completion",
+    },
+    "fastLane": {
+        "classes": ("FAST", "NORMAL", "STRICT", "PACKAGE"),
+        "FAST": {
+            "scope": "docs/BOM/single phrase rework",
+            "route": "executor -> verifier",
+            "fallbackReadWindowSeconds": 30,
+        },
+        "NORMAL": {
+            "scope": "small focused code/test work",
+            "route": "executor -> verifier",
+            "fallbackReadWindowSeconds": 60,
+        },
+        "STRICT": {
+            "scope": "Team Router process/permission/safety/role protocol/shared-risk changes",
+            "route": "executor -> reviewer -> verifier",
+            "fallbackReadWindowSeconds": 90,
+        },
+        "PACKAGE": {
+            "scope": "same task family discipline hardening",
+            "route": "executor -> reviewer -> verifier",
+            "fallbackReadWindowSeconds": 120,
+        },
+        "completion": "direct-return first; bounded read_thread fallback only after the class window, user-triggered status request, known expected completion window, or timeout/blocker handling",
+    },
+    "closeoutReportingPolicy": {
+        "scope": "every task closeout must report implementation, verification, exceptions, risks, current state, and next step",
+        "requiredFields": (
+            "implemented changes",
+            "verification actually run and results",
+            "blockers/exceptions",
+            "remaining risks",
+            "current state and next step",
+        ),
+    },
+    "compoundingDecisionPolicy": {
+        "recordWhen": (
+            "manager overreach",
+            "role conflict",
+            "permission/sandbox issue",
+            "test instability",
+            "temp-file/workspace pollution",
+            "user explicitly adds a reusable process preference",
+        ),
+        "skipWhen": "ordinary successful implementation/testing with no new reusable risk",
     },
     "roleReuse": {
         "default": "reuse existing executor and existing verifier thread for the same taskId or task family",
@@ -147,6 +200,21 @@ MANAGER_ORCHESTRATION_POLICY = {
             "task-family boundary changes",
             "isolation requirement changes",
         ),
+    },
+    "roleTitleNormalization": {
+        "format": "角色-任务名",
+        "requiredAfter": "immediately after creating or discovering any role thread, call set_thread_title and persist the normalized title",
+        "appliesTo": ("manager", "executor", "reviewer", "verifier"),
+        "examples": (
+            "执行者-Team Router <task label>",
+            "审查者-Team Router <task label>",
+            "验证者-Team Router <task label>",
+        ),
+        "parentThread": {
+            "format": "调度者-Team Router <task label>",
+            "scope": "parent/current manager-dispatcher thread title when the host UI exposes a current-thread title hook",
+            "runtimeStatus": "process contract only in this adapter path; no callable current-thread title hook is implemented here",
+        },
     },
     "verifierDirectReturn": {
         "requiredFields": (
@@ -213,6 +281,7 @@ SIDE_EFFECT_TAXONOMY_POLICY = {
     "WORKSPACE_WRITE": {
         "description": "project file modifications, formatters that write, fixtures, package artifacts, runtime/docs/tests changes",
         "boundary": "active Manager Mode delegates WORKSPACE_WRITE to executor unless explicit role switch",
+        "managerOverreachRegression": "small artifact/docs/.gitignore policy tasks still require executor dispatch or explicit role switch before active Manager Mode edits files or runs write-prone verification",
     },
     "HEAVY_OR_RISKY": {
         "description": "long benchmark/install/upgrade/destructive cleanup/global config/external API/production data",
@@ -326,6 +395,29 @@ REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS = (
 
 REVIEWER_GATE_TRUE_VALUES = {"true", "yes", "1", "required", "high", "high-risk", "high risk", "critical"}
 
+GATE_CLASSES = ("FAST", "NORMAL", "STRICT", "PACKAGE")
+GATE_READ_INTERVAL_SECONDS = {
+    "FAST": 30,
+    "NORMAL": 60,
+    "STRICT": 90,
+    "PACKAGE": 120,
+}
+FAST_GATE_TERMS = (
+    "bom",
+    "encoding",
+    "docs-only",
+    "typo",
+    "wording",
+    "readme",
+)
+PACKAGE_GATE_TERMS = (
+    "package",
+    "bundle",
+    "compounded",
+    "same task family",
+    "discipline hardening",
+)
+
 _ALLOWED_BY_MARKER = {
     "TEAM_ROUTER_PLAN": {
         "status": {"planned", "blocked"},
@@ -416,6 +508,78 @@ def reviewer_gate_required_for_ledger(ledger: Mapping[str, Any]) -> bool:
     if any(term in text for term in REVIEWER_GATE_REQUIRED_TERMS):
         return True
     return "team router" in text and any(term in text for term in REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS)
+
+
+def classify_team_router_gate(ledger: Mapping[str, Any]) -> str:
+    text = _reviewer_gate_text(ledger)
+    if any(term in text for term in PACKAGE_GATE_TERMS):
+        return "PACKAGE"
+    if reviewer_gate_required_for_ledger(ledger):
+        return "STRICT"
+    if any(term in text for term in FAST_GATE_TERMS):
+        return "FAST"
+    return "NORMAL"
+
+
+def gate_class_requires_reviewer(gate_class: str) -> bool:
+    gate = _required_str(gate_class, "gateClass").upper()
+    if gate not in GATE_CLASSES:
+        raise ProtocolError("invalid gateClass: %r" % (gate_class,))
+    return gate in {"STRICT", "PACKAGE"}
+
+
+def role_read_interval_seconds(gate_class: str) -> int:
+    gate = _required_str(gate_class, "gateClass").upper()
+    if gate not in GATE_READ_INTERVAL_SECONDS:
+        raise ProtocolError("invalid gateClass: %r" % (gate_class,))
+    return GATE_READ_INTERVAL_SECONDS[gate]
+
+
+def _parse_iso_timestamp(value: str, field_name: str) -> datetime:
+    raw = _required_str(value, field_name)
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ProtocolError("invalid %s: %r" % (field_name, value)) from exc
+
+
+def _isoformat_plus_seconds(value: str, seconds: int) -> str:
+    return (_parse_iso_timestamp(value, "observed_at") + timedelta(seconds=seconds)).isoformat()
+
+
+def _iso_timestamp_before(left: str, right: str) -> bool:
+    return _parse_iso_timestamp(left, "observed_at") < _parse_iso_timestamp(right, "nextAllowedReadAt")
+
+
+def next_role_read_policy(ledger: Mapping[str, Any], *, observed_at: str) -> dict[str, Any]:
+    gate = classify_team_router_gate(ledger)
+    seconds = role_read_interval_seconds(gate)
+    return {
+        "gateClass": gate,
+        "lastReadAt": None,
+        "nextAllowedReadAt": _isoformat_plus_seconds(observed_at, seconds),
+        "readReason": "awaiting direct return fallback",
+        "directReturnExpected": True,
+    }
+
+
+def role_read_allowed(ledger: Mapping[str, Any], *, observed_at: str, reason: str) -> dict[str, Any]:
+    reason_text = _required_str(reason, "reason")
+    lowered = reason_text.lower()
+    if "user-triggered" in lowered or "timeout" in lowered or "blocker" in lowered:
+        return {"allowed": True, "action": "read_allowed", "reason": reason_text}
+    discipline = ledger.get("readDiscipline") if isinstance(ledger.get("readDiscipline"), Mapping) else {}
+    next_allowed = discipline.get("nextAllowedReadAt")
+    if isinstance(next_allowed, str) and _iso_timestamp_before(observed_at, next_allowed):
+        return {
+            "allowed": False,
+            "action": "read_suppressed",
+            "reason": "await direct return until nextAllowedReadAt",
+            "nextAllowedReadAt": next_allowed,
+        }
+    return {"allowed": True, "action": "read_allowed", "reason": reason_text}
 
 def _validate_task_id(task_id: str) -> None:
     if not isinstance(task_id, str) or not TASK_ID_RE.match(task_id):
@@ -1431,12 +1595,19 @@ def create_role_threads_with_adapter(thread_adapter: Any,
             if found_title:
                 title = found_title
                 break
-        roles[role] = {
+        record = {
             "threadId": thread_id,
             "title": title,
             "createdAt": observed_at,
             "lastObservedAt": observed_at,
         }
+        roles[role] = _normalize_adapter_role_title(
+            thread_adapter,
+            project_id,
+            role,
+            record,
+            resolved_task_title,
+        )
     return roles
 
 
@@ -1944,7 +2115,9 @@ def _apply_executor_callback_message(ledger: dict[str, Any],
             msg.raw,
             msg.fields,
         ))
-    ledger["status"] = "reviewing" if reviewer_gate_required_for_ledger(ledger) else "verifying"
+    gate_class = classify_team_router_gate(ledger)
+    ledger["gateClass"] = gate_class
+    ledger["status"] = "reviewing" if gate_class_requires_reviewer(gate_class) else "verifying"
     return ledger
 
 
@@ -2523,8 +2696,9 @@ def send_reviewer_request_with_adapter(state_root: str | Path,
                                        return_thread_id: str | None = None) -> dict[str, Any]:
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "send reviewer request for")
-    if not reviewer_gate_required_for_ledger(ledger):
-        raise StateStoreError("reviewer gate is not required for task: %s" % task_id)
+    gate_class = classify_team_router_gate(ledger)
+    if not gate_class_requires_reviewer(gate_class):
+        raise StateStoreError("reviewer gate is not required for %s task: %s" % (gate_class, task_id))
     callback_observation = _latest_executor_callback_observation(ledger)
     if callback_observation is None:
         raise StateStoreError("missing executor callback observation for reviewer request: %s" % task_id)
@@ -2812,15 +2986,19 @@ def _ledger_has_verifier_request(ledger: Mapping[str, Any]) -> bool:
 def _adapter_task_update(action: str,
                          state_root: str | Path,
                          project_id: str,
-                         ledger: Mapping[str, Any]) -> dict[str, Any]:
+                         ledger: Mapping[str, Any],
+                         *,
+                         observed_at: str | None = None) -> dict[str, Any]:
     registry = load_registry(state_root, project_id)
-    return {
+    update = {
         "action": action,
         "status": ledger.get("status"),
         "ledger": dict(ledger),
         "userOutput": format_task_update_for_user(ledger, registry),
     }
-
+    if observed_at is not None and _watch_next_wakeup(ledger) is not None:
+        update["readDiscipline"] = next_role_read_policy(ledger, observed_at=observed_at)
+    return update
 
 def _watch_next_wakeup(ledger: Mapping[str, Any]) -> dict[str, Any] | None:
     status = ledger.get("status")
@@ -2872,14 +3050,15 @@ def _watch_next_wakeup(ledger: Mapping[str, Any]) -> dict[str, Any] | None:
 def _watch_task_update(action: str,
                        state_root: str | Path,
                        project_id: str,
-                       ledger: Mapping[str, Any]) -> dict[str, Any]:
-    update = _adapter_task_update(action, state_root, project_id, ledger)
+                       ledger: Mapping[str, Any],
+                       *,
+                       observed_at: str | None = None) -> dict[str, Any]:
+    update = _adapter_task_update(action, state_root, project_id, ledger, observed_at=observed_at)
     update["nextWakeup"] = _watch_next_wakeup(ledger)
     update["automationBoundary"] = (
         "host watcher must call watch_team_task_with_adapter again with low-frequency event-driven read_thread polling when nextWakeup is not null; default cadence is one short initial wait, then 30-60s between checks, and user-visible updates only on status changes, timeout, blocked states, or completion"
     )
     return update
-
 
 def watch_team_task_with_adapter(state_root: str | Path,
                                  project_id: str,
@@ -2919,8 +3098,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 sent_at=observed_at,
                 return_thread_id=return_thread_id,
             )
-            return _watch_task_update("watch_sent_executor_dispatch", state_root, project_id, ledger)
-        return _watch_task_update("watch_read_manager_plan", state_root, project_id, ledger)
+            return _watch_task_update("watch_sent_executor_dispatch", state_root, project_id, ledger, observed_at=observed_at)
+        return _watch_task_update("watch_read_manager_plan", state_root, project_id, ledger, observed_at=observed_at)
     if (
         status == "awaiting_callback"
         or (status == "callback_unreachable" and not _ledger_has_verifier_request(ledger))
@@ -2949,7 +3128,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_return_thread_id_from_record(dispatch, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, direct_ledger)
+                return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, direct_ledger, observed_at=observed_at)
             if direct_ledger is not None and direct_ledger["status"] == "verifying":
                 direct_ledger = send_verifier_request_with_adapter(
                     state_root,
@@ -2960,7 +3139,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_return_thread_id_from_record(dispatch, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger)
+                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger, observed_at=observed_at)
         ledger = read_executor_callback_with_adapter(
             state_root,
             project_id,
@@ -2979,7 +3158,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 sent_at=observed_at,
                 return_thread_id=_inherited_reviewer_return_thread_id(ledger, return_thread_id),
             )
-            return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger)
+            return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at)
         if ledger["status"] == "verifying":
             ledger = send_verifier_request_with_adapter(
                 state_root,
@@ -2990,8 +3169,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 sent_at=observed_at,
                 return_thread_id=_inherited_verifier_return_thread_id(ledger, return_thread_id),
             )
-            return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger)
-        return _watch_task_update("watch_read_executor_callback", state_root, project_id, ledger)
+            return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at)
+        return _watch_task_update("watch_read_executor_callback", state_root, project_id, ledger, observed_at=observed_at)
     if status in {"reviewing", "review_unreachable"}:
         request = _direct_return_record(ledger, "reviewer")
         if request is not None:
@@ -3017,9 +3196,9 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_return_thread_id_from_record(request, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger)
+                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger, observed_at=observed_at)
             if direct_ledger is not None:
-                return _watch_task_update("watch_read_reviewer_review", state_root, project_id, direct_ledger)
+                return _watch_task_update("watch_read_reviewer_review", state_root, project_id, direct_ledger, observed_at=observed_at)
         if _ledger_has_reviewer_request(ledger):
             update = read_reviewer_review_update_with_adapter(
                 state_root,
@@ -3040,7 +3219,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_inherited_verifier_return_thread_id(ledger, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger)
+                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at)
             update["action"] = "watch_read_reviewer_review"
             update["status"] = ledger.get("status")
             update["nextWakeup"] = _watch_next_wakeup(ledger)
@@ -3057,7 +3236,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
             sent_at=observed_at,
             return_thread_id=_inherited_reviewer_return_thread_id(ledger, return_thread_id),
         )
-        return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger)
+        return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at)
     if (
         status == "verifying"
         or (status == "callback_unreachable" and _ledger_has_verifier_request(ledger))
@@ -3077,7 +3256,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 captured_at=observed_at,
             )
             if direct_ledger is not None:
-                return _watch_task_update("watch_read_verifier_verdict", state_root, project_id, direct_ledger)
+                return _watch_task_update("watch_read_verifier_verdict", state_root, project_id, direct_ledger, observed_at=observed_at)
         if _ledger_has_verifier_request(ledger):
             update = read_verifier_verdict_update_with_adapter(
                 state_root,
@@ -3104,8 +3283,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
             sent_at=observed_at,
             return_thread_id=_inherited_verifier_return_thread_id(ledger, return_thread_id),
         )
-        return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger)
-    return _watch_task_update("watch_no_action", state_root, project_id, ledger)
+        return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at)
+    return _watch_task_update("watch_no_action", state_root, project_id, ledger, observed_at=observed_at)
 
 
 def run_team_task_with_adapter(state_root: str | Path,
@@ -3191,6 +3370,7 @@ def run_team_task_with_adapter(state_root: str | Path,
                 state_root,
                 project_id,
                 ledger,
+                observed_at=observed_at,
             )
         if (
             status == "awaiting_callback"
@@ -3241,6 +3421,7 @@ def run_team_task_with_adapter(state_root: str | Path,
                 state_root,
                 project_id,
                 ledger,
+                observed_at=observed_at,
             )
         if (
             status == "verifying"
@@ -3272,6 +3453,7 @@ def run_team_task_with_adapter(state_root: str | Path,
                 state_root,
                 project_id,
                 ledger,
+                observed_at=observed_at,
             )
         return _adapter_task_update("no_action", state_root, project_id, ledger)
 

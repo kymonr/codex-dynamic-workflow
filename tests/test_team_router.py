@@ -18,6 +18,7 @@ class FakeThreadAdapter:
     def __init__(self):
         self.created = []
         self.sent = []
+        self.renamed = []
         self.messages = {}
         self._thread_count = 0
         self._message_count = 0
@@ -52,6 +53,10 @@ class FakeThreadAdapter:
     def read_thread(self, **kwargs):
         return {"thread": {"messages": list(self.messages.get(kwargs["threadId"], []))}}
 
+    def set_thread_title(self, **kwargs):
+        self.renamed.append(dict(kwargs))
+        return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
+
     def append_reply(self, thread_id, text, *, message_id, sent_at):
         self.messages.setdefault(thread_id, []).append({
             "messageId": message_id,
@@ -68,6 +73,7 @@ class FullThreadAdapter(FakeThreadAdapter):
         return {"threads": []}
 
     def set_thread_title(self, **kwargs):
+        self.renamed.append(dict(kwargs))
         return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
 
 
@@ -242,8 +248,129 @@ risks: none
                 }
             },
         }
-
         self.assertFalse(team_router.reviewer_gate_required_for_ledger(ledger))
+
+    def test_classify_team_router_gate_fast_docs_rework(self):
+        ledger = {
+            "objective": "restore README BOM and keep polling wording",
+            "plan": {"fields": {
+                "scope": "README.md",
+                "riskBoundary": "docs-only encoding rework",
+                "executorPrompt": "restore UTF-8 BOM only",
+                "notes": "no runtime change",
+            }},
+        }
+
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "FAST")
+        self.assertFalse(team_router.gate_class_requires_reviewer("FAST"))
+
+    def test_classify_team_router_gate_strict_for_router_policy(self):
+        ledger = {
+            "objective": "Team Router bounded polling runtime policy",
+            "plan": {"fields": {
+                "scope": "src/team_router.py tests/test_team_router.py",
+                "riskBoundary": "manager orchestration policy",
+                "executorPrompt": "change role protocol and polling rules",
+                "notes": "process rules",
+            }},
+        }
+
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
+        self.assertTrue(team_router.gate_class_requires_reviewer("STRICT"))
+
+    def test_classify_team_router_gate_normal_fallback_for_plain_task(self):
+        ledger = {
+            "objective": "update local helper behavior",
+            "plan": {"fields": {
+                "scope": "src/local_helper.py",
+                "riskBoundary": "ordinary implementation task",
+                "executorPrompt": "adjust helper behavior",
+                "notes": "single ordinary task without review-routing markers",
+            }},
+        }
+
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "NORMAL")
+        self.assertFalse(team_router.gate_class_requires_reviewer("NORMAL"))
+
+    def test_classify_team_router_gate_package_for_compounded_discipline(self):
+        ledger = {
+            "objective": "manager-discipline hardening package",
+            "plan": {"fields": {
+                "scope": "Team Router discipline package",
+                "riskBoundary": "role title plus polling plus manager overreach",
+                "executorPrompt": "bundle related process hardening",
+                "notes": "package same task family",
+            }},
+        }
+
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "PACKAGE")
+        self.assertTrue(team_router.gate_class_requires_reviewer("PACKAGE"))
+
+    def test_fast_gate_default_read_window_is_30_seconds(self):
+        self.assertEqual(team_router.role_read_interval_seconds("FAST"), 30)
+        self.assertEqual(team_router.role_read_interval_seconds("NORMAL"), 60)
+        self.assertEqual(team_router.role_read_interval_seconds("STRICT"), 90)
+        self.assertEqual(team_router.role_read_interval_seconds("PACKAGE"), 120)
+
+    def test_next_role_read_policy_uses_gate_interval_and_timezone(self):
+        ledger = {
+            "objective": "restore README BOM",
+            "plan": {"fields": {"scope": "README.md", "riskBoundary": "docs-only encoding"}},
+        }
+
+        policy = team_router.next_role_read_policy(
+            ledger,
+            observed_at="2026-06-24T12:00:00+08:00",
+        )
+
+        self.assertEqual(policy["gateClass"], "FAST")
+        self.assertEqual(policy["nextAllowedReadAt"], "2026-06-24T12:00:30+08:00")
+        self.assertTrue(policy["directReturnExpected"])
+
+    def test_role_read_allowed_suppresses_early_fallback_reads(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-fast",
+            "objective": "restore README BOM",
+            "status": "awaiting_callback",
+            "plan": {"fields": {"scope": "README.md", "riskBoundary": "docs-only encoding"}},
+            "readDiscipline": {
+                "gateClass": "FAST",
+                "nextAllowedReadAt": "2026-06-24T12:00:30+08:00",
+                "directReturnExpected": True,
+            },
+        }
+
+        decision = team_router.role_read_allowed(
+            ledger,
+            observed_at="2026-06-24T12:00:10+08:00",
+            reason="scheduled-fallback",
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["action"], "read_suppressed")
+        self.assertIn("direct return", decision["reason"])
+
+    def test_role_read_allowed_user_triggered_status_read(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-fast",
+            "objective": "restore README BOM",
+            "status": "awaiting_callback",
+            "readDiscipline": {
+                "gateClass": "FAST",
+                "nextAllowedReadAt": "2026-06-24T12:00:30+08:00",
+                "directReturnExpected": True,
+            },
+        }
+
+        decision = team_router.role_read_allowed(
+            ledger,
+            observed_at="2026-06-24T12:00:10+08:00",
+            reason="user-triggered status check",
+        )
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["action"], "read_allowed")
+
     def test_protocol_contract_snapshot_centralizes_roles_states_and_markers(self):
         snapshot = team_router.protocol_contract_snapshot()
 
@@ -291,6 +418,14 @@ risks: none
         self.assertIn("event-driven", policy["polling"]["mode"])
         self.assertIn("read_thread", policy["polling"]["mode"])
         self.assertIn("30-60s", policy["polling"]["steadyCadence"])
+        self.assertIn("user-triggered status check", policy["polling"]["allowedReads"])
+        self.assertIn("agreed or explicit interval", "\n".join(policy["polling"]["allowedReads"]))
+        self.assertIn("known expected completion window", "\n".join(policy["polling"]["allowedReads"]))
+        self.assertIn("timeout or blocker handling", policy["polling"]["allowedReads"])
+        self.assertIn("bounded status reads are allowed", policy["polling"]["zeroReadBoundary"])
+        self.assertIn("zero-read waiting is not required", policy["polling"]["zeroReadBoundary"])
+        self.assertIn("continuous polling", policy["polling"]["forbidden"])
+        self.assertIn("mid-run instruction injection", policy["polling"]["forbidden"])
         self.assertIn("status changes", policy["polling"]["userVisibleUpdates"])
         self.assertIn("reuse existing executor", policy["roleReuse"]["default"])
         self.assertIn("existing verifier", policy["roleReuse"]["default"])
@@ -298,6 +433,17 @@ risks: none
         self.assertIn("original executor", policy["roleReuse"]["reworkExecutor"])
         self.assertIn("original verifier", policy["roleReuse"]["reworkVerifier"])
         self.assertIn("isolation requirement changes", policy["roleReuse"]["newThreadOnlyWhen"])
+        title_policy = policy["roleTitleNormalization"]
+        self.assertEqual(title_policy["format"], "角色-任务名")
+        self.assertIn("immediately after creating or discovering", title_policy["requiredAfter"])
+        self.assertIn("set_thread_title", title_policy["requiredAfter"])
+        self.assertEqual(title_policy["appliesTo"], ("manager", "executor", "reviewer", "verifier"))
+        self.assertIn("执行者-Team Router <task label>", title_policy["examples"])
+        self.assertIn("审查者-Team Router <task label>", title_policy["examples"])
+        self.assertIn("验证者-Team Router <task label>", title_policy["examples"])
+        self.assertEqual(title_policy["parentThread"]["format"], "调度者-Team Router <task label>")
+        self.assertIn("parent/current manager-dispatcher", title_policy["parentThread"]["scope"])
+        self.assertIn("no callable current-thread title hook", title_policy["parentThread"]["runtimeStatus"])
         self.assertIn("verdictDelivery: direct-send", policy["verifierDirectReturn"]["requiredFields"])
         self.assertIn("verdictFallback: self-thread-marker", policy["verifierDirectReturn"]["requiredFields"])
         self.assertEqual(
@@ -330,6 +476,46 @@ risks: none
             policy["reviewerDirectReturn"]["sendInstruction"],
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
         )
+
+        fast_lane = policy["fastLane"]
+        self.assertEqual(fast_lane["classes"], ("FAST", "NORMAL", "STRICT", "PACKAGE"))
+        self.assertEqual(fast_lane["FAST"]["route"], "executor -> verifier")
+        self.assertEqual(fast_lane["FAST"]["fallbackReadWindowSeconds"], 30)
+        self.assertIn("docs/BOM", fast_lane["FAST"]["scope"])
+        self.assertEqual(fast_lane["NORMAL"]["route"], "executor -> verifier")
+        self.assertEqual(fast_lane["NORMAL"]["fallbackReadWindowSeconds"], 60)
+        self.assertIn("small focused code/test work", fast_lane["NORMAL"]["scope"])
+        self.assertEqual(fast_lane["STRICT"]["route"], "executor -> reviewer -> verifier")
+        self.assertEqual(fast_lane["STRICT"]["fallbackReadWindowSeconds"], 90)
+        self.assertIn("Team Router process", fast_lane["STRICT"]["scope"])
+        self.assertEqual(fast_lane["PACKAGE"]["route"], "executor -> reviewer -> verifier")
+        self.assertEqual(fast_lane["PACKAGE"]["fallbackReadWindowSeconds"], 120)
+        self.assertIn("same task family discipline hardening", fast_lane["PACKAGE"]["scope"])
+        self.assertIn("direct-return first", fast_lane["completion"])
+        self.assertIn("bounded read_thread fallback", fast_lane["completion"])
+        self.assertIn("user-triggered status request", fast_lane["completion"])
+        closeout_reporting = policy["closeoutReportingPolicy"]
+        self.assertEqual(
+            closeout_reporting["requiredFields"],
+            (
+                "implemented changes",
+                "verification actually run and results",
+                "blockers/exceptions",
+                "remaining risks",
+                "current state and next step",
+            ),
+        )
+        self.assertIn("every task closeout", closeout_reporting["scope"])
+
+        compounding = policy["compoundingDecisionPolicy"]
+        self.assertIn("manager overreach", compounding["recordWhen"])
+        self.assertIn("role conflict", compounding["recordWhen"])
+        self.assertIn("permission/sandbox issue", compounding["recordWhen"])
+        self.assertIn("test instability", compounding["recordWhen"])
+        self.assertIn("temp-file/workspace pollution", compounding["recordWhen"])
+        self.assertIn("user explicitly adds a reusable process preference", compounding["recordWhen"])
+        self.assertIn("ordinary successful implementation/testing", compounding["skipWhen"])
+        self.assertIn("no new reusable risk", compounding["skipWhen"])
 
     def test_protocol_contract_snapshot_includes_side_effect_taxonomy_policy(self):
         policy = team_router.protocol_contract_snapshot()["sideEffectTaxonomy"]
@@ -372,6 +558,23 @@ risks: none
         self.assertIn("separate publish/release authorization", policy["EXTERNAL_RELEASE"]["requires"])
         self.assertIn("at most DISPATCH_ONLY", policy["terseApprovalBoundary"])
         self.assertIn("subagent fallback is not allowed", policy["namedReviewerRequirement"])
+
+    def test_active_manager_dispatches_small_artifact_policy_writes(self):
+        policy = team_router.protocol_contract_snapshot()["sideEffectTaxonomy"]
+        regression = policy["WORKSPACE_WRITE"]["managerOverreachRegression"]
+        scenarios = (
+            "small artifact policy task",
+            "docs policy task",
+            ".gitignore policy task",
+        )
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                self.assertIn("WORKSPACE_WRITE", policy)
+                self.assertIn("executor dispatch", regression)
+                self.assertIn("explicit role switch", regression)
+                self.assertIn(scenario.split()[0], regression)
+                self.assertIn("active Manager Mode", regression)
 
     def test_protocol_contract_snapshot_includes_role_closeout_policy(self):
         policy = team_router.protocol_contract_snapshot()["roleCloseoutPolicy"]
@@ -1180,6 +1383,49 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(updated["status"], "verifying")
 
+    def test_fast_executor_callback_skips_reviewer_and_records_gate_class(self):
+        ledger = self._awaiting_callback_ledger()
+        ledger["objective"] = "restore README BOM"
+        ledger["plan"]["fields"]["scope"] = "README.md"
+        ledger["plan"]["fields"]["riskBoundary"] = "docs-only encoding rework"
+        ledger["plan"]["fields"]["executorPrompt"] = "restore UTF-8 BOM only"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: bom restored\nevidence: tests\nrisks: none\nnext: verifier"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["gateClass"], "FAST")
+        self.assertIsNone(updated["review"])
+
+    def test_strict_executor_callback_enters_reviewer_and_records_gate_class(self):
+        ledger = self._high_risk_awaiting_callback_ledger()
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: protocol changed\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "reviewing")
+        self.assertEqual(updated["gateClass"], "STRICT")
+        self.assertIsNone(updated["verification"])
+
     def test_watch_sends_reviewer_request_for_high_risk_callback(self):
         adapter = FakeThreadAdapter()
         ledger = self._high_risk_awaiting_callback_ledger()
@@ -1609,6 +1855,39 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             self.root, self.project_id, self.task_id, [pass_messages[0], {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: blocked\nsummary: blocked\nfindings: unsafe\nrequiredChanges: redesign\nevidenceChecked: tests\nrisks: high"}], captured_at="2026-06-22T20:07:00+08:00"
         )
         self.assertEqual(blocked["status"], "blocked")
+
+    def test_reviewer_request_rejects_fast_gate_callback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._awaiting_callback_ledger()
+        ledger["objective"] = "restore README BOM"
+        ledger["plan"]["fields"]["scope"] = "README.md"
+        ledger["plan"]["fields"]["riskBoundary"] = "docs-only encoding rework"
+        ledger["plan"]["fields"]["executorPrompt"] = "restore UTF-8 BOM only"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: bom restored\nevidence: tests\nrisks: none\nnext: verifier"},
+        ]
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_reviewer_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:05:00+08:00",
+            )
+
+        self.assertIn("reviewer gate is not required", str(ctx.exception))
+        self.assertIn("FAST", str(ctx.exception))
 
     def test_reviewer_gate_without_role_thread_requires_role_conversation_not_subagent(self):
         adapter = FakeThreadAdapter()
@@ -2302,8 +2581,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(fallback, {"messageId": None, "sentAt": "2026-06-22T20:03:00+08:00"})
 
     def test_thread_adapter_capability_probe_reports_missing_tools(self):
+        class MissingTitleAdapter(FakeThreadAdapter):
+            set_thread_title = None
+
         with self.assertRaises(team_router.StateStoreError) as ctx:
-            team_router.probe_thread_adapter_capabilities(FakeThreadAdapter())
+            team_router.probe_thread_adapter_capabilities(MissingTitleAdapter())
         self.assertIn("list_projects", str(ctx.exception))
         self.assertIn("list_threads", str(ctx.exception))
         self.assertIn("set_thread_title", str(ctx.exception))
@@ -2564,7 +2846,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             )
         self.assertEqual(adapter.sent, [])
 
-    def test_create_role_threads_uses_nested_title_from_create_result(self):
+    def test_create_role_threads_normalizes_created_titles_immediately(self):
         class NestedTitleAdapter(FakeThreadAdapter):
             def create_thread(self, **kwargs):
                 prompt = kwargs["prompt"]
@@ -2577,18 +2859,29 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 self.messages[thread_id] = []
                 return {"thread": {"id": thread_id, "title": "Nested %s title" % role}}
 
+        adapter = NestedTitleAdapter()
         roles = team_router.create_role_threads_with_adapter(
-            NestedTitleAdapter(),
+            adapter,
             project_id=self.project_id,
-            objective="inspect docs",
+            objective="Team Router title hardening",
             target={"type": "projectless"},
             observed_at="2026-06-22T20:00:00+08:00",
+            role_names=["manager", "executor", "reviewer", "verifier"],
         )
 
-        self.assertEqual(roles["manager"]["title"], "Nested manager title")
-        self.assertEqual(roles["executor"]["title"], "Nested executor title")
-        self.assertEqual(roles["verifier"]["title"], "Nested verifier title")
-
+        self.assertEqual(roles["manager"]["title"], "规划者-Team Router title hardening")
+        self.assertEqual(roles["executor"]["title"], "执行者-Team Router title hardening")
+        self.assertEqual(roles["reviewer"]["title"], "审查者-Team Router title hardening")
+        self.assertEqual(roles["verifier"]["title"], "验证者-Team Router title hardening")
+        self.assertEqual(
+            adapter.renamed,
+            [
+                {"threadId": "thread-executor", "title": "执行者-Team Router title hardening"},
+                {"threadId": "thread-manager", "title": "规划者-Team Router title hardening"},
+                {"threadId": "thread-reviewer", "title": "审查者-Team Router title hardening"},
+                {"threadId": "thread-verifier", "title": "验证者-Team Router title hardening"},
+            ],
+        )
 
     def test_reviewer_role_is_first_class_but_not_default_created(self):
         default_adapter = FakeThreadAdapter()
@@ -2613,7 +2906,13 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertEqual(sorted(reviewer_roles), ["reviewer"])
         self.assertEqual(reviewer_roles["reviewer"]["threadId"], "thread-reviewer")
+        self.assertEqual(reviewer_roles["reviewer"]["title"], "审查者-inspect router protocol")
+        self.assertIn(
+            {"threadId": "thread-reviewer", "title": "审查者-inspect router protocol"},
+            reviewer_adapter.renamed,
+        )
         self.assertTrue(team_router.role_thread_title(self.project_id, "reviewer", "协议审查").startswith("审查者-"))
+
     def test_role_thread_title_supports_chinese_visible_task_titles_and_legacy_default(self):
         self.assertEqual(
             team_router.role_thread_title(
@@ -4738,10 +5037,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "验证者 (Verifier)",
             "只有规划者、执行者、验证者是长期 role thread",
             "父线程侧状态控制器 (Parent-Side State Controller)",
-            "Visible Codex desktop role-thread titles use `角色-任务名`",
-            "`执行者-管理者模式触发词修复`",
-            "`验证者-管理者模式触发词修复`",
-            "Do not include the project name by default",
+            "Visible Codex desktop thread titles use `角色-任务名`",
+            "`调度者-Team Router",
+            "`执行者-Team Router 管理者模式触发词修复`",
+            "`验证者-Team Router 管理者模式触发词修复`",
+            "set_thread_title",
             "explicit role-intent phrases",
             "“你是管理者”",
             "“你作为管理者”",
@@ -4854,10 +5154,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "规划者 (Manager)",
             "执行者 (Executor)",
             "验证者 (Verifier)",
-            "Visible Codex desktop role-thread titles use `角色-任务名`",
-            "`执行者-管理者模式触发词修复`",
-            "`验证者-管理者模式触发词修复`",
-            "Do not include the project name by default",
+            "Visible Codex desktop thread titles use `角色-任务名`",
+            "`调度者-Team Router",
+            "`执行者-Team Router 管理者模式触发词修复`",
+            "`验证者-Team Router 管理者模式触发词修复`",
+            "set_thread_title",
             "explicit role-intent phrases",
             "“你是管理者”",
             "“你作为管理者”",
@@ -5141,10 +5442,19 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for name, text in docs:
             with self.subTest(path=name):
                 for needle in (
+                    "bounded",
                     "low-frequency",
                     "event-driven",
                     "read_thread",
                     "30-60s",
+                    "Role threads do not actively push back",
+                    "zero-read waiting",
+                    "user-triggered",
+                    "agreed or explicit interval",
+                    "known expected completion window",
+                    "timeout/blocker handling",
+                    "continuous polling",
+                    "mid-run instruction injection",
                     "Role reuse policy",
                     "reuse existing executor",
                     "existing verifier",
@@ -5154,6 +5464,50 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "verdictDelivery: direct-send",
                     "verdictFallback: self-thread-marker",
                     "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
+                    "FAST",
+                    "NORMAL",
+                    "STRICT",
+                    "PACKAGE",
+                    "direct-return first",
+                    "bounded read_thread fallback",
+                    "executor -> verifier",
+                    "executor -> reviewer -> verifier",
+                ):
+                    self.assertIn(needle, text)
+
+    def test_manager_and_manual_docs_cover_closeout_reporting_and_compounding_decision(self):
+        docs = (
+            (
+                "manager-mode.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+            (
+                "manual-orchestration.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "manual-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in docs:
+            with self.subTest(path=name):
+                for needle in (
+                    "Closeout reporting policy",
+                    "implemented changes",
+                    "verification actually run and results",
+                    "blockers/exceptions",
+                    "remaining risks",
+                    "current state and next step",
+                    "compounding decision",
+                    "manager overreach",
+                    "role conflict",
+                    "permission/sandbox issue",
+                    "test instability",
+                    "temp-file/workspace pollution",
+                    "user explicitly adds a reusable process preference",
+                    "ordinary successful implementation/testing",
+                    "no new reusable risk",
                 ):
                     self.assertIn(needle, text)
 

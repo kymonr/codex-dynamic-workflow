@@ -43,7 +43,7 @@ Canonical aliases: 调度者 (Orchestrator), 工具宿主边界 (Adapter Host Bo
 
 规划者 / 执行者 / 验证者 are default core role threads. 审查者 is a conditional reviewer role thread and should be created or reused only when its gate applies. The parent-side concepts must not create extra threads.
 
-Visible Codex desktop role-thread titles use `角色-任务名`, for example `执行者-管理者模式触发词修复` and `验证者-管理者模式触发词修复`. Do not include the project name by default unless the task name itself would be ambiguous.
+Visible Codex desktop thread titles use `角色-任务名`: normalize the parent/current manager-dispatcher thread to `调度者-Team Router <task label>` when the host UI exposes it, and role threads to examples such as `执行者-Team Router 管理者模式触发词修复`, `审查者-Team Router 管理者模式触发词修复`, and `验证者-Team Router 管理者模式触发词修复`. Immediately after creating or discovering any role thread, normalize it with `set_thread_title`.
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`.
 
@@ -72,8 +72,9 @@ Use `run_team_task_with_adapter()` only when the parent has already probed tools
 
 Call it again after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Emit `update["userOutput"]` exactly when the helper returns closeout or handoff content.
 
-Manager waiting policy: `read_thread` polling is allowed only as low-frequency, event-driven waiting. Use one short initial wait when a role may have replied, then default to 30-60s between watcher/read_thread checks or slower for large tasks. Do not surface every poll as user-visible progress; report only status changes, timeout, blocked states, or completion.
+Manager waiting policy: `read_thread` polling is allowed only as bounded, low-frequency, event-driven waiting. Role threads do not actively push back, so this is not zero-read waiting: allowed reads are user-triggered status checks, reads after an agreed or explicit interval such as the default 30-60s cadence, reads after a known expected completion window, and timeout/blocker handling. Forbid continuous polling, do not turn reads into mid-run instruction injection, and report only status changes, timeout, blocked states, or completion.
 
+Fast Lane policy: classify Team Router work as FAST, NORMAL, STRICT, or PACKAGE. FAST covers docs/BOM/single phrase rework, routes executor -> verifier, and uses a 30s bounded read_thread fallback window. NORMAL covers small focused code/test work, routes executor -> verifier, and uses a 60s bounded read_thread fallback window. STRICT covers Team Router process/permission/safety/role protocol/shared-risk changes, routes executor -> reviewer -> verifier, and uses a 90s bounded read_thread fallback window. PACKAGE covers same task family discipline hardening, keeps one executor -> reviewer -> verifier chain, and uses a 120s bounded read_thread fallback window. Completion is direct-return first; bounded read_thread fallback is allowed only after the class window, user-triggered status request, known expected completion window, or timeout/blocker handling.
 Role reuse policy: for the same `taskId` or task family, reuse existing executor, existing reviewer when the conditional reviewer gate applies, and existing verifier threads by default. Rework goes back to the original executor thread, rework review goes back to the original reviewer thread, and rework verification goes back to the original verifier thread. Create a new role thread only when the role boundary, permission boundary, workspace boundary, task-family boundary, or isolation requirement changes.
 
 For direct return, pass the current manager/parent thread id as `returnThreadId` when sending executor dispatches, reviewer requests, and verifier requests. The role prompt should include `callbackDelivery: direct-send` plus `callbackFallback: self-thread-marker` for executor dispatches, `reviewDelivery: direct-send` plus `reviewFallback: self-thread-marker` for reviewer requests, or `verdictDelivery: direct-send` plus `verdictFallback: self-thread-marker` for verifier requests, and instruct the role to call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT block>)` after it writes the marker in its own thread; reviewer direct-return specifically requires `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)`, and verifier direct-return specifically requires `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)`. This is possible when the role thread has `send_message_to_thread` access. Manager inbox capture of those direct-return blocks should drive the ledger state machine forward, including review, verifier dispatch, and closeout generation.
@@ -140,6 +141,8 @@ Use this continuation when the parent thread directly invokes Codex app tools or
 7. Emit `format_task_update_for_user()` exactly:
    - `Team Router Closeout` for terminal tasks with closeout.
    - `Team Router Handoff` for waiting, unreachable, interrupted, or non-terminal tasks.
+
+After dispatching a role thread, do not continuously poll it. Role threads do not actively push back, so bounded status reads are allowed, but only when user-triggered, after an agreed or explicit interval such as the default 30-60s cadence, after a known expected completion window, or for timeout/blocker handling. A `read_thread` check is observation, not a channel for mid-run instruction injection.
 
 ## Fixture
 

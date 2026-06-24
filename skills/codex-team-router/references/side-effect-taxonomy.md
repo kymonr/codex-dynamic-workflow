@@ -30,6 +30,8 @@ Mutating project work: modifying project files, running formatters that write, g
 
 In active Manager Mode, `WORKSPACE_WRITE` must be delegated to executor unless the user explicitly switches out of Manager Mode with an allowed role-switch phrase such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地”.
 
+Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an executor or ask for an explicit role switch instead of doing them directly.
+
 ### HEAVY_OR_RISKY
 
 Long benchmarks, installs/upgrades, destructive cleanup, global config changes, external API or production-data access, and network publishing.
