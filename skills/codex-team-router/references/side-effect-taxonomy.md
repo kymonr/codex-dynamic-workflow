@@ -1,0 +1,69 @@
+# Side Effect Taxonomy
+
+This reference is part of the Team Router contract. `SKILL.md` is the short entrypoint; keep sideEffectTaxonomy details here.
+
+## sideEffectTaxonomy
+
+Manager Mode must classify every parent-side action by side effect before acting. The taxonomy is a policy boundary for Manager Mode, commit closeout, role dispatch, watcher reads, and reviewer routing.
+
+### READ_ONLY
+
+Non-mutating inspection: inspect status/diff/log/show, read files, search with `rg`, use CodeGraph query/status/explore, perform low-frequency/event-driven `read_thread`, and other non-mutating inspection.
+
+Allowed for manager assessment, review routing, watcher checks, and commit closeout preflight. `READ_ONLY` does not authorize implementation and must not become implementation.
+
+### DISPATCH_ONLY
+
+Routing actions: create or reuse role threads when required, send `TEAM_ROUTER_DISPATCH`, `TEAM_ROUTER_REVIEW_REQUEST`, or `TEAM_ROUTER_VERIFY`, record/capture ledger state, and continue direct-return state transitions.
+
+Allowed in Manager Mode when routing work. `DISPATCH_ONLY` is not equivalent to the manager implementing changes.
+
+### LOCAL_CLOSEOUT
+
+After verifier pass and an explicit user request to commit, manager may run local status/diff, stage only accepted files, and create a local commit.
+
+`LOCAL_CLOSEOUT` excludes continued implementation, unrelated untracked files, push, PR, merge, deploy, publish, and release.
+
+### WORKSPACE_WRITE
+
+Mutating project work: modifying project files, running formatters that write, generating fixtures, changing runtime, docs, or tests.
+
+In active Manager Mode, `WORKSPACE_WRITE` must be delegated to executor unless the user explicitly switches out of Manager Mode with an allowed role-switch phrase such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地”.
+
+### HEAVY_OR_RISKY
+
+Long benchmarks, installs/upgrades, destructive cleanup, global config changes, external API or production-data access, and network publishing.
+
+Requires explicit separate authorization. Manager cannot infer `HEAVY_OR_RISKY` authorization from `修`, `继续`, `开始修`, `先修`, `修这个`, `可以`, or `do it`.
+
+### EXTERNAL_RELEASE
+
+Push, PR, merge, deploy, publish, or release.
+
+Requires separate publish/release authorization, explicitly separate from local commit. `EXTERNAL_RELEASE` never rides along with commit, `LOCAL_CLOSEOUT`, or verifier pass.
+
+## Precedence Rules
+
+In active Manager Mode, terse approvals like `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, and `do it` authorize at most `DISPATCH_ONLY` unless the user explicitly switches out of Manager Mode.
+
+`READ_ONLY` can support manager judgment, review routing, low-frequency/event-driven watcher/read_thread policy, and commit preflight, but it must not become implementation.
+
+`LOCAL_CLOSEOUT` is allowed only after verifier pass plus explicit user commit request.
+
+`WORKSPACE_WRITE` is delegated executor work in active Manager Mode unless an explicit role switch has happened.
+
+`HEAVY_OR_RISKY` requires explicit separate authorization and cannot be inferred from terse approvals.
+
+`EXTERNAL_RELEASE` requires explicit publish/release authorization and never rides along with commit or local closeout.
+
+## Policy Links
+
+Manager Mode hard rule: terse implementation commands in active Manager Mode authorize routing only, not parent-side implementation.
+
+Manager commit closeout policy: local commit closeout is `LOCAL_CLOSEOUT`; it requires verifier pass and explicit commit request, stages only accepted files, and excludes unrelated untracked files plus push/PR/merge/deploy.
+
+roleCloseoutPolicy: final protocol blocks are the closeout; default is no extra role-thread closeout message. Sending extra stop text is not a hidden implementation channel.
+
+Watcher/read_thread policy: manager reads are `READ_ONLY` and must remain low-frequency and event-driven.
+
+Named reviewer requirement: when reviewer is required or named for Team Router self changes, use the visible reviewer role conversation. subagent fallback is not allowed.

@@ -5,307 +5,70 @@ description: Use when the user asks for system-version multi-agent coordination 
 
 # Codex Team Router
 
-This Skill is a control-plane wrapper for Codex app thread tools. It coordinates core long-lived role threads, adds a conditional reviewer gate for high-risk routing work, and records state in a local ledger. It does not run a daemon, does not poll unattended, does not push/merge/deploy, and does not treat prompt text as a sandbox.
+Short entrypoint only. Keep this file under the Codex 8KB cap; deep protocol details live in `references/` and are part of the Team Router contract.
 
-## Required Thread Tools
+Use Team Router as a Codex desktop thread-tools control plane. It coordinates visible long-lived role threads, records local registry/ledger state, and adds a conditional reviewer gate for high-risk routing work. It does not run a daemon, does not poll unattended, does not push/merge/deploy, and does not treat prompt text as a sandbox.
 
-Before doing any work, probe that these Codex app tools are available:
-
-- `list_projects`
-- `create_thread`
-- `list_threads`
-- `read_thread`
-- `send_message_to_thread`
-- `set_thread_title`
-
-If required tools are missing, stop with `tool_error`. This Skill is for Codex app thread tools; do not pretend it works in a plain CLI or Claude-only host.
-
-The adapter path requires in-process Python callables owned by the parent host. Model-side Codex app tools are not Python callables and cannot be passed into `src/team_router.py` directly; if no host adapter exists, use the manual/pre-created continuation and feed send/read results back into the helpers.
-
-## 角色模型 (Role Model)
-
-Use Chinese role names as the reader-facing names. Keep the English names only as protocol/code aliases.
+## Roles
 
 | 中文主名 | English alias | Thread? | Responsibility |
 | --- | --- | --- | --- |
-| 父线程调度者 | Parent Orchestrator | no | Understand the user goal, choose the next state-machine step, call helpers/tools, and emit the exact handoff or closeout. |
-| 工具宿主边界 | Adapter Host Boundary | no | Own real callable access to `list_projects`, `create_thread`, `send_message_to_thread`, `read_thread`, and title/thread listing tools. |
-| 状态控制器 | State Controller | no | Persist registry, ledger, recovery anchors, state transitions, and user-visible `Team Router Handoff` / `Team Router Closeout`. |
+| 调度者 | Orchestrator | no | Understand the user goal, choose the next state-machine step, call helpers/tools, and emit handoff or closeout. |
+| 工具宿主边界 | Adapter Host Boundary | no | Own real callable access to Codex thread tools. |
+| 状态控制器 | State Controller | no | Persist registry, ledger, recovery anchors, state transitions, and user-visible output. |
 | 规划者 | Manager | yes | Reply only with `TEAM_ROUTER_PLAN`; define scope, stop condition, risk boundary, and executor prompt. |
-| 执行者 | Executor | yes | Follow the manager plan, do the delegated read-only/design-only work, and reply with evidence in `TEAM_ROUTER_CALLBACK`. |
-| 审查者 | Reviewer | conditional yes | Conditional reviewer for router/manager/orchestration policy, permission/safety boundaries, process rules, role protocol, and shared/high-risk logic; perform read-only/adversarial design review and reply with `TEAM_ROUTER_REVIEW`. |
-| 验证者 | Verifier | yes | Check the raw executor callback, reviewer requirements when present, evidence, permission boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`; verifier remains final acceptance. |
+| 执行者 | Executor | yes | Follow the delegated work and reply with evidence in `TEAM_ROUTER_CALLBACK`. |
+| 审查者 | Reviewer | conditional yes | For router/manager/orchestration policy, permission/safety boundaries, process rules, role protocol, and shared/high-risk logic; perform read-only/adversarial review and reply with `TEAM_ROUTER_REVIEW`. |
+| 验证者 | Verifier | yes | Check callback, reviewer requirements when present, evidence, boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`; verifier remains final acceptance. |
 
-Canonical aliases: 父线程调度者 (Parent Orchestrator), 工具宿主边界 (Adapter Host Boundary), 状态控制器 (State Controller), 规划者 (Manager), 执行者 (Executor), 审查者 (Reviewer), 验证者 (Verifier).
+Visible Codex desktop role-thread titles use `角色-任务名`, such as `执行者-管理者模式触发词修复`. Do not include the project name by default unless the task name itself would be ambiguous.
 
-规划者、执行者、验证者 are the default core role threads. 审查者 is a conditional reviewer role thread: create or reuse it only when the gate applies. 父线程调度者、工具宿主边界、状态控制器 are parent-side concepts and must not create extra role threads.
-只有规划者、执行者、验证者是长期 role thread；reviewer 是 conditional reviewer，不属于普通低风险任务的默认三段式。
+## Manager Mode Hard Rule
 
-Visible Codex desktop role-thread titles use `角色-任务名`, for example `规划者-管理者模式触发词修复`, `执行者-管理者模式触发词修复`, and `验证者-管理者模式触发词修复`. Do not include the project name by default unless the task name itself would be ambiguous.
+Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
-### Manager Mode Hard Rule
+Manager Mode is sticky for the current task after it is triggered. Terse follow-ups or implementation commands such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` are not execution authorization. Treat them only as permission to refine the plan, propose rule updates, or dispatch/prepare executor/verifier work. Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge. Explicit role switch phrases such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地” are required before parent-side implementation.
 
-Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`.
+## Minimal Live Tool Order
 
-Bare `manager` or `team manager` does not trigger Manager Mode. 裸 `manager` 不触发 Manager Mode; this avoids accidental activation for ordinary implementation requests such as `manager thread`, `manager parser`, or `manager integration`.
-
-Manager Mode is sticky for the current task after it is triggered, and it persists until an explicit role switch. A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution authorization. Treat those replies only as permission to refine the plan, propose rule updates, or dispatch/prepare executor/verifier work inside Team Router, not as permission for the manager to personally edit files or run project commands.
-
-Manager Mode responsibilities:
-
-1. Understand the objective.
-2. Define scope.
-3. Identify permission and safety boundaries.
-4. Split work across roles.
-5. Write `executorPrompt` and, when needed, `verifierPrompt`.
-6. Define acceptance criteria.
-7. Track status, identify blockers, and decide whether work needs rework.
-
-Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge. It must not act as the executor, fabricate child-thread results, or switch back to execution without explicit user approval.
-
-If implementation is needed, Manager Mode must output a task for the executor instead of doing the work. If implementation is requested during active Manager Mode, produce an executor task, a verifier task, or ask for an explicit role switch. Do not personally edit files or run project commands from Manager Mode. 除非用户明确说“切回执行者”, “你亲自改代码”, or “按这个 plan 落地”, keep the response in planning/review/orchestration mode only.
-
-## Parent Thread Entry Flow
-
-The parent thread is the orchestrator. The role threads only reply in their own threads with marker blocks. The required live-tool order is:
+Before live orchestration, probe the Codex app tools and stop with `tool_error` if required tools are unavailable:
 
 ```text
 list_projects -> create_thread -> send_message_to_thread -> read_thread
 ```
 
-Use exactly one role-thread creation path per task. Do not mix the adapter-created and pre-created paths.
+Use exactly one role-thread creation path per task. If callable adapter tools are unavailable, use the manual/pre-created continuation and existing role bindings instead of the adapter runner.
 
-### Recommended adapter runner
+## Direct Return
 
-Use `parent_entry_guard()` at the parent boundary before choosing the adapter-created path. If callable thread tools are unavailable or the adapter object only contains model-side tool descriptors, do not continue the adapter runner; continue only with the manual/pre-created path and existing `manager` / `executor` / `verifier` role bindings, plus an existing reviewer only when conditional reviewer review is required.
+When the parent/manager thread id is available, include `returnThreadId` in executor, reviewer, and verifier prompts. Executor uses `callbackDelivery: direct-send` plus `callbackFallback: self-thread-marker`; reviewer uses `reviewDelivery: direct-send` plus `reviewFallback: self-thread-marker`; verifier uses `verdictDelivery: direct-send` plus `verdictFallback: self-thread-marker`. After writing its marker block in its own thread, the role must call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT block>)`. Keep self-thread markers as fallback/audit anchors.
 
-Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/reviewer/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`. It is not the entrypoint for pre-created role threads when the host lacks callable tools.
+## Conditional Reviewer Gate
 
-Use a filesystem-safe Team Router `project_id` for local state, such as `codex-dynamic-workflow`. If Codex desktop `list_projects` returns a path-like project id such as `D:\codex\codex-dynamic-workflow`, pass it as `codex_project_id` so target lookup uses the real Codex id while registry and ledger paths stay safe.
+Ordinary small fixes and clearly low-risk tasks use executor -> verifier. Router/manager/orchestration policy, permission or safety boundary rules, process rules, role protocol, and shared/high-risk logic must use executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance). Reviewer is not final acceptance; verifier remains final acceptance. When the user names `reviewer` for Team Router self changes, use a reviewer role conversation/thread; if none exists, create/register it or stop and report it. subagent fallback is not allowed.
 
-Use `run_team_task_with_adapter()` only when the parent has already probed tools and resolved the project target. It is the lower-level runner behind the orchestration entry.
+## roleCloseoutPolicy
 
-Call it once per parent turn or after a role thread has replied. It stops after sending work to a role thread, after a read that is still waiting/unreachable/blocked, or after terminal closeout. Parent thread rule: emit `update["userOutput"]` to the user when the returned payload contains closeout or handoff content.
+After task completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT` or ordinary closeout message to role threads. final protocol block is the closeout: `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, and `TEAM_ROUTER_VERDICT` are sufficient task-ending anchors. compact is native operation, not chat prompt; do not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If no compact tool is available, do nothing.
 
-Manager waiting policy: `read_thread` polling is allowed only as low-frequency, event-driven waiting. Use one short initial wait when a role may have replied, then default to 30-60s between watcher/read_thread checks or slower for large tasks. Do not surface every poll as user-visible progress; report only status changes, timeout, blocked states, or completion.
+## sideEffectTaxonomy
 
-Role reuse policy: for the same `taskId` or task family, reuse existing executor, existing reviewer when the conditional reviewer gate applies, and existing verifier threads by default. Rework goes back to the original executor thread, rework review goes back to the original reviewer thread, and rework verification goes back to the original verifier thread. Create a new role thread only when the role boundary, permission boundary, workspace boundary, task-family boundary, or isolation requirement changes.
+Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. In active Manager Mode, terse approvals such as `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, or `do it` authorize at most `DISPATCH_ONLY`; `WORKSPACE_WRITE` requires executor delegation unless the user explicitly switches roles, `LOCAL_CLOSEOUT` requires verifier pass plus an explicit commit request, and `EXTERNAL_RELEASE` always needs separate authorization.
 
-For direct return, pass the current manager/parent thread id as `returnThreadId` when building executor dispatches, reviewer requests, and verifier requests. Executor prompts must include `callbackDelivery: direct-send` plus `callbackFallback: self-thread-marker`; reviewer prompts must include `reviewDelivery: direct-send` plus `reviewFallback: self-thread-marker`; verifier prompts must include `verdictDelivery: direct-send` plus `verdictFallback: self-thread-marker`. The role prompt must tell the role to call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT block>)` after it writes the marker in its own thread; reviewer direct-return specifically requires `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)`, and verifier direct-return specifically requires `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)`. Manager inbox capture is part of the ledger state machine: a direct-return callback, review, or verdict captured from the return thread must update ledger state, not just notify the manager. Keep `self-thread-marker` as the fallback/audit path.
-Compatibility anchor: executor/verifier direct-return still includes `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)`; reviewer adds `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)`.
+## roleHandoffPolicy / reviewPackagePolicy
 
+Prefer stable file/path handoff over accumulated chat history when role threads share the workspace. Keep role prompts short: task id, objective, expected marker, permission boundary, relevant `taskBriefPath` / `executorReportPath` / `reviewPackagePath`, and exact return protocol. Review packages are preferred evidence bundles for high-risk Team Router self changes and long executor results; they supplement but never replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`. Package path fields are policy concepts/future optional runtime fields, not implemented runtime fields in this task.
 
-Conditional reviewer gate: ordinary small fixes and clearly low-risk tasks use executor -> verifier. Router/manager/orchestration policy, permission or safety boundary rules, process rules, role protocol, and shared/high-risk logic must use executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance). The reviewer independently looks for design risks, rule gaps, omissions, and new bad modes; it does not implement changes and is not final acceptance. The verifier remains final acceptance and confirms the executor result plus any reviewer requiredChanges are satisfied. Runtime adapters execute this gate with `send_reviewer_request_with_adapter()`, `read_reviewer_review_update_with_adapter()`, and `capture_reviewer_review_from_read()`: reviewer `pass` continues to verifier, reviewer `needs_rework` returns to executor rework, and reviewer `blocked` blocks the task. When the user names `reviewer` for Team Router self changes, the manager must use a reviewer role conversation/thread; if no existing reviewer thread exists, explicitly create/register reviewer role conversation or stop and report it. subagent fallback is not allowed. Trigger logic covers `runtime gate`, `reviewer gate`, `Team Router self changes`, and `Team Router` combined with reviewer/runtime/protocol/policy/permission/safety/process/shared/high-risk semantics; a plain `team_router.py` filename or low-risk docs-only/single-file cleanup does not trigger reviewer by itself.
+## References
 
-For hosts without direct return, missed direct delivery, or recovery audits, use `watch_team_task_with_adapter()` from a real scheduler/automation. The watcher reads the ledger/registry recovery anchor, calls `read_thread`, captures a manager plan, executor callback, reviewer review, or verifier verdict, and immediately performs the next safe parent continuation such as sending executor work, sending reviewer work, sending verifier work, or returning closeout `userOutput`. It returns `action`, `status`, `userOutput`, `nextWakeup`, and `automationBoundary`. If `nextWakeup` is not null, the host automation must schedule another watcher call for that role/anchor. Direct return is possible when role threads are instructed with `returnThreadId` and can call `send_message_to_thread`; watcher/scheduler polling is the fallback when that is unavailable or misses delivery.
+Read only the relevant deep reference for the current step:
 
-When the verifier returns `needs_rework`, the runner stops with `action: needs_rework_pending`. Call it with `confirm_rework=True` only after the user approves another executor dispatch.
-
-### Adapter-created roles path
-
-Use this path when the parent host can provide adapter callables whose functions invoke the real Codex app tools.
-
-1. Probe the required tools and run `list_projects`; choose the current `projectId` and a project `target` with a local or worktree environment.
-2. Resolve `stateRoot` and load the project registry.
-3. Prefer `orchestrate_team_task_with_adapter()` for normal parent orchestration.
-4. Use `start_team_task_with_adapter()` only when you need the lower-level start primitive. It reuses registry role bindings, calls `create_thread` only for missing manager/executor/verifier core roles; create or reuse reviewer only when the conditional reviewer gate applies, then writes the registry role bindings and task ledger.
-5. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
-
-### Pre-created roles path
-
-Use this path when the parent thread has already called `create_thread` manually or the host cannot pass tool callables into Python directly.
-
-1. Probe the required tools and run `list_projects`; choose the current `projectId` and project target.
-2. Resolve `stateRoot` and load the project registry.
-3. Call `create_thread` only for missing manager/executor/verifier core role threads; add reviewer only when the conditional reviewer gate applies.
-4. Build a `roles` mapping with `manager`, `executor`, and `verifier`, each containing `threadId`, `title`, `createdAt`, and `lastObservedAt`.
-5. Persist the pre-created role bindings with `create_team_task()` or the lower-level `update_registry_roles()` plus task-ledger helpers.
-6. Do not call `start_team_task_with_adapter()` after manually creating role threads.
-
-### Adapter continuation
-
-Use this continuation when the parent host can pass tool callables into Python.
-
-1. Send the manager plan request with `send_manager_plan_request_with_adapter()`. This records the send anchor for later `read_thread` recovery.
-2. Call `read_thread` for the manager thread through `read_manager_plan_with_adapter()`. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
-3. Send executor work with `send_executor_dispatch_with_adapter()`. The dispatch must include `callbackMode: self-thread-marker` and `TEAM_ROUTER_CALLBACK taskId=<taskId>`. When `returnThreadId` is available, also include `callbackDelivery: direct-send`.
-4. Call `read_thread` for the executor thread through `read_executor_callback_with_adapter()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
-5. Send verifier work with `send_verifier_request_with_adapter()`. Forward the raw executor callback block; do not summarize it first.
-6. Call `read_thread` for the verifier thread through `read_verifier_verdict_update_with_adapter()` so the parent gets both the updated ledger and the exact user-facing output payload.
-7. Parent thread rule: emit `update["userOutput"]` to the user. Do not replace it with an unstructured summary. If the task is not terminal, the helper returns a handoff with recovery anchors; if it is terminal with closeout, the helper returns a closeout.
-
-### Manual/pre-created continuation
-
-Use this continuation after the pre-created roles path when the parent thread directly invokes Codex app tools or the host cannot pass tool callables into Python. This path uses manual helper/record/capture functions; it does not continue through `orchestrate_team_task_with_adapter()` or `run_team_task_with_adapter()`. `parent_entry_guard(...precreated_roles...)` is only a boundary decision and prompt aid here, not an end-to-end adapter-runner entrypoint.
-
-1. Build the manager request with `make_plan_request_message()`, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist the anchor with `record_plan_request_sent()`.
-2. Call `read_thread` for the manager thread, normalize the plain result with `normalize_thread_read_messages()`, then pass messages to `capture_manager_plan_from_read()`. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
-3. Build executor work with `make_executor_dispatch_message()`, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist the anchor with `record_executor_dispatch_sent()`.
-4. Call `read_thread` for the executor thread, normalize the result with `normalize_thread_read_messages()`, then pass messages to `capture_executor_callback_from_read()`. If no final callback is present but the read window covers the anchor, leave the task waiting and give the user a copy-paste reminder for the executor thread.
-5. Build verifier work with `make_verifier_request_message()` using the raw executor callback block, call `send_message_to_thread`, normalize the send result with `thread_send_anchor()`, then persist the anchor with `record_verifier_request_sent()`.
-6. Call `read_thread` for the verifier thread, normalize the result with `normalize_thread_read_messages()`, then pass messages to `capture_verifier_verdict_from_read()`.
-7. Load the project registry and emit `format_task_update_for_user()` to the user. Do not replace it with an unstructured summary.
-
-See `docs/runbooks/codex-team-router-live-orchestration.md` for a replayable live smoke procedure and fixture expectations.
-
-## State Root
-
-Use a shared `stateRoot`, not the current worktree root:
-
-```text
-<stateRoot>\projects\<codexProjectId>\registry.json
-<stateRoot>\projects\<codexProjectId>\tasks\<taskId>.json
-```
-
-Resolve `stateRoot` in this order:
-
-1. User-provided persistent directory.
-2. Canonical git root; if current path is a worktree, resolve to the shared root or ask the user for one.
-3. Current project root only for non-git projects.
-
-Never place durable state under `D:\.codex-tmp`. If state is inside a repo, ensure `.codex-team-router/` is ignored before writing state.
-
-## Protocols
-
-Marker lines use `MARKER key=value`. Ordinary fields use `key: value`. Reject mixed marker formats such as `taskId: <id>`.
-
-### Manager Plan
-
-```text
-TEAM_ROUTER_PLAN_REQUEST taskId=<taskId>
-objective: <user goal>
-permission: read-only | design-only
-
-TEAM_ROUTER_PLAN taskId=<taskId>
-status: planned | blocked
-acknowledgedPermission: read-only | design-only | escalation-required
-scope: <clear scope>
-stopWhen: <done or blocked condition>
-riskBoundary: <permission/data/external-system boundary>
-executorPrompt: <prompt for executor>
-notes: <none or notes>
-```
-
-The manager result must be parsed before executor dispatch. If manager escalates permission or blocks, do not dispatch.
-
-### Executor Callback
-
-```text
-TEAM_ROUTER_DISPATCH taskId=<taskId>
-role: executor
-callbackMode: self-thread-marker
-callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>
-returnThreadId: <manager thread id when direct return is available>
-callbackDelivery: direct-send
-callbackFallback: self-thread-marker
-permission: read-only | design-only
-scope: <manager scope>
-stopWhen: <manager stopWhen>
-searchAnchor: <messageId or sentAt>
-
-TEAM_ROUTER_CALLBACK taskId=<taskId>
-status: done | blocked
-final: true
-summary: <3-7 lines>
-evidence: <paths, command summaries, or thread observations>
-risks: <none or risks>
-next: <none or next step>
-```
-
-Use `callbackDelivery: direct-send` when a manager/parent `returnThreadId` is available and the role can call `send_message_to_thread`; keep `callbackMode: self-thread-marker` so the role thread remains recoverable by `read_thread`. Use the last matching final callback for fallback/audit reads.
-
-
-### Reviewer Review
-
-```text
-TEAM_ROUTER_REVIEW_REQUEST taskId=<taskId>
-reviewMarker: TEAM_ROUTER_REVIEW taskId=<taskId>
-returnThreadId: <manager thread id when direct return is available>
-reviewDelivery: direct-send
-reviewFallback: self-thread-marker
-reviewerMode: read-only/adversarial
-permission: read-only | design-only
-scope: <review scope>
-
-TEAM_ROUTER_REVIEW taskId=<taskId>
-result: pass | needs_rework | blocked
-summary: <review summary>
-findings: <adversarial findings or none>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-```
-
-Natural-language reviews do not move state. Reviewer is a conditional reviewer, not final acceptance; verifier remains final acceptance.
-
-### Verifier Verdict
-
-```text
-TEAM_ROUTER_VERIFY taskId=<taskId>
-callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>
-returnThreadId: <manager thread id when direct return is available>
-verdictDelivery: direct-send
-verdictFallback: self-thread-marker
-permission: read-only | design-only
-scope: <executor scope>
-
-TEAM_ROUTER_VERDICT taskId=<taskId>
-result: pass | needs_rework | blocked
-summary: <verdict summary>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-```
-
-Natural-language verdicts do not move state.
-
-## 父线程侧状态控制器 (Parent-Side State Controller)
-
-The implementation keeps the parent-side orchestration flow deterministic and local. Thread tools are an adapter layer: they send messages and pass plain send/read results back into helper functions. The helper layer performs registry role persistence, task ledger updates, protocol parsing, and recovery anchor selection. The 规划者 (Manager) thread does not own ledger or registry state.
-
-Registry role persistence uses `update_registry_roles()` and `create_team_task()` to record the `manager`, `executor`, and `verifier` thread ids under the project registry before task dispatch. Task creation writes `tasks/<taskId>.json` immediately and moves the ledger to `roles_ready`.
-
-The ledger stores read recovery anchors in three places:
-
-- `planRequest.searchAnchor` for manager `TEAM_ROUTER_PLAN` reads.
-- The latest `dispatches[]` entry for executor `TEAM_ROUTER_CALLBACK` reads.
-- `verification.request.searchAnchor` for verifier `TEAM_ROUTER_VERDICT` reads.
-
-Use `recovery_read_request()` to derive the role thread id and `searchAnchor` from the ledger plus registry before calling `read_thread`. Do not infer recovery state from the current conversation alone.
-
-The adapter-facing entrypoints are:
-
-- `probe_thread_adapter_capabilities()` to check the parent host exposes the required Codex app thread tools before live orchestration.
-- `parent_entry_guard()` to select adapter-created orchestration only when callable tools exist, otherwise requiring manual/pre-created role bindings.
-- `protocol_contract_snapshot()` to keep role, state, and marker-field docs/tests aligned.
-- `orchestrate_team_task_with_adapter()` as the recommended parent entry. It probes tools, resolves the project target, discovers/reuses role threads, advances the next send/read step, and returns `userOutput`.
-- `run_team_task_with_adapter()` as the lower-level runner for hosts that already resolved the target and role-thread boundary.
-- `watch_team_task_with_adapter()` for host automation that polls role-thread anchors, advances callback/verdict capture, returns `nextWakeup`, and produces closeout `userOutput` without a manual parent turn.
-- `start_team_task_with_adapter()` to create manager/executor/verifier core role threads, optionally create or reuse reviewer for conditional reviewer work, and write the initial task ledger.
-- `send_manager_plan_request_with_adapter()` and `read_manager_plan_with_adapter()` for manager planning.
-- `send_executor_dispatch_with_adapter()` and `read_executor_callback_with_adapter()` for executor work and callback capture.
-- `send_verifier_request_with_adapter()` and `read_verifier_verdict_with_adapter()` for verification and closeout.
-- `read_verifier_verdict_update_with_adapter()` when the parent orchestrator needs both the updated ledger and the user-visible closeout/handoff payload.
-- `format_task_update_for_user()`, `format_closeout_for_user()`, and `format_handoff_for_user()` for user-visible summaries after verifier reads or interruption.
-
-Adapter functions must accept plain keyword arguments matching the Codex app tool names: `create_thread(prompt=..., target=...)`, `send_message_to_thread(threadId=..., prompt=...)`, and `read_thread(threadId=...)`. Normalize send/read tool results through `thread_send_anchor()` and `normalize_thread_read_messages()` before updating ledger state. `read_thread` may return `turns[].items[]` with `agentMessage.text` and numeric epoch timestamps such as `startedAt`; keep those timestamps available for recovery-anchor filtering.
-## State Machine
-
-```text
-main: created -> roles_ready -> planning -> awaiting_plan -> planned -> dispatched -> awaiting_callback -> reviewing -> verifying -> done
-rework: verifying -> needs_rework -> dispatched
-manual_recovery: plan_unreachable -> planned | callback_unreachable -> verifying | review_unreachable -> reviewing
-terminal: blocked | malformed_callback | tool_error | missing_role | abandoned
-```
-
-`read_thread` must return a stable message id, timestamp, or ordered messages that prove the read window covers the dispatch/request anchor. If it cannot, move to `plan_unreachable` or `callback_unreachable` and ask the user to paste the missing marker block.
-
-## Safety Boundary
-
-`read-only/design-only 不是沙箱`. These are prompt boundaries, not enforceable filesystem or API sandboxes. If the original user goal clearly asks for writing files, commit/push/PR/merge/deploy, real APIs, accounts, or production data, stop before manager dispatch and route the work to an explicitly authorized write workflow such as `dynamic-workflow` worktree mode.
-
-Do not add any write-capable permission value to Team Router dispatch messages.
-
-## Closeout
-
-Report the final status, relevant task id, last observed thread ids, state transitions, evidence summary, uncovered risk, next action, and `remainingTodos`. For a passing verifier closeout, `remainingTodos: none`; for `needs_rework` or `blocked`, set `remainingTodos` from `nextAction` or `requiredChanges`. Do not claim a child thread is currently active unless a fresh `read_thread` result proves that exact fact.
+- `references/manager-mode.md`
+- `references/side-effect-taxonomy.md`
+- `references/role-handoff-and-review-package.md`
+- `references/direct-return.md`
+- `references/reviewer-gate.md`
+- `references/role-closeout.md`
+- `references/adapter-runtime.md`
+- `references/manual-orchestration.md`
+- `references/testing-and-quality-gates.md`

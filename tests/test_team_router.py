@@ -242,7 +242,11 @@ risks: none
     def test_protocol_contract_snapshot_centralizes_roles_states_and_markers(self):
         snapshot = team_router.protocol_contract_snapshot()
 
-        self.assertEqual(snapshot["parentSideRoles"]["parent_orchestrator"]["displayName"], "父线程调度者")
+        self.assertEqual(snapshot["parentSideRoles"]["parent_orchestrator"]["displayName"], "调度者")
+        self.assertEqual(snapshot["parentSideRoles"]["parent_orchestrator"]["englishAlias"], "Orchestrator")
+        snapshot_text = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn("父线程" + "调度者", snapshot_text)
+        self.assertNotIn("Parent " + "Orchestrator", snapshot_text)
         self.assertFalse(snapshot["parentSideRoles"]["state_controller"]["thread"])
         self.assertEqual(snapshot["roleThreads"]["manager"]["displayName"], "规划者")
         self.assertEqual(snapshot["roleThreads"]["reviewer"]["displayName"], "审查者")
@@ -321,6 +325,112 @@ risks: none
             policy["reviewerDirectReturn"]["sendInstruction"],
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
         )
+
+    def test_protocol_contract_snapshot_includes_side_effect_taxonomy_policy(self):
+        policy = team_router.protocol_contract_snapshot()["sideEffectTaxonomy"]
+
+        self.assertEqual(
+            set(policy) & {
+                "READ_ONLY",
+                "DISPATCH_ONLY",
+                "LOCAL_CLOSEOUT",
+                "WORKSPACE_WRITE",
+                "HEAVY_OR_RISKY",
+                "EXTERNAL_RELEASE",
+            },
+            {
+                "READ_ONLY",
+                "DISPATCH_ONLY",
+                "LOCAL_CLOSEOUT",
+                "WORKSPACE_WRITE",
+                "HEAVY_OR_RISKY",
+                "EXTERNAL_RELEASE",
+            },
+        )
+        self.assertIn("CodeGraph query/status/explore", policy["READ_ONLY"]["description"])
+        self.assertIn("read_thread low-frequency", policy["READ_ONLY"]["description"])
+        self.assertIn("not implementation", policy["READ_ONLY"]["boundary"])
+        self.assertIn("TEAM_ROUTER_DISPATCH", policy["DISPATCH_ONLY"]["description"])
+        self.assertIn("record/capture ledger state", policy["DISPATCH_ONLY"]["description"])
+        self.assertIn("routing is not implementation", policy["DISPATCH_ONLY"]["boundary"])
+        self.assertIn("verifier pass", policy["LOCAL_CLOSEOUT"]["requires"])
+        self.assertIn("explicit user commit request", policy["LOCAL_CLOSEOUT"]["requires"])
+        self.assertIn("stage only accepted files", policy["LOCAL_CLOSEOUT"]["allowedFor"])
+        self.assertIn("unrelated untracked", policy["LOCAL_CLOSEOUT"]["excludes"])
+        self.assertIn("push/PR/merge/deploy", policy["LOCAL_CLOSEOUT"]["excludes"])
+        self.assertIn("fixtures", policy["WORKSPACE_WRITE"]["description"])
+        self.assertIn("executor", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("explicit role switch", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("external API", policy["HEAVY_OR_RISKY"]["description"])
+        self.assertIn("explicit separate authorization", policy["HEAVY_OR_RISKY"]["requires"])
+        self.assertIn("push/PR/merge/deploy/publish/release", policy["EXTERNAL_RELEASE"]["description"])
+        self.assertIn("separate publish/release authorization", policy["EXTERNAL_RELEASE"]["requires"])
+        self.assertIn("at most DISPATCH_ONLY", policy["terseApprovalBoundary"])
+        self.assertIn("subagent fallback is not allowed", policy["namedReviewerRequirement"])
+
+    def test_protocol_contract_snapshot_includes_role_closeout_policy(self):
+        policy = team_router.protocol_contract_snapshot()["roleCloseoutPolicy"]
+
+        self.assertIn("no extra ROLE_CLOSEOUT", policy["default"])
+        self.assertIn("ordinary closeout messages", policy["default"])
+        self.assertIn("final protocol block is the closeout", policy["finalProtocolBlock"])
+        self.assertIn("TEAM_ROUTER_CALLBACK", policy["finalProtocolBlock"])
+        self.assertIn("TEAM_ROUTER_REVIEW", policy["finalProtocolBlock"])
+        self.assertIn("TEAM_ROUTER_VERDICT", policy["finalProtocolBlock"])
+        self.assertIn("compact is native operation, not chat prompt", policy["compact"])
+        self.assertIn("must not send compact or ROLE_CLOSEOUT text", policy["compact"])
+        self.assertIn("if no compact tool is available, do nothing", policy["noCompactTool"])
+        self.assertIn("role thread is still active/inProgress and must stop", policy["exceptionsOnly"])
+        self.assertIn("no final protocol block exists", "\n".join(policy["exceptionsOnly"]))
+        self.assertIn("compact/archive recovery anchor", "\n".join(policy["exceptionsOnly"]))
+        self.assertIn("user explicitly asks", policy["exceptionsOnly"])
+        self.assertIn("clear is not a default action", policy["clearArchiveNewThread"])
+        self.assertIn("task family/permission/workspace boundary changes", policy["clearArchiveNewThread"])
+
+    def test_protocol_contract_snapshot_includes_role_handoff_review_package_policy(self):
+        policy = team_router.protocol_contract_snapshot()["roleHandoffReviewPackagePolicy"]
+
+        self.assertIn("stable file/path handoff", policy["handoff"]["preferred"])
+        self.assertIn("accumulated chat history", policy["handoff"]["preferred"])
+        self.assertIn("taskId", policy["handoff"]["promptShape"])
+        self.assertIn("expected marker", policy["handoff"]["promptShape"])
+        self.assertIn("explicit protocol return format", policy["handoff"]["promptShape"])
+        self.assertIn("inline protocol blocks", policy["handoff"]["smallTasks"])
+        self.assertIn("Team Router self changes", policy["handoff"]["highRisk"])
+        self.assertIn("reviewer-gate/process/policy changes", policy["handoff"]["highRisk"])
+        self.assertIn("shared workspace/path", policy["handoff"]["highRisk"])
+        self.assertIn("inline protocol block fallback", policy["handoff"]["fallback"])
+        self.assertEqual(
+            policy["reviewPackage"]["minimumContent"],
+            [
+                "taskId",
+                "objective",
+                "scope",
+                "touched/accepted files",
+                "diff summary",
+                "executor callback/report",
+                "test/verification evidence",
+                "reviewer requiredChanges when present",
+                "excluded unrelated untracked",
+                "risks/remainingTodos",
+            ],
+        )
+        self.assertIn("focused diff/evidence", policy["reviewPackage"]["reviewerUse"])
+        self.assertIn("parent chat history", policy["reviewPackage"]["reviewerUse"])
+        self.assertIn("executor callback", policy["reviewPackage"]["verifierUse"])
+        self.assertIn("accepted files", policy["reviewPackage"]["verifierUse"])
+        self.assertIn("excluded untracked", policy["reviewPackage"]["verifierUse"])
+        self.assertIn("does not replace TEAM_ROUTER_CALLBACK", policy["reviewPackage"]["protocolMarkers"])
+        self.assertIn("TEAM_ROUTER_REVIEW", policy["reviewPackage"]["protocolMarkers"])
+        self.assertIn("TEAM_ROUTER_VERDICT", policy["reviewPackage"]["protocolMarkers"])
+        self.assertEqual(
+            policy["futureOptionalRuntimeFields"],
+            ["taskBriefPath", "executorReportPath", "reviewPackagePath"],
+        )
+        self.assertIn("no runtime behavior implemented", policy["runtimeStatus"])
+        self.assertIn("WORKSPACE_WRITE/executor-delegated", policy["sideEffectTaxonomy"])
+        self.assertIn("READ_ONLY", policy["sideEffectTaxonomy"])
+        self.assertIn("git diff --name-only omits untracked files", policy["commitCloseoutRisk"])
 
 class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
     def test_registry_path_uses_shared_state_root_not_worktree_root(self):
@@ -1272,6 +1382,131 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["ledger"]["verification"]["request"]["returnThreadId"], "parent-manager-thread")
 
     def test_watch_captures_reviewer_direct_return_and_sends_verifier(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper("pass"),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["result"], "pass")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
+        self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
+
+    def test_watch_ignores_reviewer_direct_return_with_wrong_source_thread_id(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper("pass", source_thread_id="thread-other-reviewer"),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_reviewer_review")
+        self.assertEqual(update["status"], "review_unreachable")
+        self.assertEqual(adapter.sent, [])
+        self.assertNotIn("result", update["ledger"]["review"])
+        self.assertIsNone(update["ledger"]["verification"])
+
+    def test_watch_ignores_reviewer_direct_return_with_wrong_task_id(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper("pass", task_id="ctr-20260622-wrong-task"),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_reviewer_review")
+        self.assertEqual(update["status"], "review_unreachable")
+        self.assertEqual(adapter.sent, [])
+        self.assertNotIn("result", update["ledger"]["review"])
+        self.assertIsNone(update["ledger"]["verification"])
+
+    def test_watch_reads_reviewer_direct_return_needs_rework_without_verifier(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper("needs_rework"),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_reviewer_review")
+        self.assertEqual(update["status"], "needs_rework")
+        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["result"], "needs_rework")
+        self.assertEqual(adapter.sent, [])
+        self.assertIsNone(update["ledger"]["verification"])
+
+    def test_watch_reads_reviewer_direct_return_blocked_without_verifier(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper("blocked"),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_reviewer_review")
+        self.assertEqual(update["status"], "blocked")
+        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["result"], "blocked")
+        self.assertEqual(adapter.sent, [])
+        self.assertIsNone(update["ledger"]["verification"])
+
+    def _record_reviewer_direct_return_request(self):
         adapter = FakeThreadAdapter()
         self._high_risk_awaiting_callback_ledger()
         team_router.update_registry_roles(
@@ -1304,29 +1539,23 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(request["reviewFallback"], "self-thread-marker")
         self.assertNotIn("verdictDelivery", request)
         self.assertNotIn("verdictFallback", request)
-        adapter.messages["parent-manager-thread"] = [
-            {
-                "messageId": "msg-review-return",
-                "sentAt": "2026-06-22T20:06:00+08:00",
-                "sourceThreadId": "thread-reviewer",
-                "text": "TEAM_ROUTER_REVIEW taskId=%s\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none" % self.task_id,
-            },
-        ]
+        return adapter
 
-        update = team_router.watch_team_task_with_adapter(
-            self.root,
-            self.project_id,
-            self.task_id,
-            thread_adapter=adapter,
-            permission="read-only",
-            observed_at="2026-06-22T20:07:00+08:00",
-        )
+    def _reviewer_direct_return_wrapper(self, result, task_id=None, source_thread_id="thread-reviewer"):
+        review_task_id = task_id or self.task_id
+        return (
+            "<codex_delegation>\n"
+            "  <source_thread_id>%s</source_thread_id>\n"
+            "  <input>TEAM_ROUTER_REVIEW taskId=%s\n"
+            "result: %s\n"
+            "summary: review result\n"
+            "findings: focused check\n"
+            "requiredChanges: none\n"
+            "evidenceChecked: tests\n"
+            "risks: none</input>\n"
+            "</codex_delegation>"
+        ) % (source_thread_id, review_task_id, result)
 
-        self.assertEqual(update["action"], "watch_sent_verifier_request")
-        self.assertEqual(update["status"], "verifying")
-        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["result"], "pass")
-        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
-        self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
     def test_reviewer_pass_sends_verifier_request_and_needs_rework_or_blocked_stops(self):
         ledger = self._high_risk_awaiting_callback_ledger()
         team_router.update_registry_roles(
@@ -4400,6 +4629,30 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
 
 class TestTeamRouterSkillDoc(unittest.TestCase):
+    REQUIRED_SKILL_REFERENCE_FILES = (
+        "manager-mode.md",
+        "side-effect-taxonomy.md",
+        "role-handoff-and-review-package.md",
+        "direct-return.md",
+        "reviewer-gate.md",
+        "role-closeout.md",
+        "adapter-runtime.md",
+        "manual-orchestration.md",
+        "testing-and-quality-gates.md",
+    )
+
+    def _skill_path(self):
+        return ROOT / "skills" / "codex-team-router" / "SKILL.md"
+
+    def _skill_references_dir(self):
+        return ROOT / "skills" / "codex-team-router" / "references"
+
+    def _skill_contract_text(self):
+        parts = [self._skill_path().read_text(encoding="utf-8")]
+        for filename in self.REQUIRED_SKILL_REFERENCE_FILES:
+            parts.append((self._skill_references_dir() / filename).read_text(encoding="utf-8"))
+        return "\n\n".join(parts)
+
     def _section(self, text, heading):
         start = text.index(heading)
         candidates = [
@@ -4411,9 +4664,22 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             return text[start:]
         return text[start:min(ends)]
 
+    def test_skill_entrypoint_uses_progressive_disclosure_references(self):
+        skill_path = self._skill_path()
+        references_dir = self._skill_references_dir()
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+        self.assertLessEqual(len(skill_path.read_bytes()), 8192)
+        self.assertTrue(references_dir.is_dir())
+        self.assertIn("Codex 8KB cap", skill_text)
+        self.assertIn("references/", skill_text)
+        self.assertIn("part of the Team Router contract", skill_text)
+        for filename in self.REQUIRED_SKILL_REFERENCE_FILES:
+            self.assertTrue((references_dir / filename).is_file(), filename)
+            self.assertIn("references/%s" % filename, skill_text)
+
     def test_skill_doc_contains_required_boundaries(self):
-        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
-        text = path.read_text(encoding="utf-8")
+        text = self._skill_contract_text()
         for needle in (
             "TEAM_ROUTER_PLAN",
             "TEAM_ROUTER_CALLBACK",
@@ -4431,8 +4697,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("workspace-write", text)
 
     def test_skill_doc_contains_parent_thread_operating_flow(self):
-        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
-        text = path.read_text(encoding="utf-8")
+        text = self._skill_contract_text()
         for needle in (
             "## Parent Thread Entry Flow",
             "list_projects -> create_thread -> send_message_to_thread -> read_thread",
@@ -4457,11 +4722,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, text)
 
     def test_skill_doc_contains_chinese_role_model(self):
-        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
-        text = path.read_text(encoding="utf-8")
+        text = self._skill_contract_text()
         for needle in (
-            "## 角色模型 (Role Model)",
-            "父线程调度者 (Parent Orchestrator)",
+            "## Role Model",
+            "调度者 (Orchestrator)",
             "工具宿主边界 (Adapter Host Boundary)",
             "状态控制器 (State Controller)",
             "规划者 (Manager)",
@@ -4511,8 +4775,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("update the rules", manager_mode)
 
     def test_skill_doc_separates_adapter_created_and_precreated_role_paths(self):
-        path = ROOT / "skills" / "codex-team-router" / "SKILL.md"
-        text = path.read_text(encoding="utf-8")
+        text = self._skill_contract_text()
 
         adapter_created = self._section(text, "### Adapter-created roles path")
         pre_created = self._section(text, "### Pre-created roles path")
@@ -4582,7 +4845,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "verdictDelivery: direct-send",
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)",
             "Watcher polling is the fallback path",
-            "父线程调度者 (Parent Orchestrator)",
+            "调度者 (Orchestrator)",
             "规划者 (Manager)",
             "执行者 (Executor)",
             "验证者 (Verifier)",
@@ -4616,7 +4879,131 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("“" + "直接" + "改”", text)
         self.assertNotIn("你" + "来执行", text)
         self.assertNotIn("while the user is still addressing" + " the agent as manager", text)
+
+    def test_readme_and_runbook_document_skill_progressive_disclosure(self):
+        paths = (
+            ROOT / "README.md",
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md",
+        )
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                for needle in (
+                    "Progressive disclosure invariant",
+                    "SKILL.md",
+                    "Codex 8KB cap",
+                    "references/",
+                    "Team Router contract",
+                ):
+                    self.assertIn(needle, text)
         self.assertNotIn("update the rules", text)
+
+    def test_side_effect_taxonomy_docs_cover_manager_action_boundaries(self):
+        docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in docs:
+            with self.subTest(path=name):
+                for needle in (
+                    "sideEffectTaxonomy",
+                    "READ_ONLY",
+                    "DISPATCH_ONLY",
+                    "LOCAL_CLOSEOUT",
+                    "WORKSPACE_WRITE",
+                    "HEAVY_OR_RISKY",
+                    "EXTERNAL_RELEASE",
+                    "`可以`",
+                    "`修`",
+                    "`继续`",
+                    "`开始修`",
+                    "`先修`",
+                    "`修这个`",
+                    "`do it`",
+                    "verifier pass",
+                    "explicit user commit request",
+                    "push/PR/merge/deploy",
+                    "subagent fallback is not allowed",
+                ):
+                    self.assertIn(needle, text)
+                for alternatives in (
+                    ("at most `DISPATCH_ONLY`", "至多授权 `DISPATCH_ONLY`"),
+                    ("not implementation authorization", "不是 implementation authorization"),
+                    ("must be delegated to executor", "必须委派 executor"),
+                    ("explicitly switches roles", "明确说“切回执行者”"),
+                    ("stage only accepted files", "stage 已验收文件"),
+                    ("unrelated untracked", "无关 untracked"),
+                    ("separate publish/release authorization", "独立 publish/release 授权"),
+                    ("explicit separate authorization", "单独明确授权"),
+                ):
+                    self.assertTrue(
+                        any(needle in text for needle in alternatives),
+                        "%s missing one of %r" % (name, alternatives),
+                    )
+
+    def test_role_handoff_and_review_package_policy_docs_cover_stable_packages(self):
+        docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in docs:
+            with self.subTest(path=name):
+                for needle in (
+                    "roleHandoffPolicy",
+                    "reviewPackagePolicy",
+                    "stable file/path handoff",
+                    "accumulated chat history",
+                    "taskBriefPath",
+                    "executorReportPath",
+                    "reviewPackagePath",
+                    "future optional runtime fields",
+                    "taskId",
+                    "objective",
+                    "scope",
+                    "touched/accepted files",
+                    "diff summary",
+                    "executor callback/report",
+                    "test/verification evidence",
+                    "reviewer requiredChanges",
+                    "excluded unrelated untracked",
+                    "risks/remainingTodos",
+                    "TEAM_ROUTER_CALLBACK",
+                    "TEAM_ROUTER_REVIEW",
+                    "TEAM_ROUTER_VERDICT",
+                    "WORKSPACE_WRITE",
+                    "executor",
+                    "git diff --name-only",
+                    "untracked files",
+                ):
+                    self.assertIn(needle, text)
+                for alternatives in (
+                    ("stable facts by file/path", "stable file/path handoff"),
+                    ("inline protocol block fallback", "inline protocol blocks"),
+                    ("does not replace", "不替代"),
+                    ("supplements evidence", "补充证据"),
+                    ("not implemented runtime fields", "不实现 runtime"),
+                    ("stage new reference files explicitly", "显式 stage 新 reference files"),
+                    ("role threads can access the same workspace/path", "可访问同一 workspace/path"),
+                    ("Writing workspace package artifacts", "写 workspace package artifacts"),
+                    ("active Manager Mode unless there is an explicit role switch", "除非明确角色切换"),
+                    ("READ_ONLY", "DISPATCH_ONLY"),
+                ):
+                    self.assertTrue(
+                        any(needle in text for needle in alternatives),
+                        "%s missing one of %r" % (name, alternatives),
+                    )
 
     def test_live_orchestration_runbook_separates_adapter_created_and_precreated_role_paths(self):
         path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
@@ -4656,7 +5043,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         names = {scenario["name"] for scenario in raw["scenarios"]}
 
         self.assertEqual(raw["roles"]["manager"], "规划者")
-        self.assertIn("父线程调度者", raw["parentSideConcepts"])
+        self.assertIn("调度者", raw["parentSideConcepts"])
+        self.assertNotIn("父线程" + "调度者", raw["parentSideConcepts"])
         self.assertEqual(
             names,
             {
@@ -4679,7 +5067,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`dynamic-workflow`",
             "read-only/design-only",
             "不支持 `workspace-write`",
-            "父线程调度者",
+            "调度者",
             "规划者",
             "执行者",
             "验证者",
@@ -4721,14 +5109,18 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
 
     def test_manager_orchestration_policy_docs_cover_polling_reuse_and_verifier_return(self):
-        paths = (
-            ROOT / "README.md",
-            ROOT / "skills" / "codex-team-router" / "SKILL.md",
-            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md",
+        docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
         )
-        for path in paths:
-            text = path.read_text(encoding="utf-8")
-            with self.subTest(path=path.name):
+        for name, text in docs:
+            with self.subTest(path=name):
                 for needle in (
                     "low-frequency",
                     "event-driven",
@@ -4746,17 +5138,72 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                 ):
                     self.assertIn(needle, text)
 
+    def test_closeout_policies_docs_cover_commit_and_role_thread_closeout(self):
+        docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in docs:
+            with self.subTest(path=name):
+                for needle in (
+                    "Manager commit closeout policy",
+                    "manager owns commit workflow",
+                    "verifier pass",
+                    "stage 已验收文件",
+                    "排除无关 untracked",
+                    "push/PR/merge/deploy 单独授权",
+                    "roleCloseoutPolicy",
+                    "不 clear role thread",
+                    "ROLE_CLOSEOUT",
+                    "final protocol block is the closeout",
+                    "TEAM_ROUTER_CALLBACK",
+                    "TEAM_ROUTER_REVIEW",
+                    "TEAM_ROUTER_VERDICT",
+                    "compact is native operation, not chat prompt",
+                    "active/inProgress",
+                    "compact/archive",
+                    "身份污染",
+                    "上下文过长",
+                    "boundary 变化",
+                    "用户明确要求",
+                ):
+                    self.assertIn(needle, text)
+                for alternatives in (
+                    ("explicit user request to commit", "用户明确要求提交"),
+                    ("continue implementation", "继续实现"),
+                    ("modify files", "修改文件"),
+                    ("heavy commands", "重型命令"),
+                    ("默认不向 role threads 额外发送", "does not send extra ROLE_CLOSEOUT"),
+                    ("没有可用 compact 工具则不做", "if no compact tool is available, do nothing"),
+                    ("没有 final protocol block", "no final protocol block exists"),
+                    ("最短 closeout/stop message", "shortest closeout/stop message"),
+                ):
+                    self.assertTrue(
+                        any(needle in text for needle in alternatives),
+                        "%s missing one of %r" % (name, alternatives),
+                    )
+
 
 
     def test_conditional_reviewer_docs_cover_role_policy_reuse_and_direct_return(self):
-        paths = (
-            ROOT / "README.md",
-            ROOT / "skills" / "codex-team-router" / "SKILL.md",
-            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md",
+        docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
         )
-        for path in paths:
-            text = path.read_text(encoding="utf-8")
-            with self.subTest(path=path.name):
+        for name, text in docs:
+            with self.subTest(path=name):
                 for needle in (
                     "conditional reviewer",
                     "reviewer",

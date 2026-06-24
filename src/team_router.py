@@ -57,8 +57,8 @@ ROLE_DISPLAY_NAMES = {
 }
 PARENT_SIDE_ROLES = {
     "parent_orchestrator": {
-        "displayName": "父线程调度者",
-        "englishAlias": "Parent Orchestrator",
+        "displayName": "调度者",
+        "englishAlias": "Orchestrator",
         "thread": False,
     },
     "adapter_host_boundary": {
@@ -183,6 +183,104 @@ MANAGER_ORCHESTRATION_POLICY = {
         ),
         "sendInstruction": "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
     },
+}
+
+SIDE_EFFECT_TAXONOMY_POLICY = {
+    "READ_ONLY": {
+        "description": "inspection/status/diff/file reads/search/CodeGraph query/status/explore/read_thread low-frequency and other non-mutating inspection",
+        "allowedFor": [
+            "manager judgment",
+            "review routing",
+            "commit closeout preflight",
+            "low-frequency event-driven watcher/read_thread checks",
+        ],
+        "boundary": "supports judgment and commit preflight; not implementation",
+    },
+    "DISPATCH_ONLY": {
+        "description": "create/reuse role threads when required, send TEAM_ROUTER_DISPATCH/TEAM_ROUTER_REVIEW_REQUEST/TEAM_ROUTER_VERIFY, record/capture ledger state, and direct-return continuation",
+        "allowedFor": ["Manager Mode routing work"],
+        "boundary": "routing is not implementation",
+    },
+    "LOCAL_CLOSEOUT": {
+        "requires": ["verifier pass", "explicit user commit request"],
+        "allowedFor": ["local status/diff", "stage only accepted files", "local commit only"],
+        "excludes": [
+            "continued implementation",
+            "unrelated untracked",
+            "push/PR/merge/deploy",
+        ],
+    },
+    "WORKSPACE_WRITE": {
+        "description": "project file modifications, formatters that write, fixtures, package artifacts, runtime/docs/tests changes",
+        "boundary": "active Manager Mode delegates WORKSPACE_WRITE to executor unless explicit role switch",
+    },
+    "HEAVY_OR_RISKY": {
+        "description": "long benchmark/install/upgrade/destructive cleanup/global config/external API/production data",
+        "requires": "explicit separate authorization",
+    },
+    "EXTERNAL_RELEASE": {
+        "description": "push/PR/merge/deploy/publish/release",
+        "requires": "separate publish/release authorization",
+    },
+    "terseApprovalBoundary": "in active Manager Mode, 可以/修/继续/开始修/先修/修这个/do it authorize at most DISPATCH_ONLY unless the user explicitly switches out of Manager Mode",
+    "namedReviewerRequirement": "when reviewer is required or named for Team Router self changes, use the visible reviewer role conversation; subagent fallback is not allowed",
+}
+
+ROLE_CLOSEOUT_POLICY = {
+    "default": "no extra ROLE_CLOSEOUT or ordinary closeout messages to role threads by default",
+    "finalProtocolBlock": "final protocol block is the closeout: TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, and TEAM_ROUTER_VERDICT",
+    "compact": "compact is native operation, not chat prompt; manager must not send compact or ROLE_CLOSEOUT text to pretend context compression happened",
+    "noCompactTool": "if no compact tool is available, do nothing",
+    "exceptionsOnly": [
+        "role thread is still active/inProgress and must stop",
+        "no final protocol block exists and a minimal stop anchor is needed",
+        "compact/archive recovery anchor is needed before compact/archive",
+        "user explicitly asks",
+    ],
+    "clearArchiveNewThread": "clear is not a default action; create/archive old role thread only for identity contamination, context too long, task family/permission/workspace boundary changes, or explicit user request",
+}
+
+ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
+    "handoff": {
+        "preferred": "stable file/path handoff over accumulated chat history",
+        "promptShape": [
+            "taskId",
+            "objective",
+            "expected marker",
+            "permission boundary",
+            "relevant package/report paths",
+            "explicit protocol return format",
+        ],
+        "smallTasks": "small/simple tasks may use inline protocol blocks only",
+        "highRisk": "high-risk Team Router self changes, reviewer-gate/process/policy changes, and long executor results should use a review package when shared workspace/path is accessible",
+        "fallback": "if role thread cannot access the same filesystem/path, inline protocol block fallback is allowed and manager must mark the fallback while keeping protocol fields exact",
+    },
+    "reviewPackage": {
+        "preferredFor": "reviewer/verifier evidence bundle on high-risk work",
+        "minimumContent": [
+            "taskId",
+            "objective",
+            "scope",
+            "touched/accepted files",
+            "diff summary",
+            "executor callback/report",
+            "test/verification evidence",
+            "reviewer requiredChanges when present",
+            "excluded unrelated untracked",
+            "risks/remainingTodos",
+        ],
+        "reviewerUse": "reviewer inspects package plus focused diff/evidence instead of reconstructing facts from parent chat history",
+        "verifierUse": "verifier checks executor callback, reviewer result if present, package evidence, permission boundary, accepted files, excluded untracked, and final user-facing closeout",
+        "protocolMarkers": "package supplements evidence and does not replace TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT",
+    },
+    "futureOptionalRuntimeFields": [
+        "taskBriefPath",
+        "executorReportPath",
+        "reviewPackagePath",
+    ],
+    "runtimeStatus": "policy concepts/future optional runtime fields only; no runtime behavior implemented",
+    "sideEffectTaxonomy": "package writing in active Manager Mode is WORKSPACE_WRITE/executor-delegated unless explicit role switch; reading package metadata is READ_ONLY or DISPATCH_ONLY metadata",
+    "commitCloseoutRisk": "commit closeout must explicitly stage new reference files because git diff --name-only omits untracked files",
 }
 
 REVIEWER_GATE_REQUIRED_TERMS = (
@@ -853,6 +951,9 @@ def protocol_contract_snapshot() -> dict[str, Any]:
         "recoverableStatuses": dict(sorted(RECOVERABLE_STATUSES.items())),
         "stateMachine": STATE_MACHINE_SNAPSHOT,
         "managerOrchestrationPolicy": MANAGER_ORCHESTRATION_POLICY,
+        "sideEffectTaxonomy": SIDE_EFFECT_TAXONOMY_POLICY,
+        "roleCloseoutPolicy": ROLE_CLOSEOUT_POLICY,
+        "roleHandoffReviewPackagePolicy": ROLE_HANDOFF_REVIEW_PACKAGE_POLICY,
     }
 
 
