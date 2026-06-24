@@ -1,11 +1,16 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import json
+import sys
 import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
 
-from helpers import ROOT
+ROOT = Path(__file__).resolve().parents[1]
+_SRC = str(ROOT / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
 import team_router
 
 
@@ -5108,6 +5113,20 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
 
 
+    def test_project_layout_keeps_team_router_root_and_dynamic_workflow_subproject(self):
+        self.assertTrue((ROOT / "src" / "team_router.py").is_file())
+        self.assertTrue((ROOT / "skills" / "codex-team-router" / "SKILL.md").is_file())
+        self.assertTrue((ROOT / "tests" / "test_team_router.py").is_file())
+        self.assertTrue((ROOT / "tests" / "fixtures" / "team_router").is_dir())
+        self.assertTrue((ROOT / "dynamic-workflow" / "src" / "runner.py").is_file())
+        self.assertTrue((ROOT / "dynamic-workflow" / "skill" / "SKILL.md").is_file())
+        self.assertTrue((ROOT / "dynamic-workflow" / "tests" / "test_run.py").is_file())
+        self.assertFalse((ROOT / "src" / "runner.py").exists())
+        self.assertFalse((ROOT / "tests" / "test_run.py").exists())
+        self.assertIn(
+            "dynamic-workflow/src/runner.py",
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+        )
     def test_manager_orchestration_policy_docs_cover_polling_reuse_and_verifier_return(self):
         docs = (
             ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
