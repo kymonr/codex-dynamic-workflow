@@ -94,9 +94,9 @@ terminal: blocked | malformed_callback | tool_error | missing_role | abandoned
 
 ## Safety Boundary
 
-`read-only/design-only 不是沙箱`. These are prompt boundaries, not enforceable filesystem or API sandboxes. If the original user goal clearly asks for writing files, commit/push/PR/merge/deploy, real APIs, accounts, or production data, stop before manager dispatch and route the work to an explicitly authorized write workflow such as `dynamic-workflow` worktree mode.
+`read-only/design-only 不是沙箱`. These are prompt boundaries, not enforceable filesystem or API sandboxes. If the original user goal asks for workspace writes, continue only when the manager dispatch explicitly grants an authorized `local-package` executor scope and the task uses the required reviewer/verifier gates. Unsupported or high-risk writes still stop before dispatch: commit/push/PR/merge/deploy, global config, project-local `AGENTS.md`, destructive operations, real APIs, accounts, or production data require separate explicit authorization outside ordinary Team Router dispatch.
 
-Do not add any write-capable permission value to Team Router dispatch messages.
+Team Router dispatch messages may use `read-only`, `design-only`, or `local-package`. `local-package` authorizes executor-delegated workspace writes only within the stated package; it does not authorize manager direct edits, commits, pushes, global config changes, production/API actions, or destructive operations.
 
 ## Closeout
 

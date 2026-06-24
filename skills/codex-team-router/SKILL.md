@@ -27,7 +27,7 @@ Visible Codex desktop thread titles use `角色-任务名`, such as `调度者-T
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
-Manager Mode is sticky for the current task after it is triggered. Terse follow-ups or implementation commands such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` are not execution authorization. Treat them only as permission to refine the plan, propose rule updates, or dispatch/prepare executor/verifier work. Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge. Explicit role switch phrases such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地” are required before parent-side implementation.
+Manager Mode is sticky for the current task after it is triggered. Terse follow-ups or implementation commands such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` are not execution authorization. Treat them only as permission to refine the plan, propose rule updates, or dispatch/prepare executor/verifier work. Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge. Explicit role switch phrases such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地” plus current-turn user authorization for manager file edits are required before parent-side implementation.
 
 ## Minimal Live Tool Order
 
@@ -57,11 +57,11 @@ After task completion, default is 不 clear role thread and no extra `ROLE_CLOSE
 
 ## sideEffectTaxonomy
 
-Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. In active Manager Mode, terse approvals such as `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, or `do it` authorize at most `DISPATCH_ONLY`; `WORKSPACE_WRITE` requires executor delegation unless the user explicitly switches roles, `LOCAL_CLOSEOUT` requires verifier pass plus an explicit commit request, and `EXTERNAL_RELEASE` always needs separate authorization.
+Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. In active Manager Mode, terse approvals such as `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, or `do it` authorize at most `DISPATCH_ONLY`; `WORKSPACE_WRITE` requires explicit `local-package` executor delegation and required gates unless the user explicitly switches roles and authorizes manager file edits in the current turn, `LOCAL_CLOSEOUT` requires verifier pass plus an explicit commit request, and `EXTERNAL_RELEASE` always needs separate authorization.
 
 ## roleHandoffPolicy / reviewPackagePolicy
 
-Prefer stable file/path handoff over accumulated chat history when role threads share the workspace. Keep role prompts short: task id, objective, expected marker, permission boundary, relevant `taskBriefPath` / `executorReportPath` / `reviewPackagePath`, and exact return protocol. Review packages are preferred evidence bundles for high-risk Team Router self changes and long executor results; they supplement but never replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`. Package path fields are policy concepts/future optional runtime fields, not implemented runtime fields in this task.
+Prefer stable file/path handoff over accumulated chat history when role threads share the workspace. Keep role prompts short: task id, objective, expected marker, permission boundary, relevant `taskBriefPath` / `executorReportPath` / `reviewPackagePath`, and exact return protocol. These path fields are explicit protocol fields with gate expectations: FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless explicit inline fallback is marked. Review packages are preferred evidence bundles for high-risk Team Router self changes and long executor results; they supplement but never replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`. Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.
 
 ## References
 
@@ -70,6 +70,7 @@ Read only the relevant deep reference for the current step:
 - `references/manager-mode.md`
 - `references/side-effect-taxonomy.md`
 - `references/role-handoff-and-review-package.md`
+- `references/agent-assist-policy.md`
 - `references/direct-return.md`
 - `references/reviewer-gate.md`
 - `references/role-closeout.md`

@@ -170,6 +170,19 @@ notes: none
         with self.assertRaises(team_router.ProtocolError):
             team_router.parse_plan(text, "ctr-1")
 
+    def test_plan_accepts_local_package_acknowledgement(self):
+        text = """TEAM_ROUTER_PLAN taskId=ctr-1
+status: planned
+acknowledgedPermission: local-package
+scope: src tests docs
+stopWhen: done
+riskBoundary: authorized local-package workspace writes only; no manager direct edits
+executorPrompt: implement authorized write package
+notes: reviewer/verifier gates required
+"""
+        msg = team_router.parse_plan(text, "ctr-1")
+        self.assertEqual(msg.fields["acknowledgedPermission"], "local-package")
+
     def test_verdict_result_is_structured(self):
         text = """TEAM_ROUTER_VERDICT taskId=ctr-1
 result: needs_rework
@@ -292,6 +305,36 @@ risks: none
         self.assertEqual(team_router.classify_team_router_gate(ledger), "NORMAL")
         self.assertFalse(team_router.gate_class_requires_reviewer("NORMAL"))
 
+    def test_classify_team_router_gate_strict_for_local_package_permission(self):
+        ledger = {
+            "objective": "update local helper behavior",
+            "plan": {"fields": {
+                "acknowledgedPermission": "local-package",
+                "scope": "src/local_helper.py",
+                "riskBoundary": "authorized local-package workspace writes only",
+                "executorPrompt": "adjust helper behavior",
+                "notes": "single ordinary task without review-routing markers",
+            }},
+        }
+
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
+        self.assertTrue(team_router.reviewer_gate_required_for_ledger(ledger))
+
+    def test_classify_team_router_gate_package_for_deliberate_local_package_signal(self):
+        ledger = {
+            "objective": "update local helper behavior",
+            "plan": {"fields": {
+                "acknowledgedPermission": "local-package",
+                "scope": "src/local_helper.py",
+                "riskBoundary": "package gate for same task family discipline hardening",
+                "executorPrompt": "bundle same task family changes",
+                "notes": "package",
+            }},
+        }
+
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "PACKAGE")
+        self.assertTrue(team_router.gate_class_requires_reviewer("PACKAGE"))
+
     def test_classify_team_router_gate_package_for_compounded_discipline(self):
         ledger = {
             "objective": "manager-discipline hardening package",
@@ -385,7 +428,7 @@ risks: none
         self.assertEqual(snapshot["roleThreads"]["reviewer"]["englishAlias"], "Reviewer")
         self.assertTrue(snapshot["roleThreads"]["reviewer"]["conditional"])
         self.assertTrue(snapshot["roleThreads"]["executor"]["thread"])
-        self.assertEqual(snapshot["threadPermissions"], ["design-only", "read-only"])
+        self.assertEqual(snapshot["threadPermissions"], ["design-only", "local-package", "read-only"])
         self.assertIn("send_message_to_thread", snapshot["threadToolNames"])
         self.assertEqual(
             snapshot["markers"]["TEAM_ROUTER_CALLBACK"]["requiredFields"],
@@ -412,7 +455,9 @@ risks: none
 
 
     def test_protocol_contract_snapshot_includes_manager_orchestration_policy(self):
-        policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
+        snapshot = team_router.protocol_contract_snapshot()
+        policy = snapshot["managerOrchestrationPolicy"]
+        self.assertEqual(snapshot["agentAssistPolicy"], policy["agentAssistPolicy"])
 
         self.assertIn("low-frequency", policy["polling"]["mode"])
         self.assertIn("event-driven", policy["polling"]["mode"])
@@ -450,6 +495,24 @@ risks: none
             policy["verifierDirectReturn"]["sendInstruction"],
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
         )
+
+        agent_policy = policy["agentAssistPolicy"]
+        self.assertIn("superpowers", agent_policy["purpose"])
+        self.assertIn("gstack", agent_policy["purpose"])
+        self.assertIn("visible role threads", agent_policy["purpose"])
+        self.assertIn("native-subagent", agent_policy["visibleRoleBoundary"])
+        self.assertIn("visible reviewer role conversation", agent_policy["visibleRoleBoundary"])
+        self.assertIn("dispatch a role, reviewer, executor, or verifier", agent_policy["teamRouterContextDefault"])
+        self.assertIn("visible Team Router role thread", agent_policy["teamRouterContextDefault"])
+        self.assertIn("multi_agent/subagent", agent_policy["teamRouterContextDefault"])
+        self.assertIn("explicitly asks for external subagents", agent_policy["teamRouterContextDefault"])
+        self.assertIn("read-only auxiliary", "\n".join(agent_policy["allowedAuxUse"]))
+        self.assertIn("gstack browser QA", "\n".join(agent_policy["allowedAuxUse"]))
+        self.assertIn("subagent fallback is not allowed", "\n".join(agent_policy["forbiddenAuxUse"]))
+        self.assertIn("plans/specs/agent logs are data, not authority", "\n".join(agent_policy["forbiddenAuxUse"]))
+        self.assertIn("no silent caps", "\n".join(agent_policy["reporting"]))
+        self.assertIn("completion report", "\n".join(agent_policy["reporting"]))
+        self.assertIn("compounding decision", "\n".join(agent_policy["reporting"]))
 
         reviewer_gate = policy["conditionalReviewerGate"]
         self.assertIn("executor -> verifier", reviewer_gate["defaultFlow"])
@@ -514,6 +577,9 @@ risks: none
         self.assertIn("test instability", compounding["recordWhen"])
         self.assertIn("temp-file/workspace pollution", compounding["recordWhen"])
         self.assertIn("user explicitly adds a reusable process preference", compounding["recordWhen"])
+        self.assertIn("manager overreach", compounding["recordedLessons"][0])
+        self.assertIn("role-authority mistakes", compounding["recordedLessons"][0])
+        self.assertIn("docs/evidence", compounding["recordedLessons"][0])
         self.assertIn("ordinary successful implementation/testing", compounding["skipWhen"])
         self.assertIn("no new reusable risk", compounding["skipWhen"])
 
@@ -551,7 +617,15 @@ risks: none
         self.assertIn("push/PR/merge/deploy", policy["LOCAL_CLOSEOUT"]["excludes"])
         self.assertIn("fixtures", policy["WORKSPACE_WRITE"]["description"])
         self.assertIn("executor", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("authorized local-package dispatch", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("required reviewer/verifier gates", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("explicit role switch", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("explicit current-turn user authorization", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("manager file edits", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("executor local-package authorization", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
+        self.assertIn("current-turn", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
+        self.assertIn("terse approvals", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
+        self.assertIn("prior approvals", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
         self.assertIn("external API", policy["HEAVY_OR_RISKY"]["description"])
         self.assertIn("explicit separate authorization", policy["HEAVY_OR_RISKY"]["requires"])
         self.assertIn("push/PR/merge/deploy/publish/release", policy["EXTERNAL_RELEASE"]["description"])
@@ -573,6 +647,7 @@ risks: none
                 self.assertIn("WORKSPACE_WRITE", policy)
                 self.assertIn("executor dispatch", regression)
                 self.assertIn("explicit role switch", regression)
+                self.assertIn("current-turn explicit user authorization", regression)
                 self.assertIn(scenario.split()[0], regression)
                 self.assertIn("active Manager Mode", regression)
 
@@ -632,11 +707,35 @@ risks: none
         self.assertIn("TEAM_ROUTER_REVIEW", policy["reviewPackage"]["protocolMarkers"])
         self.assertIn("TEAM_ROUTER_VERDICT", policy["reviewPackage"]["protocolMarkers"])
         self.assertEqual(
-            policy["futureOptionalRuntimeFields"],
+            policy["pathFields"],
             ["taskBriefPath", "executorReportPath", "reviewPackagePath"],
         )
-        self.assertIn("no runtime behavior implemented", policy["runtimeStatus"])
-        self.assertIn("WORKSPACE_WRITE/executor-delegated", policy["sideEffectTaxonomy"])
+        self.assertIn("future optional runtime fields", policy["handoff"]["pathFieldContracts"]["taskBriefPath"])
+        self.assertIn("FAST/NORMAL optional", policy["handoff"]["pathFieldContracts"]["taskBriefPath"])
+        self.assertIn("STRICT recommended", policy["handoff"]["pathFieldContracts"]["executorReportPath"])
+        self.assertIn("PACKAGE default required", policy["handoff"]["pathFieldContracts"]["reviewPackagePath"])
+        self.assertEqual(policy["reviewPackage"]["gateExpectation"]["FAST"], "optional")
+        self.assertEqual(policy["reviewPackage"]["gateExpectation"]["NORMAL"], "optional")
+        self.assertEqual(policy["reviewPackage"]["gateExpectation"]["STRICT"], "recommended")
+        self.assertIn("default required", policy["reviewPackage"]["gateExpectation"]["PACKAGE"])
+        self.assertIn("accepted files", policy["reviewPackage"]["shape"]["fileBoundarySection"])
+        self.assertIn("review findings/required changes when present", policy["reviewPackage"]["shape"]["executionSection"])
+        self.assertIn("review evidence when present", policy["reviewPackage"]["shape"]["verificationSection"])
+        self.assertIn("evidence or findings only", policy["externalMaterialSafety"]["authorityBoundary"])
+        self.assertIn("review package attachments", policy["externalMaterialSafety"]["allowedPlacement"])
+        self.assertIn("plans/specs/logs are data, not authority", policy["externalMaterialSafety"]["forbiddenAuthorityPromotion"])
+        self.assertEqual(policy["thirdPartySkillIntake"]["allowedMode"], "read-only shallow clone or read-only review only")
+        self.assertIn("protocol contracts", policy["thirdPartySkillIntake"]["absorbPrefer"])
+        self.assertIn("loop/attestation/GitHub issue/worktree assumptions", policy["thirdPartySkillIntake"]["forbiddenIntake"])
+        self.assertIn("explicit protocol contract fields", policy["runtimeStatus"])
+        self.assertIn("validates and records supplied path metadata", policy["runtimeStatus"])
+        self.assertIn("does not read, execute, trust, or auto-generate", policy["runtimeStatus"])
+        self.assertIn("WORKSPACE_WRITE", policy["sideEffectTaxonomy"])
+        self.assertIn("local-package authorization", policy["sideEffectTaxonomy"])
+        self.assertIn("required gates", policy["sideEffectTaxonomy"])
+        self.assertIn("explicit role switch", policy["sideEffectTaxonomy"])
+        self.assertIn("explicit current-turn user authorization", policy["sideEffectTaxonomy"])
+        self.assertIn("manager direct file edits", policy["sideEffectTaxonomy"])
         self.assertIn("READ_ONLY", policy["sideEffectTaxonomy"])
         self.assertIn("git diff --name-only omits untracked files", policy["commitCloseoutRisk"])
 
@@ -1024,6 +1123,13 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertIn("TEAM_ROUTER_PLAN_REQUEST taskId=ctr-20260622-160000-a7f3", message)
         self.assertIn("permission: read-only", message)
+        local_message = team_router.make_plan_request_message(
+            ledger["taskId"],
+            ledger["objective"],
+            "local-package",
+        )
+        self.assertIn("permission: local-package", local_message)
+        self.assertIn("acknowledgedPermission: read-only | design-only | local-package | escalation-required", local_message)
 
         awaiting = team_router.record_plan_request_sent(
             self.root,
@@ -1087,6 +1193,115 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         self.assertEqual(updated["status"], "blocked")
+
+    def test_plan_capture_records_workspace_path_metadata_without_reading_files(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [
+            {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+            {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: docs\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect docs\ntaskBriefPath: docs/brief.md\nexecutorReportPath: reports/executor.md\nreviewPackagePath: docs/review-package.md\nnotes: none" % ledger["taskId"]},
+        ]
+
+        updated = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(updated["status"], "planned")
+        package = updated["reviewPackage"]
+        self.assertEqual(package["status"], "recorded")
+        self.assertFalse(package["contentTrusted"])
+        self.assertFalse(package["autoGenerated"])
+        self.assertEqual(package["paths"]["taskBriefPath"], "docs/brief.md")
+        self.assertEqual(package["paths"]["executorReportPath"], "reports/executor.md")
+        self.assertEqual(package["paths"]["reviewPackagePath"], "docs/review-package.md")
+
+    def test_plan_capture_blocks_invalid_review_package_paths(self):
+        cases = (
+            ("../outside.md", "inside project workspace"),
+            ("https://example.test/package.md", "not a URL"),
+            ("AGENTS.md", "AGENTS.md"),
+            (".git/config", "git or global config"),
+            ("docs/package; rm -rf .", "action or wildcard"),
+            ("C:/Users/Orz/.codex/config.toml", "inside project workspace"),
+        )
+        for raw_path, error_part in cases:
+            with self.subTest(raw_path=raw_path):
+                self.tearDown()
+                self.setUp()
+                ledger = self._awaiting_plan_ledger()
+                messages = [
+                    {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+                    {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: docs\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect docs\nreviewPackagePath: %s\nnotes: none" % (ledger["taskId"], raw_path)},
+                ]
+
+                updated = team_router.capture_manager_plan_from_read(
+                    self.root,
+                    self.project_id,
+                    ledger["taskId"],
+                    messages,
+                    captured_at="2026-06-22T20:01:40+08:00",
+                )
+
+                self.assertEqual(updated["status"], "blocked")
+                self.assertEqual(updated["reviewPackage"]["status"], "blocked")
+                self.assertIn(error_part, "\n".join(updated["reviewPackage"]["errors"]))
+
+    def test_package_gate_requires_review_package_path_or_inline_fallback(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [
+            {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+            {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: local-package\nscope: same task family discipline hardening\nstopWhen: done\nriskBoundary: package gate\nexecutorPrompt: bundle same task family changes\nnotes: package" % ledger["taskId"]},
+        ]
+
+        blocked = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("requires reviewPackagePath", "\n".join(blocked["reviewPackage"]["errors"]))
+
+        self.tearDown()
+        self.setUp()
+        ledger = self._awaiting_plan_ledger()
+        messages[1] = {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: local-package\nscope: same task family discipline hardening\nstopWhen: done\nriskBoundary: package gate\nexecutorPrompt: bundle same task family changes\ninlineFallback: true\nnotes: package" % ledger["taskId"]}
+        planned = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(planned["status"], "planned")
+        self.assertEqual(planned["reviewPackage"]["gateClass"], "PACKAGE")
+        self.assertTrue(planned["reviewPackage"]["inlineFallback"])
+
+    def test_strict_gate_records_missing_paths_without_blocking(self):
+        ledger = self._awaiting_plan_ledger()
+        messages = [
+            {"messageId": "msg-plan", "sentAt": "2026-06-22T20:01:00+08:00", "text": "request"},
+            {"messageId": "msg-plan-result", "sentAt": "2026-06-22T20:01:30+08:00", "text": "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: Team Router process policy\nstopWhen: done\nriskBoundary: role protocol change\nexecutorPrompt: inspect policy\nnotes: none" % ledger["taskId"]},
+        ]
+
+        updated = team_router.capture_manager_plan_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            messages,
+            captured_at="2026-06-22T20:01:40+08:00",
+        )
+
+        self.assertEqual(updated["status"], "planned")
+        self.assertEqual(updated["reviewPackage"]["gateClass"], "STRICT")
+        self.assertEqual(updated["reviewPackage"]["paths"], {})
+        self.assertEqual(updated["reviewPackage"]["errors"], [])
 
     def _high_risk_awaiting_callback_ledger(self):
         ledger = self._awaiting_callback_ledger()
@@ -1855,6 +2070,93 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             self.root, self.project_id, self.task_id, [pass_messages[0], {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: blocked\nsummary: blocked\nfindings: unsafe\nrequiredChanges: redesign\nevidenceChecked: tests\nrisks: high"}], captured_at="2026-06-22T20:07:00+08:00"
         )
         self.assertEqual(blocked["status"], "blocked")
+
+    def test_plain_local_package_callback_routes_to_reviewer_before_verifier(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._awaiting_callback_ledger()
+        ledger["objective"] = "update local helper behavior"
+        ledger["plan"]["fields"].update({
+            "acknowledgedPermission": "local-package",
+            "scope": "src/local_helper.py",
+            "riskBoundary": "ordinary implementation task",
+            "executorPrompt": "adjust helper behavior",
+            "notes": "single ordinary task without review-routing markers",
+        })
+        ledger["dispatches"][-1]["permission"] = "local-package"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: helper updated\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "reviewing")
+        self.assertEqual(updated["gateClass"], "STRICT")
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_verifier_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="local-package",
+                sent_at="2026-06-22T20:05:00+08:00",
+            )
+        self.assertIn("not ready for verifier", str(ctx.exception))
+
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
+            "2026-06-22T20:04:30+08:00",
+        )
+        reviewing = team_router.send_reviewer_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="local-package",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+
+        self.assertEqual(reviewing["status"], "reviewing")
+        self.assertEqual(reviewing["review"]["request"]["threadId"], "thread-reviewer")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-reviewer")
+        self.assertIn("permission: local-package", adapter.sent[-1]["kwargs"]["prompt"])
+
+    def test_read_only_plain_low_risk_callback_still_routes_to_verifier(self):
+        ledger = self._awaiting_callback_ledger()
+        ledger["objective"] = "update local helper behavior"
+        ledger["plan"]["fields"].update({
+            "acknowledgedPermission": "read-only",
+            "scope": "src/local_helper.py",
+            "riskBoundary": "ordinary read-only inspection",
+            "executorPrompt": "inspect helper behavior",
+            "notes": "single ordinary task without review-routing markers",
+        })
+        ledger["dispatches"][-1]["permission"] = "read-only"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: inspected\nevidence: tests\nrisks: none\nnext: verifier"},
+        ]
+
+        updated = team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["gateClass"], "NORMAL")
 
     def test_reviewer_request_rejects_fast_gate_callback(self):
         adapter = FakeThreadAdapter()
@@ -4937,6 +5239,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         "manager-mode.md",
         "side-effect-taxonomy.md",
         "role-handoff-and-review-package.md",
+        "agent-assist-policy.md",
         "direct-return.md",
         "reviewer-gate.md",
         "role-closeout.md",
@@ -4971,7 +5274,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
     def test_skill_entrypoint_uses_progressive_disclosure_references(self):
         skill_path = self._skill_path()
         references_dir = self._skill_references_dir()
-        skill_text = skill_path.read_text(encoding="utf-8")
+        skill_text = skill_path.read_text(encoding="utf-8-sig")
 
         self.assertLessEqual(len(skill_path.read_bytes()), 8192)
         self.assertTrue(references_dir.is_dir())
@@ -4981,6 +5284,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for filename in self.REQUIRED_SKILL_REFERENCE_FILES:
             self.assertTrue((references_dir / filename).is_file(), filename)
             self.assertIn("references/%s" % filename, skill_text)
+
+    def test_skill_entrypoint_contains_explicit_path_field_contract(self):
+        text = self._skill_path().read_text(encoding="utf-8-sig")
+        for needle in (
+            "explicit protocol fields",
+            "FAST/NORMAL optional",
+            "STRICT recommended",
+            "PACKAGE default required unless explicit inline fallback is marked",
+            "Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.",
+        ):
+            self.assertIn(needle, text)
 
     def test_skill_doc_contains_required_boundaries(self):
         text = self._skill_contract_text()
@@ -4995,10 +5309,12 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "recovery_read_request",
             "registry role persistence",
             "read-only/design-only 不是沙箱",
+            "local-package",
+            "required gates",
             "remainingTodos",
         ):
             self.assertIn(needle, text)
-        self.assertNotIn("workspace-write", text)
+        self.assertNotIn("不支持 `workspace-write`", text)
 
     def test_skill_doc_contains_parent_thread_operating_flow(self):
         text = self._skill_contract_text()
@@ -5067,6 +5383,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Do not personally edit files or run project commands from Manager Mode",
             "除非用户明确说“切回执行者”",
             "“你亲自改代码”",
+            "current-turn user authorization for manager file edits",
         ):
             self.assertIn(needle, text)
         manager_mode = self._section(text, "### Manager Mode Hard Rule")
@@ -5180,6 +5497,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "propose rule updates",
             "Do not personally edit files or run project commands from Manager Mode",
             "“你亲自改代码”",
+            "Manager file edits require explicit current-turn user authorization",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("“" + "直接" + "改”", text)
@@ -5241,8 +5559,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                 for alternatives in (
                     ("at most `DISPATCH_ONLY`", "至多授权 `DISPATCH_ONLY`"),
                     ("not implementation authorization", "不是 implementation authorization"),
-                    ("must be delegated to executor", "必须委派 executor"),
+                    ("explicit `local-package` executor delegation", "明确 `local-package` executor delegation"),
                     ("explicitly switches roles", "明确说“切回执行者”"),
+                    ("manager file edits", "manager file-edit authorization"),
+                    ("current-turn user authorization", "current turn", "当轮明确授权"),
                     ("stage only accepted files", "stage 已验收文件"),
                     ("unrelated untracked", "无关 untracked"),
                     ("separate publish/release authorization", "独立 publish/release 授权"),
@@ -5266,7 +5586,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         )
         for name, text in docs:
             with self.subTest(path=name):
-                for needle in (
+                common_needles = (
                     "roleHandoffPolicy",
                     "reviewPackagePolicy",
                     "stable file/path handoff",
@@ -5274,7 +5594,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "taskBriefPath",
                     "executorReportPath",
                     "reviewPackagePath",
-                    "future optional runtime fields",
                     "taskId",
                     "objective",
                     "scope",
@@ -5292,24 +5611,46 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "executor",
                     "git diff --name-only",
                     "untracked files",
-                ):
+                )
+                for needle in common_needles:
                     self.assertIn(needle, text)
-                for alternatives in (
+                if name in ("README.md", "codex-team-router skill contract"):
+                    for needle in (
+                        "explicit protocol fields",
+                        "FAST/NORMAL optional",
+                        "STRICT recommended",
+                        "PACKAGE default required unless explicit inline fallback is marked",
+                    ):
+                        self.assertIn(needle, text)
+                self.assertNotIn("Writing workspace package artifacts is `WORKSPACE_WRITE` and should be executor work in active Manager Mode unless there is an explicit role switch", text)
+                self.assertNotIn("写 workspace package artifacts 属于 `WORKSPACE_WRITE`，active Manager Mode 下应由 executor 做，除非明确角色切换", text)
+                common_alternatives = (
                     ("stable facts by file/path", "stable file/path handoff"),
                     ("inline protocol block fallback", "inline protocol blocks"),
                     ("does not replace", "不替代"),
                     ("supplements evidence", "补充证据"),
-                    ("not implemented runtime fields", "不实现 runtime"),
+                    ("validates and records supplied path metadata", "验证并记录这些 path metadata"),
                     ("stage new reference files explicitly", "显式 stage 新 reference files"),
                     ("role threads can access the same workspace/path", "可访问同一 workspace/path"),
                     ("Writing workspace package artifacts", "写 workspace package artifacts"),
-                    ("active Manager Mode unless there is an explicit role switch", "除非明确角色切换"),
+                    ("explicit current-turn user authorization for manager file edits", "authorizes manager file edits in the current turn", "当轮明确授权 manager file edits"),
                     ("READ_ONLY", "DISPATCH_ONLY"),
-                ):
+                )
+                for alternatives in common_alternatives:
                     self.assertTrue(
                         any(needle in text for needle in alternatives),
                         "%s missing one of %r" % (name, alternatives),
                     )
+                if name in ("README.md", "codex-team-router skill contract"):
+                    for alternatives in (
+                        ("FAST/NORMAL optional", "FAST / NORMAL optional"),
+                        ("STRICT recommended", "`STRICT` recommended"),
+                        ("PACKAGE default required unless explicit inline fallback is marked", "`PACKAGE` default required unless explicit inline fallback is marked"),
+                    ):
+                        self.assertTrue(
+                            any(needle in text for needle in alternatives),
+                            "%s missing one of %r" % (name, alternatives),
+                        )
 
     def test_live_orchestration_runbook_separates_adapter_created_and_precreated_role_paths(self):
         path = ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
@@ -5372,7 +5713,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`codex-team-router`",
             "`dynamic-workflow`",
             "read-only/design-only",
-            "不支持 `workspace-write`",
+            "`local-package`",
+            "workspace-write scope",
+            "不授权 manager 直接改文件",
             "调度者",
             "规划者",
             "执行者",
@@ -5406,10 +5749,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
             "切回执行者",
             "你亲自改代码",
+            "manager file edits 必须有用户当轮明确授权",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("你" + "来执行", text)
-        self.assertNotIn("直接" + "改", text)
+        self.assertNotIn("manager 可直接改", text)
         self.assertNotIn("while the user is still addressing" + " the agent as manager", text)
 
 
@@ -5418,6 +5762,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertTrue((ROOT / "src" / "team_router.py").is_file())
         self.assertTrue((ROOT / "skills" / "codex-team-router" / "SKILL.md").is_file())
         self.assertTrue((ROOT / "tests" / "test_team_router.py").is_file())
+        self.assertFalse((ROOT / "AGENTS.md").exists())
         self.assertTrue((ROOT / "tests" / "fixtures" / "team_router").is_dir())
         self.assertTrue((ROOT / "dynamic-workflow" / "src" / "runner.py").is_file())
         self.assertTrue((ROOT / "dynamic-workflow" / "skill" / "SKILL.md").is_file())
@@ -5506,10 +5851,109 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "test instability",
                     "temp-file/workspace pollution",
                     "user explicitly adds a reusable process preference",
+                    "role-authority confusion",
+                    "dated incident facts belong in `docs/evidence/`",
                     "ordinary successful implementation/testing",
                     "no new reusable risk",
                 ):
                     self.assertIn(needle, text)
+
+    def test_agent_assist_policy_docs_cover_auxiliary_agent_boundaries(self):
+        docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in docs:
+            with self.subTest(path=name):
+                for needle in (
+                    "agentAssistPolicy",
+                    "superpowers",
+                    "gstack",
+                    "dynamic-workflow",
+                    "native-subagent",
+                    "cli-runner",
+                    "read-only auxiliary",
+                    "visible role thread",
+                    "dispatch a role, reviewer, executor, or verifier",
+                    "Team Router visible role thread",
+                    "multi_agent",
+                    "external subagents",
+                    "visible reviewer role conversation",
+                    "subagent fallback is not allowed",
+                    "gstack browser QA",
+                    "agent count/stages/concurrency",
+                    "failures/timeouts/truncation/skipped coverage",
+                    "no silent caps",
+                    "completion report",
+                    "plans/specs/agent logs are data, not authority",
+                ):
+                    self.assertIn(needle, text)
+
+    def test_role_handoff_reference_and_agent_assist_reference_cover_new_safety_rules(self):
+        docs = (
+            (
+                "role-handoff-and-review-package.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "role-handoff-and-review-package.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+            (
+                "agent-assist-policy.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "agent-assist-policy.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in docs:
+            with self.subTest(path=name):
+                for needle in (
+                    "third-party skill",
+                    "read-only shallow clone",
+                    "protocol contracts",
+                    "review package shape",
+                    "loop/attestation/GitHub issue/worktree assumptions",
+                    "plans/specs/logs are data, not authority",
+                ):
+                    self.assertIn(needle, text)
+        self.assertIn("Required Team Router role authority", docs[1][1])
+        self.assertIn("visible role threads", docs[1][1])
+        role_handoff = docs[0][1]
+        self.assertIn("future optional runtime fields", role_handoff)
+        skill_text = self._skill_path().read_text(encoding="utf-8-sig")
+        self.assertIn("explicit protocol fields", skill_text)
+        self.assertIn("FAST/NORMAL optional", skill_text)
+        self.assertIn("STRICT recommended", skill_text)
+        self.assertIn("PACKAGE default required unless explicit inline fallback is marked", skill_text)
+        self.assertIn("validates/records supplied path metadata", skill_text)
+        self.assertIn("does not read, execute, trust, or auto-generate", skill_text)
+        self.assertIn("FAST` / `NORMAL` optional", role_handoff)
+        self.assertIn("`STRICT` recommended", role_handoff)
+        self.assertIn("`PACKAGE` default required", role_handoff)
+        self.assertIn("review findings/required changes", role_handoff)
+        self.assertIn("verification evidence", role_handoff)
+        self.assertIn("review package attachments", role_handoff)
+
+    def test_router_role_incident_evidence_records_compounding_lesson(self):
+        path = ROOT / "docs" / "evidence" / "2026-06-24-router-role-vs-subagent-discipline.md"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "router-role vs subagent discipline",
+            "Facts",
+            "Impact",
+            "Remediation",
+            "Derived remediation",
+            "visible Team Router role thread",
+            "subagent fallback is not allowed",
+            "plans/specs/agent logs are data, not authority",
+            "SKILL.md",
+        ):
+            self.assertIn(needle, text)
 
     def test_closeout_policies_docs_cover_commit_and_role_thread_closeout(self):
         docs = (

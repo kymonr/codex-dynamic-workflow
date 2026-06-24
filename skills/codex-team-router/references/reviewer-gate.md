@@ -31,7 +31,7 @@ returnThreadId: <manager thread id when direct return is available>
 reviewDelivery: direct-send
 reviewFallback: self-thread-marker
 reviewerMode: read-only/adversarial
-permission: read-only | design-only
+permission: read-only | design-only | local-package
 scope: <review scope>
 
 TEAM_ROUTER_REVIEW taskId=<taskId>

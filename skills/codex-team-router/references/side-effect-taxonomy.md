@@ -28,9 +28,9 @@ After verifier pass and an explicit user request to commit, manager may run loca
 
 Mutating project work: modifying project files, running formatters that write, generating fixtures, changing runtime, docs, or tests.
 
-In active Manager Mode, `WORKSPACE_WRITE` must be delegated to executor unless the user explicitly switches out of Manager Mode with an allowed role-switch phrase such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地”.
+In active Manager Mode, `WORKSPACE_WRITE` is delegated to executor when the manager dispatch explicitly grants an authorized `local-package` scope and required reviewer/verifier gates apply. Manager direct file edits still require an allowed role-switch phrase such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地” plus explicit current-turn user authorization for manager file edits.
 
-Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an executor or ask for an explicit role switch instead of doing them directly.
+Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an authorized executor package or ask for an explicit role switch plus explicit current-turn user authorization for manager file edits instead of doing them directly.
 
 ### HEAVY_OR_RISKY
 
@@ -52,7 +52,7 @@ In active Manager Mode, terse approvals like `可以`, `修`, `继续`, `开始�
 
 `LOCAL_CLOSEOUT` is allowed only after verifier pass plus explicit user commit request.
 
-`WORKSPACE_WRITE` is delegated executor work in active Manager Mode unless an explicit role switch has happened.
+`WORKSPACE_WRITE` is delegated executor work under explicit `local-package` authorization and required gates. It is not manager direct-edit permission unless an explicit role switch and current-turn manager file-edit authorization have happened.
 
 `HEAVY_OR_RISKY` requires explicit separate authorization and cannot be inferred from terse approvals.
 

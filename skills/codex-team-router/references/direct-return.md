@@ -30,11 +30,11 @@ Marker lines use `MARKER key=value`. Ordinary fields use `key: value`. Reject mi
 ```text
 TEAM_ROUTER_PLAN_REQUEST taskId=<taskId>
 objective: <user goal>
-permission: read-only | design-only
+permission: read-only | design-only | local-package
 
 TEAM_ROUTER_PLAN taskId=<taskId>
 status: planned | blocked
-acknowledgedPermission: read-only | design-only | escalation-required
+acknowledgedPermission: read-only | design-only | local-package | escalation-required
 scope: <clear scope>
 stopWhen: <done or blocked condition>
 riskBoundary: <permission/data/external-system boundary>
@@ -54,7 +54,7 @@ callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>
 returnThreadId: <manager thread id when direct return is available>
 callbackDelivery: direct-send
 callbackFallback: self-thread-marker
-permission: read-only | design-only
+permission: read-only | design-only | local-package
 scope: <manager scope>
 stopWhen: <manager stopWhen>
 searchAnchor: <messageId or sentAt>
@@ -78,7 +78,7 @@ callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>
 returnThreadId: <manager thread id when direct return is available>
 verdictDelivery: direct-send
 verdictFallback: self-thread-marker
-permission: read-only | design-only
+permission: read-only | design-only | local-package
 scope: <executor scope>
 
 TEAM_ROUTER_VERDICT taskId=<taskId>

@@ -11,6 +11,7 @@ Required reference files:
 - `manager-mode.md`
 - `side-effect-taxonomy.md`
 - `role-handoff-and-review-package.md`
+- `agent-assist-policy.md`
 - `direct-return.md`
 - `reviewer-gate.md`
 - `role-closeout.md`
@@ -18,9 +19,9 @@ Required reference files:
 - `manual-orchestration.md`
 - `testing-and-quality-gates.md`
 
-Tests must fail if the entrypoint grows past the 8KB cap, if required references are removed, or if key rules disappear from the combined SKILL.md plus references contract.
+Tests must fail if the entrypoint grows past the 8KB cap, if required references are removed, if a project-local `AGENTS.md` is introduced without explicit authorization, or if key rules disappear from the combined SKILL.md plus references contract.
 
-`protocol_contract_snapshot()` is the code-side center of truth for role/state/marker contracts and policy snapshots. It must expose `sideEffectTaxonomy`, `roleCloseoutPolicy`, and `roleHandoffReviewPackagePolicy` so docs/tests do not drift from the implementation contract.
+`protocol_contract_snapshot()` is the code-side center of truth for role/state/marker contracts and policy snapshots. It must expose `sideEffectTaxonomy`, `roleCloseoutPolicy`, `roleHandoffReviewPackagePolicy`, and `agentAssistPolicy` so docs/tests do not drift from the implementation contract. Snapshot tests must lock the explicit path-field contract (`taskBriefPath`, `executorReportPath`, `reviewPackagePath`), gate-based package expectations, external-material safety boundary, Team Router project-context visible role defaults, and third-party skill intake boundary.
 
 ## Fixture Expectations
 
