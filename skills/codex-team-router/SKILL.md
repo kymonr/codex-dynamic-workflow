@@ -72,6 +72,7 @@ Read only the relevant deep reference for the current step:
 - `references/role-handoff-and-review-package.md`
 - `references/agent-assist-policy.md`
 - `references/direct-return.md`
+- `references/manager-polling-cadence.md`
 - `references/reviewer-gate.md`
 - `references/role-closeout.md`
 - `references/adapter-runtime.md`
