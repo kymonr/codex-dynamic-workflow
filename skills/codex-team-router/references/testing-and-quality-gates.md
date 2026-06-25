@@ -39,8 +39,9 @@ The fixture `tests/fixtures/team_router/live_manager_inbox_direct_return.json` i
 
 The fixture `tests/fixtures/team_router/three_role_visible_smoke_scenarios.json` snapshots the visible three-role mode. It must keep these paths represented:
 
-- `direct-send-callback-success`: executor direct return reaches the parent inbox and records `returnThreadId`, `returnSearchAnchor`, and `fallbackSearchAnchor`.
-- `direct-send-missed-self-thread-fallback`: manager inbox misses direct return, so the self-thread marker and `read_thread searchAnchor` recover the callback.
+- `direct-send-callback-success`: executor direct return reaches the parent inbox and records `returnThreadId`, `orchestratorThreadId`, `roleThreadId`, `returnSearchAnchor`, and `fallbackSearchAnchor`.
+- `direct-send-missed-self-thread-fallback`: manager inbox misses direct return, so the self-thread marker and `read_thread searchAnchor` recover the callback on the 5 minutes / 300 seconds watcher fallback cadence.
+- `direct-send-duplicate-callback-idempotent`: duplicate direct callbacks are ignored after the ledger advances past that role; observations are not recorded twice.
 - `verifier-needs-rework`: verifier returns `needs_rework`; parent stops until user approval before redispatch.
 - `verifier-blocked-closeout`: verifier returns `blocked`; parent emits `Team Router Closeout` with remaining work.
 

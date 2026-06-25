@@ -27,7 +27,7 @@ Role reuse policy applies to reviewer too: for the same `taskId` or task family,
 ```text
 TEAM_ROUTER_REVIEW_REQUEST taskId=<taskId>
 reviewMarker: TEAM_ROUTER_REVIEW taskId=<taskId>
-returnThreadId: <manager thread id when direct return is available>
+returnThreadId: <explicit orchestrator/parent thread id when direct return is available>
 reviewDelivery: direct-send
 reviewFallback: self-thread-marker
 reviewerMode: read-only/adversarial

@@ -28,9 +28,9 @@ After verifier pass and an explicit user request to commit, manager may run loca
 
 Mutating project work: modifying project files, running formatters that write, generating fixtures, changing runtime, docs, or tests.
 
-In active Manager Mode, `WORKSPACE_WRITE` is delegated to executor when the manager dispatch explicitly grants an authorized `local-package` scope and required reviewer/verifier gates apply. Manager direct file edits still require an allowed role-switch phrase such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地” plus explicit current-turn user authorization for manager file edits.
+In active Manager Mode, `WORKSPACE_WRITE` is delegated to executor when the manager dispatch explicitly grants an authorized `local-package` scope and required reviewer/verifier gates apply. Manager/dispatcher direct file edits are opt-in: they require an explicit current-turn instruction that the manager should do that exact file-changing action. Commit, PR, publish, and release must first be presented as gated actions and wait for explicit authorization.
 
-Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an authorized executor package or ask for an explicit role switch plus explicit current-turn user authorization for manager file edits instead of doing them directly.
+Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an authorized executor package, or proceed only when the user explicitly says in the current turn that the manager should do that exact work.
 
 ### HEAVY_OR_RISKY
 
@@ -52,7 +52,7 @@ In active Manager Mode, terse approvals like `可以`, `修`, `继续`, `开始�
 
 `LOCAL_CLOSEOUT` is allowed only after verifier pass plus explicit user commit request.
 
-`WORKSPACE_WRITE` is delegated executor work under explicit `local-package` authorization and required gates. It is not manager direct-edit permission unless an explicit role switch and current-turn manager file-edit authorization have happened.
+`WORKSPACE_WRITE` is delegated executor work under explicit `local-package` authorization and required gates. It is not manager direct-edit permission unless the current turn explicitly tells the manager to do that exact file-changing work.
 
 `HEAVY_OR_RISKY` requires explicit separate authorization and cannot be inferred from terse approvals.
 

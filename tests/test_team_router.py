@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import json
 import sys
 import tempfile
@@ -349,11 +349,11 @@ risks: none
         self.assertEqual(team_router.classify_team_router_gate(ledger), "PACKAGE")
         self.assertTrue(team_router.gate_class_requires_reviewer("PACKAGE"))
 
-    def test_fast_gate_default_read_window_is_30_seconds(self):
-        self.assertEqual(team_router.role_read_interval_seconds("FAST"), 30)
-        self.assertEqual(team_router.role_read_interval_seconds("NORMAL"), 60)
-        self.assertEqual(team_router.role_read_interval_seconds("STRICT"), 90)
-        self.assertEqual(team_router.role_read_interval_seconds("PACKAGE"), 120)
+    def test_role_read_interval_uses_five_minute_minimum(self):
+        self.assertEqual(team_router.role_read_interval_seconds("FAST"), 300)
+        self.assertEqual(team_router.role_read_interval_seconds("NORMAL"), 300)
+        self.assertEqual(team_router.role_read_interval_seconds("STRICT"), 300)
+        self.assertEqual(team_router.role_read_interval_seconds("PACKAGE"), 300)
 
     def test_next_role_read_policy_uses_gate_interval_and_timezone(self):
         ledger = {
@@ -367,8 +367,35 @@ risks: none
         )
 
         self.assertEqual(policy["gateClass"], "FAST")
-        self.assertEqual(policy["nextAllowedReadAt"], "2026-06-24T12:00:30+08:00")
+        self.assertEqual(policy["nextAllowedReadAt"], "2026-06-24T12:05:00+08:00")
+        self.assertEqual(policy["minimumIntervalSeconds"], 300)
         self.assertTrue(policy["directReturnExpected"])
+        self.assertTrue(policy["completionFeedbackRequired"])
+        self.assertIn("observe-only", policy["convergenceMode"])
+
+    def test_missing_protocol_status_does_not_treat_active_done_phrasing_as_feedback_missing(self):
+        self.assertEqual(
+            team_router._missing_protocol_observed_status("not done yet, still working"),
+            "active",
+        )
+        self.assertEqual(
+            team_router._missing_protocol_observed_status("I'm done with step 1, moving on"),
+            "active",
+        )
+        self.assertEqual(
+            team_router._missing_protocol_observed_status("looks completely fine, continuing"),
+            "active",
+        )
+
+    def test_missing_protocol_status_requires_structured_completion_cues(self):
+        self.assertEqual(
+            team_router._missing_protocol_observed_status("status: done\nfinal: true"),
+            "needs_feedback",
+        )
+        self.assertEqual(
+            team_router._missing_protocol_observed_status("completed successfully"),
+            "needs_feedback",
+        )
 
     def test_role_read_allowed_suppresses_early_fallback_reads(self):
         ledger = {
@@ -378,14 +405,14 @@ risks: none
             "plan": {"fields": {"scope": "README.md", "riskBoundary": "docs-only encoding"}},
             "readDiscipline": {
                 "gateClass": "FAST",
-                "nextAllowedReadAt": "2026-06-24T12:00:30+08:00",
+                "nextAllowedReadAt": "2026-06-24T12:05:00+08:00",
                 "directReturnExpected": True,
             },
         }
 
         decision = team_router.role_read_allowed(
             ledger,
-            observed_at="2026-06-24T12:00:10+08:00",
+            observed_at="2026-06-24T12:04:59+08:00",
             reason="scheduled-fallback",
         )
 
@@ -400,7 +427,7 @@ risks: none
             "status": "awaiting_callback",
             "readDiscipline": {
                 "gateClass": "FAST",
-                "nextAllowedReadAt": "2026-06-24T12:00:30+08:00",
+                "nextAllowedReadAt": "2026-06-24T12:05:00+08:00",
                 "directReturnExpected": True,
             },
         }
@@ -408,12 +435,185 @@ risks: none
         decision = team_router.role_read_allowed(
             ledger,
             observed_at="2026-06-24T12:00:10+08:00",
-            reason="user-triggered status check",
+            reason="user_requested_status check",
         )
 
         self.assertTrue(decision["allowed"])
         self.assertEqual(decision["action"], "read_allowed")
 
+    def test_role_read_allowed_does_not_bypass_on_incidental_stop_word(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-fast",
+            "objective": "restore README BOM",
+            "status": "awaiting_callback",
+            "readDiscipline": {
+                "gateClass": "FAST",
+                "nextAllowedReadAt": "2026-06-24T12:05:00+08:00",
+                "directReturnExpected": True,
+            },
+        }
+
+        decision = team_router.role_read_allowed(
+            ledger,
+            observed_at="2026-06-24T12:00:10+08:00",
+            reason="do not stop the heartbeat",
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["action"], "read_suppressed")
+
+
+    def test_role_read_allowed_enforces_last_read_five_minute_interval(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-fast",
+            "objective": "restore README BOM",
+            "status": "awaiting_callback",
+            "readDiscipline": {
+                "gateClass": "FAST",
+                "lastReadAt": "2026-06-24T12:00:00+08:00",
+                "nextAllowedReadAt": "2026-06-24T12:00:30+08:00",
+                "minimumIntervalSeconds": 300,
+                "directReturnExpected": True,
+            },
+        }
+
+        early = team_router.role_read_allowed(
+            ledger,
+            observed_at="2026-06-24T12:04:59+08:00",
+            reason="scheduled-fallback",
+        )
+        allowed = team_router.role_read_allowed(
+            ledger,
+            observed_at="2026-06-24T12:05:00+08:00",
+            reason="scheduled-fallback",
+        )
+
+        self.assertFalse(early["allowed"])
+        self.assertEqual(early["nextAllowedReadAt"], "2026-06-24T12:05:00+08:00")
+        self.assertEqual(early["minimumIntervalSeconds"], 300)
+        self.assertTrue(allowed["allowed"])
+
+
+    def test_convergence_prompt_disallowed_while_role_status_is_active(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-strict",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "inProgress",
+            "readDiscipline": {
+                "gateClass": "STRICT",
+                "nextAllowedReadAt": "2026-06-24T12:01:30+08:00",
+                "directReturnExpected": True,
+            },
+        }
+
+        decision = team_router.convergence_prompt_allowed(
+            ledger,
+            observed_at="2026-06-24T12:00:40+08:00",
+            reason="scheduled convergence check",
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["action"], "observe_only_wait")
+        self.assertEqual(decision["observedStatus"], "in_progress")
+
+    def test_convergence_timeout_requires_observation_of_no_progress_first(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-strict",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "idle",
+            "readDiscipline": {
+                "gateClass": "STRICT",
+                "nextAllowedReadAt": "2026-06-24T12:01:30+08:00",
+                "directReturnExpected": True,
+            },
+        }
+
+        decision = team_router.convergence_prompt_allowed(
+            ledger,
+            observed_at="2026-06-24T12:05:00+08:00",
+            reason="timeout fallback",
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["action"], "observe_only_read_first")
+
+    def test_convergence_timeout_allowed_after_observation_confirms_no_progress(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-strict",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "idle",
+            "readDiscipline": {
+                "gateClass": "STRICT",
+                "nextAllowedReadAt": "2026-06-24T12:01:30+08:00",
+                "directReturnExpected": True,
+                "lastObservedNoProgressAt": "2026-06-24T12:04:30+08:00",
+            },
+        }
+
+        decision = team_router.convergence_prompt_allowed(
+            ledger,
+            observed_at="2026-06-24T12:05:00+08:00",
+            reason="timeout fallback",
+        )
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["action"], "convergence_allowed")
+        self.assertEqual(decision["observedNoProgressAt"], "2026-06-24T12:04:30+08:00")
+
+    def test_command_startup_retry_decision_uses_parent_probes_then_same_scope_retry(self):
+        decision = team_router.command_startup_retry_decision(-1073741502, "", "")
+
+        self.assertTrue(decision["startupFailure"])
+        self.assertEqual(decision["action"], "run_parent_minimal_probes")
+        self.assertIn("cmd.exe /c ver", decision["probes"])
+        self.assertIn("Get-Location", decision["probes"])
+        self.assertIn("git status -s --untracked-files=all", decision["probes"])
+
+        retry = team_router.command_startup_retry_decision(-1073741502, "", "", probes_recovered=True)
+        self.assertEqual(retry["action"], "retry_same_scope")
+        self.assertIn("same narrow package", retry["reason"])
+
+        blocked = team_router.command_startup_retry_decision(-1073741502, "", "", probes_recovered=False)
+        self.assertEqual(blocked["action"], "environment_blocked")
+
+    def test_verifier_evidence_only_fast_path_requires_complete_evidence_and_pass_review(self):
+        callback_fields = {
+            "status": "done",
+            "summary": "implemented",
+            "evidence": "tests: ok; diff checked",
+        }
+        reviewer_result = {
+            "fields": {
+                "result": "pass",
+                "requiredChanges": "none",
+                "evidenceChecked": "tests",
+            }
+        }
+
+        decision = team_router.verifier_evidence_only_fast_path(callback_fields, reviewer_result)
+        self.assertTrue(decision["allowed"])
+        self.assertIn("requiredChanges none", decision["reason"])
+
+    def test_verifier_evidence_only_fast_path_rejects_required_changes_or_missing_evidence(self):
+        missing = team_router.verifier_evidence_only_fast_path({"status": "done"}, None)
+        self.assertFalse(missing["allowed"])
+        self.assertIn("missing", missing["reason"])
+
+        reviewer_gap = team_router.verifier_evidence_only_fast_path(
+            {"status": "done", "evidence": "tests"},
+            {"fields": {"result": "pass", "requiredChanges": "add more evidence"}},
+        )
+        self.assertFalse(reviewer_gap["allowed"])
+        self.assertIn("requiredChanges", reviewer_gap["reason"])
+
+    def test_verifier_evidence_only_fast_path_rejects_missing_reviewer_result_even_with_evidence(self):
+        decision = team_router.verifier_evidence_only_fast_path(
+            {"status": "done", "evidence": "tests passed"},
+            None,
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], "reviewer result is missing")
     def test_protocol_contract_snapshot_centralizes_roles_states_and_markers(self):
         snapshot = team_router.protocol_contract_snapshot()
 
@@ -439,6 +639,10 @@ risks: none
             ["blocked", "needs_rework", "pass"],
         )
         self.assertEqual(
+            snapshot["markers"]["TEAM_ROUTER_VERDICT"]["conditionalRequired"]["result"],
+            "required unless status: accepted is present; status: accepted implies result: pass",
+        )
+        self.assertEqual(
             snapshot["markers"]["TEAM_ROUTER_REVIEW"]["requiredFields"],
             ["result", "summary", "findings", "requiredChanges", "evidenceChecked", "risks"],
         )
@@ -462,7 +666,7 @@ risks: none
         self.assertIn("low-frequency", policy["polling"]["mode"])
         self.assertIn("event-driven", policy["polling"]["mode"])
         self.assertIn("read_thread", policy["polling"]["mode"])
-        self.assertIn("30-60s", policy["polling"]["steadyCadence"])
+        self.assertIn("5 minutes", policy["polling"]["steadyCadence"])
         self.assertIn("user-triggered status check", policy["polling"]["allowedReads"])
         self.assertIn("agreed or explicit interval", "\n".join(policy["polling"]["allowedReads"]))
         self.assertIn("known expected completion window", "\n".join(policy["polling"]["allowedReads"]))
@@ -472,6 +676,70 @@ risks: none
         self.assertIn("continuous polling", policy["polling"]["forbidden"])
         self.assertIn("mid-run instruction injection", policy["polling"]["forbidden"])
         self.assertIn("status changes", policy["polling"]["userVisibleUpdates"])
+        watcher = policy["watcherAutomation"]
+        self.assertEqual(
+            watcher["ledgerFields"],
+            ("role", "threadId", "expectedMarker", "lastReadAt", "firstCheckAt", "nextAllowedReadAt", "status", "waitingReason", "nextManagerAction"),
+        )
+        self.assertIn("heartbeat", watcher["fallback"])
+        self.assertIn("5 minutes", watcher["fallback"])
+        self.assertIn("Role writing a marker is not receipt by the manager", watcher["receiptRule"])
+        self.assertIn("plain user-facing language", watcher["completionReport"])
+        self.assertIn("firstCheckAt", watcher["ledgerFields"])
+        self.assertIn("single short observation-only check", watcher["firstCheck"])
+        self.assertIn("5 minutes", watcher["firstCheck"])
+        accepted_closeout = watcher["acceptedCloseout"]
+        self.assertIn("stop_and_delete_heartbeat", accepted_closeout["watcherAction"])
+        self.assertIn("plain language", accepted_closeout["reportAction"])
+        self.assertIn("stage/commit/push/PR/publish/release were not done", accepted_closeout["notDone"])
+        direct_return = policy["roleDirectReturn"]
+        self.assertEqual(direct_return["defaultReturnThread"], "none without explicit parent/source thread id")
+        self.assertIn("current orchestrator/parent thread", direct_return["targetThread"])
+        self.assertIn("not the manager/planner role thread", direct_return["targetThread"])
+        self.assertEqual(
+            direct_return["requiredLedgerFields"],
+            ("returnThreadId", "orchestratorThreadId", "roleThreadId"),
+        )
+        self.assertIn("direct-send", direct_return["delivery"])
+        self.assertIn("self-thread-marker", direct_return["fallback"])
+        self.assertIn("5 minutes", direct_return["fallback"])
+        self.assertIn("sourceThreadId", direct_return["managerReceiptValidation"])
+        self.assertIn("taskId", direct_return["managerReceiptValidation"])
+        self.assertIn("marker", direct_return["managerReceiptValidation"])
+        self.assertIn("returnThreadId", direct_return["managerReceiptValidation"])
+        self.assertIn("orchestratorThreadId", direct_return["managerReceiptValidation"])
+        self.assertIn("roleThreadId", direct_return["managerReceiptValidation"])
+        self.assertIn("expected marker", direct_return["inboxValidation"])
+        self.assertIn("currently awaited", direct_return["inboxValidation"])
+        self.assertIn("duplicate direct callbacks are ignored", direct_return["deduplication"])
+        self.assertIn("not recorded twice", direct_return["deduplication"])
+        self.assertEqual(
+            direct_return["markers"],
+            {
+                "executor": "TEAM_ROUTER_CALLBACK",
+                "reviewer": "TEAM_ROUTER_REVIEW",
+                "verifier": "TEAM_ROUTER_VERDICT",
+            },
+        )
+        convergence = policy["convergence"]
+        self.assertIn("observation-only", convergence["statusReads"])
+        self.assertIn("return-verdict-now", convergence["firstResponseToStillWorking"])
+        self.assertIn("idle or completed", convergence["allowedWhen"][0])
+        self.assertIn("blocked or explicitly asks", convergence["allowedWhen"][1])
+        self.assertIn("user explicitly asks", convergence["allowedWhen"][2])
+        self.assertIn("observation-only status read confirms no recent progress", convergence["allowedWhen"][3])
+        self.assertEqual(convergence["blockedWhileRoleStatus"], ("active", "inProgress", "running", "working"))
+        self.assertIn("slow progress alone is not enough", convergence["retryWithFreshRoleThread"])
+        startup = policy["startupFailureRecovery"]
+        self.assertIn("-1073741502", startup["startupFailureSignature"])
+        self.assertIn("environment/tooling startup failure", startup["startupFailureSignature"])
+        self.assertIn("pause role escalation", startup["managerSequence"][0])
+        self.assertIn("cmd.exe /c ver", startup["managerSequence"][1])
+        self.assertIn("Get-Location", startup["managerSequence"][1])
+        self.assertIn("git status", startup["managerSequence"][1])
+        self.assertIn("retry the same narrow package only", startup["managerSequence"][2])
+        self.assertIn("mark environment blocked", startup["managerSequence"][3])
+        self.assertIn("preserve the original authorized scope", startup["retryScope"])
         self.assertIn("reuse existing executor", policy["roleReuse"]["default"])
         self.assertIn("existing verifier", policy["roleReuse"]["default"])
         self.assertIn("same taskId or task family", policy["roleReuse"]["default"])
@@ -495,6 +763,16 @@ risks: none
             policy["verifierDirectReturn"]["sendInstruction"],
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
         )
+
+        evidence_only = policy["verifierEvidenceOnlyFastPath"]
+        self.assertIn("executor evidence is complete", evidence_only["allowedWhen"][0])
+        self.assertIn("reviewer result is pass", evidence_only["allowedWhen"][1])
+        self.assertIn("requiredChanges is none", evidence_only["allowedWhen"][2])
+        self.assertIn("requiredChanges is not none", evidence_only["forbiddenWhen"][0])
+        self.assertIn("missing or incomplete", evidence_only["forbiddenWhen"][2])
+        self.assertIn("evidence-only", evidence_only["verdictRequirements"][0])
+        self.assertIn("residual risks", evidence_only["verdictRequirements"][1])
+        self.assertIn("stage/commit/push/PR/release were not done", evidence_only["verdictRequirements"][2])
 
         agent_policy = policy["agentAssistPolicy"]
         self.assertIn("superpowers", agent_policy["purpose"])
@@ -543,19 +821,20 @@ risks: none
         fast_lane = policy["fastLane"]
         self.assertEqual(fast_lane["classes"], ("FAST", "NORMAL", "STRICT", "PACKAGE"))
         self.assertEqual(fast_lane["FAST"]["route"], "executor -> verifier")
-        self.assertEqual(fast_lane["FAST"]["fallbackReadWindowSeconds"], 30)
+        self.assertEqual(fast_lane["FAST"]["fallbackReadWindowSeconds"], 300)
         self.assertIn("docs/BOM", fast_lane["FAST"]["scope"])
         self.assertEqual(fast_lane["NORMAL"]["route"], "executor -> verifier")
-        self.assertEqual(fast_lane["NORMAL"]["fallbackReadWindowSeconds"], 60)
+        self.assertEqual(fast_lane["NORMAL"]["fallbackReadWindowSeconds"], 300)
         self.assertIn("small focused code/test work", fast_lane["NORMAL"]["scope"])
         self.assertEqual(fast_lane["STRICT"]["route"], "executor -> reviewer -> verifier")
-        self.assertEqual(fast_lane["STRICT"]["fallbackReadWindowSeconds"], 90)
+        self.assertEqual(fast_lane["STRICT"]["fallbackReadWindowSeconds"], 300)
         self.assertIn("Team Router process", fast_lane["STRICT"]["scope"])
         self.assertEqual(fast_lane["PACKAGE"]["route"], "executor -> reviewer -> verifier")
-        self.assertEqual(fast_lane["PACKAGE"]["fallbackReadWindowSeconds"], 120)
+        self.assertEqual(fast_lane["PACKAGE"]["fallbackReadWindowSeconds"], 300)
         self.assertIn("same task family discipline hardening", fast_lane["PACKAGE"]["scope"])
         self.assertIn("direct-return first", fast_lane["completion"])
         self.assertIn("bounded read_thread fallback", fast_lane["completion"])
+        self.assertIn("300 second", fast_lane["completion"])
         self.assertIn("user-triggered status request", fast_lane["completion"])
         closeout_reporting = policy["closeoutReportingPolicy"]
         self.assertEqual(
@@ -619,13 +898,15 @@ risks: none
         self.assertIn("executor", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("authorized local-package dispatch", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("required reviewer/verifier gates", policy["WORKSPACE_WRITE"]["boundary"])
-        self.assertIn("explicit role switch", policy["WORKSPACE_WRITE"]["boundary"])
-        self.assertIn("explicit current-turn user authorization", policy["WORKSPACE_WRITE"]["boundary"])
-        self.assertIn("manager file edits", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("exact current-turn manager instruction", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("specific file edit/file-change action", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("commit/PR/publish/release", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("prompt and wait for explicit authorization", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("executor local-package authorization", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
-        self.assertIn("current-turn", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
+        self.assertIn("current-turn explicit manager instruction", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
+        self.assertIn("historical authorization", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
         self.assertIn("terse approvals", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
-        self.assertIn("prior approvals", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
+        self.assertIn("role switch alone", policy["WORKSPACE_WRITE"]["managerFileEditAuthorization"])
         self.assertIn("external API", policy["HEAVY_OR_RISKY"]["description"])
         self.assertIn("explicit separate authorization", policy["HEAVY_OR_RISKY"]["requires"])
         self.assertIn("push/PR/merge/deploy/publish/release", policy["EXTERNAL_RELEASE"]["description"])
@@ -646,8 +927,9 @@ risks: none
             with self.subTest(scenario=scenario):
                 self.assertIn("WORKSPACE_WRITE", policy)
                 self.assertIn("executor dispatch", regression)
-                self.assertIn("explicit role switch", regression)
-                self.assertIn("current-turn explicit user authorization", regression)
+                self.assertIn("specific manager file-edit instruction", regression)
+                self.assertIn("asking for role/authorization", regression)
+                self.assertIn("role switch alone is not sufficient", regression)
                 self.assertIn(scenario.split()[0], regression)
                 self.assertIn("active Manager Mode", regression)
 
@@ -733,8 +1015,10 @@ risks: none
         self.assertIn("WORKSPACE_WRITE", policy["sideEffectTaxonomy"])
         self.assertIn("local-package authorization", policy["sideEffectTaxonomy"])
         self.assertIn("required gates", policy["sideEffectTaxonomy"])
-        self.assertIn("explicit role switch", policy["sideEffectTaxonomy"])
-        self.assertIn("explicit current-turn user authorization", policy["sideEffectTaxonomy"])
+        self.assertIn("exact current-turn manager instruction", policy["sideEffectTaxonomy"])
+        self.assertIn("specific file-change action", policy["sideEffectTaxonomy"])
+        self.assertIn("commit/PR/publish/release", policy["sideEffectTaxonomy"])
+        self.assertIn("prompt and wait for explicit authorization", policy["sideEffectTaxonomy"])
         self.assertIn("manager direct file edits", policy["sideEffectTaxonomy"])
         self.assertIn("READ_ONLY", policy["sideEffectTaxonomy"])
         self.assertIn("git diff --name-only omits untracked files", policy["commitCloseoutRisk"])
@@ -1130,6 +1414,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertIn("permission: local-package", local_message)
         self.assertIn("acknowledgedPermission: read-only | design-only | local-package | escalation-required", local_message)
+        self.assertIn("Optional PACKAGE/STRICT handoff fields when relevant:", local_message)
+        self.assertIn("taskBriefPath: <workspace path to task brief>", local_message)
+        self.assertIn("executorReportPath: <workspace path to executor report>", local_message)
+        self.assertIn("reviewPackagePath: <workspace path to review package> | inline", local_message)
+        self.assertIn("inlineFallback: true", local_message)
 
         awaiting = team_router.record_plan_request_sent(
             self.root,
@@ -1339,6 +1628,32 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(read_request["threadId"], "thread-executor")
         self.assertEqual(read_request["searchAnchor"]["messageId"], "msg-dispatch")
 
+    def test_executor_dispatch_records_heartbeat_watcher_metadata(self):
+        ledger = self._planned_ledger()
+
+        updated = team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+        )
+
+        watcher = updated["watcher"]
+        self.assertEqual(watcher["role"], "executor")
+        self.assertEqual(watcher["threadId"], "thread-executor")
+        self.assertEqual(watcher["expectedMarker"], "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3")
+        self.assertEqual(watcher["lastReadAt"], "2026-06-22T20:02:00+08:00")
+        self.assertEqual(watcher["nextAllowedReadAt"], "2026-06-22T20:07:00+08:00")
+        self.assertEqual(watcher["minimumIntervalSeconds"], 300)
+        self.assertEqual(watcher["status"], "running")
+        self.assertEqual(watcher["nextManagerAction"], "watch_team_task_with_adapter")
+        self.assertEqual(watcher["actionOnWake"], "read_thread")
+        self.assertEqual(watcher["firstCheckAction"], "read_thread")
+        self.assertEqual(watcher["firstCheckReason"], "initial short follow-up after dispatch")
+        self.assertEqual(watcher["firstCheckAt"], "2026-06-22T20:02:30+08:00")
+
     def test_executor_dispatch_supports_direct_return_delivery_metadata(self):
         ledger = self._planned_ledger()
 
@@ -1348,9 +1663,12 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "read-only",
             {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00"},
             return_thread_id="parent-manager-thread",
+            role_thread_id="thread-executor",
         )
 
         self.assertIn("returnThreadId: parent-manager-thread", message)
+        self.assertIn("orchestratorThreadId: parent-manager-thread", message)
+        self.assertIn("roleThreadId: thread-executor", message)
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
         self.assertIn(
@@ -1370,6 +1688,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         latest = updated["dispatches"][-1]
         self.assertEqual(latest["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(latest["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(latest["roleThreadId"], "thread-executor")
         self.assertEqual(latest["callbackDelivery"], "direct-send")
         self.assertEqual(latest["callbackFallback"], "self-thread-marker")
         self.assertEqual(latest["fallbackSearchAnchor"], latest["searchAnchor"])
@@ -1377,6 +1697,28 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             latest["returnSearchAnchor"],
             {"messageId": None, "sentAt": "2026-06-22T20:02:00+08:00"},
         )
+
+    def test_send_executor_dispatch_with_adapter_includes_startup_failure_recovery_policy(self):
+        adapter = FakeThreadAdapter()
+        self._planned_ledger()
+
+        team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="local-package",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+
+        prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("-1073741502", prompt)
+        self.assertIn("cmd.exe /c ver", prompt)
+        self.assertIn("Get-Location", prompt)
+        self.assertIn("git status -s --untracked-files=all", prompt)
+        self.assertIn("not a task-code failure", prompt)
+        self.assertIn("retry the same narrow package only", prompt)
+        self.assertIn("Do not widen scope beyond the original narrow package", prompt)
 
     def test_executor_dispatch_search_anchor_serializes_null_message_id(self):
         ledger = self._planned_ledger()
@@ -1390,6 +1732,69 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         anchor_line = next(line for line in message.splitlines() if line.startswith("searchAnchor: "))
         self.assertEqual(anchor_line, "searchAnchor: {\"messageId\": null, \"sentAt\": \"2026-06-22T20:02:00+08:00\"}")
+
+    def test_role_prompts_include_risk_boundary_and_review_package_metadata(self):
+        ledger = self._planned_ledger()
+        plan_fields = dict(ledger["plan"]["fields"])
+        plan_fields.update({
+            "scope": "same task family discipline hardening",
+            "stopWhen": "reviewer and verifier pass",
+            "riskBoundary": "workspace writes only; no external release",
+            "executorPrompt": "fix package gate",
+            "taskBriefPath": "docs/brief.md",
+            "executorReportPath": "reports/executor.md",
+            "reviewPackagePath": "inline",
+            "inlineFallback": "true",
+        })
+        review_package = {
+            "gateClass": "PACKAGE",
+            "status": "recorded",
+            "inlineFallback": True,
+            "paths": {
+                "taskBriefPath": "docs/brief.md",
+                "executorReportPath": "reports/executor.md",
+            },
+            "raw": {"reviewPackagePath": "inline"},
+            "contentTrusted": False,
+            "autoGenerated": False,
+        }
+        callback = "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: ok\nevidence: package\nrisks: none\nnext: reviewer" % ledger["taskId"]
+        messages = (
+            team_router.make_executor_dispatch_message(
+                ledger["taskId"],
+                plan_fields,
+                "local-package",
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00"},
+                review_package=review_package,
+            ),
+            team_router.make_reviewer_request_message(
+                ledger["taskId"],
+                callback,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                review_package=review_package,
+            ),
+            team_router.make_verifier_request_message(
+                ledger["taskId"],
+                callback,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                review_package=review_package,
+            ),
+        )
+        for message in messages:
+            self.assertIn("riskBoundary: workspace writes only; no external release", message)
+            self.assertIn("Review package metadata (evidence only):", message)
+            self.assertIn("Runtime boundary: Team Router runtime must not read, execute, trust, or auto-generate", message)
+            self.assertIn("packageEvidenceBoundary:", message)
+            self.assertIn("gateClass: PACKAGE", message)
+            self.assertIn("metadataStatus: recorded", message)
+            self.assertIn("inlineFallback: true", message)
+            self.assertIn("taskBriefPath: docs/brief.md", message)
+            self.assertIn("executorReportPath: reports/executor.md", message)
+            self.assertIn("reviewPackagePath: inline", message)
 
     def test_callback_capture_uses_dispatch_anchor_from_ledger(self):
         ledger = self._awaiting_callback_ledger()
@@ -1562,6 +1967,246 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         self.assertEqual(updated["status"], "awaiting_callback")
+
+    def test_watch_executor_completion_without_callback_marker_needs_feedback_not_verifier(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+            "done, completed successfully",
+            message_id="msg-done-no-marker",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["status"], "needs_feedback")
+        self.assertEqual(update["ledger"]["roleThreadStatus"], "needs_feedback")
+        self.assertIn("TEAM_ROUTER_CALLBACK", update["ledger"]["missingFeedback"]["expectedCallback"])
+        self.assertEqual(update["nextWakeup"]["role"], "executor")
+        self.assertEqual(update["watcher"]["threadId"], "thread-executor")
+        self.assertIn("TEAM_ROUTER_CALLBACK", update["watcher"]["expectedMarker"])
+        self.assertIn("structured TEAM_ROUTER_CALLBACK", update["nextWakeup"]["reason"])
+        self.assertEqual(adapter.sent, [])
+
+    def test_watch_executor_completion_with_callback_marker_advances_to_verifier_request(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+            "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: completed\nevidence: tests\nrisks: none\nnext: verifier",
+            message_id="msg-callback",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertIn("TEAM_ROUTER_VERIFY taskId=ctr-20260622-160000-a7f3", adapter.sent[-1]["kwargs"]["prompt"])
+
+    def test_watch_executor_still_working_keeps_observe_only_convergence_decision(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+            "still working",
+            message_id="msg-later",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["status"], "awaiting_callback")
+        self.assertEqual(update["ledger"]["roleThreadStatus"], "active")
+        self.assertEqual(update["watcher"]["status"], "active")
+        self.assertEqual(update["watcher"]["firstCheckAt"], "2026-06-22T20:02:30+08:00")
+        self.assertEqual(update["watcher"]["nextAllowedReadAt"], "2026-06-22T20:09:00+08:00")
+        self.assertEqual(update["convergenceDecision"]["action"], "observe_only_wait")
+        self.assertFalse(update["convergenceDecision"]["allowed"])
+        self.assertEqual(adapter.sent, [])
+
+    def test_waiting_executor_update_before_timeout_does_not_allow_convergence_without_observation(self):
+        ledger = self._awaiting_callback_ledger()
+
+        update = team_router._adapter_task_update(
+            "watch_waiting_executor",
+            self.root,
+            self.project_id,
+            ledger,
+            observed_at="2026-06-22T20:02:10+08:00",
+        )
+
+        self.assertEqual(update["readDiscipline"]["nextAllowedReadAt"], "2026-06-22T20:07:00+08:00")
+        self.assertEqual(update["convergenceDecision"]["action"], "observe_only_wait")
+        self.assertFalse(update["convergenceDecision"]["allowed"])
+        self.assertEqual(update["convergenceDecision"]["readDecision"]["action"], "read_suppressed")
+
+    def test_waiting_executor_update_exposes_heartbeat_watcher_metadata(self):
+        ledger = self._awaiting_callback_ledger()
+
+        update = team_router._adapter_task_update(
+            "watch_waiting_executor",
+            self.root,
+            self.project_id,
+            ledger,
+            observed_at="2026-06-22T20:02:10+08:00",
+        )
+
+        watcher = update["watcher"]
+        self.assertEqual(watcher["role"], "executor")
+        self.assertEqual(watcher["threadId"], "thread-executor")
+        self.assertEqual(watcher["expectedMarker"], "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3")
+        self.assertEqual(watcher["lastReadAt"], "2026-06-22T20:02:10+08:00")
+        self.assertEqual(watcher["nextAllowedReadAt"], "2026-06-22T20:07:10+08:00")
+        self.assertEqual(watcher["nextManagerAction"], "watch_team_task_with_adapter")
+        self.assertEqual(watcher["actionOnWake"], "read_thread")
+        self.assertEqual(watcher["firstCheckAt"], "2026-06-22T20:02:30+08:00")
+        self.assertEqual(watcher["firstCheckAction"], "read_thread")
+        self.assertIn("nextAllowedReadAt: 2026-06-22T20:07:00+08:00", update["userOutput"])
+        self.assertIn("expectedMarker: TEAM_ROUTER_CALLBACK", update["userOutput"])
+
+    def test_watch_executor_first_check_with_valid_marker_advances_immediately(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+"TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: immediate\nevidence: tests\nrisks: none\nnext: verifier",
+            message_id="msg-callback-fast",
+            sent_at="2026-06-22T20:02:20+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:02:30+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+
+    def test_watch_executor_first_check_without_marker_becomes_needs_feedback(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+            "completed quickly",
+            message_id="msg-complete-no-marker-fast",
+            sent_at="2026-06-22T20:02:20+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:02:30+08:00",
+        )
+
+        self.assertEqual(update["status"], "needs_feedback")
+        self.assertEqual(update["nextWakeup"]["role"], "executor")
+        self.assertIn("TEAM_ROUTER_CALLBACK", update["watcher"]["expectedMarker"])
+
+    def test_watch_executor_idle_after_observation_allows_timeout_convergence(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:08:00+08:00",
+        )
+
+        self.assertEqual(update["status"], "awaiting_callback")
+        self.assertEqual(update["ledger"]["roleThreadStatus"], "idle")
+        self.assertEqual(update["convergenceDecision"]["action"], "convergence_allowed")
+        self.assertTrue(update["convergenceDecision"]["allowed"])
+        self.assertEqual(
+            update["convergenceDecision"].get("observedNoProgressAt"),
+            "2026-06-22T20:08:00+08:00",
+        )
+
+    def test_waiting_executor_idle_without_no_progress_confirmation_does_not_allow_convergence(self):
+        ledger = self._awaiting_callback_ledger()
+        ledger["roleThreadStatus"] = "idle"
+        ledger["readDiscipline"] = dict(ledger["readDiscipline"])
+        ledger["readDiscipline"].pop("lastObservedNoProgressAt", None)
+
+        update = team_router._adapter_task_update(
+            "watch_waiting_executor",
+            self.root,
+            self.project_id,
+            ledger,
+            observed_at="2026-06-22T20:08:00+08:00",
+        )
+
+        self.assertEqual(update["convergenceDecision"]["action"], "observe_only_read_first")
+        self.assertFalse(update["convergenceDecision"]["allowed"])
+        self.assertIn("observation-only read", update["convergenceDecision"]["reason"])
 
     def test_high_risk_executor_callback_enters_reviewer_gate_instead_of_verifier(self):
         ledger = self._high_risk_awaiting_callback_ledger()
@@ -2158,6 +2803,22 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(updated["status"], "verifying")
         self.assertEqual(updated["gateClass"], "NORMAL")
 
+        adapter = FakeThreadAdapter()
+        team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+        verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("riskBoundary: ordinary read-only inspection", verifier_prompt)
+        self.assertNotIn("Review package metadata", verifier_prompt)
+        self.assertNotIn("reviewPackagePath:", verifier_prompt)
+        self.assertNotIn("inlineFallback:", verifier_prompt)
+        self.assertNotIn("Reviewer result context:", verifier_prompt)
+
     def test_reviewer_request_rejects_fast_gate_callback(self):
         adapter = FakeThreadAdapter()
         ledger = self._awaiting_callback_ledger()
@@ -2207,6 +2868,243 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("reviewer role conversation", str(ctx.exception))
         self.assertIn("subagent fallback is not allowed", str(ctx.exception))
 
+    def test_verifier_request_includes_reviewer_result_context_for_reviewer_gated_flow(self):
+        adapter = FakeThreadAdapter()
+        self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        callback_messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            callback_messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        team_router.record_reviewer_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            reviewer_thread_id="thread-reviewer",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-review",
+        )
+        review_messages = [
+            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review"},
+            {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: confirm regression tests\nevidenceChecked: tests\nrisks: none"},
+        ]
+        passed = team_router.capture_reviewer_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            review_messages,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        self.assertEqual(passed["status"], "verifying")
+
+        team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:08:00+08:00",
+        )
+
+        verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("Reviewer result context:", verifier_prompt)
+        self.assertIn("Verifier must confirm reviewer requiredChanges are satisfied before returning pass.", verifier_prompt)
+        self.assertIn("TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", verifier_prompt)
+        self.assertIn("requiredChanges: confirm regression tests", verifier_prompt)
+
+
+    def test_send_verifier_request_with_adapter_without_reviewer_result_does_not_offer_evidence_only_fast_path(self):
+        adapter = FakeThreadAdapter()
+        self._verifying_ledger()
+
+        team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+
+        verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertNotIn("without re-running commands or widening inspection", verifier_prompt)
+
+    def test_send_verifier_request_with_adapter_offers_evidence_only_fast_path_after_clean_reviewer_pass(self):
+        adapter = FakeThreadAdapter()
+        self._high_risk_awaiting_callback_ledger()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+        callback_messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests passed\nrisks: none\nnext: reviewer"},
+        ]
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            callback_messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        team_router.record_reviewer_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            reviewer_thread_id="thread-reviewer",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-review",
+        )
+        team_router.capture_reviewer_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review"},
+                {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="local-package",
+            sent_at="2026-06-22T20:08:00+08:00",
+        )
+
+        verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertIn("without re-running commands or widening inspection", verifier_prompt)
+
+    def test_verifier_request_mentions_evidence_only_fast_path_when_reviewer_passes_cleanly(self):
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: implemented\n"
+            "evidence: tests passed\n"
+            "risks: none\n"
+            "next: verifier"
+        )
+        reviewer_result = {
+            "fields": {
+                "result": "pass",
+                "summary": "ok",
+                "findings": "none",
+                "requiredChanges": "none",
+                "evidenceChecked": "tests",
+                "risks": "none",
+            }
+        }
+
+        verifier_prompt = team_router.make_verifier_request_message(
+            "ctr-20260622-160000-a7f3",
+            callback_block,
+            "local-package",
+            "narrow Team Router stability fix",
+            reviewer_result=reviewer_result,
+        )
+
+        self.assertIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertIn("stage/commit/push/PR/release were not done", verifier_prompt)
+
+    def test_verifier_request_without_reviewer_result_does_not_offer_evidence_only_fast_path(self):
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: implemented\n"
+            "evidence: tests passed\n"
+            "risks: none\n"
+            "next: verifier"
+        )
+
+        verifier_prompt = team_router.make_verifier_request_message(
+            "ctr-20260622-160000-a7f3",
+            callback_block,
+            "local-package",
+            "narrow Team Router stability fix",
+            reviewer_result=None,
+        )
+
+        self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertNotIn("without re-running commands or widening inspection", verifier_prompt)
+    def test_verifier_accepted_closeout_adds_auto_stop_and_plain_language_metadata(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        accepted = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+{"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nstatus: accepted\nsummary: accepted fast\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(accepted["status"], "done")
+        self.assertEqual(accepted["closeout"]["status"], "accepted")
+        self.assertEqual(accepted["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+        self.assertIn("plain language", accepted["closeout"]["reportAction"])
+        self.assertIn("stage/commit/push/PR/publish/release were not done", accepted["closeout"]["notDone"])
+        self.assertNotIn("watcher", accepted)
+        registry = team_router.load_registry(self.root, self.project_id)
+        closeout = team_router.format_closeout_for_user(accepted, registry)
+        self.assertIn("heartbeatAction: stop_and_delete_heartbeat", closeout)
+        self.assertIn("plainLanguageReport: required", closeout)
+        self.assertIn("notDone: stage/commit/push/PR/publish/release were not done", closeout)
+
+    def test_verifier_needs_rework_does_not_produce_accepted_closeout_action(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        needs_rework = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+{"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: needs_rework\nsummary: more work\nrequiredChanges: fix docs\nevidenceChecked: callback\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(needs_rework["status"], "needs_rework")
+        self.assertNotIn("watcherAction", needs_rework["closeout"])
+
     def test_verifier_pass_writes_verification_and_closeout(self):
         ledger = self._verifying_ledger()
         verify_message = team_router.make_verifier_request_message(
@@ -2255,9 +3153,12 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "read-only",
             "src",
             return_thread_id="parent-manager-thread",
+            role_thread_id="thread-verifier",
         )
 
         self.assertIn("returnThreadId: parent-manager-thread", verify_message)
+        self.assertIn("orchestratorThreadId: parent-manager-thread", verify_message)
+        self.assertIn("roleThreadId: thread-verifier", verify_message)
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
         self.assertIn(
@@ -2277,6 +3178,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         request = requested["verification"]["request"]
         self.assertEqual(request["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(request["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(request["roleThreadId"], "thread-verifier")
         self.assertEqual(request["verdictDelivery"], "direct-send")
         self.assertEqual(request["verdictFallback"], "self-thread-marker")
         self.assertEqual(request["fallbackSearchAnchor"], request["searchAnchor"])
@@ -2295,9 +3198,12 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "read-only",
             "src",
             return_thread_id="parent-manager-thread",
+            role_thread_id="thread-reviewer",
         )
 
         self.assertIn("returnThreadId: parent-manager-thread", review_message)
+        self.assertIn("orchestratorThreadId: parent-manager-thread", review_message)
+        self.assertIn("roleThreadId: thread-reviewer", review_message)
         self.assertIn("reviewDelivery: direct-send", review_message)
         self.assertIn("reviewFallback: self-thread-marker", review_message)
         self.assertIn(
@@ -2329,6 +3235,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         request = requested["review"]["request"]
         self.assertEqual(request["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(request["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(request["roleThreadId"], "thread-reviewer")
         self.assertEqual(request["reviewDelivery"], "direct-send")
         self.assertEqual(request["reviewFallback"], "self-thread-marker")
         self.assertEqual(request["fallbackSearchAnchor"], request["searchAnchor"])
@@ -4035,6 +4943,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(second["action"], "sent_executor_dispatch")
         self.assertEqual(second["ledger"]["status"], "awaiting_callback")
         self.assertEqual(len(adapter.sent), 2)
+        dispatch = second["ledger"]["dispatches"][-1]
+        self.assertNotIn("returnThreadId", dispatch)
+        self.assertNotIn("callbackDelivery", dispatch)
+        self.assertNotIn("returnThreadId:", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertNotIn("callbackDelivery: direct-send", adapter.sent[-1]["kwargs"]["prompt"])
 
         executor_thread = second["ledger"]["dispatches"][-1]["threadId"]
         adapter.append_reply(
@@ -4061,6 +4974,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "line one\nline two",
         )
         self.assertEqual(len(adapter.sent), 3)
+        verifier_request = third["ledger"]["verification"]["request"]
+        self.assertNotIn("returnThreadId", verifier_request)
+        self.assertNotIn("verdictDelivery", verifier_request)
+        self.assertNotIn("returnThreadId:", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertNotIn("verdictDelivery: direct-send", adapter.sent[-1]["kwargs"]["prompt"])
 
         verifier_thread = third["ledger"]["verification"]["request"]["threadId"]
         adapter.append_reply(
@@ -4083,6 +5001,87 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(fourth["action"], "read_verifier_verdict")
         self.assertEqual(fourth["ledger"]["status"], "done")
         self.assertTrue(fourth["userOutput"].startswith("Team Router Closeout"))
+
+    def test_run_team_task_with_adapter_recovers_from_needs_feedback_when_marker_later_arrives(self):
+        adapter = FakeThreadAdapter()
+
+        first = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:01:00+08:00",
+        )
+        manager_thread = first["ledger"]["planRequest"]["threadId"]
+        adapter.append_reply(
+            manager_thread,
+            "TEAM_ROUTER_PLAN taskId=%s\nstatus: planned\nacknowledgedPermission: read-only\nscope: src\nstopWhen: done\nriskBoundary: read only\nexecutorPrompt: inspect src\nnotes: none" % self.task_id,
+            message_id="msg-plan-result",
+            sent_at="2026-06-22T20:01:30+08:00",
+        )
+
+        second = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:02:00+08:00",
+        )
+        executor_thread = second["ledger"]["dispatches"][-1]["threadId"]
+        adapter.append_reply(
+            executor_thread,
+            "completed successfully",
+            message_id="msg-done-no-marker",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        third = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+        self.assertEqual(third["action"], "read_executor_callback")
+        self.assertEqual(third["ledger"]["status"], "needs_feedback")
+        self.assertIn("TEAM_ROUTER_CALLBACK", third["ledger"]["missingFeedback"]["expectedCallback"])
+
+        adapter.append_reply(
+            executor_thread,
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: recovered\nevidence: callback marker\nrisks: none\nnext: verifier" % self.task_id,
+            message_id="msg-callback-after-needs-feedback",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+        fourth = team_router.run_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            permission="read-only",
+            observed_at="2026-06-22T20:06:00+08:00",
+        )
+
+        self.assertEqual(fourth["action"], "sent_verifier_request")
+        self.assertEqual(fourth["ledger"]["status"], "verifying")
+        self.assertEqual(
+            fourth["ledger"]["observations"][-1]["parsedFields"]["summary"],
+            "recovered",
+        )
 
     def test_run_team_task_with_adapter_routes_high_risk_callback_through_reviewer_pass(self):
         adapter = FakeThreadAdapter()
@@ -4327,6 +5326,116 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_sent_verifier_request")
         self.assertEqual(update["status"], "verifying")
         self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "direct return callback")
+        self.assertEqual(len(adapter.sent), 1)
+        self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
+
+    def test_executor_direct_return_duplicate_callback_is_idempotent(self):
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        messages = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: direct return callback\n"
+                    "evidence: manager inbox\n"
+                    "risks: none\n"
+                    "next: verifier" % self.task_id
+                ),
+            },
+        ]
+
+        first = team_router._capture_executor_callback_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        second = team_router._capture_executor_callback_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:05:00+08:00",
+        )
+
+        self.assertEqual(first["status"], "verifying")
+        self.assertIsNone(second)
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertEqual(len(saved["observations"]), 1)
+
+    def test_watch_team_task_ignores_malformed_manager_inbox_callback_and_uses_self_thread_fallback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: maybe\n"
+                    "final: true\n"
+                    "summary: malformed direct return\n"
+                    "evidence: manager inbox\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: fallback callback\n"
+                    "evidence: executor self-thread\n"
+                    "risks: none\n"
+                    "next: verifier" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "fallback callback")
         self.assertEqual(len(adapter.sent), 1)
         self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
 
@@ -4575,6 +5684,65 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["status"], "done")
         self.assertIn("summary: direct return closeout", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertEqual(len(adapter.sent), 0)
+
+    def test_watch_team_task_ignores_malformed_manager_inbox_verdict_and_uses_self_thread_fallback(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-verdict",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-verifier</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "result: accepted\n"
+                    "summary: malformed direct return\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: manager inbox\n"
+                    "risks: none</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+        adapter.messages["thread-verifier"] = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+            {
+                "messageId": "msg-verdict",
+                "sentAt": "2026-06-22T20:06:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "result: pass\n"
+                    "summary: fallback closeout\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: verifier self-thread\n"
+                    "risks: none" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_verifier_verdict")
+        self.assertEqual(update["status"], "done")
+        self.assertIn("summary: fallback closeout", update["userOutput"])
         self.assertEqual(len(adapter.sent), 0)
 
     def test_watch_team_task_ignores_manager_inbox_verdict_with_wrong_source_thread_id(self):
@@ -5791,10 +6959,29 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "low-frequency",
                     "event-driven",
                     "read_thread",
-                    "30-60s",
-                    "Role threads do not actively push back",
+                    "5 minutes",
+                    "heartbeat",
+                    "watcher",
+                    "firstCheckAt",
+                    "nextAllowedReadAt",
+                    "expected marker",
+                    "stop_and_delete_heartbeat",
+                    "plain language",
+                    "direct-send return is preferred",
+                    "explicit parent/source thread id",
+                    "orchestratorThreadId",
+                    "roleThreadId",
+                    "sourceThreadId",
+                    "taskId",
+                    "self-thread-marker",
+                    "duplicate direct callbacks",
+                    "not recorded twice",
+                    "returnThreadId",
+                    "watcher/heartbeat",
+                    "Role writing a marker is not receipt by the manager",
                     "zero-read waiting",
                     "user-triggered",
+                    "status/stop/immediate",
                     "agreed or explicit interval",
                     "known expected completion window",
                     "timeout/blocker handling",
@@ -5819,6 +7006,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "executor -> reviewer -> verifier",
                 ):
                     self.assertIn(needle, text)
+                self.assertNotIn("Role threads do not actively push back", text)
 
     def test_manager_and_manual_docs_cover_closeout_reporting_and_compounding_decision(self):
         docs = (

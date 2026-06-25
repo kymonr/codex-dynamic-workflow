@@ -21,13 +21,13 @@ Use Team Router as a Codex desktop thread-tools control plane. It coordinates vi
 | 审查者 | Reviewer | conditional yes | For router/manager/orchestration policy, permission/safety boundaries, process rules, role protocol, and shared/high-risk logic; perform read-only/adversarial review and reply with `TEAM_ROUTER_REVIEW`. |
 | 验证者 | Verifier | yes | Check callback, reviewer requirements when present, evidence, boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`; verifier remains final acceptance. |
 
-Visible Codex desktop thread titles use `角色-任务名`, such as `调度者-Team Router role title 规范化` and `执行者-Team Router 管理者模式触发词修复`; normalize the parent/current manager-dispatcher title when the host UI exposes it, and normalize created/discovered role threads immediately with `set_thread_title`.
+Visible Codex desktop thread titles use `角色-任务名`, e.g. `调度者-Team Router <task>` and `执行者-Team Router <task>`; when acting as manager, rename the current/parent conversation itself, not only child role threads. Normalize role threads with `set_thread_title`.
 
 ## Manager Mode Hard Rule
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
-Manager Mode is sticky for the current task after it is triggered. Terse follow-ups or implementation commands such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` are not execution authorization. Treat them only as permission to refine the plan, propose rule updates, or dispatch/prepare executor/verifier work. Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge. Explicit role switch phrases such as “切回执行者”, “你亲自改代码”, or “按这个 plan 落地” plus current-turn user authorization for manager file edits are required before parent-side implementation.
+Manager Mode is sticky for the current task after it is triggered. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` authorize only plan refinement, rule updates, or executor/verifier dispatch. Manager/dispatcher file changes are opt-in: prompt before commit/PR/release, and do other file edits only when the user explicitly says in the current turn that you should do that exact work; otherwise dispatch executor or ask for role switch.
 
 ## Minimal Live Tool Order
 
@@ -41,7 +41,7 @@ Use exactly one role-thread creation path per task. If callable adapter tools ar
 
 ## Direct Return
 
-When the parent/manager thread id is available, include `returnThreadId` in executor, reviewer, and verifier prompts. Executor uses `callbackDelivery: direct-send` plus `callbackFallback: self-thread-marker`; reviewer uses `reviewDelivery: direct-send` plus `reviewFallback: self-thread-marker`; verifier uses `verdictDelivery: direct-send` plus `verdictFallback: self-thread-marker`. After writing its marker block in its own thread, the role must call `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT block>)`. Keep self-thread markers as fallback/audit anchors.
+When an explicit orchestrator/parent id is available, prompts/ledger records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send their final marker to `returnThreadId`, keep self-thread markers as fallback/audit anchors, and use the role-specific delivery/fallback fields. Manager validates sourceThreadId, taskId, expected marker, return/orchestrator target, and role/source; duplicate direct callbacks are ignored after ledger advance. watcher/heartbeat remains the 5 minutes fallback. See `references/direct-return.md`.
 
 ## Fast Lane
 
@@ -53,7 +53,7 @@ Ordinary small fixes and clearly low-risk tasks use executor -> verifier. Router
 
 ## roleCloseoutPolicy
 
-After task completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT` or ordinary closeout message to role threads. final protocol block is the closeout: `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, and `TEAM_ROUTER_VERDICT` are sufficient task-ending anchors. compact is native operation, not chat prompt; do not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If no compact tool is available, do nothing.
+After task completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT` to role threads. Protocol blocks are sufficient role-thread anchors. Parent manager still gives the user a plain-language closeout after every completed flow: changed, verified, accepted by, not done, risks, next gated step. compact is native operation, not chat prompt; do not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If no compact tool is available, do nothing.
 
 ## sideEffectTaxonomy
 

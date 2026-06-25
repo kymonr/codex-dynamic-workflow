@@ -6,7 +6,12 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 When the user only talks to manager, manager owns commit workflow. After verifier pass and an explicit user request to commit, manager may perform local `git status` / `git diff`, stage 已验收文件, and commit as a closeout operation.
 
-Commit closeout is not implementation authorization. Manager must not use commit as permission to continue implementation, modify files, or run heavy commands. Manager must 排除无关 untracked. push/PR/merge/deploy 单独授权.
+Commit closeout is not implementation authorization. Manager must not use commit as permission to continue implementation, modify files, or run heavy commands. Manager must 排除无关 untracked. Before commit, PR, push, merge, deploy, publish, or release, manager prompts for explicit authorization; push/PR/merge/deploy 单独授权.
+
+
+## Parent user closeout
+
+Every completed Team Router flow needs a parent-thread report in ordinary, user-readable language. Protocol blocks close the role threads, but the manager still tells the user what changed, what verification actually ran, who accepted it, what was not done, remaining risks, current state, and the next gated step. Keep it short, concrete, and free of unnecessary internal jargon; use protocol names only where they clarify evidence.
 
 ## roleCloseoutPolicy
 
