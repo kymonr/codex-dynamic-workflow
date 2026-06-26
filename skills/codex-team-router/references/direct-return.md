@@ -12,6 +12,12 @@ Use these explicit fields together:
 
 Do not default `returnThreadId` to the manager/planner role thread. If no explicit parent/source thread id is available, omit direct-send metadata and rely on watcher/heartbeat fallback.
 
+## Role Thread Requirement
+
+Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to `multi_agent_v1` workers/subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
+
+Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can report `directReturnAttempt: sent|unavailable|failed`. If an existing role reports `directReturnAttempt: unavailable`, keep the self-thread marker as fallback for that run, but create or reuse a proper Codex thread role for subsequent work that requires role-to-manager callback.
+
 Prompt metadata by role:
 
 - executor: `callbackDelivery: direct-send` plus `callbackFallback: self-thread-marker`.

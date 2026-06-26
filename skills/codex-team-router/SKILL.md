@@ -43,6 +43,8 @@ Use exactly one role-thread creation path per task. If callable adapter tools ar
 
 When an explicit orchestrator/parent id is available, prompts/ledger records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send their final marker to `returnThreadId`, keep self-thread markers as fallback/audit anchors, and use the role-specific delivery/fallback fields. Manager validates sourceThreadId, taskId, expected marker, return/orchestrator target, and role/source; duplicate direct callbacks are ignored after ledger advance. watcher/heartbeat remains the 5 minutes fallback. See `references/direct-return.md`.
 
+Team Router role dispatch must use Codex desktop thread roles for executor, reviewer, and verifier. Do not use `multi_agent_v1` workers/subagents as Team Router role threads: they may lack `send_message_to_thread` and cannot provide reliable direct-return. If a role thread is archived, broken, or lacks thread-tool capability, create or reuse a proper Codex thread role before dispatching work that expects role-to-manager callback.
+
 ## Fast Lane
 
 Fast Lane policy: classes are FAST, NORMAL, STRICT, PACKAGE. Completion is direct-return first with bounded read_thread fallback; FAST docs/BOM/single phrase rework and NORMAL small focused code/test work use executor -> verifier, while STRICT Team Router process/permission/safety/role protocol/shared-risk changes and PACKAGE same task family discipline hardening use executor -> reviewer -> verifier.
