@@ -195,6 +195,44 @@ risks: none
         self.assertEqual(msg.fields["result"], "needs_rework")
 
 
+    def test_direct_return_receipt_requires_explicit_role_and_source_role_thread_id(self):
+        cases = (
+            ("TEAM_ROUTER_CALLBACK", "executor", team_router.parse_callback, "status: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: verifier"),
+            ("TEAM_ROUTER_REVIEW", "reviewer", team_router.parse_review, "result: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"),
+            ("TEAM_ROUTER_VERDICT", "verifier", team_router.parse_verdict, "result: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"),
+        )
+        for marker, role, parser, body in cases:
+            with self.subTest(marker=marker, missing="role"):
+                msg = parser(
+                    "%s taskId=ctr-1\nsourceThreadId: parent-manager-thread\nsourceRoleThreadId: thread-%s\n%s" % (marker, role, body),
+                    "ctr-1",
+                )
+                malformed = team_router._validate_direct_return_receipt(
+                    msg,
+                    {"messageId": "msg-return", "sentAt": "2026-06-22T20:00:00+08:00", "sourceThreadId": "thread-%s" % role},
+                    task_id="ctr-1",
+                    expected_role=role,
+                    expected_role_thread_id="thread-%s" % role,
+                    expected_return_thread_id="parent-manager-thread",
+                )
+                self.assertIsNotNone(malformed)
+                self.assertIn("role", malformed["error"])
+
+            with self.subTest(marker=marker, missing="sourceRoleThreadId"):
+                msg = parser(
+                    "%s taskId=ctr-1\nsourceThreadId: parent-manager-thread\nrole: %s\n%s" % (marker, role.title(), body),
+                    "ctr-1",
+                )
+                malformed = team_router._validate_direct_return_receipt(
+                    msg,
+                    {"messageId": "msg-return", "sentAt": "2026-06-22T20:00:00+08:00", "sourceThreadId": "thread-%s" % role},
+                    task_id="ctr-1",
+                    expected_role=role,
+                    expected_role_thread_id="thread-%s" % role,
+                    expected_return_thread_id="parent-manager-thread",
+                )
+                self.assertIsNotNone(malformed)
+                self.assertIn("sourceRoleThreadId", malformed["error"])
     def test_protocol_contract_snapshot_includes_active_role_return_model(self):
         policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
         model = policy["callbackDeliveryModel"]
@@ -213,8 +251,10 @@ risks: none
         self.assertIn("verdictDelivery: direct-send", model["requiredDispatchFields"])
         self.assertIn("verdictFallback: self-thread-marker", model["requiredDispatchFields"])
         self.assertIn("taskId", model["managerReceiptValidation"])
+        self.assertIn("sourceThreadId", model["managerReceiptValidation"])
         self.assertIn("role", model["managerReceiptValidation"])
         self.assertIn("sourceRoleThreadId", model["managerReceiptValidation"])
+        self.assertIn("returnThreadId", model["managerReceiptValidation"])
         self.assertIn("same protocol block body", model["fallbackBodyInvariant"])
         self.assertIn("deliveryStatus: fallback_only", model["fallbackMetadata"])
         self.assertIn("deliveryError", model["fallbackMetadata"])
@@ -766,10 +806,12 @@ risks: none
         self.assertIn("direct-send", direct_return["delivery"])
         self.assertIn("self-thread-marker", direct_return["fallback"])
         self.assertIn("5 minutes", direct_return["fallback"])
-        self.assertIn("sourceThreadId", direct_return["managerReceiptValidation"])
         self.assertIn("taskId", direct_return["managerReceiptValidation"])
+        self.assertIn("protocol-block `sourceThreadId`", direct_return["managerReceiptValidation"])
+        self.assertIn("role", direct_return["managerReceiptValidation"])
+        self.assertIn("sourceRoleThreadId", direct_return["managerReceiptValidation"])
+        self.assertIn("pending `returnThreadId`", direct_return["managerReceiptValidation"])
         self.assertIn("marker", direct_return["managerReceiptValidation"])
-        self.assertIn("returnThreadId", direct_return["managerReceiptValidation"])
         self.assertIn("orchestratorThreadId", direct_return["managerReceiptValidation"])
         self.assertIn("roleThreadId", direct_return["managerReceiptValidation"])
         self.assertIn("expected marker", direct_return["inboxValidation"])
@@ -2893,13 +2935,15 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                                         task_id=None,
                                         source_thread_id="thread-reviewer",
                                         source_role_thread_id=None,
-                                        role="Reviewer"):
+                                        role="Reviewer",
+                                        protocol_source_thread_id="parent-manager-thread"):
         review_task_id = task_id or self.task_id
         review_source_role_thread_id = source_role_thread_id or source_thread_id
         return (
             "<codex_delegation>\n"
             "  <source_thread_id>%s</source_thread_id>\n"
             "  <input>TEAM_ROUTER_REVIEW taskId=%s\n"
+            "sourceThreadId: %s\n"
             "role: %s\n"
             "sourceRoleThreadId: %s\n"
             "result: %s\n"
@@ -2909,7 +2953,59 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "evidenceChecked: tests\n"
             "risks: none</input>\n"
             "</codex_delegation>"
-        ) % (source_thread_id, review_task_id, role, review_source_role_thread_id, result)
+        ) % (source_thread_id, review_task_id, protocol_source_thread_id, role, review_source_role_thread_id, result)
+
+    def test_watch_reviewer_direct_return_rejects_wrong_protocol_source_thread_id(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper(
+                    "pass",
+                    source_thread_id="thread-reviewer",
+                    source_role_thread_id="thread-reviewer",
+                    protocol_source_thread_id="wrong-parent-thread",
+                ),
+            },
+        ]
+        adapter.messages["thread-reviewer"] = [
+            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review request"},
+            {
+                "messageId": "msg-review-fallback",
+                "sentAt": "2026-06-22T20:06:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_REVIEW taskId=%s\n"
+                    "result: pass\n"
+                    "summary: fallback review\n"
+                    "findings: fallback evidence\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: reviewer self-thread\n"
+                    "risks: none" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["summary"], "fallback review")
+        self.assertEqual(
+            update["ledger"]["review"]["result"]["receipt"]["source"],
+            "self-thread-fallback/read_thread",
+        )
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertIn("sourceThreadId", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["returnThreadId"], "parent-manager-thread")
 
     def test_reviewer_pass_sends_verifier_request_and_needs_rework_or_blocked_stops(self):
         ledger = self._high_risk_awaiting_callback_ledger()
@@ -5575,6 +5671,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                     "<codex_delegation>\n"
                     "  <source_thread_id>thread-executor</source_thread_id>\n"
                     "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-executor\n"
+                    "role: Executor\n"
                     "status: done\n"
                     "final: true\n"
                     "summary: direct return callback\n"
@@ -5622,6 +5721,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 "sourceThreadId": "thread-executor",
                 "text": (
                     "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-executor\n"
+                    "role: Executor\n"
                     "status: done\n"
                     "final: true\n"
                     "summary: direct return callback\n"
@@ -5728,6 +5830,73 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
         self.assertEqual(len(adapter.sent), 1)
         self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
+
+    def test_watch_executor_direct_return_rejects_wrong_protocol_source_thread_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "sourceThreadId: wrong-parent-thread\n"
+                    "sourceRoleThreadId: thread-executor\n"
+                    "role: Executor\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: manager inbox\n"
+                    "evidence: direct return\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: fallback callback\n"
+                    "evidence: executor self-thread\n"
+                    "risks: none\n"
+                    "next: verifier" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "fallback callback")
+        self.assertEqual(update["ledger"]["observations"][-1]["receipt"]["source"], "self-thread-fallback/read_thread")
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertIn("sourceThreadId", telemetry[0]["error"])
 
     def test_watch_team_task_ignores_manager_inbox_callback_with_wrong_source_thread_id(self):
         adapter = FakeThreadAdapter()
@@ -5940,6 +6109,94 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["source"], "self-thread-fallback/read_thread")
         self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["channel"], "read_thread")
 
+    def test_watch_verifier_direct_return_rejects_wrong_protocol_source_thread_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+        )
+        callback_messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: verifier" % self.task_id,
+            },
+        ]
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            callback_messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-verdict-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-verifier</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "sourceThreadId: wrong-parent-thread\n"
+                    "sourceRoleThreadId: thread-verifier\n"
+                    "role: Verifier\n"
+                    "result: pass\n"
+                    "summary: manager inbox verdict\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: direct return\n"
+                    "risks: none</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+        adapter.messages["thread-verifier"] = [
+            {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+            {
+                "messageId": "msg-verdict",
+                "sentAt": "2026-06-22T20:06:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "result: pass\n"
+                    "summary: fallback verdict\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: verifier self-thread\n"
+                    "risks: none" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_read_verifier_verdict")
+        self.assertEqual(update["status"], "done")
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["fields"]["summary"], "fallback verdict")
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["source"], "self-thread-fallback/read_thread")
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertIn("sourceThreadId", telemetry[0]["error"])
+
     def test_watch_team_task_prefers_manager_inbox_direct_return_verdict(self):
         adapter = FakeThreadAdapter()
         ledger = self._verifying_ledger()
@@ -5960,6 +6217,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                     "<codex_delegation>\n"
                     "  <source_thread_id>thread-verifier</source_thread_id>\n"
                     "  <input>TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-verifier\n"
+                    "role: Verifier\n"
                     "result: pass\n"
                     "summary: direct return closeout\n"
                     "requiredChanges: none\n"
@@ -6171,6 +6431,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                     "<codex_delegation>\n"
                     "  <source_thread_id>thread-executor</source_thread_id>\n"
                     "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-executor\n"
+                    "role: Executor\n"
                     "status: done\n"
                     "final: true\n"
                     "summary: direct return callback\n"
@@ -6818,6 +7081,32 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("不支持 `workspace-write`", text)
 
+    def test_workbench_does_not_claim_uncommitted_diff_when_used_as_current_record(self):
+        text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Current Task", text)
+        self.assertNotIn("State: uncommitted local diff only", text)
+        current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
+        for needle in (
+            "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
+            "`docs/compounding.md`",
+            "`README.md`",
+            "`docs/runbooks/codex-team-router-live-orchestration.md`",
+            "`docs/workbench.md`",
+            "`skills/codex-team-router/references/direct-return.md`",
+            "`skills/codex-team-router/references/manager-mode.md`",
+            "`skills/codex-team-router/references/manual-orchestration.md`",
+            "`skills/codex-team-router/references/testing-and-quality-gates.md`",
+            "`src/team_router.py`",
+            "`tests/test_team_router.py`",
+        ):
+            self.assertIn(needle, current_diff_section)
+        for stale in (
+            "`skills/codex-team-router/SKILL.md`",
+            "`skills/codex-team-router/references/agent-assist-policy.md`",
+            "`skills/codex-team-router/references/role-closeout.md`",
+        ):
+            self.assertNotIn(stale, current_diff_section)
     def test_skill_doc_contains_parent_thread_operating_flow(self):
         text = self._skill_contract_text()
         for needle in (
@@ -6898,6 +7187,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "then output the same protocol block body",
             "sourceThreadId",
             "sourceRoleThreadId",
+            "protocol block",
+            "must match the pending ledger `returnThreadId`",
+            "must match the expected `roleThreadId` / role thread record",
+            "wrapper source identifies the role thread",
+            "validate `sourceRoleThreadId` against the expected `roleThreadId` / role thread record.",
             "role: Executor",
             "role: Reviewer",
             "role: Verifier",
@@ -6909,11 +7203,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "verdictFallback: self-thread-marker",
             "deliveryStatus: fallback_only",
             "deliveryError",
-            "Manager accepts direct-send only when `taskId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry.",
+            "Manager accepts direct-send only when `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry, including that `sourceThreadId` matches the pending ledger `returnThreadId`.",
             "rejected/quarantined",
             "cannot expand scope",
         ):
             self.assertIn(needle, text)
+        self.assertNotIn(
+            "Manager accepts direct-send only when `taskId`, `role`, and `sourceRoleThreadId`",
+            text,
+        )
         for stale in (
             "directReturnAttempt",
             "send_message_to_thread(threadId=<returnThreadId>",

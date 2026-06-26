@@ -11,6 +11,14 @@ This is the project-level compounding ledger. Keep reusable lessons here when a 
 
 ## Entries
 
+### Direct Return Identity Must Be Explicit
+
+- Trigger: direct-return contract docs and snapshots required `role` / `sourceRoleThreadId`, but runtime receipt validation still accepted missing identity fields by falling back to wrapper/source defaults.
+- Rule: manager direct-send receipt validation must treat the Codex delegation wrapper source as transport metadata only; it cannot infer protocol identity from wrapper `<source_thread_id>` / normalized message `sourceThreadId`.
+- Rule: direct-return protocol blocks must explicitly provide `sourceThreadId`, `role`, and `sourceRoleThreadId`; missing or mismatched fields are malformed/quarantined and must fall back to the role self-thread marker path.
+- Rule: direct-return contract changes must lock runtime validator behavior, active docs/snapshot wording, and negative tests for both wrong values and missing fields.
+- Enforced by: `src/team_router.py`, `tests/test_team_router.py`, `skills/codex-team-router/references/direct-return.md`, `skills/codex-team-router/references/testing-and-quality-gates.md`, and `docs/workbench.md`.
+
 ### Manager Overreach, Lightweight Flow, And Role Callback Discipline
 
 - Trigger: manager wrote or attempted to write files during active Manager Mode, a narrow mechanical fix expanded into too many roles, and a role completed key checks without proactively returning the expected protocol block.

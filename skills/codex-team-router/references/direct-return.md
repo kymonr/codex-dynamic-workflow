@@ -2,6 +2,8 @@
 
 This reference is part of the Team Router contract. `SKILL.md` is the short entrypoint; keep direct-return details here.
 
+Terminology: Codex delegation wrapper metadata may expose the sender role thread as `<source_thread_id>` / normalized message `sourceThreadId`. That wrapper source identifies the role thread that sent the message. Inside the Team Router protocol block, `sourceThreadId` is the parent/orchestrator return thread id and must match the pending ledger `returnThreadId`; `sourceRoleThreadId` is the role thread id and must match the expected `roleThreadId` / role thread record for the pending role ledger entry.
+
 Direct return is the primary completion path when the current orchestrator/parent thread id is known. The role must first call `send_message_to_thread(sourceThreadId, protocolBlock)` to direct-send the final protocol block to Manager, then output the same protocol block body in its own thread as the `self-thread-marker` fallback/audit copy.
 
 Use these explicit fields together:
@@ -39,13 +41,13 @@ Manager inbox capture is part of the ledger state machine. A direct-return callb
 Manager inbox validation requirements:
 
 - validate `taskId` against the active ledger task.
-- validate `sourceThreadId` against the expected manager/orchestrator thread for that pending role result.
+- validate protocol-block `sourceThreadId` against the expected parent/orchestrator `returnThreadId`.
 - validate `sourceRoleThreadId` against the expected `roleThreadId` / role thread record.
 - validate `role` against the pending role ledger entry.
 - validate the expected marker: `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`.
 - consume the callback only while the ledger is currently awaiting that role result, including that role's `needs_feedback` recovery state.
 
-Manager accepts direct-send only when `taskId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry. Unmatched direct-send blocks are rejected/quarantined, cannot advance the ledger, and cannot expand scope.
+Manager accepts direct-send only when `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry, including that `sourceThreadId` matches the pending ledger `returnThreadId`. Unmatched direct-send blocks are rejected/quarantined, cannot advance the ledger, and cannot expand scope.
 
 Duplicate direct callbacks are ignored after the ledger advances past that role. Do not record duplicate observations and do not let old executor/reviewer/verifier callbacks trigger the next state twice.
 

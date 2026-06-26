@@ -167,7 +167,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "requiredLedgerFields": ("returnThreadId", "orchestratorThreadId", "roleThreadId"),
         "delivery": "direct-send via send_message_to_thread when an explicit parent/source returnThreadId is available",
         "fallback": "self-thread-marker plus watcher/heartbeat read_thread capture remains mandatory 5 minutes fallback",
-        "managerReceiptValidation": "manager accepts direct returns only after sourceThreadId, taskId, expected marker, returnThreadId/orchestratorThreadId target, and roleThreadId/source role validation",
+        "managerReceiptValidation": "manager accepts direct-send protocol blocks only when taskId, protocol-block `sourceThreadId`, role, and sourceRoleThreadId match the pending role ledger entry, including protocol-block `sourceThreadId` matching pending `returnThreadId`; expected marker, returnThreadId/orchestratorThreadId target, and roleThreadId/source role validation still apply",
         "inboxValidation": "manager inbox capture validates taskId, sourceThreadId, expected marker, and consumes only the role currently awaited by the ledger",
         "deduplication": "duplicate direct callbacks are ignored after the ledger advances past that role; observations are not recorded twice",
         "markers": {
@@ -195,7 +195,7 @@ MANAGER_ORCHESTRATION_POLICY = {
             "callbackFallback/reviewFallback/verdictFallback: self-thread-marker",
         ),
         "roleThreadBootstrap": "newly created role threads require two-step bootstrap: create role thread first, record sourceRoleThreadId, then send formal dispatch containing that id; reused roles already have a known sourceRoleThreadId",
-        "managerReceiptValidation": "manager accepts direct-send protocol blocks only when taskId, role, and sourceRoleThreadId match the pending role ledger entry; unmatched blocks are rejected or quarantined and must not expand task scope",
+        "managerReceiptValidation": "manager accepts direct-send protocol blocks only when taskId, protocol-block sourceThreadId matches the pending returnThreadId, role, and sourceRoleThreadId match the pending role ledger entry; unmatched blocks are rejected or quarantined and must not expand task scope",
         "fallbackBodyInvariant": "direct-send and local fallback must contain the same protocol block body",
         "fallbackMetadata": "local fallback may append deliveryStatus: fallback_only and deliveryError when direct-send is unavailable or failed",
         "normalCadence": "manager waits for direct-send first; perform one bounded read/check only on failed/unknown send, expected idle role, user completion signal, or timeout; avoid continuous polling",
@@ -2853,21 +2853,34 @@ def _validate_direct_return_receipt(msg: ProtocolMessage,
                                     *,
                                     task_id: str,
                                     expected_role: str,
-                                    expected_role_thread_id: str) -> dict[str, Any] | None:
+                                    expected_role_thread_id: str,
+                                    expected_return_thread_id: str | None = None) -> dict[str, Any] | None:
     message = manager_message if isinstance(manager_message, Mapping) else {}
-    normalized_role = _normalize_direct_return_role(msg.fields.get("role"), expected_role=expected_role)
-    source_role_thread_id = str(
-        msg.fields.get("sourceRoleThreadId") or message.get("sourceThreadId") or ""
-    ).strip()
+    role_value = str(msg.fields.get("role") or "").strip()
+    source_role_thread_id = str(msg.fields.get("sourceRoleThreadId") or "").strip()
+    protocol_source_thread_id = str(msg.fields.get("sourceThreadId") or "").strip()
+    expected_return = str(expected_return_thread_id or "").strip()
     errors: list[str] = []
     if msg.task_id != task_id:
         errors.append("%s.taskId must be %r, got %r" % (msg.marker, task_id, msg.task_id))
-    if normalized_role != expected_role:
+    if expected_return:
+        if not protocol_source_thread_id:
+            errors.append("%s.sourceThreadId is required" % msg.marker)
+        elif protocol_source_thread_id != expected_return:
+            errors.append(
+                "%s.sourceThreadId must be %r, got %r"
+                % (msg.marker, expected_return, protocol_source_thread_id)
+            )
+    if not role_value:
+        errors.append("%s.role is required" % msg.marker)
+    elif _normalize_direct_return_role(role_value, expected_role=expected_role) != expected_role:
         errors.append(
             "%s.role must be %r, got %r"
-            % (msg.marker, expected_role, msg.fields.get("role") or expected_role)
+            % (msg.marker, expected_role, role_value)
         )
-    if source_role_thread_id != expected_role_thread_id:
+    if not source_role_thread_id:
+        errors.append("%s.sourceRoleThreadId is required" % msg.marker)
+    elif source_role_thread_id != expected_role_thread_id:
         errors.append(
             "%s.sourceRoleThreadId must be %r, got %r"
             % (msg.marker, expected_role_thread_id, source_role_thread_id)
@@ -4050,6 +4063,7 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
             task_id=task_id,
             expected_role="executor",
             expected_role_thread_id=_required_str(dispatch.get("roleThreadId") or dispatch.get("threadId"), "executorDispatch.roleThreadId"),
+            expected_return_thread_id=_required_str(dispatch.get("returnThreadId"), "executorDispatch.returnThreadId"),
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
@@ -4102,6 +4116,7 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
             task_id=task_id,
             expected_role="reviewer",
             expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "reviewerRequest.roleThreadId"),
+            expected_return_thread_id=_required_str(request.get("returnThreadId"), "reviewerRequest.returnThreadId"),
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
@@ -4154,6 +4169,7 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
             task_id=task_id,
             expected_role="verifier",
             expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "verifierRequest.roleThreadId"),
+            expected_return_thread_id=_required_str(request.get("returnThreadId"), "verifierRequest.returnThreadId"),
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(

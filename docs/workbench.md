@@ -4,31 +4,37 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- Objective: harden Team Router workflow around manager write boundaries, lightweight role routing, proactive role return, bounded CONTROL closeout, and persistent project records.
-- State: uncommitted local diff only.
-- Last refreshed: 2026-06-26 review-fix pass for compounding/workbench recording findings.
+- Objective: Team Router Direct Return Contract Hardening final review documentation fixes.
+- State: implementation complete and locally verified; current local diff is the direct-return contract hardening package, its matching docs/test sync, and the recorded compounding lesson.
+- Last refreshed: 2026-06-27 plan record cleanup.
 - Not done: stage, commit, push, PR, publish, release.
 
 ## Current Diff Surface
 
+- `docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`
 - `docs/compounding.md`
-- `docs/workbench.md`
+- `README.md`
 - `docs/runbooks/codex-team-router-live-orchestration.md`
-- `skills/codex-team-router/SKILL.md`
-- `skills/codex-team-router/references/agent-assist-policy.md`
+- `docs/workbench.md`
+- `skills/codex-team-router/references/direct-return.md`
 - `skills/codex-team-router/references/manager-mode.md`
 - `skills/codex-team-router/references/manual-orchestration.md`
-- `skills/codex-team-router/references/role-closeout.md`
+- `skills/codex-team-router/references/testing-and-quality-gates.md`
 - `src/team_router.py`
 - `tests/test_team_router.py`
 
 ## Verification Record
 
-- `py -m py_compile src\team_router.py tests\test_team_router.py`: pass
-- `git diff --check`: pass; observed CRLF/LF normalization warning for `docs/runbooks/codex-team-router-live-orchestration.md`
-- Focused unittest for protocol/docs closeout coverage: pass
-- Review-fix focused unittest for compounding/workbench recording: pass
-- Expanded related unittest classes: pass
+- `py -m py_compile src\team_router.py tests\test_team_router.py`: pass.
+- Compounding ledger entry for direct-return identity fields: recorded in `docs/compounding.md`.
+- Plan record cleanup: current Superpowers plan file marked as completed record; no open task checkboxes or stale `observations[...]["fields"]` snippet remain.
+- Focused direct-return sourceThreadId tests for executor/reviewer/verifier wrong parent thread: pass.
+- Focused direct-return missing `role` / `sourceRoleThreadId` receipt validation test across executor/reviewer/verifier markers: pass.
+- Focused accepted manager-inbox direct-return callback/verdict regression tests: pass.
+- Focused docs contract tests for direct-return wording, active docs, protocol snapshot, and workbench current diff surface: pass.
+- Active contract drift search over README, runbook, skill references, and runtime snapshot: old direct-send acceptance rule absent from active docs/source.
+- `py -m unittest discover -s tests -p test_team_router.py -v`: pass, 224 tests.
+- `git diff --check`: pass; observed CRLF/LF normalization warnings for README, runbook, workbench, testing-and-quality-gates, and tests/test_team_router.py.
 
 ## Next Gate
 
