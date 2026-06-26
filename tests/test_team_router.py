@@ -195,6 +195,55 @@ risks: none
         self.assertEqual(msg.fields["result"], "needs_rework")
 
 
+    def test_protocol_contract_snapshot_includes_active_role_return_model(self):
+        policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
+        model = policy["callbackDeliveryModel"]
+
+        self.assertIn("direct-send", model["primaryDelivery"])
+        self.assertIn("self-thread-marker", model["fallback"])
+        self.assertIn("sourceThreadId", model["requiredDispatchFields"])
+        self.assertIn("sourceRoleThreadId", model["requiredDispatchFields"])
+        self.assertIn("role", model["requiredDispatchFields"])
+        self.assertIn("taskId", model["managerReceiptValidation"])
+        self.assertIn("role", model["managerReceiptValidation"])
+        self.assertIn("sourceRoleThreadId", model["managerReceiptValidation"])
+        self.assertIn("same protocol block body", model["fallbackBodyInvariant"])
+        self.assertIn("deliveryStatus: fallback_only", model["fallbackMetadata"])
+        self.assertIn("deliveryError", model["fallbackMetadata"])
+        self.assertIn("two-step bootstrap", model["roleThreadBootstrap"])
+        self.assertIn("create", model["roleThreadBootstrap"])
+        self.assertIn("dispatch", model["roleThreadBootstrap"])
+
+    def test_protocol_contract_snapshot_includes_standing_role_reuse_policy(self):
+        policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
+        reuse = policy["roleReuse"]
+        reviewer_gate = policy["conditionalReviewerGate"]
+
+        self.assertIn("standing", reuse["default"])
+        self.assertIn("existing executor", reuse["default"])
+        self.assertIn("existing reviewer", reuse["default"])
+        self.assertIn("existing verifier", reuse["default"])
+        self.assertIn("same taskId or task family", reuse["default"])
+        self.assertIn("first missing role binding", reuse["newThreadOnlyWhen"])
+        self.assertIn("role/thread unavailable or archived/broken", reuse["newThreadOnlyWhen"])
+        self.assertIn("permission boundary changes", reuse["newThreadOnlyWhen"])
+        self.assertIn("workspace boundary changes", reuse["newThreadOnlyWhen"])
+        self.assertIn("task-family boundary changes", reuse["newThreadOnlyWhen"])
+        self.assertIn("isolation/audit boundary changes", reuse["newThreadOnlyWhen"])
+        self.assertIn("concurrency conflict", reuse["newThreadOnlyWhen"])
+        self.assertIn("model/capability requirement", reuse["newThreadOnlyWhen"])
+        self.assertIn("original executor", reuse["reworkExecutor"])
+        self.assertIn("original reviewer", reuse["reworkReviewer"])
+        self.assertIn("original verifier", reuse["reworkVerifier"])
+        self.assertIn("fresh searchAnchor", reuse["dispatchFreshness"])
+        self.assertIn("stale search anchor", reuse["dispatchFreshness"])
+        self.assertNotIn("max", reuse["default"].lower())
+        self.assertIn("same reviewer", reviewer_gate["roleReuse"])
+        self.assertIn("review lens", reviewer_gate["roleReuse"])
+        self.assertIn("compliance review", reviewer_gate["roleReuse"])
+        self.assertIn("code-quality review", reviewer_gate["roleReuse"])
+        self.assertIn("original reviewer", reviewer_gate["roleReuse"])
+
 class TestTeamRouterState(unittest.TestCase):
     def test_callback_unreachable_is_recoverable_not_terminal(self):
         self.assertNotIn("callback_unreachable", team_router.TERMINAL_STATUSES)
@@ -721,6 +770,28 @@ risks: none
                 "verifier": "TEAM_ROUTER_VERDICT",
             },
         )
+        delivery_model = policy["callbackDeliveryModel"]
+        self.assertIn("direct-send", delivery_model["primaryDelivery"])
+        self.assertIn("send_message_to_thread", delivery_model["primaryDelivery"])
+        self.assertIn("sourceThreadId", delivery_model["primaryDelivery"])
+        self.assertIn("self-thread-marker", delivery_model["fallback"])
+        self.assertIn("mandatory audit and recovery path", delivery_model["fallback"])
+        self.assertIn("sourceThreadId", delivery_model["requiredDispatchFields"])
+        self.assertIn("sourceRoleThreadId", delivery_model["requiredDispatchFields"])
+        self.assertIn("role", delivery_model["requiredDispatchFields"])
+        self.assertIn("callbackDelivery/reviewDelivery/verdictDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("callbackFallback/reviewFallback/verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("two-step bootstrap", delivery_model["roleThreadBootstrap"])
+        self.assertIn("taskId", delivery_model["managerReceiptValidation"])
+        self.assertIn("role", delivery_model["managerReceiptValidation"])
+        self.assertIn("sourceRoleThreadId", delivery_model["managerReceiptValidation"])
+        self.assertIn("same protocol block body", delivery_model["fallbackBodyInvariant"])
+        self.assertIn("deliveryStatus: fallback_only", delivery_model["fallbackMetadata"])
+        self.assertIn("deliveryError", delivery_model["fallbackMetadata"])
+        self.assertIn("direct-send first", delivery_model["normalCadence"])
+        self.assertIn("one bounded read/check", delivery_model["normalCadence"])
+        self.assertIn("avoid continuous polling", delivery_model["normalCadence"])
+
         convergence = policy["convergence"]
         self.assertIn("observation-only", convergence["statusReads"])
         self.assertIn("return-verdict-now", convergence["firstResponseToStillWorking"])
@@ -745,7 +816,7 @@ risks: none
         self.assertIn("same taskId or task family", policy["roleReuse"]["default"])
         self.assertIn("original executor", policy["roleReuse"]["reworkExecutor"])
         self.assertIn("original verifier", policy["roleReuse"]["reworkVerifier"])
-        self.assertIn("isolation requirement changes", policy["roleReuse"]["newThreadOnlyWhen"])
+        self.assertIn("isolation/audit boundary changes", policy["roleReuse"]["newThreadOnlyWhen"])
         title_policy = policy["roleTitleNormalization"]
         self.assertEqual(title_policy["format"], "角色-任务名")
         self.assertIn("immediately after creating or discovering", title_policy["requiredAfter"])
@@ -791,6 +862,16 @@ risks: none
         self.assertIn("no silent caps", "\n".join(agent_policy["reporting"]))
         self.assertIn("completion report", "\n".join(agent_policy["reporting"]))
         self.assertIn("compounding decision", "\n".join(agent_policy["reporting"]))
+        aux_selection = agent_policy["auxiliaryAgentSelectionPolicy"]
+        self.assertIn("high-star external subagent catalog ideas", aux_selection["purpose"])
+        self.assertIn("agent-organizer", "\n".join(aux_selection["selectionGuide"]))
+        self.assertIn("visible role threads remain the execution path", "\n".join(aux_selection["selectionGuide"]))
+        self.assertIn("Team Router reviewer/verifier gates are not replaced", "\n".join(aux_selection["selectionGuide"]))
+        self.assertEqual(aux_selection["safeRefactorPattern"]["flow"], "analyze -> propose -> wait -> execute")
+        self.assertIn("codebase-orchestrator", aux_selection["safeRefactorPattern"]["source"])
+        self.assertIn("STRICT/PACKAGE changes route through reviewer then verifier", "\n".join(aux_selection["safeRefactorPattern"]["teamRouterMapping"]))
+        self.assertIn("Write/Edit/Bash reviewer permissions", "\n".join(aux_selection["safeRefactorPattern"]["forbiddenIntake"]))
+        self.assertIn("do not install external plugins", "\n".join(aux_selection["safeRefactorPattern"]["forbiddenIntake"]))
 
         reviewer_gate = policy["conditionalReviewerGate"]
         self.assertIn("executor -> verifier", reviewer_gate["defaultFlow"])
@@ -802,7 +883,7 @@ risks: none
         self.assertIn("ordinary small fixes", reviewer_gate["skipWhen"])
         self.assertIn("not final acceptance", reviewer_gate["reviewerResponsibility"])
         self.assertIn("final acceptance", reviewer_gate["verifierResponsibility"])
-        self.assertIn("reuse existing reviewer", reviewer_gate["roleReuse"])
+        self.assertIn("reuse the same reviewer thread", reviewer_gate["roleReuse"])
         self.assertIn("original reviewer", reviewer_gate["roleReuse"])
         self.assertIn("send_reviewer_request_with_adapter()", reviewer_gate["runtimeImplementation"])
         self.assertIn("read_reviewer_review_update_with_adapter()", reviewer_gate["runtimeImplementation"])
@@ -845,11 +926,16 @@ risks: none
                 "blockers/exceptions",
                 "remaining risks",
                 "current state and next step",
+                "compoundingDecision: recorded | skipped",
+                "reason: ...",
             ),
         )
         self.assertIn("every task closeout", closeout_reporting["scope"])
+        self.assertIn("closeout compounding decision", closeout_reporting["scope"])
 
         compounding = policy["compoundingDecisionPolicy"]
+        self.assertEqual(compounding["closeoutFields"]["compoundingDecision"], ("recorded", "skipped"))
+        self.assertIn("required explanatory text", compounding["closeoutFields"]["reason"])
         self.assertIn("manager overreach", compounding["recordWhen"])
         self.assertIn("role conflict", compounding["recordWhen"])
         self.assertIn("permission/sandbox issue", compounding["recordWhen"])
@@ -861,6 +947,9 @@ risks: none
         self.assertIn("docs/evidence", compounding["recordedLessons"][0])
         self.assertIn("ordinary successful implementation/testing", compounding["skipWhen"])
         self.assertIn("no new reusable risk", compounding["skipWhen"])
+        self.assertIn("compoundingDecision: skipped", compounding["skipReport"])
+        self.assertIn("reason: ordinary successful implementation/testing", compounding["skipReport"])
+
 
     def test_protocol_contract_snapshot_includes_side_effect_taxonomy_policy(self):
         policy = team_router.protocol_contract_snapshot()["sideEffectTaxonomy"]
@@ -1666,20 +1755,30 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             role_thread_id="thread-executor",
         )
 
+        self.assertIn("sourceThreadId: parent-manager-thread", message)
+        self.assertIn("sourceRoleThreadId: thread-executor", message)
+        self.assertIn("role: Executor", message)
         self.assertIn("returnThreadId: parent-manager-thread", message)
         self.assertIn("orchestratorThreadId: parent-manager-thread", message)
         self.assertIn("roleThreadId: thread-executor", message)
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
-        self.assertIn("write the final TEAM_ROUTER_CALLBACK block in this role thread first", message)
-        self.assertIn("check whether send_message_to_thread is available", message)
         self.assertIn(
-            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>)",
+            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_CALLBACK block.",
             message,
         )
-        self.assertIn("directReturnAttempt: sent | unavailable | failed", message)
-        self.assertIn("directReturnTarget: <returnThreadId when applicable>", message)
-        self.assertIn("directReturnError: <short error only when failed>", message)
+        self.assertIn(
+            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            message,
+        )
+        self.assertIn("Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.", message)
+        self.assertIn(
+            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            message,
+        )
+        self.assertIn("same protocol block body", message)
+        self.assertIn("deliveryStatus: fallback_only", message)
+        self.assertIn("deliveryError", message)
         self.assertIn("callbackMarker: TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", message)
 
         updated = team_router.record_executor_dispatch_sent(
@@ -2524,6 +2623,69 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
         self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
 
+    def test_watch_reviewer_direct_return_validates_protocol_source_role_thread_id(self):
+        adapter = self._record_reviewer_direct_return_request()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "text": self._reviewer_direct_return_wrapper(
+                    "pass",
+                    source_thread_id="thread-reviewer",
+                    source_role_thread_id="wrong-reviewer-thread",
+                ),
+            },
+        ]
+        adapter.messages["thread-reviewer"] = [
+            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review request"},
+            {
+                "messageId": "msg-review-fallback",
+                "sentAt": "2026-06-22T20:06:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_REVIEW taskId=%s\n"
+                    "result: pass\n"
+                    "summary: fallback review\n"
+                    "findings: fallback evidence\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: reviewer self-thread\n"
+                    "risks: none" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["review"]["result"]["fields"]["summary"], "fallback review")
+        self.assertEqual(
+            update["ledger"]["review"]["result"]["receipt"]["source"],
+            "self-thread-fallback/read_thread",
+        )
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertEqual(telemetry[0]["taskId"], self.task_id)
+        self.assertEqual(telemetry[0]["role"], "reviewer")
+        self.assertEqual(telemetry[0]["sourceThreadId"], "thread-reviewer")
+        self.assertEqual(telemetry[0]["roleThreadId"], "thread-reviewer")
+        self.assertEqual(telemetry[0]["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["expectedMarker"], "TEAM_ROUTER_REVIEW taskId=%s" % self.task_id)
+        self.assertEqual(telemetry[0]["messageId"], "msg-review-return")
+        self.assertEqual(telemetry[0]["sentAt"], "2026-06-22T20:06:00+08:00")
+        self.assertEqual(telemetry[0]["capturedAt"], "2026-06-22T20:07:00+08:00")
+        self.assertIn("sourceRoleThreadId", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
+
+
     def test_watch_ignores_reviewer_direct_return_with_wrong_source_thread_id(self):
         adapter = self._record_reviewer_direct_return_request()
         adapter.messages["parent-manager-thread"] = [
@@ -2659,12 +2821,20 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertNotIn("verdictFallback", request)
         return adapter
 
-    def _reviewer_direct_return_wrapper(self, result, task_id=None, source_thread_id="thread-reviewer"):
+    def _reviewer_direct_return_wrapper(self,
+                                        result,
+                                        task_id=None,
+                                        source_thread_id="thread-reviewer",
+                                        source_role_thread_id=None,
+                                        role="Reviewer"):
         review_task_id = task_id or self.task_id
+        review_source_role_thread_id = source_role_thread_id or source_thread_id
         return (
             "<codex_delegation>\n"
             "  <source_thread_id>%s</source_thread_id>\n"
             "  <input>TEAM_ROUTER_REVIEW taskId=%s\n"
+            "role: %s\n"
+            "sourceRoleThreadId: %s\n"
             "result: %s\n"
             "summary: review result\n"
             "findings: focused check\n"
@@ -2672,7 +2842,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "evidenceChecked: tests\n"
             "risks: none</input>\n"
             "</codex_delegation>"
-        ) % (source_thread_id, review_task_id, result)
+        ) % (source_thread_id, review_task_id, role, review_source_role_thread_id, result)
 
     def test_reviewer_pass_sends_verifier_request_and_needs_rework_or_blocked_stops(self):
         ledger = self._high_risk_awaiting_callback_ledger()
@@ -3163,20 +3333,30 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             role_thread_id="thread-verifier",
         )
 
+        self.assertIn("sourceThreadId: parent-manager-thread", verify_message)
+        self.assertIn("sourceRoleThreadId: thread-verifier", verify_message)
+        self.assertIn("role: Verifier", verify_message)
         self.assertIn("returnThreadId: parent-manager-thread", verify_message)
         self.assertIn("orchestratorThreadId: parent-manager-thread", verify_message)
         self.assertIn("roleThreadId: thread-verifier", verify_message)
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
-        self.assertIn("write the final TEAM_ROUTER_VERDICT block in this role thread first", verify_message)
-        self.assertIn("check whether send_message_to_thread is available", verify_message)
         self.assertIn(
-            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
+            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_VERDICT block.",
             verify_message,
         )
-        self.assertIn("directReturnAttempt: sent | unavailable | failed", verify_message)
-        self.assertIn("directReturnTarget: <returnThreadId when applicable>", verify_message)
-        self.assertIn("directReturnError: <short error only when failed>", verify_message)
+        self.assertIn(
+            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            verify_message,
+        )
+        self.assertIn("Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.", verify_message)
+        self.assertIn(
+            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            verify_message,
+        )
+        self.assertIn("same protocol block body", verify_message)
+        self.assertIn("deliveryStatus: fallback_only", verify_message)
+        self.assertIn("deliveryError", verify_message)
         self.assertIn("callbackMarker: TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3", verify_message)
 
         requested = team_router.record_verifier_request_sent(
@@ -3209,20 +3389,30 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             role_thread_id="thread-reviewer",
         )
 
+        self.assertIn("sourceThreadId: parent-manager-thread", review_message)
+        self.assertIn("sourceRoleThreadId: thread-reviewer", review_message)
+        self.assertIn("role: Reviewer", review_message)
         self.assertIn("returnThreadId: parent-manager-thread", review_message)
         self.assertIn("orchestratorThreadId: parent-manager-thread", review_message)
         self.assertIn("roleThreadId: thread-reviewer", review_message)
         self.assertIn("reviewDelivery: direct-send", review_message)
         self.assertIn("reviewFallback: self-thread-marker", review_message)
-        self.assertIn("write the final TEAM_ROUTER_REVIEW block in this role thread first", review_message)
-        self.assertIn("check whether send_message_to_thread is available", review_message)
         self.assertIn(
-            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
+            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_REVIEW block.",
             review_message,
         )
-        self.assertIn("directReturnAttempt: sent | unavailable | failed", review_message)
-        self.assertIn("directReturnTarget: <returnThreadId when applicable>", review_message)
-        self.assertIn("directReturnError: <short error only when failed>", review_message)
+        self.assertIn(
+            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            review_message,
+        )
+        self.assertIn("Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.", review_message)
+        self.assertIn(
+            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            review_message,
+        )
+        self.assertIn("same protocol block body", review_message)
+        self.assertIn("deliveryStatus: fallback_only", review_message)
+        self.assertIn("deliveryError", review_message)
         self.assertIn("reviewMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
         self.assertIn("reviewerMode: read-only/adversarial", review_message)
 
@@ -5641,6 +5831,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("Team Router Closeout", update["userOutput"])
         self.assertIn("summary: watcher closeout", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertIn("compoundingDecision: skipped", update["userOutput"])
+        self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", update["userOutput"])
         self.assertEqual(len(adapter.sent), 0)
 
     def test_verifier_role_fallback_read_uses_fallback_search_anchor(self):
@@ -5723,6 +5915,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["status"], "done")
         self.assertIn("summary: direct return closeout", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertIn("compoundingDecision: skipped", update["userOutput"])
+        self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", update["userOutput"])
         self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["source"], "manager-inbox/direct-send")
         self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["channel"], "manager-inbox")
         self.assertEqual(len(adapter.sent), 0)
@@ -6377,10 +6571,22 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("manager: thread-manager", closeout)
         self.assertIn("summary: ok", closeout)
         self.assertIn("remainingTodos: none", closeout)
+        self.assertIn("compoundingDecision: skipped", closeout)
+        self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", closeout)
+        legacy_done = dict(done)
+        legacy_done["closeout"] = dict(done["closeout"])
+        legacy_done["closeout"].pop("compoundingDecision")
+        legacy_done["closeout"].pop("reason")
+        legacy_closeout = team_router.format_closeout_for_user(legacy_done, registry)
+
+        self.assertIn("compoundingDecision: skipped", legacy_closeout)
+        self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", legacy_closeout)
         self.assertIn("read_thread anchors", handoff)
         self.assertIn("msg-verify", handoff)
         self.assertIn("verification", handoff)
         self.assertIn("remainingTodos: none", handoff)
+        self.assertNotIn("compoundingDecision:", handoff)
+        self.assertNotIn("reason: ", handoff)
 
     def test_format_task_update_for_user_uses_closeout_only_for_terminal_closeout(self):
         awaiting = self._awaiting_callback_ledger()
@@ -6426,6 +6632,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("Team Router Closeout", closeout)
         self.assertIn("summary: complete", closeout)
         self.assertIn("remainingTodos: none", closeout)
+        self.assertIn("compoundingDecision: skipped", closeout)
+        self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", closeout)
         self.assertNotIn("read_thread anchors", closeout)
 
     def test_read_verifier_verdict_update_with_adapter_returns_user_output(self):
@@ -6456,6 +6664,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("Team Router Closeout", update["userOutput"])
         self.assertIn("summary: adapter done", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertIn("compoundingDecision: skipped", update["userOutput"])
+        self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", update["userOutput"])
 
 
 class TestTeamRouterSkillDoc(unittest.TestCase):
@@ -6560,11 +6770,78 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "emit `update[\"userOutput\"]`",
             "callbackDelivery: direct-send",
             "verdictDelivery: direct-send",
-            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)",
+            "send_message_to_thread(sourceThreadId, protocolBlock)",
             "watcher/scheduler polling is the fallback",
+            "self-thread-marker writes only to the role thread",
+            "does not automatically appear in the manager/main thread",
+            "explicit result collection read/check",
+            "one deliberate collection check",
         ):
             self.assertIn(needle, text)
 
+    def test_team_router_docs_describe_active_role_return(self):
+        docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                ROOT / "README.md",
+                ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md",
+                ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md",
+                ROOT / "skills" / "codex-team-router" / "references" / "manual-orchestration.md",
+                ROOT / "skills" / "codex-team-router" / "references" / "testing-and-quality-gates.md",
+            )
+        )
+        for needle in (
+            "direct-send + self-thread-marker fallback",
+            "send_message_to_thread(sourceThreadId, protocolBlock)",
+            "sourceRoleThreadId",
+            "role",
+            "taskId",
+            "two-step bootstrap",
+            "deliveryStatus: fallback_only",
+            "deliveryError",
+            "same protocol block body",
+            "bounded result-collection read/check",
+            "continuous polling is not the default",
+        ):
+            self.assertIn(needle, docs)
+        self.assertNotIn("after it writes the marker in its own thread", docs)
+
+        runbook = (
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "first call `send_message_to_thread(sourceThreadId, protocolBlock)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback",
+            runbook,
+        )
+    def test_direct_return_reference_matches_active_role_return_contract(self):
+        text = (self._skill_references_dir() / "direct-return.md").read_text(encoding="utf-8")
+        for needle in (
+            "first call `send_message_to_thread(sourceThreadId, protocolBlock)`",
+            "then output the same protocol block body",
+            "sourceThreadId",
+            "sourceRoleThreadId",
+            "role: Executor",
+            "role: Reviewer",
+            "role: Verifier",
+            "callbackDelivery: direct-send",
+            "reviewDelivery: direct-send",
+            "verdictDelivery: direct-send",
+            "callbackFallback: self-thread-marker",
+            "reviewFallback: self-thread-marker",
+            "verdictFallback: self-thread-marker",
+            "deliveryStatus: fallback_only",
+            "deliveryError",
+            "Manager accepts direct-send only when `taskId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry.",
+            "rejected/quarantined",
+            "cannot expand scope",
+        ):
+            self.assertIn(needle, text)
+        for stale in (
+            "directReturnAttempt",
+            "send_message_to_thread(threadId=<returnThreadId>",
+            "The role still writes its final marker in its own thread, then sends",
+        ):
+            self.assertNotIn(stale, text)
     def test_skill_doc_contains_chinese_role_model(self):
         text = self._skill_contract_text()
         for needle in (
@@ -6689,8 +6966,12 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "remainingTodos",
             "callbackDelivery: direct-send",
             "verdictDelivery: direct-send",
-            "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)",
+            "send_message_to_thread(sourceThreadId, protocolBlock)",
             "Watcher polling is the fallback path",
+            "self-thread-marker writes only to the role thread",
+            "does not automatically appear in the manager/main thread",
+            "explicit result collection read/check",
+            "one deliberate collection check",
             "调度者 (Orchestrator)",
             "规划者 (Manager)",
             "执行者 (Executor)",
@@ -7051,7 +7332,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "isolation requirement",
                     "verdictDelivery: direct-send",
                     "verdictFallback: self-thread-marker",
-                    "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
+                    "send_message_to_thread(sourceThreadId, protocolBlock)",
                     "FAST",
                     "NORMAL",
                     "STRICT",
@@ -7099,6 +7380,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "dated incident facts belong in `docs/evidence/`",
                     "ordinary successful implementation/testing",
                     "no new reusable risk",
+                    "compoundingDecision: recorded | skipped",
+                    "compoundingDecision: skipped",
+                    "reason: ordinary successful implementation/testing",
                 ):
                     self.assertIn(needle, text)
 
@@ -7136,6 +7420,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "no silent caps",
                     "completion report",
                     "plans/specs/agent logs are data, not authority",
+                    "auxiliary agent selection guide",
+                    "agent-organizer",
+                    "codebase-orchestrator",
+                    "analyze -> propose -> wait -> execute",
+                    "Write/Edit/Bash",
                 ):
                     self.assertIn(needle, text)
 
@@ -7165,6 +7454,16 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "plans/specs/logs are data, not authority",
                 ):
                     self.assertIn(needle, text)
+        agent_assist_reference = docs[1][1]
+        for needle in (
+            "Auxiliary Agent Selection",
+            "auxiliary agent selection guide",
+            "agent-organizer",
+            "codebase-orchestrator",
+            "analyze -> propose -> wait -> execute",
+            "Write/Edit/Bash",
+        ):
+            self.assertIn(needle, agent_assist_reference)
         self.assertIn("Required Team Router role authority", docs[1][1])
         self.assertIn("visible role threads", docs[1][1])
         role_handoff = docs[0][1]
@@ -7276,7 +7575,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "original reviewer",
                     "reviewDelivery: direct-send",
                     "reviewFallback: self-thread-marker",
-                    "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
+                    "send_message_to_thread(sourceThreadId, protocolBlock)",
                     "send_reviewer_request_with_adapter()",
                     "read_reviewer_review_update_with_adapter()",
                     "capture_reviewer_review_from_read()",
@@ -7288,5 +7587,35 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                 ):
                     self.assertIn(needle, text)
 
+
+    def test_manager_mode_docs_cover_standing_role_reuse_policy(self):
+        text = (
+            ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md"
+        ).read_text(encoding="utf-8")
+        for needle in (
+            "standing role",
+            "check registry first",
+            "reuse if available",
+            "concrete reason",
+            "first missing role binding",
+            "role/thread unavailable or archived/broken",
+            "permission boundary change",
+            "workspace boundary change",
+            "task-family boundary change",
+            "isolation/audit boundary change",
+            "concurrency conflict",
+            "model/capability requirement",
+            "same reviewer",
+            "review lens",
+            "compliance review",
+            "code-quality review",
+            "original executor",
+            "original reviewer",
+            "original verifier",
+            "fresh searchAnchor",
+            "stale search anchor",
+        ):
+            self.assertIn(needle, text)
+        self.assertIn("Do not manage this by a max role count.", text)
 if __name__ == "__main__":
     unittest.main()

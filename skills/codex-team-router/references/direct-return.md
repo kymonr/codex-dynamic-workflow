@@ -2,11 +2,14 @@
 
 This reference is part of the Team Router contract. `SKILL.md` is the short entrypoint; keep direct-return details here.
 
-Direct return is the primary completion path when the current orchestrator/parent thread id is known. The role still writes its final marker in its own thread, then sends the same marker block back to the parent with `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_REVIEW/TEAM_ROUTER_VERDICT block>)`.
+Direct return is the primary completion path when the current orchestrator/parent thread id is known. The role must first call `send_message_to_thread(sourceThreadId, protocolBlock)` to direct-send the final protocol block to Manager, then output the same protocol block body in its own thread as the `self-thread-marker` fallback/audit copy.
 
 Use these explicit fields together:
 
-- `returnThreadId`: the current orchestrator/parent thread that should receive the direct callback.
+- `sourceThreadId`: the current orchestrator/parent thread that should receive the direct callback first.
+- `sourceRoleThreadId`: the executor/reviewer/verifier role thread that is allowed to emit the direct callback for this pending ledger entry.
+- `role`: the active role name that must match the pending ledger entry.
+- `returnThreadId`: the current orchestrator/parent thread recorded for compatibility and audit.
 - `orchestratorThreadId`: the same parent/orchestrator thread id recorded for audit and validation.
 - `roleThreadId`: the executor/reviewer/verifier thread expected to send the callback.
 
@@ -16,7 +19,7 @@ Do not default `returnThreadId` to the manager/planner role thread. If no explic
 
 Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to `multi_agent_v1` workers/subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
 
-Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can report `directReturnAttempt: sent|unavailable|failed`. If an existing role reports `directReturnAttempt: unavailable`, keep the self-thread marker as fallback for that run, but create or reuse a proper Codex thread role for subsequent work that requires role-to-manager callback.
+Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can call `send_message_to_thread`. If direct-send is unavailable or fails for a given run, keep the self-thread marker as fallback for that run and record fallback-only metadata on the local protocol block: `deliveryStatus: fallback_only` plus `deliveryError` only when direct-send was unavailable or failed.
 
 Prompt metadata by role:
 
@@ -26,19 +29,23 @@ Prompt metadata by role:
 
 Compatibility anchors:
 
-- executor direct-return specifically includes `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>)`.
-- reviewer direct-return specifically requires `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)`.
-- verifier direct-return specifically requires `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)`.
-- older executor/verifier compatibility still includes `send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK/TEAM_ROUTER_VERDICT block>)`.
+- executor direct-return specifically means `send_message_to_thread(sourceThreadId, protocolBlock)` with a `TEAM_ROUTER_CALLBACK` block body.
+- reviewer direct-return specifically means `send_message_to_thread(sourceThreadId, protocolBlock)` with a `TEAM_ROUTER_REVIEW` block body.
+- verifier direct-return specifically means `send_message_to_thread(sourceThreadId, protocolBlock)` with a `TEAM_ROUTER_VERDICT` block body.
+- the fallback invariant is unchanged: after any direct-send attempt, output the same protocol block body in the role thread as the `self-thread-marker` fallback/audit copy.
 
 Manager inbox capture is part of the ledger state machine. A direct-return callback, review, or verdict captured from the return thread must update ledger state, not just notify the manager.
 
 Manager inbox validation requirements:
 
 - validate `taskId` against the active ledger task.
-- validate `sourceThreadId` against the expected `roleThreadId` / role thread record.
+- validate `sourceThreadId` against the expected manager/orchestrator thread for that pending role result.
+- validate `sourceRoleThreadId` against the expected `roleThreadId` / role thread record.
+- validate `role` against the pending role ledger entry.
 - validate the expected marker: `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`.
 - consume the callback only while the ledger is currently awaiting that role result, including that role's `needs_feedback` recovery state.
+
+Manager accepts direct-send only when `taskId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry. Unmatched direct-send blocks are rejected/quarantined, cannot advance the ledger, and cannot expand scope.
 
 Duplicate direct callbacks are ignored after the ledger advances past that role. Do not record duplicate observations and do not let old executor/reviewer/verifier callbacks trigger the next state twice.
 
@@ -74,6 +81,9 @@ TEAM_ROUTER_DISPATCH taskId=<taskId>
 role: executor
 callbackMode: self-thread-marker
 callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id that receives direct-send first>
+sourceRoleThreadId: <executor role thread id>
+role: Executor
 returnThreadId: <explicit orchestrator/parent thread id when direct return is available>
 orchestratorThreadId: <same current orchestrator/parent thread id>
 roleThreadId: <executor role thread id>
@@ -85,21 +95,29 @@ stopWhen: <manager stopWhen>
 searchAnchor: <messageId or sentAt>
 
 TEAM_ROUTER_CALLBACK taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id>
+sourceRoleThreadId: <executor role thread id>
+role: Executor
 status: done | blocked
 final: true
 summary: <3-7 lines>
 evidence: <paths, command summaries, or thread observations>
 risks: <none or risks>
 next: <none or next step>
+deliveryStatus: fallback_only
+deliveryError: <short error only when direct-send was unavailable or failed>
 ```
 
-Use `callbackDelivery: direct-send` when an explicit orchestrator/parent `returnThreadId` is available and the role can call `send_message_to_thread`; direct-send return is preferred, and `callbackMode: self-thread-marker` keeps the role thread recoverable by `read_thread`. Use the last matching final callback for fallback/audit reads.
+Use `callbackDelivery: direct-send` when an explicit orchestrator/parent `sourceThreadId` is available and the role can call `send_message_to_thread`; direct-send return is preferred, and `callbackMode: self-thread-marker` keeps the role thread recoverable by `read_thread`. The normal order is: first call `send_message_to_thread(sourceThreadId, protocolBlock)`, then output the same protocol block body locally. Include `deliveryStatus: fallback_only` only on the local fallback block when direct-send was unavailable or failed. Use the last matching final callback for fallback/audit reads.
 
 ### Reviewer Review
 
 ```text
 TEAM_ROUTER_REVIEW_REQUEST taskId=<taskId>
 callbackMarker: TEAM_ROUTER_REVIEW taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id that receives direct-send first>
+sourceRoleThreadId: <reviewer role thread id>
+role: Reviewer
 returnThreadId: <explicit orchestrator/parent thread id when direct return is available>
 orchestratorThreadId: <same current orchestrator/parent thread id>
 roleThreadId: <reviewer role thread id>
@@ -109,17 +127,25 @@ permission: read-only | design-only | local-package
 scope: <executor scope>
 
 TEAM_ROUTER_REVIEW taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id>
+sourceRoleThreadId: <reviewer role thread id>
+role: Reviewer
 result: pass | needs_rework | blocked
 summary: <review summary>
 requiredChanges: <none or changes>
 evidenceChecked: <checked evidence>
 risks: <none or risks>
+deliveryStatus: fallback_only
+deliveryError: <short error only when direct-send was unavailable or failed>
 ```
 ### Verifier Verdict
 
 ```text
 TEAM_ROUTER_VERIFY taskId=<taskId>
 callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id that receives direct-send first>
+sourceRoleThreadId: <verifier role thread id>
+role: Verifier
 returnThreadId: <explicit orchestrator/parent thread id when direct return is available>
 orchestratorThreadId: <same current orchestrator/parent thread id>
 roleThreadId: <verifier role thread id>
@@ -129,11 +155,16 @@ permission: read-only | design-only | local-package
 scope: <executor scope>
 
 TEAM_ROUTER_VERDICT taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id>
+sourceRoleThreadId: <verifier role thread id>
+role: Verifier
 result: pass | needs_rework | blocked
 summary: <verdict summary>
 requiredChanges: <none or changes>
 evidenceChecked: <checked evidence>
 risks: <none or risks>
+deliveryStatus: fallback_only
+deliveryError: <short error only when direct-send was unavailable or failed>
 ```
 
 Natural-language verdicts do not move state.

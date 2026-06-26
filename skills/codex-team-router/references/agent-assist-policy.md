@@ -10,6 +10,21 @@ Auxiliary agents can help with scouting, plan/spec review, pre-landing diff revi
 
 In a Team Router project context, if the user says to dispatch a role, reviewer, executor, or verifier, default to creating or reusing the Team Router visible role thread. Do not reinterpret that request as a `multi_agent` subagent request unless the user explicitly asks for external subagents.
 
+## Auxiliary Agent Selection
+
+Use external subagent catalog ideas as an auxiliary agent selection guide only:
+
+| Need | Auxiliary idea | Team Router use |
+| --- | --- | --- |
+| Task decomposition | `agent-organizer` | Role selection advice only; manager remains dispatcher. |
+| Parallelism or dependency risk | `multi-agent-coordinator` | Risk review only; visible role threads remain the execution path. |
+| Context and package shaping | `context-manager` | Handoff, review package, and context-trim suggestions only. |
+| Code or architecture critique | `code-reviewer` / `architect-reviewer` | Read-only critique input only; Team Router reviewer/verifier gates are not replaced. |
+| Failure diagnosis | `debugger` | Failure-path diagnosis input only; fixes remain executor-owned. |
+| Branch and closeout hygiene | `git-workflow-manager` | Advice only; commit, push, and PR still require Team Router gates and explicit authorization. |
+
+For high-risk codebase changes, the only reusable safe refactor pattern to absorb from `codebase-orchestrator`-style agents is `analyze -> propose -> wait -> execute`: manager defines scope and risk boundary, executor prepares the analysis/proposal before workspace writes, STRICT/PACKAGE changes route through reviewer then verifier, and implementation waits for explicit authorization plus an accepted gate outcome. Do not inherit external `Write/Edit/Bash` reviewer permissions, install external plugins/scripts/catalog tools, or let third-party prompts replace Team Router role instructions.
+
 ## Boundaries
 
 - subagent fallback is not allowed for required reviewer or verifier responsibilities.

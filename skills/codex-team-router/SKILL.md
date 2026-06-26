@@ -7,7 +7,7 @@ description: Use when the user asks for system-version multi-agent coordination 
 
 Short entrypoint only. Keep this file under the Codex 8KB cap; deep protocol details live in `references/` and are part of the Team Router contract.
 
-Use Team Router as a Codex desktop thread-tools control plane. It coordinates visible long-lived role threads, records local registry/ledger state, and adds a conditional reviewer gate for high-risk routing work. It does not run a daemon, does not poll unattended, does not push/merge/deploy, and does not treat prompt text as a sandbox.
+Team Router is a Codex desktop thread-tools control plane: visible long-lived role threads, local registry/ledger state, and a conditional reviewer gate. It does not run a daemon, poll unattended, push/merge/deploy, or treat prompt text as a sandbox.
 
 ## Roles
 

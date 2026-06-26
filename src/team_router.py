@@ -176,6 +176,22 @@ MANAGER_ORCHESTRATION_POLICY = {
             "verifier": "TEAM_ROUTER_VERDICT",
         },
     },
+    "callbackDeliveryModel": {
+        "primaryDelivery": "direct-send via send_message_to_thread(sourceThreadId, protocolBlock)",
+        "fallback": "self-thread-marker in the role thread remains mandatory audit and recovery path",
+        "requiredDispatchFields": (
+            "sourceThreadId",
+            "sourceRoleThreadId",
+            "role",
+            "callbackDelivery/reviewDelivery/verdictDelivery: direct-send",
+            "callbackFallback/reviewFallback/verdictFallback: self-thread-marker",
+        ),
+        "roleThreadBootstrap": "newly created role threads require two-step bootstrap: create role thread first, record sourceRoleThreadId, then send formal dispatch containing that id; reused roles already have a known sourceRoleThreadId",
+        "managerReceiptValidation": "manager accepts direct-send protocol blocks only when taskId, role, and sourceRoleThreadId match the pending role ledger entry; unmatched blocks are rejected or quarantined and must not expand task scope",
+        "fallbackBodyInvariant": "direct-send and local fallback must contain the same protocol block body",
+        "fallbackMetadata": "local fallback may append deliveryStatus: fallback_only and deliveryError when direct-send is unavailable or failed",
+        "normalCadence": "manager waits for direct-send first; perform one bounded read/check only on failed/unknown send, expected idle role, user completion signal, or timeout; avoid continuous polling",
+    },
     "fastLane": {
         "classes": ("FAST", "NORMAL", "STRICT", "PACKAGE"),
         "FAST": {
@@ -249,18 +265,50 @@ MANAGER_ORCHESTRATION_POLICY = {
             "report evidence/confidence/source and a completion report for spawned or external auxiliary work",
             "feed reusable findings into the closeout compounding decision",
         ),
+        "auxiliaryAgentSelectionPolicy": {
+            "purpose": "map high-star external subagent catalog ideas to advisory auxiliary roles without changing Team Router role authority",
+            "selectionGuide": (
+                "agent-organizer: task decomposition and role selection advice only; manager remains dispatcher",
+                "multi-agent-coordinator: parallelism and dependency risk review only; visible role threads remain the execution path",
+                "context-manager: handoff, package, and context-trim suggestions only; ledger and protocol markers remain authoritative",
+                "code-reviewer or architect-reviewer: read-only critique input only; Team Router reviewer/verifier gates are not replaced",
+                "debugger: failure-path diagnosis input only; fixes remain executor-owned",
+                "git-workflow-manager: branch hygiene and closeout advice only; commit/push/PR still require Team Router gates and explicit authorization",
+            ),
+            "safeRefactorPattern": {
+                "source": "codebase-orchestrator style approval loop",
+                "flow": "analyze -> propose -> wait -> execute",
+                "teamRouterMapping": (
+                    "manager defines scope and risk boundary",
+                    "executor prepares analysis/proposal before workspace writes",
+                    "STRICT/PACKAGE changes route through reviewer then verifier",
+                    "implementation waits for explicit authorization and accepted gate outcome",
+                ),
+                "forbiddenIntake": (
+                    "do not inherit external Write/Edit/Bash reviewer permissions",
+                    "do not install external plugins, scripts, or catalog tools as part of Team Router policy intake",
+                    "do not let third-party prompts replace manager/executor/reviewer/verifier instructions",
+                ),
+            },
+        },
     },
     "closeoutReportingPolicy": {
-        "scope": "every task closeout must report implementation, verification, exceptions, risks, current state, and next step",
+        "scope": "every task closeout must report implementation, verification, exceptions, risks, current state, next step, and the closeout compounding decision",
         "requiredFields": (
             "implemented changes",
             "verification actually run and results",
             "blockers/exceptions",
             "remaining risks",
             "current state and next step",
+            "compoundingDecision: recorded | skipped",
+            "reason: ...",
         ),
     },
     "compoundingDecisionPolicy": {
+        "closeoutFields": {
+            "compoundingDecision": ("recorded", "skipped"),
+            "reason": "required explanatory text for recorded or skipped",
+        },
         "recordWhen": (
             "manager overreach",
             "role conflict",
@@ -273,20 +321,26 @@ MANAGER_ORCHESTRATION_POLICY = {
             "manager overreach and role-authority mistakes must feed the closeout compounding decision; incident facts belong in docs/evidence rather than durable policy text",
         ),
         "skipWhen": "ordinary successful implementation/testing with no new reusable risk",
+        "skipReport": "closeout must still state compoundingDecision: skipped and reason: ordinary successful implementation/testing with no new reusable risk",
     },
     "roleReuse": {
-        "default": "reuse existing executor and existing verifier thread for the same taskId or task family",
-        "reworkExecutor": "send rework to the original executor thread",
-        "reworkVerifier": "send rework verification to the original verifier thread",
+        "default": "standing role policy: check registry first and reuse existing executor, existing reviewer when the conditional reviewer gate applies, and existing verifier threads for the same taskId or task family when available; do not create a new role merely because the review lens changes",
+        "reworkExecutor": "send rework to the original executor thread unless that role is blocked, unavailable, or invalid",
+        "reworkReviewer": "send re-review to the original reviewer thread unless that role is blocked, unavailable, or invalid",
+        "reworkVerifier": "send rework verification to the original verifier thread unless that role is blocked, unavailable, or invalid",
+        "dispatchFreshness": "every dispatch, including reused roles, must carry sourceThreadId/sourceRoleThreadId/role plus direct-send and self-thread-marker fields with a fresh searchAnchor/message metadata; do not reuse a stale search anchor",
         "newThreadOnlyWhen": (
+            "first missing role binding",
+            "role/thread unavailable or archived/broken",
             "role boundary changes",
             "permission boundary changes",
             "workspace boundary changes",
             "task-family boundary changes",
-            "isolation requirement changes",
+            "isolation/audit boundary changes",
+            "concurrency conflict",
+            "model/capability requirement",
         ),
-    },
-    "roleTitleNormalization": {
+    },    "roleTitleNormalization": {
         "format": "角色-任务名",
         "requiredAfter": "immediately after creating or discovering any role thread, call set_thread_title and persist the normalized title",
         "appliesTo": ("manager", "executor", "reviewer", "verifier"),
@@ -341,11 +395,10 @@ MANAGER_ORCHESTRATION_POLICY = {
         "skipWhen": "ordinary small fixes or clearly low-risk tasks",
         "reviewerResponsibility": "read-only adversarial design review for risks, rule gaps, omissions, and new bad modes; not final acceptance",
         "verifierResponsibility": "read-only final acceptance that executor output and reviewer requirements are satisfied",
-        "roleReuse": "reuse existing reviewer thread for the same taskId or task family; rework review returns to the original reviewer unless boundaries change",
+        "roleReuse": "reuse the same reviewer thread for the same taskId or task family; do not create a new reviewer only because the review lens changes, for example compliance review vs code-quality review; re-review returns to the original reviewer unless that role is blocked, unavailable, invalid, or boundaries change",
         "runtimeImplementation": "watch/run use send_reviewer_request_with_adapter(), read_reviewer_review_update_with_adapter(), and capture_reviewer_review_from_read(); reviewer pass -> verifier, needs_rework -> executor rework gate, blocked -> blocked",
         "namedReviewerRequirement": "when the user names reviewer for Team Router self changes, use a reviewer role conversation/thread; if none exists, explicitly create/register reviewer role conversation or stop and report it; subagent fallback is not allowed",
-    },
-    "reviewerDirectReturn": {
+    },    "reviewerDirectReturn": {
         "requiredFields": (
             "returnThreadId",
             "reviewDelivery: direct-send",
@@ -2455,19 +2508,24 @@ def make_executor_dispatch_message(task_id: str,
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         direct_lines = [
+            "sourceThreadId: %s" % return_thread_id,
             "returnThreadId: %s" % return_thread_id,
             "orchestratorThreadId: %s" % return_thread_id,
         ]
         if role_thread_id is not None:
-            direct_lines.append("roleThreadId: %s" % _required_str(role_thread_id, "roleThreadId"))
+            required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
+            direct_lines.extend((
+                "sourceRoleThreadId: %s" % required_role_thread_id,
+                "role: Executor",
+                "roleThreadId: %s" % required_role_thread_id,
+            ))
         lines.extend((*direct_lines,
             "callbackDelivery: direct-send",
             "callbackFallback: self-thread-marker",
-            "Direct return contract: write the final TEAM_ROUTER_CALLBACK block in this role thread first.",
-            "Direct return contract: then check whether send_message_to_thread is available.",
-            "Direct return contract: if it is available, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>) with the exact TEAM_ROUTER_CALLBACK block you just wrote.",
-            "Direct return evidence fields: directReturnAttempt, directReturnTarget, directReturnError.",
-            "If direct-send is unavailable or failed, keep the self-thread marker for watcher fallback.",
+            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_CALLBACK block.",
+            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            "Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.",
+            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
         ))
     lines.extend((
         "",
@@ -2518,6 +2576,8 @@ def record_executor_dispatch_sent(state_root: str | Path,
                 "evidenceChecked": "reworkCount",
                 "risks": "none",
                 "nextAction": "none",
+                "compoundingDecision": "skipped",
+                "reason": "ordinary terminal closeout with no new reusable process lesson identified",
             }
             return save_task_ledger(state_root, project_id, task_id, ledger)
         ledger["reworkCount"] = rework_count
@@ -2705,11 +2765,12 @@ def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
                                     marker: str,
                                     task_id: str,
                                     source_thread_id: str,
-                                    anchor: Mapping[str, Any] | None) -> tuple[ProtocolMessage | None, dict[str, Any] | None]:
+                                    anchor: Mapping[str, Any] | None) -> tuple[ProtocolMessage | None, dict[str, Any] | None, Mapping[str, Any] | None]:
     candidates = _direct_return_candidate_messages(messages, anchor, source_thread_id)
+    message = candidates[-1] if candidates and isinstance(candidates[-1], Mapping) else None
     text = _messages_text(candidates)
     if not text:
-        return None, None
+        return None, None, message
     parser = parse_message
     if marker == "TEAM_ROUTER_VERDICT":
         parser = parse_verdict
@@ -2720,19 +2781,78 @@ def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
     elif marker == "TEAM_ROUTER_PLAN":
         parser = parse_plan
     try:
-        parsed = parser(text, task_id) if parser is not parse_message else parse_message(text, marker, task_id)
-        return parsed, None
+        marker_blocks = [block for block in _iter_marker_blocks(text) if block.marker == marker]
     except ProtocolError as exc:
-        if str(exc).startswith("missing "):
-            return None, None
-        message = candidates[-1] if candidates and isinstance(candidates[-1], Mapping) else {}
         malformed = {
-            "messageId": message.get("messageId"),
-            "sentAt": message.get("sentAt"),
-            "sourceThreadId": message.get("sourceThreadId"),
+            "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+            "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+            "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
             "error": str(exc),
         }
-        return None, malformed
+        return None, malformed, message
+    if not marker_blocks:
+        return None, None, message
+    marker_block = marker_blocks[-1]
+    if marker_block.task_id != task_id:
+        malformed = {
+            "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+            "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+            "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+            "error": "%s.taskId must be %r, got %r" % (marker, task_id, marker_block.task_id),
+        }
+        return None, malformed, message
+    try:
+        parsed = parser(marker_block.raw, task_id) if parser is not parse_message else parse_message(marker_block.raw, marker, task_id)
+        return parsed, None, message
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            return None, None, message
+        malformed = {
+            "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+            "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+            "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+            "error": str(exc),
+        }
+        return None, malformed, message
+
+
+def _normalize_direct_return_role(role: Any, *, expected_role: str) -> str:
+    value = str(role or expected_role).strip().lower()
+    return value or expected_role
+
+
+def _validate_direct_return_receipt(msg: ProtocolMessage,
+                                    manager_message: Mapping[str, Any] | None,
+                                    *,
+                                    task_id: str,
+                                    expected_role: str,
+                                    expected_role_thread_id: str) -> dict[str, Any] | None:
+    message = manager_message if isinstance(manager_message, Mapping) else {}
+    normalized_role = _normalize_direct_return_role(msg.fields.get("role"), expected_role=expected_role)
+    source_role_thread_id = str(
+        msg.fields.get("sourceRoleThreadId") or message.get("sourceThreadId") or ""
+    ).strip()
+    errors: list[str] = []
+    if msg.task_id != task_id:
+        errors.append("%s.taskId must be %r, got %r" % (msg.marker, task_id, msg.task_id))
+    if normalized_role != expected_role:
+        errors.append(
+            "%s.role must be %r, got %r"
+            % (msg.marker, expected_role, msg.fields.get("role") or expected_role)
+        )
+    if source_role_thread_id != expected_role_thread_id:
+        errors.append(
+            "%s.sourceRoleThreadId must be %r, got %r"
+            % (msg.marker, expected_role_thread_id, source_role_thread_id)
+        )
+    if not errors:
+        return None
+    return {
+        "messageId": message.get("messageId"),
+        "sentAt": message.get("sentAt"),
+        "sourceThreadId": message.get("sourceThreadId"),
+        "error": "; ".join(errors),
+    }
 
 
 def _receipt_metadata(record: Mapping[str, Any],
@@ -3014,19 +3134,24 @@ def make_reviewer_request_message(task_id: str,
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         direct_lines = [
+            "sourceThreadId: %s" % return_thread_id,
             "returnThreadId: %s" % return_thread_id,
             "orchestratorThreadId: %s" % return_thread_id,
         ]
         if role_thread_id is not None:
-            direct_lines.append("roleThreadId: %s" % _required_str(role_thread_id, "roleThreadId"))
+            required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
+            direct_lines.extend((
+                "sourceRoleThreadId: %s" % required_role_thread_id,
+                "role: Reviewer",
+                "roleThreadId: %s" % required_role_thread_id,
+            ))
         lines.extend((*direct_lines,
             "reviewDelivery: direct-send",
             "reviewFallback: self-thread-marker",
-            "Direct return contract: write the final TEAM_ROUTER_REVIEW block in this role thread first.",
-            "Direct return contract: then check whether send_message_to_thread is available.",
-            "Direct return contract: if it is available, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>) with the exact TEAM_ROUTER_REVIEW block you just wrote.",
-            "Direct return evidence fields: directReturnAttempt, directReturnTarget, directReturnError.",
-            "If direct-send is unavailable or failed, keep the self-thread marker for watcher fallback.",
+            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_REVIEW block.",
+            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            "Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.",
+            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
         ))
     lines.extend((
         "",
@@ -3135,6 +3260,8 @@ def _apply_reviewer_review_message(ledger: dict[str, Any],
                 "risks": msg.fields.get("risks", ""),
                 "nextAction": "rework limit reached before reviewer requested changes were resolved",
                 "remainingTodos": msg.fields.get("requiredChanges", ""),
+                "compoundingDecision": "skipped",
+                "reason": "blocked verifier closeout did not identify a new reusable process lesson",
             }
         else:
             ledger["status"] = "needs_rework"
@@ -3150,6 +3277,8 @@ def _apply_reviewer_review_message(ledger: dict[str, Any],
             "risks": msg.fields.get("risks", ""),
             "nextAction": msg.fields.get("requiredChanges", ""),
             "remainingTodos": msg.fields.get("requiredChanges", ""),
+            "compoundingDecision": "skipped",
+            "reason": "blocked verifier closeout did not identify a new reusable process lesson",
         }
     ledger = _clear_waiting_read_state(ledger)
     return ledger
@@ -3224,19 +3353,24 @@ def make_verifier_request_message(task_id: str,
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         direct_lines = [
+            "sourceThreadId: %s" % return_thread_id,
             "returnThreadId: %s" % return_thread_id,
             "orchestratorThreadId: %s" % return_thread_id,
         ]
         if role_thread_id is not None:
-            direct_lines.append("roleThreadId: %s" % _required_str(role_thread_id, "roleThreadId"))
+            required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
+            direct_lines.extend((
+                "sourceRoleThreadId: %s" % required_role_thread_id,
+                "role: Verifier",
+                "roleThreadId: %s" % required_role_thread_id,
+            ))
         lines.extend((*direct_lines,
             "verdictDelivery: direct-send",
             "verdictFallback: self-thread-marker",
-            "Direct return contract: write the final TEAM_ROUTER_VERDICT block in this role thread first.",
-            "Direct return contract: then check whether send_message_to_thread is available.",
-            "Direct return contract: if it is available, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>) with the exact TEAM_ROUTER_VERDICT block you just wrote.",
-            "Direct return evidence fields: directReturnAttempt, directReturnTarget, directReturnError.",
-            "If direct-send is unavailable or failed, keep the self-thread marker for watcher fallback.",
+            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_VERDICT block.",
+            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            "Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.",
+            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
         ))
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result)
     lines.extend((
@@ -3337,6 +3471,8 @@ def _make_closeout(ledger: Mapping[str, Any],
         "risks": verdict_fields.get("risks", ""),
         "nextAction": next_action,
         "remainingTodos": "none" if ledger.get("status") == "done" else next_action,
+        "compoundingDecision": "skipped",
+        "reason": "ordinary successful implementation/testing with no new reusable risk",
     }
     if accepted:
         closeout.update({
@@ -3872,13 +4008,21 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
     dispatch = _direct_return_record(ledger, "executor")
     if dispatch is None:
         return None
-    msg, malformed = _direct_return_protocol_message(
+    msg, malformed, manager_message = _direct_return_protocol_message(
         messages,
         marker="TEAM_ROUTER_CALLBACK",
         task_id=task_id,
         source_thread_id=_required_str(dispatch.get("threadId"), "executorDispatch.threadId"),
         anchor=_as_mapping(dispatch.get("returnSearchAnchor"), "executorDispatch.returnSearchAnchor", default_empty=False),
     )
+    if malformed is None and msg is not None:
+        malformed = _validate_direct_return_receipt(
+            msg,
+            manager_message,
+            task_id=task_id,
+            expected_role="executor",
+            expected_role_thread_id=_required_str(dispatch.get("roleThreadId") or dispatch.get("threadId"), "executorDispatch.roleThreadId"),
+        )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
             ledger,
@@ -3916,13 +4060,21 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
     request = _direct_return_record(ledger, "reviewer")
     if request is None:
         return None
-    msg, malformed = _direct_return_protocol_message(
+    msg, malformed, manager_message = _direct_return_protocol_message(
         messages,
         marker="TEAM_ROUTER_REVIEW",
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "reviewerRequest.threadId"),
         anchor=_as_mapping(request.get("returnSearchAnchor"), "reviewerRequest.returnSearchAnchor", default_empty=False),
     )
+    if malformed is None and msg is not None:
+        malformed = _validate_direct_return_receipt(
+            msg,
+            manager_message,
+            task_id=task_id,
+            expected_role="reviewer",
+            expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "reviewerRequest.roleThreadId"),
+        )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
             ledger,
@@ -3960,13 +4112,21 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
     request = _direct_return_record(ledger, "verifier")
     if request is None:
         return None
-    msg, malformed = _direct_return_protocol_message(
+    msg, malformed, manager_message = _direct_return_protocol_message(
         messages,
         marker="TEAM_ROUTER_VERDICT",
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "verifierRequest.threadId"),
         anchor=_as_mapping(request.get("returnSearchAnchor"), "verifierRequest.returnSearchAnchor", default_empty=False),
     )
+    if malformed is None and msg is not None:
+        malformed = _validate_direct_return_receipt(
+            msg,
+            manager_message,
+            task_id=task_id,
+            expected_role="verifier",
+            expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "verifierRequest.roleThreadId"),
+        )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
             ledger,
@@ -4657,9 +4817,23 @@ def _anchor_lines(ledger: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+DEFAULT_CLOSEOUT_COMPOUNDING_REASON = "ordinary successful implementation/testing with no new reusable risk"
+
+
+def _closeout_compounding_fields(closeout: Mapping[str, Any]) -> tuple[str, str]:
+    decision = str(closeout.get("compoundingDecision", "")).strip().lower()
+    if decision not in {"recorded", "skipped"}:
+        decision = "skipped"
+    reason = str(closeout.get("reason", "")).strip()
+    if not reason:
+        reason = DEFAULT_CLOSEOUT_COMPOUNDING_REASON
+    return decision, reason
+
+
 def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
     project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
     closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else {}
+    compounding_decision, compounding_reason = _closeout_compounding_fields(closeout)
     lines = [
         "Team Router Closeout",
         "taskId: %s" % ledger.get("taskId"),
@@ -4673,6 +4847,8 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
         "risks: %s" % closeout.get("risks", ""),
         "nextAction: %s" % closeout.get("nextAction", ""),
         "remainingTodos: %s" % closeout.get("remainingTodos", closeout.get("nextAction", "")),
+        "compoundingDecision: %s" % compounding_decision,
+        "reason: %s" % compounding_reason,
     ))
     if closeout.get("watcherAction"):
         lines.extend((
