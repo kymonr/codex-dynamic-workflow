@@ -1,6 +1,6 @@
 ---
 name: codex-team-router
-description: Use when the user asks for system-version multi-agent coordination with Codex app thread tools, long-lived manager/executor/verifier threads plus a conditional reviewer gate, cross-session team routing, explicitly asks the assistant to act as a team manager, or continues an already-active Manager Mode task with terse follow-ups such as 修, 继续, 处理, go, or do it. Manager Mode is orchestration-only and must not perform implementation work directly.
+description: Use for Codex desktop Team Router orchestration with visible manager/executor/verifier threads, a conditional reviewer gate, cross-session routing, explicit team-manager requests, or continues an already-active Manager Mode task with terse follow-ups. Manager Mode is orchestration-only.
 ---
 
 # Codex Team Router
@@ -21,13 +21,14 @@ Team Router is a Codex desktop thread-tools control plane: visible long-lived ro
 | 审查者 | Reviewer | conditional yes | For router/manager/orchestration policy, permission/safety boundaries, process rules, role protocol, and shared/high-risk logic; perform read-only/adversarial review and reply with `TEAM_ROUTER_REVIEW`. |
 | 验证者 | Verifier | yes | Check callback, reviewer requirements when present, evidence, boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`; verifier remains final acceptance. |
 
-Visible Codex desktop thread titles use `角色-任务名`, e.g. `调度者-Team Router <task>` and `执行者-Team Router <task>`; when acting as manager, rename the current/parent conversation itself, not only child role threads. Normalize role threads with `set_thread_title`.
+Visible Codex desktop thread titles use `角色-任务名`, e.g. `调度者-Team Router <task>` and `执行者-Team Router <task>`; when acting as manager, first rename the current/parent conversation itself as soon as the task label is clear, before child-role dispatch. Normalize role threads with `set_thread_title`.
 
 ## Manager Mode Hard Rule
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
-Manager Mode is sticky for the current task after it is triggered. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` authorize only plan refinement, rule updates, or executor/verifier dispatch. Manager/dispatcher file changes are opt-in: prompt before commit/PR/release, and do other file edits only when the user explicitly says in the current turn that you should do that exact work; otherwise dispatch executor or ask for role switch.
+Manager Mode is sticky for the current task. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
+Skill/rule/Superpowers write requests such as `记录进skill`, `改进skill`, `superpowers修`, or `写进规则` still route through executor/reviewer/verifier unless the user explicitly switches role and authorizes manager direct edits.
 
 ## Minimal Live Tool Order
 
@@ -43,11 +44,11 @@ Use exactly one role-thread creation path per task. If callable adapter tools ar
 
 When an explicit orchestrator/parent id is available, prompts/ledger records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send their final marker to `returnThreadId`, keep self-thread markers as fallback/audit anchors, and use the role-specific delivery/fallback fields. Manager validates sourceThreadId, taskId, expected marker, return/orchestrator target, and role/source; duplicate direct callbacks are ignored after ledger advance. watcher/heartbeat remains the 5 minutes fallback. See `references/direct-return.md`.
 
-Team Router role dispatch must use Codex desktop thread roles for executor, reviewer, and verifier. Do not use `multi_agent_v1` workers/subagents as Team Router role threads: they may lack `send_message_to_thread` and cannot provide reliable direct-return. If a role thread is archived, broken, or lacks thread-tool capability, create or reuse a proper Codex thread role before dispatching work that expects role-to-manager callback.
+Team Router dispatch uses Codex desktop thread roles for executor/reviewer/verifier. Do not use `multi_agent_v1` workers/subagents as Team Router role threads: they may lack `send_message_to_thread` and reliable direct-return. If a role is unavailable, create/reuse a proper Codex thread role.
 
 ## Fast Lane
 
-Fast Lane policy: classes are FAST, NORMAL, STRICT, PACKAGE. Completion is direct-return first with bounded read_thread fallback; FAST docs/BOM/single phrase rework and NORMAL small focused code/test work use executor -> verifier, while STRICT Team Router process/permission/safety/role protocol/shared-risk changes and PACKAGE same task family discipline hardening use executor -> reviewer -> verifier.
+Fast Lane: FAST, NORMAL, STRICT, PACKAGE. Completion is direct-return first with bounded read_thread fallback. FAST docs/BOM/single phrase and NORMAL small focused code/test use executor -> verifier. STRICT process/permission/safety/role protocol/shared-risk and PACKAGE same task family discipline hardening use executor -> reviewer -> verifier. CRLF/LF normalization uses executor plus either reviewer or verifier; escalate only for semantic/process risk.
 
 ## Conditional Reviewer Gate
 
@@ -55,7 +56,7 @@ Ordinary small fixes and clearly low-risk tasks use executor -> verifier. Router
 
 ## roleCloseoutPolicy
 
-After task completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT` to role threads. Protocol blocks are sufficient role-thread anchors. Parent manager still gives the user a plain-language closeout after every completed flow: changed, verified, accepted by, not done, risks, next gated step. compact is native operation, not chat prompt; do not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If no compact tool is available, do nothing.
+After task completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT` to role threads. Protocol blocks are sufficient role-thread anchors. Parent manager still gives the user a plain-language closeout after every completed flow: changed, verified, accepted by, not done, risks, next gated step. compact is native operation, not chat prompt; do not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If no compact tool is available, do nothing. Records: durable -> `docs/compounding.md`; task living record -> `docs/workbench.md`.
 
 ## sideEffectTaxonomy
 

@@ -204,6 +204,14 @@ risks: none
         self.assertIn("sourceThreadId", model["requiredDispatchFields"])
         self.assertIn("sourceRoleThreadId", model["requiredDispatchFields"])
         self.assertIn("role", model["requiredDispatchFields"])
+        self.assertIn("callbackMarker", model["requiredDispatchFields"])
+        self.assertIn("returnThreadId", model["requiredDispatchFields"])
+        self.assertIn("callbackDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("callbackFallback: self-thread-marker", model["requiredDispatchFields"])
+        self.assertIn("reviewDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("reviewFallback: self-thread-marker", model["requiredDispatchFields"])
+        self.assertIn("verdictDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("verdictFallback: self-thread-marker", model["requiredDispatchFields"])
         self.assertIn("taskId", model["managerReceiptValidation"])
         self.assertIn("role", model["managerReceiptValidation"])
         self.assertIn("sourceRoleThreadId", model["managerReceiptValidation"])
@@ -213,6 +221,12 @@ risks: none
         self.assertIn("two-step bootstrap", model["roleThreadBootstrap"])
         self.assertIn("create", model["roleThreadBootstrap"])
         self.assertIn("dispatch", model["roleThreadBootstrap"])
+        self.assertIn("direct-send", model["proactiveReturnRule"])
+        self.assertIn("key checks complete", model["proactiveReturnRule"])
+        self.assertIn("must not rely on parent polling", model["proactiveReturnRule"])
+        self.assertIn("bounded wait/read", model["boundedControlFallback"])
+        self.assertIn("scope-limited closeout", model["boundedControlFallback"])
+        self.assertIn("already-confirmed facts", model["boundedControlFallback"])
 
     def test_protocol_contract_snapshot_includes_standing_role_reuse_policy(self):
         policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
@@ -779,6 +793,14 @@ risks: none
         self.assertIn("sourceThreadId", delivery_model["requiredDispatchFields"])
         self.assertIn("sourceRoleThreadId", delivery_model["requiredDispatchFields"])
         self.assertIn("role", delivery_model["requiredDispatchFields"])
+        self.assertIn("callbackMarker", delivery_model["requiredDispatchFields"])
+        self.assertIn("returnThreadId", delivery_model["requiredDispatchFields"])
+        self.assertIn("callbackDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("callbackFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("reviewDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("reviewFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("verdictDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
         self.assertIn("callbackDelivery/reviewDelivery/verdictDelivery: direct-send", delivery_model["requiredDispatchFields"])
         self.assertIn("callbackFallback/reviewFallback/verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
         self.assertIn("two-step bootstrap", delivery_model["roleThreadBootstrap"])
@@ -791,6 +813,12 @@ risks: none
         self.assertIn("direct-send first", delivery_model["normalCadence"])
         self.assertIn("one bounded read/check", delivery_model["normalCadence"])
         self.assertIn("avoid continuous polling", delivery_model["normalCadence"])
+        self.assertIn("must direct-send", delivery_model["proactiveReturnRule"])
+        self.assertIn("key checks complete", delivery_model["proactiveReturnRule"])
+        self.assertIn("must not rely on parent polling", delivery_model["proactiveReturnRule"])
+        self.assertIn("bounded wait/read", delivery_model["boundedControlFallback"])
+        self.assertIn("scope-limited closeout", delivery_model["boundedControlFallback"])
+        self.assertIn("already-confirmed facts", delivery_model["boundedControlFallback"])
 
         convergence = policy["convergence"]
         self.assertIn("observation-only", convergence["statusReads"])
@@ -827,6 +855,8 @@ risks: none
         self.assertIn("验证者-Team Router <task label>", title_policy["examples"])
         self.assertEqual(title_policy["parentThread"]["format"], "调度者-Team Router <task label>")
         self.assertIn("parent/current manager-dispatcher", title_policy["parentThread"]["scope"])
+        self.assertIn("manager first renames", title_policy["parentThread"]["firstAction"])
+        self.assertIn("before child-role dispatch", title_policy["parentThread"]["firstAction"])
         self.assertIn("no callable current-thread title hook", title_policy["parentThread"]["runtimeStatus"])
         self.assertIn("verdictDelivery: direct-send", policy["verifierDirectReturn"]["requiredFields"])
         self.assertIn("verdictFallback: self-thread-marker", policy["verifierDirectReturn"]["requiredFields"])
@@ -855,6 +885,19 @@ risks: none
         self.assertIn("visible Team Router role thread", agent_policy["teamRouterContextDefault"])
         self.assertIn("multi_agent/subagent", agent_policy["teamRouterContextDefault"])
         self.assertIn("explicitly asks for external subagents", agent_policy["teamRouterContextDefault"])
+        process_write_boundary = agent_policy["managerModeProcessWriteBoundary"]
+        self.assertIn("记录进skill", process_write_boundary["triggerExamples"])
+        self.assertIn("改进skill", process_write_boundary["triggerExamples"])
+        self.assertIn("superpowers修", process_write_boundary["triggerExamples"])
+        self.assertIn("写进规则", process_write_boundary["triggerExamples"])
+        self.assertIn("active Manager Mode", process_write_boundary["defaultHandling"])
+        self.assertIn("orchestration", process_write_boundary["defaultHandling"])
+        self.assertIn("explicitly switches role", process_write_boundary["defaultHandling"])
+        self.assertIn("dispatch executor/reviewer/verifier", process_write_boundary["managerAllowedActions"])
+        self.assertIn("personally edit files", process_write_boundary["managerForbiddenActions"])
+        self.assertIn("planning/TDD/debugging/verification", agent_policy["superpowersBoundary"])
+        self.assertIn("do not grant manager write authority", agent_policy["superpowersBoundary"])
+        self.assertIn("file changes route through executor/reviewer/verifier", agent_policy["superpowersBoundary"])
         self.assertIn("read-only auxiliary", "\n".join(agent_policy["allowedAuxUse"]))
         self.assertIn("gstack browser QA", "\n".join(agent_policy["allowedAuxUse"]))
         self.assertIn("subagent fallback is not allowed", "\n".join(agent_policy["forbiddenAuxUse"]))
@@ -917,6 +960,9 @@ risks: none
         self.assertIn("bounded read_thread fallback", fast_lane["completion"])
         self.assertIn("300 second", fast_lane["completion"])
         self.assertIn("user-triggered status request", fast_lane["completion"])
+        self.assertIn("CRLF/LF normalization", fast_lane["mechanicalFixException"])
+        self.assertIn("either reviewer or verifier", fast_lane["mechanicalFixException"])
+        self.assertIn("semantic/process risk", fast_lane["mechanicalFixException"])
         closeout_reporting = policy["closeoutReportingPolicy"]
         self.assertEqual(
             closeout_reporting["requiredFields"],
@@ -936,15 +982,24 @@ risks: none
         compounding = policy["compoundingDecisionPolicy"]
         self.assertEqual(compounding["closeoutFields"]["compoundingDecision"], ("recorded", "skipped"))
         self.assertIn("required explanatory text", compounding["closeoutFields"]["reason"])
+        self.assertIn("default to compoundingDecision: recorded", compounding["recordDefault"])
+        self.assertIn("concrete reason and evidence", compounding["recordDefault"])
         self.assertIn("manager overreach", compounding["recordWhen"])
         self.assertIn("role conflict", compounding["recordWhen"])
+        self.assertIn("role-authority confusion", compounding["recordWhen"])
         self.assertIn("permission/sandbox issue", compounding["recordWhen"])
+        self.assertIn("permission boundary failure", compounding["recordWhen"])
         self.assertIn("test instability", compounding["recordWhen"])
         self.assertIn("temp-file/workspace pollution", compounding["recordWhen"])
         self.assertIn("user explicitly adds a reusable process preference", compounding["recordWhen"])
         self.assertIn("manager overreach", compounding["recordedLessons"][0])
         self.assertIn("role-authority mistakes", compounding["recordedLessons"][0])
+        self.assertIn("docs/compounding.md", compounding["recordedLessons"][0])
         self.assertIn("docs/evidence", compounding["recordedLessons"][0])
+        self.assertIn("durable lesson writes are executor-owned and gated", compounding["recordedLessons"][1])
+        self.assertIn("must not self-write the lesson", compounding["recordedLessons"][1])
+        self.assertIn("pending/blocked/skipped", compounding["noDurableWriteReport"])
+        self.assertIn("silently omitting", compounding["noDurableWriteReport"])
         self.assertIn("ordinary successful implementation/testing", compounding["skipWhen"])
         self.assertIn("no new reusable risk", compounding["skipWhen"])
         self.assertIn("compoundingDecision: skipped", compounding["skipReport"])
@@ -1031,6 +1086,18 @@ risks: none
         self.assertIn("TEAM_ROUTER_CALLBACK", policy["finalProtocolBlock"])
         self.assertIn("TEAM_ROUTER_REVIEW", policy["finalProtocolBlock"])
         self.assertIn("TEAM_ROUTER_VERDICT", policy["finalProtocolBlock"])
+        self.assertIn("proactively return", policy["proactiveReturn"])
+        self.assertIn("key checks complete", policy["proactiveReturn"])
+        self.assertIn("must not rely on parent polling", policy["proactiveReturn"])
+        self.assertIn("bounded wait/read", policy["controlFallback"])
+        self.assertIn("scope-limited", policy["controlFallback"])
+        self.assertIn("already-confirmed facts", policy["controlFallback"])
+        self.assertIn("docs/compounding.md", policy["continuousRecords"])
+        self.assertIn("docs/workbench.md", policy["continuousRecords"])
+        self.assertIn("living record", policy["continuousRecords"])
+        self.assertIn("task state", policy["continuousRecords"])
+        self.assertIn("verification", policy["continuousRecords"])
+        self.assertIn("pending/blocked/skipped", policy["continuousRecords"])
         self.assertIn("compact is native operation, not chat prompt", policy["compact"])
         self.assertIn("must not send compact or ROLE_CLOSEOUT text", policy["compact"])
         self.assertIn("if no compact tool is available, do nothing", policy["noCompactTool"])
@@ -3414,6 +3481,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("deliveryStatus: fallback_only", review_message)
         self.assertIn("deliveryError", review_message)
         self.assertIn("reviewMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
+        self.assertIn("callbackMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
         self.assertIn("reviewerMode: read-only/adversarial", review_message)
 
         team_router.update_registry_roles(
@@ -6769,7 +6837,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "read_verifier_verdict_update_with_adapter()",
             "emit `update[\"userOutput\"]`",
             "callbackDelivery: direct-send",
+            "callbackFallback: self-thread-marker",
+            "reviewDelivery: direct-send",
+            "reviewFallback: self-thread-marker",
             "verdictDelivery: direct-send",
+            "verdictFallback: self-thread-marker",
+            "callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>",
+            "callbackMarker: TEAM_ROUTER_REVIEW taskId=<taskId>",
+            "callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>",
+            "returnThreadId",
             "send_message_to_thread(sourceThreadId, protocolBlock)",
             "watcher/scheduler polling is the fallback",
             "self-thread-marker writes only to the role thread",
@@ -6802,6 +6878,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "same protocol block body",
             "bounded result-collection read/check",
             "continuous polling is not the default",
+            "After bounded wait/read with no final protocol block",
+            "scope-limited closeout from already-confirmed facts",
         ):
             self.assertIn(needle, docs)
         self.assertNotIn("after it writes the marker in its own thread", docs)
@@ -6859,6 +6937,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`执行者-Team Router 管理者模式触发词修复`",
             "`验证者-Team Router 管理者模式触发词修复`",
             "set_thread_title",
+            "Skill/rule/Superpowers write requests such as `记录进skill`",
+            "still route through executor/reviewer/verifier",
+            "first manager-side action",
+            "before creating, dispatching, or normalizing child role threads",
             "explicit role-intent phrases",
             "“你是管理者”",
             "“你作为管理者”",
@@ -6896,6 +6978,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("你" + "来执行", manager_mode)
         self.assertNotIn("while the user is still addressing" + " the agent as manager", manager_mode)
         self.assertNotIn("update the rules", manager_mode)
+        for needle in (
+            "skill/process requests such as `记录进skill`",
+            "Superpowers can guide planning/TDD/debugging/verification",
+            "does not grant manager write authority",
+            "File changes must route through executor/reviewer/verifier",
+        ):
+            self.assertIn(needle, manager_mode)
 
     def test_skill_doc_separates_adapter_created_and_precreated_role_paths(self):
         text = self._skill_contract_text()
@@ -6965,7 +7054,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "verifier-blocked-closeout",
             "remainingTodos",
             "callbackDelivery: direct-send",
+            "callbackFallback: self-thread-marker",
+            "reviewDelivery: direct-send",
+            "reviewFallback: self-thread-marker",
             "verdictDelivery: direct-send",
+            "verdictFallback: self-thread-marker",
+            "callbackMarker: TEAM_ROUTER_CALLBACK taskId=<taskId>",
+            "callbackMarker: TEAM_ROUTER_REVIEW taskId=<taskId>",
+            "callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>",
+            "returnThreadId",
             "send_message_to_thread(sourceThreadId, protocolBlock)",
             "Watcher polling is the fallback path",
             "self-thread-marker writes only to the role thread",
@@ -7345,6 +7442,33 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     self.assertIn(needle, text)
                 self.assertNotIn("Role threads do not actively push back", text)
 
+        focused_docs = (
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "manager-mode.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+            (
+                "manual-orchestration.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "manual-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in focused_docs:
+            with self.subTest(path=name, focused="mechanical-role-callback"):
+                for needle in (
+                    "CRLF/LF normalization",
+                    "either reviewer or verifier",
+                    "semantic/process risk",
+                ):
+                    self.assertIn(needle, text)
+        for name, text in focused_docs[1:]:
+            with self.subTest(path=name, focused="bounded-control-closeout"):
+                self.assertIn("scope-limited closeout from already-confirmed facts", text)
+
     def test_manager_and_manual_docs_cover_closeout_reporting_and_compounding_decision(self):
         docs = (
             (
@@ -7377,6 +7501,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "temp-file/workspace pollution",
                     "user explicitly adds a reusable process preference",
                     "role-authority confusion",
+                    "Reusable lessons belong in `docs/compounding.md`",
                     "dated incident facts belong in `docs/evidence/`",
                     "ordinary successful implementation/testing",
                     "no new reusable risk",
@@ -7385,6 +7510,32 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "reason: ordinary successful implementation/testing",
                 ):
                     self.assertIn(needle, text)
+
+    def test_role_closeout_reference_covers_compounding_ownership(self):
+        text = (ROOT / "skills" / "codex-team-router" / "references" / "role-closeout.md").read_text(encoding="utf-8")
+        for needle in (
+            "Compounding落实 ownership",
+            "manager reports `compoundingDecision`",
+            "Durable lesson writes are executor-owned",
+            "gated through executor/reviewer/verifier",
+            "may not self-write the lesson as an exception",
+            "docs/compounding.md",
+            "docs/workbench.md",
+            "living record",
+            "pending/blocked/skipped",
+        ):
+            self.assertIn(needle, text)
+
+    def test_agent_assist_reference_covers_superpowers_manager_boundary(self):
+        text = (ROOT / "skills" / "codex-team-router" / "references" / "agent-assist-policy.md").read_text(encoding="utf-8")
+        for needle in (
+            "Superpowers skills are process-discipline only",
+            "planning, TDD, debugging, and verification",
+            "do not grant manager write authority",
+            "still routes through executor/reviewer/verifier",
+            "explicitly switches role",
+        ):
+            self.assertIn(needle, text)
 
     def test_agent_assist_policy_docs_cover_auxiliary_agent_boundaries(self):
         docs = (
@@ -7548,7 +7699,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                         any(needle in text for needle in alternatives),
                         "%s missing one of %r" % (name, alternatives),
                     )
-
+        role_closeout = (
+            ROOT / "skills" / "codex-team-router" / "references" / "role-closeout.md"
+        ).read_text(encoding="utf-8")
+        for needle in (
+            "proactively return",
+            "must not rely on parent polling",
+            "scope-limited to already-confirmed facts",
+        ):
+            self.assertIn(needle, role_closeout)
 
 
     def test_conditional_reviewer_docs_cover_role_policy_reuse_and_direct_return(self):

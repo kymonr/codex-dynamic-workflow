@@ -13,6 +13,8 @@ Commit closeout is not implementation authorization. Manager must not use commit
 
 Every completed Team Router flow needs a parent-thread report in ordinary, user-readable language. Protocol blocks close the role threads, but the manager still tells the user what changed, what verification actually ran, who accepted it, what was not done, remaining risks, current state, and the next gated step. Keep it short, concrete, and free of unnecessary internal jargon; use protocol names only where they clarify evidence.
 
+Compounding落实 ownership: the manager reports `compoundingDecision`, concrete reason, and evidence. Durable lesson writes are executor-owned and gated through executor/reviewer/verifier; the manager may not self-write the lesson as an exception. Project-level reusable lessons are continuously recorded in `docs/compounding.md`; current task state is recorded in `docs/workbench.md` as a living record and must be refreshed when task state, diff surface, verification, or next gate changes. If no durable file is written, parent closeout states why the compounding record is pending/blocked/skipped rather than silently omitting it.
+
 ## roleCloseoutPolicy
 
 After task completion, default is 不 clear role thread and manager does not send extra ROLE_CLOSEOUT or ordinary closeout messages to role threads by default.
@@ -24,6 +26,8 @@ final protocol block is the closeout:
 - verifier `TEAM_ROUTER_VERDICT`
 
 These protocol blocks are sufficient task-ending anchors.
+
+When key checks are complete, the role must proactively return its protocol block by direct-send and self-thread fallback; it must not rely on parent polling. If the manager sends CONTROL after bounded wait/read because no final protocol block arrived, the role closeout is scope-limited to already-confirmed facts.
 
 compact is native operation, not chat prompt. Manager must not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If native compact is available and truly needed, such as role thread 上下文过长, manager may trigger native compact; if no compact tool is available, do nothing.
 

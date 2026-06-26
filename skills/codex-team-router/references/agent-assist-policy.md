@@ -6,6 +6,8 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 Team Router may absorb superpowers, gstack, dynamic-workflow, native-subagent, cli-runner, Claude, and similar agent skills as optional read-only auxiliary support. The visible role thread protocol remains authoritative: manager, executor, reviewer, and verifier responsibilities stay in their role conversations and ledger markers.
 
+Superpowers skills are process-discipline only: they may guide planning, TDD, debugging, and verification, but in Team Router Manager Mode they do not grant manager write authority. Any skill/rule/Superpowers request that writes files still routes through executor/reviewer/verifier unless the user explicitly switches role and authorizes manager direct edits.
+
 Auxiliary agents can help with scouting, plan/spec review, pre-landing diff review, gstack browser QA evidence, completeness criticism, and independent read-only comparison. They can inform role prompts, review packages, evidence, and the closeout compounding decision.
 
 In a Team Router project context, if the user says to dispatch a role, reviewer, executor, or verifier, default to creating or reusing the Team Router visible role thread. Do not reinterpret that request as a `multi_agent` subagent request unless the user explicitly asks for external subagents.
