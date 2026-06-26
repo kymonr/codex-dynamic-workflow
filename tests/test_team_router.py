@@ -1671,10 +1671,15 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("roleThreadId: thread-executor", message)
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
+        self.assertIn("write the final TEAM_ROUTER_CALLBACK block in this role thread first", message)
+        self.assertIn("check whether send_message_to_thread is available", message)
         self.assertIn(
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>)",
             message,
         )
+        self.assertIn("directReturnAttempt: sent | unavailable | failed", message)
+        self.assertIn("directReturnTarget: <returnThreadId when applicable>", message)
+        self.assertIn("directReturnError: <short error only when failed>", message)
         self.assertIn("callbackMarker: TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", message)
 
         updated = team_router.record_executor_dispatch_sent(
@@ -2514,6 +2519,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_sent_verifier_request")
         self.assertEqual(update["status"], "verifying")
         self.assertEqual(update["ledger"]["review"]["result"]["fields"]["result"], "pass")
+        self.assertEqual(update["ledger"]["review"]["result"]["receipt"]["source"], "manager-inbox/direct-send")
+        self.assertEqual(update["ledger"]["review"]["result"]["receipt"]["channel"], "manager-inbox")
         self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
         self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
 
@@ -3161,10 +3168,15 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("roleThreadId: thread-verifier", verify_message)
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
+        self.assertIn("write the final TEAM_ROUTER_VERDICT block in this role thread first", verify_message)
+        self.assertIn("check whether send_message_to_thread is available", verify_message)
         self.assertIn(
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
             verify_message,
         )
+        self.assertIn("directReturnAttempt: sent | unavailable | failed", verify_message)
+        self.assertIn("directReturnTarget: <returnThreadId when applicable>", verify_message)
+        self.assertIn("directReturnError: <short error only when failed>", verify_message)
         self.assertIn("callbackMarker: TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3", verify_message)
 
         requested = team_router.record_verifier_request_sent(
@@ -3183,11 +3195,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(request["verdictDelivery"], "direct-send")
         self.assertEqual(request["verdictFallback"], "self-thread-marker")
         self.assertEqual(request["fallbackSearchAnchor"], request["searchAnchor"])
-        self.assertEqual(
-            request["returnSearchAnchor"],
-            {"messageId": None, "sentAt": "2026-06-22T20:05:00+08:00"},
-        )
-
+        self.assertEqual(requested["status"], "verifying")
 
     def test_reviewer_request_supports_direct_return_delivery_metadata(self):
         ledger = self._verifying_ledger()
@@ -3206,10 +3214,15 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("roleThreadId: thread-reviewer", review_message)
         self.assertIn("reviewDelivery: direct-send", review_message)
         self.assertIn("reviewFallback: self-thread-marker", review_message)
+        self.assertIn("write the final TEAM_ROUTER_REVIEW block in this role thread first", review_message)
+        self.assertIn("check whether send_message_to_thread is available", review_message)
         self.assertIn(
             "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
             review_message,
         )
+        self.assertIn("directReturnAttempt: sent | unavailable | failed", review_message)
+        self.assertIn("directReturnTarget: <returnThreadId when applicable>", review_message)
+        self.assertIn("directReturnError: <short error only when failed>", review_message)
         self.assertIn("reviewMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
         self.assertIn("reviewerMode: read-only/adversarial", review_message)
 
@@ -3247,6 +3260,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(read_request["threadId"], "thread-reviewer")
         self.assertEqual(read_request["searchAnchor"]["messageId"], "msg-review")
         self.assertEqual(read_request["expectedCallback"], "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3")
+
     def test_verifier_capture_accepts_same_timestamp_response_for_time_only_anchor(self):
         ledger = self._verifying_ledger()
         verify_prompt = team_router.make_verifier_request_message(
@@ -5326,6 +5340,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_sent_verifier_request")
         self.assertEqual(update["status"], "verifying")
         self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "direct return callback")
+        self.assertEqual(update["ledger"]["observations"][-1]["receipt"]["source"], "manager-inbox/direct-send")
+        self.assertEqual(update["ledger"]["observations"][-1]["receipt"]["channel"], "manager-inbox")
+        self.assertEqual(update["ledger"]["callbackReceipt"]["source"], "manager-inbox/direct-send")
         self.assertEqual(len(adapter.sent), 1)
         self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
 
@@ -5376,6 +5393,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIsNone(second)
         saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
         self.assertEqual(len(saved["observations"]), 1)
+        self.assertFalse(saved.get("malformedDirectReturns"))
 
     def test_watch_team_task_ignores_malformed_manager_inbox_callback_and_uses_self_thread_fallback(self):
         adapter = FakeThreadAdapter()
@@ -5436,6 +5454,20 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_sent_verifier_request")
         self.assertEqual(update["status"], "verifying")
         self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "fallback callback")
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertEqual(telemetry[0]["taskId"], self.task_id)
+        self.assertEqual(telemetry[0]["role"], "executor")
+        self.assertEqual(telemetry[0]["sourceThreadId"], "thread-executor")
+        self.assertEqual(telemetry[0]["roleThreadId"], "thread-executor")
+        self.assertEqual(telemetry[0]["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["expectedMarker"], "TEAM_ROUTER_CALLBACK taskId=%s" % self.task_id)
+        self.assertEqual(telemetry[0]["messageId"], "msg-manager-callback")
+        self.assertEqual(telemetry[0]["sentAt"], "2026-06-22T20:03:00+08:00")
+        self.assertEqual(telemetry[0]["capturedAt"], "2026-06-22T20:04:00+08:00")
+        self.assertIn("must be one of", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
         self.assertEqual(len(adapter.sent), 1)
         self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "thread-verifier")
 
@@ -5482,6 +5514,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_read_executor_callback")
         self.assertEqual(update["status"], "callback_unreachable")
         self.assertEqual(update["ledger"]["observations"], [])
+        self.assertFalse(update["ledger"].get("malformedDirectReturns"))
         self.assertEqual(adapter.sent, [])
 
     def test_watch_team_task_ignores_manager_inbox_callback_with_wrong_task_id(self):
@@ -5548,7 +5581,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             {
                 "messageId": "msg-callback",
                 "sentAt": "2026-06-22T20:03:00+08:00",
-                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: fallback callback\nevidence: executor self-thread\nrisks: none\nnext: verifier" % self.task_id,
+                "text": "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: fallback callback\nevidence: executor self-thread\nrisks: none\nnext: verifier\ndirectReturnAttempt: sent\ndirectReturnTarget: parent-manager-thread" % self.task_id,
             },
         ]
 
@@ -5562,6 +5595,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(update["status"], "verifying")
         self.assertEqual(update["observations"][-1]["parsedFields"]["summary"], "fallback callback")
+        self.assertEqual(update["observations"][-1]["parsedFields"]["directReturnAttempt"], "sent")
+        self.assertEqual(update["callbackReceipt"]["source"], "self-thread-fallback/read_thread")
+        self.assertEqual(update["callbackReceipt"]["channel"], "read_thread")
 
     def test_watch_team_task_reads_verifier_pass_and_returns_closeout(self):
         adapter = FakeThreadAdapter()
@@ -5626,7 +5662,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             {
                 "messageId": "msg-verdict",
                 "sentAt": "2026-06-22T20:06:00+08:00",
-                "text": "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: fallback closeout\nrequiredChanges: none\nevidenceChecked: verifier self-thread\nrisks: none" % self.task_id,
+                "text": "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: fallback closeout\nrequiredChanges: none\nevidenceChecked: verifier self-thread\nrisks: none\ndirectReturnAttempt: unavailable\ndirectReturnTarget: parent-manager-thread" % self.task_id,
             },
         ]
 
@@ -5640,6 +5676,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(update["ledger"]["status"], "done")
         self.assertIn("summary: fallback closeout", update["userOutput"])
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["fields"]["directReturnAttempt"], "unavailable")
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["source"], "self-thread-fallback/read_thread")
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["channel"], "read_thread")
 
     def test_watch_team_task_prefers_manager_inbox_direct_return_verdict(self):
         adapter = FakeThreadAdapter()
@@ -5684,6 +5723,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["status"], "done")
         self.assertIn("summary: direct return closeout", update["userOutput"])
         self.assertIn("remainingTodos: none", update["userOutput"])
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["source"], "manager-inbox/direct-send")
+        self.assertEqual(update["ledger"]["verification"]["verdict"]["receipt"]["channel"], "manager-inbox")
         self.assertEqual(len(adapter.sent), 0)
 
     def test_watch_team_task_ignores_malformed_manager_inbox_verdict_and_uses_self_thread_fallback(self):
@@ -5743,6 +5784,20 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_read_verifier_verdict")
         self.assertEqual(update["status"], "done")
         self.assertIn("summary: fallback closeout", update["userOutput"])
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertEqual(telemetry[0]["taskId"], self.task_id)
+        self.assertEqual(telemetry[0]["role"], "verifier")
+        self.assertEqual(telemetry[0]["sourceThreadId"], "thread-verifier")
+        self.assertEqual(telemetry[0]["roleThreadId"], "thread-verifier")
+        self.assertEqual(telemetry[0]["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["expectedMarker"], "TEAM_ROUTER_VERDICT taskId=%s" % self.task_id)
+        self.assertEqual(telemetry[0]["messageId"], "msg-manager-verdict")
+        self.assertEqual(telemetry[0]["sentAt"], "2026-06-22T20:06:00+08:00")
+        self.assertEqual(telemetry[0]["capturedAt"], "2026-06-22T20:07:00+08:00")
+        self.assertIn("must be one of", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
         self.assertEqual(len(adapter.sent), 0)
 
     def test_watch_team_task_ignores_manager_inbox_verdict_with_wrong_source_thread_id(self):
@@ -5787,6 +5842,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["action"], "watch_read_verifier_verdict")
         self.assertEqual(update["status"], "callback_unreachable")
         self.assertIsNone(update["ledger"]["closeout"])
+        self.assertFalse(update["ledger"].get("malformedDirectReturns"))
         self.assertEqual(len(adapter.sent), 0)
 
     def test_watch_team_task_ignores_manager_inbox_verdict_with_wrong_task_id(self):

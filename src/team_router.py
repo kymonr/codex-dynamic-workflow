@@ -2463,7 +2463,11 @@ def make_executor_dispatch_message(task_id: str,
         lines.extend((*direct_lines,
             "callbackDelivery: direct-send",
             "callbackFallback: self-thread-marker",
-            "Direct return: after writing the TEAM_ROUTER_CALLBACK block, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>) using the returnThreadId above so the orchestrator/parent thread receives the result.",
+            "Direct return contract: write the final TEAM_ROUTER_CALLBACK block in this role thread first.",
+            "Direct return contract: then check whether send_message_to_thread is available.",
+            "Direct return contract: if it is available, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_CALLBACK block>) with the exact TEAM_ROUTER_CALLBACK block you just wrote.",
+            "Direct return evidence fields: directReturnAttempt, directReturnTarget, directReturnError.",
+            "If direct-send is unavailable or failed, keep the self-thread marker for watcher fallback.",
         ))
     lines.extend((
         "",
@@ -2481,6 +2485,12 @@ def make_executor_dispatch_message(task_id: str,
         "risks: <none or risks>",
         "next: <none or next step>",
     ))
+    if return_thread_id is not None:
+        lines.extend((
+            "directReturnAttempt: sent | unavailable | failed",
+            "directReturnTarget: <returnThreadId when applicable>",
+            "directReturnError: <short error only when failed>",
+        ))
     return "\n".join(lines)
 
 
@@ -2695,10 +2705,11 @@ def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
                                     marker: str,
                                     task_id: str,
                                     source_thread_id: str,
-                                    anchor: Mapping[str, Any] | None) -> ProtocolMessage | None:
-    text = _messages_text(_direct_return_candidate_messages(messages, anchor, source_thread_id))
+                                    anchor: Mapping[str, Any] | None) -> tuple[ProtocolMessage | None, dict[str, Any] | None]:
+    candidates = _direct_return_candidate_messages(messages, anchor, source_thread_id)
+    text = _messages_text(candidates)
     if not text:
-        return None
+        return None, None
     parser = parse_message
     if marker == "TEAM_ROUTER_VERDICT":
         parser = parse_verdict
@@ -2709,11 +2720,79 @@ def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
     elif marker == "TEAM_ROUTER_PLAN":
         parser = parse_plan
     try:
-        return parser(text, task_id) if parser is not parse_message else parse_message(text, marker, task_id)
-    except ProtocolError:
-        # Direct-return inbox reads are opportunistic receipt checks; malformed
-        # manager-inbox copies must not break the role-thread self-marker fallback.
-        return None
+        parsed = parser(text, task_id) if parser is not parse_message else parse_message(text, marker, task_id)
+        return parsed, None
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            return None, None
+        message = candidates[-1] if candidates and isinstance(candidates[-1], Mapping) else {}
+        malformed = {
+            "messageId": message.get("messageId"),
+            "sentAt": message.get("sentAt"),
+            "sourceThreadId": message.get("sourceThreadId"),
+            "error": str(exc),
+        }
+        return None, malformed
+
+
+def _receipt_metadata(record: Mapping[str, Any],
+                      *,
+                      source: str,
+                      channel: str) -> dict[str, Any]:
+    return {
+        "source": source,
+        "channel": channel,
+        "roleThreadId": record.get("threadId"),
+        "returnThreadId": record.get("returnThreadId"),
+        "orchestratorThreadId": record.get("orchestratorThreadId") or record.get("returnThreadId"),
+    }
+
+
+def _record_malformed_direct_return(ledger: dict[str, Any],
+                                    *,
+                                    task_id: str,
+                                    role: str,
+                                    record: Mapping[str, Any],
+                                    captured_at: str,
+                                    malformed: Mapping[str, Any]) -> dict[str, Any]:
+    entries = list(ledger.get("malformedDirectReturns") or [])
+    event = {
+        "taskId": task_id,
+        "role": role,
+        "sourceThreadId": malformed.get("sourceThreadId") or record.get("threadId"),
+        "roleThreadId": record.get("threadId"),
+        "returnThreadId": record.get("returnThreadId"),
+        "orchestratorThreadId": record.get("returnThreadId"),
+        "expectedMarker": record.get("expectedCallback"),
+        "messageId": malformed.get("messageId"),
+        "sentAt": malformed.get("sentAt"),
+        "capturedAt": captured_at,
+        "error": malformed.get("error"),
+        "recovery": "self-thread-marker fallback",
+    }
+    signature = (
+        event.get("role"),
+        event.get("roleThreadId"),
+        event.get("messageId"),
+        event.get("sentAt"),
+        event.get("error"),
+    )
+    for existing in entries:
+        if not isinstance(existing, Mapping):
+            continue
+        existing_signature = (
+            existing.get("role"),
+            existing.get("roleThreadId"),
+            existing.get("messageId"),
+            existing.get("sentAt"),
+            existing.get("error"),
+        )
+        if existing_signature == signature:
+            ledger["malformedDirectReturns"] = entries
+            return ledger
+    entries.append(event)
+    ledger["malformedDirectReturns"] = entries
+    return ledger
 
 
 def _project_roles_from_registry(registry: Mapping[str, Any], project_id: str) -> dict[str, Any]:
@@ -2847,17 +2926,23 @@ def _apply_executor_callback_message(ledger: dict[str, Any],
                                      dispatch: Mapping[str, Any],
                                      msg: ProtocolMessage,
                                      *,
-                                     captured_at: str) -> dict[str, Any]:
+                                     captured_at: str,
+                                     receipt_source: str = "self-thread-fallback/read_thread",
+                                     receipt_channel: str = "read_thread") -> dict[str, Any]:
     thread_id = _required_str(dispatch.get("threadId"), "executorDispatch.threadId")
+    receipt = _receipt_metadata(dispatch, source=receipt_source, channel=receipt_channel)
     if not _has_observation_content(ledger, "callback_raw", "executor", thread_id, msg.raw):
-        ledger["observations"].append(make_observation(
+        observation = make_observation(
             "callback_raw",
             "executor",
             thread_id,
             captured_at,
             msg.raw,
             msg.fields,
-        ))
+        )
+        observation["receipt"] = dict(receipt)
+        ledger["observations"].append(observation)
+    ledger["callbackReceipt"] = dict(receipt)
     gate_class = classify_team_router_gate(ledger)
     ledger["gateClass"] = gate_class
     ledger["status"] = "reviewing" if gate_class_requires_reviewer(gate_class) else "verifying"
@@ -2937,7 +3022,11 @@ def make_reviewer_request_message(task_id: str,
         lines.extend((*direct_lines,
             "reviewDelivery: direct-send",
             "reviewFallback: self-thread-marker",
-            "Direct return: after writing the TEAM_ROUTER_REVIEW block, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>) using the returnThreadId above so the orchestrator/parent thread receives the review.",
+            "Direct return contract: write the final TEAM_ROUTER_REVIEW block in this role thread first.",
+            "Direct return contract: then check whether send_message_to_thread is available.",
+            "Direct return contract: if it is available, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>) with the exact TEAM_ROUTER_REVIEW block you just wrote.",
+            "Direct return evidence fields: directReturnAttempt, directReturnTarget, directReturnError.",
+            "If direct-send is unavailable or failed, keep the self-thread marker for watcher fallback.",
         ))
     lines.extend((
         "",
@@ -2953,6 +3042,12 @@ def make_reviewer_request_message(task_id: str,
         "evidenceChecked: <checked evidence>",
         "risks: <none or risks>",
     ))
+    if return_thread_id is not None:
+        lines.extend((
+            "directReturnAttempt: sent | unavailable | failed",
+            "directReturnTarget: <returnThreadId when applicable>",
+            "directReturnError: <short error only when failed>",
+        ))
     return "\n".join(lines)
 
 
@@ -2998,22 +3093,28 @@ def _apply_reviewer_review_message(ledger: dict[str, Any],
                                    request: Mapping[str, Any],
                                    msg: ProtocolMessage,
                                    *,
-                                   captured_at: str) -> dict[str, Any]:
+                                   captured_at: str,
+                                   receipt_source: str = "self-thread-fallback/read_thread",
+                                   receipt_channel: str = "read_thread") -> dict[str, Any]:
     thread_id = request.get("threadId") if isinstance(request, Mapping) else ""
+    receipt = _receipt_metadata(request, source=receipt_source, channel=receipt_channel)
     if thread_id and not _has_observation_content(ledger, "review_raw", "reviewer", str(thread_id), msg.raw):
-        ledger["observations"].append(make_observation(
+        observation = make_observation(
             "review_raw",
             "reviewer",
             str(thread_id),
             captured_at,
             msg.raw,
             msg.fields,
-        ))
+        )
+        observation["receipt"] = dict(receipt)
+        ledger["observations"].append(observation)
     review["result"] = {
         "threadId": thread_id,
         "capturedAt": captured_at,
         "raw": msg.raw,
         "fields": dict(msg.fields),
+        "receipt": dict(receipt),
     }
     ledger["review"] = review
     result = msg.fields["result"]
@@ -3131,7 +3232,11 @@ def make_verifier_request_message(task_id: str,
         lines.extend((*direct_lines,
             "verdictDelivery: direct-send",
             "verdictFallback: self-thread-marker",
-            "Direct return: after writing the TEAM_ROUTER_VERDICT block, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>) using the returnThreadId above so the orchestrator/parent thread receives the result.",
+            "Direct return contract: write the final TEAM_ROUTER_VERDICT block in this role thread first.",
+            "Direct return contract: then check whether send_message_to_thread is available.",
+            "Direct return contract: if it is available, call send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>) with the exact TEAM_ROUTER_VERDICT block you just wrote.",
+            "Direct return evidence fields: directReturnAttempt, directReturnTarget, directReturnError.",
+            "If direct-send is unavailable or failed, keep the self-thread marker for watcher fallback.",
         ))
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result)
     lines.extend((
@@ -3166,6 +3271,12 @@ def make_verifier_request_message(task_id: str,
         "evidenceChecked: <checked evidence>",
         "risks: <none or risks>",
     ))
+    if return_thread_id is not None:
+        lines.extend((
+            "directReturnAttempt: sent | unavailable | failed",
+            "directReturnTarget: <returnThreadId when applicable>",
+            "directReturnError: <short error only when failed>",
+        ))
     return "\n".join(lines)
 
 
@@ -3242,22 +3353,28 @@ def _apply_verifier_verdict_message(ledger: dict[str, Any],
                                     request: Mapping[str, Any],
                                     msg: ProtocolMessage,
                                     *,
-                                    captured_at: str) -> dict[str, Any]:
+                                    captured_at: str,
+                                    receipt_source: str = "self-thread-fallback/read_thread",
+                                    receipt_channel: str = "read_thread") -> dict[str, Any]:
     thread_id = request.get("threadId") if isinstance(request, Mapping) else ""
+    receipt = _receipt_metadata(request, source=receipt_source, channel=receipt_channel)
     if thread_id and not _has_observation_content(ledger, "verdict_raw", "verifier", str(thread_id), msg.raw):
-        ledger["observations"].append(make_observation(
+        observation = make_observation(
             "verdict_raw",
             "verifier",
             str(thread_id),
             captured_at,
             msg.raw,
             msg.fields,
-        ))
+        )
+        observation["receipt"] = dict(receipt)
+        ledger["observations"].append(observation)
     verification["verdict"] = {
         "threadId": thread_id,
         "capturedAt": captured_at,
         "raw": msg.raw,
         "fields": dict(msg.fields),
+        "receipt": dict(receipt),
     }
     ledger["verification"] = verification
     result = msg.fields["result"]
@@ -3755,13 +3872,24 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
     dispatch = _direct_return_record(ledger, "executor")
     if dispatch is None:
         return None
-    msg = _direct_return_protocol_message(
+    msg, malformed = _direct_return_protocol_message(
         messages,
         marker="TEAM_ROUTER_CALLBACK",
         task_id=task_id,
         source_thread_id=_required_str(dispatch.get("threadId"), "executorDispatch.threadId"),
         anchor=_as_mapping(dispatch.get("returnSearchAnchor"), "executorDispatch.returnSearchAnchor", default_empty=False),
     )
+    if malformed is not None:
+        ledger = _record_malformed_direct_return(
+            ledger,
+            task_id=task_id,
+            role="executor",
+            record=dispatch,
+            captured_at=captured_at,
+            malformed=malformed,
+        )
+        save_task_ledger(state_root, project_id, task_id, ledger)
+        return None
     if msg is None:
         return None
     ledger = _apply_executor_callback_message(
@@ -3769,6 +3897,8 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
         dispatch,
         msg,
         captured_at=captured_at,
+        receipt_source="manager-inbox/direct-send",
+        receipt_channel="manager-inbox",
     )
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
@@ -3786,13 +3916,24 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
     request = _direct_return_record(ledger, "reviewer")
     if request is None:
         return None
-    msg = _direct_return_protocol_message(
+    msg, malformed = _direct_return_protocol_message(
         messages,
         marker="TEAM_ROUTER_REVIEW",
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "reviewerRequest.threadId"),
         anchor=_as_mapping(request.get("returnSearchAnchor"), "reviewerRequest.returnSearchAnchor", default_empty=False),
     )
+    if malformed is not None:
+        ledger = _record_malformed_direct_return(
+            ledger,
+            task_id=task_id,
+            role="reviewer",
+            record=request,
+            captured_at=captured_at,
+            malformed=malformed,
+        )
+        save_task_ledger(state_root, project_id, task_id, ledger)
+        return None
     if msg is None:
         return None
     review = dict(ledger.get("review") or {})
@@ -3802,6 +3943,8 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
         request,
         msg,
         captured_at=captured_at,
+        receipt_source="manager-inbox/direct-send",
+        receipt_channel="manager-inbox",
     )
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
@@ -3817,13 +3960,24 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
     request = _direct_return_record(ledger, "verifier")
     if request is None:
         return None
-    msg = _direct_return_protocol_message(
+    msg, malformed = _direct_return_protocol_message(
         messages,
         marker="TEAM_ROUTER_VERDICT",
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "verifierRequest.threadId"),
         anchor=_as_mapping(request.get("returnSearchAnchor"), "verifierRequest.returnSearchAnchor", default_empty=False),
     )
+    if malformed is not None:
+        ledger = _record_malformed_direct_return(
+            ledger,
+            task_id=task_id,
+            role="verifier",
+            record=request,
+            captured_at=captured_at,
+            malformed=malformed,
+        )
+        save_task_ledger(state_root, project_id, task_id, ledger)
+        return None
     if msg is None:
         return None
     verification = dict(ledger.get("verification") or {})
@@ -3833,6 +3987,8 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
         request,
         msg,
         captured_at=captured_at,
+        receipt_source="manager-inbox/direct-send",
+        receipt_channel="manager-inbox",
     )
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
