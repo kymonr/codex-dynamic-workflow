@@ -7561,18 +7561,25 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
 
         self.assertIn("## Current Task", text)
+        for needle in (
+            "Current git truth",
+            "Current next gate",
+            "Historical records",
+            "current git truth / current next gate",
+            "Do not copy older ahead/behind, diff-surface, next-gate, or role-callback claims into the current state without refreshing them",
+            "`git status -sb --untracked-files=all`",
+            "`git diff --name-only`",
+            "old executor callback",
+        ):
+            self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
         for needle in (
-            "`src/team_router.py`",
             "`tests/test_team_router.py`",
             "`docs/workbench.md`",
-            "`docs/runbooks/codex-team-router-live-orchestration.md`",
-            "`skills/codex-team-router/SKILL.md`",
             "`skills/codex-team-router/references/manager-mode.md`",
-            "`skills/codex-team-router/references/manager-polling-cadence.md`",
-            "`skills/codex-team-router/references/direct-return.md`",
-            "`docs/compounding.md`",
+            "`skills/codex-team-router/references/reviewer-gate.md`",
+            "`skills/codex-team-router/references/manual-orchestration.md`",
         ):
             self.assertIn(needle, current_diff_section)
         for stale_current_claim in (
@@ -7589,10 +7596,14 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
             "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
             "`README.md`",
-            "`skills/codex-team-router/references/manual-orchestration.md`",
             "`skills/codex-team-router/references/testing-and-quality-gates.md`",
             "`skills/codex-team-router/references/agent-assist-policy.md`",
             "`skills/codex-team-router/references/role-closeout.md`",
+            "`src/team_router.py`",
+            "`docs/runbooks/codex-team-router-live-orchestration.md`",
+            "`skills/codex-team-router/SKILL.md`",
+            "`skills/codex-team-router/references/direct-return.md`",
+            "`docs/compounding.md`",
         ):
             self.assertNotIn(stale, current_diff_section)
 
@@ -8352,6 +8363,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             with self.subTest(path=name):
                 for needle in (
                     "Closeout reporting policy",
+                    "用户可读中文 closeout",
+                    "changed",
+                    "verified",
+                    "accepted by",
+                    "not done",
+                    "risks",
+                    "next gated step",
                     "implemented changes",
                     "verification actually run and results",
                     "blockers/exceptions",
@@ -8611,6 +8629,18 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     self.assertIn(needle, text)
 
 
+        reviewer_gate = (self._skill_references_dir() / "reviewer-gate.md").read_text(
+            encoding="utf-8"
+        )
+        for needle in (
+            "Team Router skill/rule/process self-changes",
+            "executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance)",
+            "not final acceptance",
+            "verifier remains final acceptance",
+        ):
+            self.assertIn(needle, reviewer_gate)
+
+
     def test_manager_mode_docs_cover_standing_role_reuse_policy(self):
         text = (
             ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md"
@@ -8632,6 +8662,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "review lens",
             "compliance review",
             "code-quality review",
+            "report the role binding outcome as `reused`, `new`, or `replacement`",
+            "replacement reason",
+            "reused role thread id",
+            "new role thread id",
             "original executor",
             "original reviewer",
             "original verifier",
