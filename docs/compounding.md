@@ -9,6 +9,26 @@ This is the project-level compounding ledger. Keep reusable lessons here when a 
 - Link the rule to the files/tests that enforce it.
 - If closeout says `compoundingDecision: recorded`, this file should be updated or the closeout must explain why the record is pending/blocked.
 
+## 中文复利记录模板
+
+后续新增复利记录默认使用中文正文；协议字段、命令、路径、文件名、日志和报错保持 literal。每条记录必须写清楚：
+
+```text
+### <可复用规则标题>
+
+- compoundingDecision: recorded | skipped
+- reason: <为什么记录或跳过；跳过也要说明没有新的可复用风险>
+- 触发条件：<哪些用户请求、角色状态、权限边界或失败现象会触发这条规则>
+- 越权/风险事实：<实际发生或需要防止的越权、权限、流程、测试、工作区污染、交付可靠性风险>
+- 影响面：<影响哪些角色、流程、文件、测试、回调、验收或用户理解>
+- 正确 delegation：<管理者应如何派给 executor/reviewer/verifier；写清 scope/files、permission、return protocol 和禁止事项>
+- 验收证据：<应检查的文件、关键 diff 摘要、测试命令与结果、回调/verdict/review 证据>
+- 规则：<可复用行为规则，避免只写一次性事故叙述>
+- Enforced by: <文件、测试、协议快照或 runbook>
+```
+
+如果记录被跳过，仍要保留 `compoundingDecision: skipped` 与 `reason`，并说明为什么普通实现/验证没有产生新的可复用流程风险。用户不懂英文时，不能只返回英文模板。
+
 ## Entries
 
 ### 管理者只能调度，不能亲自越权改文件

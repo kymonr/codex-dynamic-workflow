@@ -15,6 +15,7 @@ Role requests should hand off stable facts by file/path when available, not by a
 
 Task-content language: role-request free-text task content defaults to Chinese for human-readable objective, scope, stop condition, notes, summaries, risks, and next-step descriptions. Protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal.
 
+Callback language: protocol field names stay parser-compatible English, but the human-readable `summary`, `evidence`, `risks`, and `next` content in `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, and `TEAM_ROUTER_VERDICT` defaults to Chinese. Managers must ask executors, reviewers, and verifiers to explain changes, evidence, risks, required changes, and next steps in Chinese; English is reserved for protocol keys, commands, paths, filenames, logs, errors, enum values, and unavoidable technical identifiers. If the user does not understand English, returning only an English template or English-only free-text closeout is not acceptable.
 For write packages, this must be an exact executor delegation: include `taskId`, objective, explicit scope/files, permission boundary, expected marker, required reviewer/verifier gates, and return protocol. `local-package` lets the executor write only inside that explicit scope; it does not authorize manager direct edits or scope expansion.
 
 Path fields are explicit protocol contract fields, not merely future optional runtime fields:

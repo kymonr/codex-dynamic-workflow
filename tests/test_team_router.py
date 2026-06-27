@@ -427,6 +427,56 @@ risks: none
         self.assertIn("code-quality review", reviewer_gate["roleReuse"])
         self.assertIn("original reviewer", reviewer_gate["roleReuse"])
 
+    def test_role_request_messages_keep_protocol_keys_but_require_chinese_human_text(self):
+        task_id = "ctr-20260628-chinese-callback"
+        plan_fields = {
+            "scope": "docs/compounding.md tests/test_team_router.py",
+            "stopWhen": "中文模板和测试完成",
+            "executorPrompt": "更新中文复利模板，并用中文说明变更、证据和风险。",
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: 已更新中文规则\n"
+            "evidence: tests\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+        messages = (
+            team_router.make_executor_dispatch_message(
+                task_id,
+                plan_fields,
+                "local-package",
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-28T10:00:00+08:00"},
+            ),
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+            ),
+        )
+
+        for message in messages:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("Language rule: keep protocol field names English", message)
+                self.assertIn("Chinese by default", message)
+                self.assertIn("commands, paths, filenames, logs, errors", message)
+                self.assertIn("TEAM_ROUTER_", message)
+        self.assertIn("summary/evidence/risks/next", messages[0])
+        self.assertIn("summary/findings/requiredChanges/evidenceChecked/risks", messages[1])
+        self.assertIn("summary/requiredChanges/evidenceChecked/risks", messages[2])
+
+
 class TestTeamRouterState(unittest.TestCase):
     def test_callback_unreachable_is_recoverable_not_terminal(self):
         self.assertNotIn("callback_unreachable", team_router.TERMINAL_STATUSES)
@@ -1335,6 +1385,11 @@ risks: none
         self.assertIn("role-request free-text task content defaults to Chinese", policy["handoff"]["taskContentLanguage"])
         self.assertIn("protocol markers", policy["handoff"]["taskContentLanguage"])
         self.assertIn("commands, filenames, and tool names stay English/literal", policy["handoff"]["taskContentLanguage"])
+        self.assertIn("protocol field names stay parser-compatible English", policy["handoff"]["callbackLanguage"])
+        self.assertIn("summary, evidence, risks, and next content", policy["handoff"]["callbackLanguage"])
+        self.assertIn("TEAM_ROUTER_CALLBACK", policy["handoff"]["callbackLanguage"])
+        self.assertIn("executors, reviewers, and verifiers", policy["handoff"]["callbackLanguage"])
+        self.assertIn("English-only templates", policy["handoff"]["callbackLanguage"])
         self.assertEqual(
             policy["reviewPackage"]["minimumContent"],
             [
@@ -1366,6 +1421,7 @@ risks: none
         self.assertIn("must not include", policy["reviewPackage"]["diffPolicy"])
         self.assertIn("free-text fields default to Chinese", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("role-request task-content language", policy["reviewPackage"]["languagePolicy"])
+        self.assertIn("callback summary/evidence/risks/next content", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("field names", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("enum values", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("English classifier signals", policy["reviewPackage"]["languagePolicy"])
@@ -1432,6 +1488,9 @@ risks: none
         self.assertIn("must not include a full diff", reference)
         self.assertIn("free-text fields default to Chinese", reference)
         self.assertIn("Task-content language: role-request free-text task content defaults to Chinese", reference)
+        self.assertIn("Callback language: protocol field names stay parser-compatible English", reference)
+        self.assertIn("`summary`, `evidence`, `risks`, and `next`", reference)
+        self.assertIn("user does not understand English", reference)
 
 class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
     def test_registry_path_uses_shared_state_root_not_worktree_root(self):
@@ -8632,6 +8691,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
     def test_compounding_log_records_role_visibility_and_delivery_lesson(self):
         text = (ROOT / "docs" / "compounding.md").read_text(encoding="utf-8")
         for needle in (
+            "中文复利记录模板",
+            "compoundingDecision: recorded | skipped",
+            "reason: <为什么记录或跳过",
+            "触发条件",
+            "越权/风险事实",
+            "影响面",
+            "正确 delegation",
+            "验收证据",
+            "用户不懂英文时，不能只返回英文模板",
             "compoundingDecision: recorded",
             "archived role/thread no-reuse",
             "proactive role-return reliability",
