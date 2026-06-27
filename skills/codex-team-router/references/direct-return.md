@@ -21,7 +21,7 @@ Do not default `returnThreadId` to the manager/planner role thread. If no explic
 
 Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to `multi_agent_v1` workers/subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
 
-Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can call `send_message_to_thread`. If direct-send is unavailable or fails for a given run, keep the self-thread marker as fallback for that run and record fallback-only metadata on the local protocol block: `deliveryStatus: fallback_only` plus `deliveryError` only when direct-send was unavailable or failed.
+Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can call `send_message_to_thread`. An archived role/thread is unavailable for reuse, period: create or use a non-archived visible replacement role and record the replacement reason. If a non-archived role is still not user-visible, read_thread readable, or otherwise usable, treat it as unavailable/broken and replace it with a visible role. If direct-send is unavailable or fails for a given run, keep the self-thread marker as fallback for that run and record fallback-only metadata on the local protocol block: `deliveryStatus: fallback_only` plus `deliveryError` only when direct-send was unavailable or failed.
 
 Prompt metadata by role:
 
@@ -51,7 +51,7 @@ Manager accepts direct-send only when `taskId`, protocol-block `sourceThreadId`,
 
 Duplicate direct callbacks are ignored after the ledger advances past that role. Do not record duplicate observations and do not let old executor/reviewer/verifier callbacks trigger the next state twice.
 
-Keep `self-thread-marker` as the fallback/audit path. If direct-send is unavailable or misses delivery, watcher/heartbeat must read the role thread at the normal 5 minutes / 300 seconds fallback cadence and capture the self-thread marker.
+Keep `self-thread-marker` as the fallback/audit path. If direct-send is unavailable or misses delivery, watcher/heartbeat must read the role thread at the normal 5 minutes / 300 seconds fallback cadence and capture the self-thread marker. watcher-only collection is `deliveryStatus: fallback_only` / delivery degraded, not normal success, and manager closeout must record that degraded path instead of presenting it as proactive role return.
 
 ## Protocols
 

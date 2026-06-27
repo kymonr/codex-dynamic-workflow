@@ -21,46 +21,47 @@ Team Router is a Codex desktop thread-tools control plane: visible long-lived ro
 | 审查者 | Reviewer | conditional yes | For router/manager/orchestration policy, permission/safety boundaries, process rules, role protocol, and shared/high-risk logic; perform read-only/adversarial review and reply with `TEAM_ROUTER_REVIEW`. |
 | 验证者 | Verifier | yes | Check callback, reviewer requirements when present, evidence, boundary, and risks, then reply with `TEAM_ROUTER_VERDICT`; verifier remains final acceptance. |
 
-Visible Codex desktop thread titles use `角色-任务名`, e.g. `调度者-Team Router <task>` and `执行者-Team Router <task>`; when acting as manager, first rename the current/parent conversation itself as soon as the task label is clear, before child-role dispatch. Normalize role threads with `set_thread_title`.
+Visible thread titles use `角色-任务名`. Manager first renames the parent/current conversation to `调度者-Team Router <task>` before child dispatch; adapter-created orchestration requires `parent_thread_id` plus callable `set_thread_title`, otherwise return `tool_error` / blocked. Normalize role threads with `set_thread_title`.
 
 ## Manager Mode Hard Rule
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
 Manager Mode is sticky for the current task. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement, classification, or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
+Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates; ambiguous follow-ups never skip the next gate.
 Skill/rule/Superpowers write requests such as `记录进skill`, `改进skill`, `superpowers修`, or `写进规则` still route through executor/reviewer/verifier. Manager classifies and delegates exact `local-package` scope; `local-package` is executor-only, not manager direct-edit permission.
 
 ## Minimal Live Tool Order
 
-Before live orchestration, probe the Codex app tools and stop with `tool_error` if required tools are unavailable:
+Before live orchestration, probe required Codex app tools and stop with `tool_error` if unavailable:
 
 ```text
-list_projects -> create_thread -> send_message_to_thread -> read_thread
+list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread
 ```
 
-Use exactly one role-thread creation path per task. If callable adapter tools are unavailable, use the manual/pre-created continuation and existing role bindings instead of the adapter runner.
+Use one role-thread creation path per task. Reuse existing roles for the same task/task family; rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception. Create replacements only for concrete unavailable/archived/broken/invalid role state or real boundary/capability change. If adapter callables are unavailable, use manual/pre-created continuation with existing bindings.
 
 ## Direct Return
 
-When an explicit orchestrator/parent id is available, prompts/ledger records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send their final marker to `returnThreadId`, keep self-thread markers as fallback/audit anchors, and use the role-specific delivery/fallback fields. Manager validates sourceThreadId, taskId, expected marker, return/orchestrator target, and role/source; duplicate direct callbacks are ignored after ledger advance. watcher/heartbeat remains the 5 minutes fallback. See `references/direct-return.md`.
+When an explicit parent id is available, records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send final markers to `returnThreadId` and keep self-thread markers as fallback. Manager validates source/task/marker/role ids; duplicates are ignored after ledger advance. Watcher heartbeat remains the 5 minute fallback. See `references/direct-return.md`.
 
-Team Router dispatch uses Codex desktop thread roles for executor/reviewer/verifier. Do not use `multi_agent_v1` workers/subagents as Team Router role threads: they may lack `send_message_to_thread` and reliable direct-return. If a role is unavailable, create/reuse a proper Codex thread role.
+Team Router dispatch uses Codex desktop thread roles, not `multi_agent_v1` workers/subagents, because role threads need thread tools and reliable direct-return.
 
 ## Fast Lane
 
-Fast Lane: FAST, NORMAL, STRICT, PACKAGE. Completion is direct-return first with bounded read_thread fallback. FAST docs/BOM/single phrase and NORMAL small focused code/test use executor -> verifier. STRICT process/permission/safety/role protocol/shared-risk and PACKAGE same task family discipline hardening use executor -> reviewer -> verifier. CRLF/LF normalization uses executor plus either reviewer or verifier; escalate only for semantic/process risk.
+Fast Lane: FAST/NORMAL use executor -> verifier; STRICT/PACKAGE process, role protocol, shared-risk, or same-family discipline changes use executor -> reviewer -> verifier. Completion is direct-return first with bounded `read_thread` fallback; CRLF/LF normalization escalates only for semantic/process risk.
 
 ## Conditional Reviewer Gate
 
-Ordinary small fixes and clearly low-risk tasks use executor -> verifier. Router/manager/orchestration policy, permission or safety boundary rules, process rules, role protocol, and shared/high-risk logic must use executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance). Reviewer is not final acceptance; verifier remains final acceptance. When the user names `reviewer` for Team Router self changes, use a reviewer role conversation/thread; if none exists, create/register it or stop and report it. subagent fallback is not allowed.
+Small low-risk tasks use executor -> verifier. Router/manager policy, safety/process/role protocol, and shared/high-risk logic use executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance). Reviewer is not final; verifier is. Named reviewer self-changes require a reviewer role thread; no subagent fallback.
 
 ## roleCloseoutPolicy
 
-After task completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT` to role threads. Protocol blocks are sufficient role-thread anchors. Parent manager still gives the user a plain-language closeout after every completed flow: changed, verified, accepted by, not done, risks, next gated step. compact is native operation, not chat prompt; do not send `compact` or `ROLE_CLOSEOUT` text to pretend context compression happened. If no compact tool is available, do nothing. Records: durable -> `docs/compounding.md`; task living record -> `docs/workbench.md`.
+After completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT`; protocol blocks are anchors. Parent manager still gives plain-language closeout: changed, verified, accepted by, not done, risks, next gated step. compact is native, not chat prompt. Records: durable -> `docs/compounding.md`; task living -> `docs/workbench.md`.
 
 ## sideEffectTaxonomy
 
-Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. In active Manager Mode, terse approvals such as `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, or `do it` authorize at most `DISPATCH_ONLY`; `WORKSPACE_WRITE` requires explicit `local-package` executor delegation and required gates unless the user explicitly switches roles and authorizes manager file edits in the current turn, `LOCAL_CLOSEOUT` requires verifier pass plus an explicit commit request, and `EXTERNAL_RELEASE` always needs separate authorization.
+Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. In Manager Mode, terse approvals authorize at most `DISPATCH_ONLY`; workspace writes require explicit `local-package` executor delegation and gates, local closeout needs verifier pass plus explicit commit request, and external release needs separate authorization.
 
 ## roleHandoffPolicy / reviewPackagePolicy
 

@@ -200,7 +200,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "fallbackMetadata": "local fallback may append deliveryStatus: fallback_only and deliveryError when direct-send is unavailable or failed",
         "normalCadence": "manager waits for direct-send first; perform one bounded read/check only on failed/unknown send, expected idle role, user completion signal, or timeout; avoid continuous polling",
         "proactiveReturnRule": "roles must direct-send the final protocol block as soon as key checks complete and must not rely on parent polling",
-        "boundedControlFallback": "after bounded wait/read with no final protocol block, manager sends CONTROL requiring scope-limited closeout from already-confirmed facts",
+        "boundedControlFallback": "watcher-only collection after a missed proactive direct-send is deliveryStatus: fallback_only / delivery degraded, not normal success; after bounded wait/read with no final protocol block, manager sends CONTROL requiring scope-limited closeout from already-confirmed facts",
     },
     "fastLane": {
         "classes": ("FAST", "NORMAL", "STRICT", "PACKAGE"),
@@ -348,10 +348,11 @@ MANAGER_ORCHESTRATION_POLICY = {
     },
     "roleReuse": {
         "default": "standing role policy: check registry first and reuse existing executor, existing reviewer when the conditional reviewer gate applies, and existing verifier threads for the same taskId or task family when available; do not create a new role merely because the review lens changes",
-        "reworkExecutor": "send rework to the original executor thread unless that role is blocked, unavailable, or invalid",
-        "reworkReviewer": "send re-review to the original reviewer thread unless that role is blocked, unavailable, or invalid",
-        "reworkVerifier": "send rework verification to the original verifier thread unless that role is blocked, unavailable, or invalid",
+        "reworkExecutor": "send rework to the original executor thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
+        "reworkReviewer": "send re-review to the original reviewer thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
+        "reworkVerifier": "send rework verification to the original verifier thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
         "dispatchFreshness": "every dispatch, including reused roles, must carry sourceThreadId/sourceRoleThreadId/role plus direct-send and self-thread-marker fields with a fresh searchAnchor/message metadata; do not reuse a stale search anchor",
+        "archivedNoReuseRequirement": "an archived role/thread is unavailable for reuse, period; create or use a non-archived visible replacement role and record the replacement reason",
         "newThreadOnlyWhen": (
             "first missing role binding",
             "role/thread unavailable or archived/broken",
@@ -375,8 +376,8 @@ MANAGER_ORCHESTRATION_POLICY = {
         "parentThread": {
             "format": "调度者-Team Router <task label>",
             "scope": "parent/current manager-dispatcher thread title when the host UI exposes a current-thread title hook",
-            "firstAction": "after the task label is clear, the manager first renames the current/parent conversation before child-role dispatch",
-            "runtimeStatus": "process contract only in this adapter path; no callable current-thread title hook is implemented here",
+            "firstAction": "after the task label is clear, the manager first renames the current/parent conversation before child-role dispatch; if the host cannot provide current thread id or set_thread_title, stop with tool_error/blocked",
+            "runtimeStatus": "adapter-created path requires explicit parent_thread_id/current thread id plus callable set_thread_title; if unavailable, return tool_error/blocked before child-role dispatch",
         },
     },
     "verifierDirectReturn": {
@@ -389,7 +390,7 @@ MANAGER_ORCHESTRATION_POLICY = {
     },
     "verifierEvidenceOnlyFastPath": {
         "allowedWhen": (
-            "executor evidence is complete for the authorized scope",
+            "executor callback includes non-empty evidence for the authorized scope",
             "reviewer result is pass",
             "reviewer requiredChanges is none",
         ),
@@ -419,7 +420,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "skipWhen": "ordinary small fixes or clearly low-risk tasks",
         "reviewerResponsibility": "read-only adversarial design review for risks, rule gaps, omissions, and new bad modes; not final acceptance",
         "verifierResponsibility": "read-only final acceptance that executor output and reviewer requirements are satisfied",
-        "roleReuse": "reuse the same reviewer thread for the same taskId or task family; do not create a new reviewer only because the review lens changes, for example compliance review vs code-quality review; re-review returns to the original reviewer unless that role is blocked, unavailable, invalid, or boundaries change",
+        "roleReuse": "reuse the same reviewer thread for the same taskId or task family; do not create a new reviewer only because the review lens changes, for example compliance review vs code-quality review; re-review returns to the original reviewer unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
         "runtimeImplementation": "watch/run use send_reviewer_request_with_adapter(), read_reviewer_review_update_with_adapter(), and capture_reviewer_review_from_read(); reviewer pass -> verifier, needs_rework -> executor rework gate, blocked -> blocked",
         "namedReviewerRequirement": "when the user names reviewer for Team Router self changes, use a reviewer role conversation/thread; if none exists, explicitly create/register reviewer role conversation or stop and report it; subagent fallback is not allowed",
     },    "reviewerDirectReturn": {
@@ -1655,7 +1656,15 @@ def _waiting_read_discipline(ledger: Mapping[str, Any], *, observed_at: str) -> 
         discipline = next_role_read_policy(ledger, observed_at=observed_at)
     else:
         discipline = dict(discipline)
+    minimum_seconds = discipline.get("minimumIntervalSeconds", MIN_ROLE_POLL_INTERVAL_SECONDS)
+    try:
+        minimum_seconds_int = int(minimum_seconds)
+    except (TypeError, ValueError):
+        minimum_seconds_int = MIN_ROLE_POLL_INTERVAL_SECONDS
+    minimum_seconds_int = max(MIN_ROLE_POLL_INTERVAL_SECONDS, minimum_seconds_int)
     discipline["lastReadAt"] = observed_at
+    discipline["minimumIntervalSeconds"] = minimum_seconds_int
+    discipline["nextAllowedReadAt"] = _isoformat_plus_seconds(observed_at, minimum_seconds_int)
     return discipline
 
 
@@ -2023,6 +2032,11 @@ def role_thread_title(project_id: str, role: str, task_title: str | None = None)
     return "%s-%s" % (ROLE_DISPLAY_NAMES[role], visible_task_title)
 
 
+def parent_thread_title(task_title: str) -> str:
+    visible_task_title = _task_title_from_objective(task_title)
+    return "调度者-Team Router %s" % visible_task_title
+
+
 def _role_thread_title_matches(project_id: str,
                                role: str,
                                title: str,
@@ -2206,6 +2220,9 @@ def _normalize_adapter_role_title(thread_adapter: Any,
     return record
 
 
+UNAVAILABLE_ROLE_STATUSES = {"archived", "blocked", "broken", "invalid", "unavailable"}
+
+
 def _existing_role_threads_from_registry(state_root: str | Path,
                                          project_id: str,
                                          *,
@@ -2219,7 +2236,11 @@ def _existing_role_threads_from_registry(state_root: str | Path,
             continue
         if not isinstance(record, Mapping):
             raise StateStoreError("registry.roles.%s must be a JSON object" % role)
-        roles[role] = _normalize_role_record(role, record, observed_at)
+        normalized = _normalize_role_record(role, record, observed_at)
+        status = str(normalized.get("status") or "").strip().lower()
+        if status in UNAVAILABLE_ROLE_STATUSES:
+            continue
+        roles[role] = normalized
     return roles
 
 
@@ -2479,7 +2500,7 @@ def verifier_evidence_only_fast_path(callback_fields: Mapping[str, Any],
         return {"allowed": False, "reason": "reviewer requiredChanges is not none"}
     return {
         "allowed": True,
-        "reason": "executor evidence is complete and reviewer passed with requiredChanges none",
+        "reason": "executor evidence is present and reviewer passed with requiredChanges none",
     }
 def make_plan_request_message(task_id: str, objective: str, permission: str) -> str:
     _validate_task_id(task_id)
@@ -3456,8 +3477,8 @@ def make_verifier_request_message(task_id: str,
     if evidence_only["allowed"]:
         lines.extend((
             "",
-            "Evidence-only fast path is allowed for this verification.",
-            "If the evidence already proves the change, you may accept without re-running commands or widening inspection.",
+            "Evidence-only fast path may be considered for this verification.",
+            "If the executor evidence plus reviewer result are sufficient for the authorized scope, you may accept without re-running commands or widening inspection.",
             "Still list residual risks and explicitly state that stage/commit/push/PR/release were not done.",
         ))
     lines.extend((
@@ -4822,9 +4843,30 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        max_rework: int = 3,
                                        turn_limit: int | None = None,
                                        confirm_rework: bool = False,
-                                       return_thread_id: str | None = None) -> dict[str, Any]:
+                                       return_thread_id: str | None = None,
+                                       parent_thread_id: str | None = None) -> dict[str, Any]:
     entry = parent_entry_guard(thread_adapter)
     capabilities = entry["capabilities"]
+    if parent_thread_id is None:
+        return {
+            "action": "tool_error_parent_title_unavailable",
+            "status": "tool_error",
+            "userOutput": (
+                "Team Router tool_error: adapter-created orchestration requires "
+                "the current thread id before child-role dispatch so the parent/current "
+                "manager conversation can be renamed with set_thread_title."
+            ),
+            "capabilities": capabilities,
+            "codexProjectId": codex_project_id or project_id,
+        }
+    task_title = _task_title_from_objective(objective)
+    if not task_path(state_root, project_id, task_id).exists():
+        _adapter_call(
+            thread_adapter,
+            "set_thread_title",
+            threadId=_required_str(parent_thread_id, "parentThreadId"),
+            title=parent_thread_title(task_title),
+        )
     project_lookup_id = codex_project_id or project_id
     project_target = (
         dict(target)

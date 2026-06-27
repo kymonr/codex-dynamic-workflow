@@ -7,7 +7,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 The parent thread is the orchestrator. The role threads only reply in their own threads with marker blocks. The required live-tool order is:
 
 ```text
-list_projects -> create_thread -> send_message_to_thread -> read_thread
+list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread
 ```
 
 Use exactly one role-thread creation path per task. Do not mix the adapter-created and pre-created paths.
@@ -16,7 +16,7 @@ Use exactly one role-thread creation path per task. Do not mix the adapter-creat
 
 Use `parent_entry_guard()` at the parent boundary before choosing the adapter-created path. If callable thread tools are unavailable or the adapter object only contains model-side tool descriptors, do not continue the adapter runner; continue only with the manual/pre-created path and existing `manager` / `executor` / `verifier` role bindings, plus an existing reviewer only when conditional reviewer review is required.
 
-Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/reviewer/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`. It is not the entrypoint for pre-created role threads when the host lacks callable tools.
+Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables and an explicit current parent thread id as `parent_thread_id`. Before child-role dispatch, the helper requires callable `set_thread_title` and uses `parent_thread_id` to rename the parent/current conversation to `调度者-Team Router <task label>`; if that id is unavailable, return `tool_error` / blocked instead of silently continuing. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes role titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/reviewer/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`. It is not the entrypoint for pre-created role threads when the host lacks callable tools.
 
 Use a filesystem-safe Team Router `project_id` for local state, such as `codex-dynamic-workflow`. If Codex desktop `list_projects` returns a path-like project id such as `D:\codex\codex-dynamic-workflow`, pass it as `codex_project_id` so target lookup uses the real Codex id while registry and ledger paths stay safe.
 
@@ -30,7 +30,7 @@ Use this path when the parent host can provide adapter callables whose functions
 
 1. Probe the required tools and run `list_projects`; choose the current `projectId` and a project `target` with a local or worktree environment.
 2. Resolve `stateRoot` and load the project registry.
-3. Prefer `orchestrate_team_task_with_adapter()` for normal parent orchestration.
+3. Prefer `orchestrate_team_task_with_adapter(..., parent_thread_id=<current parent thread id>)` for normal parent orchestration; do not dispatch child roles if the current parent thread id is unavailable.
 4. Use `start_team_task_with_adapter()` only when you need the lower-level start primitive. It reuses registry role bindings, calls `create_thread` only for missing manager/executor/verifier core roles; create or reuse reviewer only when the conditional reviewer gate applies, then writes the registry role bindings and task ledger.
 5. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
 

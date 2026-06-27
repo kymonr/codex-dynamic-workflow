@@ -4,49 +4,54 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- Objective: Team Router role-task content Chinese default skill rule plus direct-return receipt hardening follow-up.
-- State: local implementation complete, validated, reviewer-approved, verifier-accepted, and global installed skill reference synced; previous helper-test commit `c9d41b3` is local-only and `master` is ahead of `origin/master` by 1; this combined diff is not committed.
-- Last refreshed: 2026-06-27 role task-content Chinese skill rule verifier acceptance.
+- Objective: Optimize the Team Router skill as manager-facing process guidance: make Manager Mode intake gates explicit and keep parent-thread title normalization from repeating on every orchestration turn.
+- State: local implementation complete and verified. `SKILL.md` now has a short Manager Intake anchor under the 8KB cap; `references/manager-mode.md` contains the detailed `READ_ONLY` / `DISPATCH_ONLY` / `WORKSPACE_WRITE` / `LOCAL_CLOSEOUT` / `EXTERNAL_RELEASE` fast path; `orchestrate_team_task_with_adapter()` now renames the parent/current thread once before first child-role dispatch instead of every loop; full Team Router tests pass.
+- Git baseline at this turn: `git status -s` already showed modified Team Router lifecycle files before the intake optimization.
+- Last refreshed: 2026-06-28 Manager Intake Fast Path optimization complete; repo/global skill files synced for `SKILL.md` and `references/manager-mode.md`.
 - Not done: commit, push, PR, merge, publish, release.
 
 ## Current Diff Surface
 
+Current package diff includes the pre-existing role-lifecycle surface plus this Manager Intake optimization and test alignment:
+
 - `src/team_router.py`
 - `tests/test_team_router.py`
-- `skills/codex-team-router/references/role-handoff-and-review-package.md`
 - `docs/workbench.md`
+- `docs/compounding.md`
+- `docs/runbooks/codex-team-router-live-orchestration.md`
+- `skills/codex-team-router/SKILL.md`
+- `skills/codex-team-router/references/adapter-runtime.md`
+- `skills/codex-team-router/references/direct-return.md`
+- `skills/codex-team-router/references/manager-mode.md`
+- `skills/codex-team-router/references/manager-polling-cadence.md`
 
-Workspace-external sync:
+## Integration Boundary
 
-- Global installed skill reference synced: `skills/codex-team-router/references/role-handoff-and-review-package.md` copied to `C:\Users\Orz\.codex\skills\codex-team-router\references\role-handoff-and-review-package.md`; SHA256 `EB668B9F66B44ED4ADA8030F493BD6575F937E94FBCFB3E19B143ECE6753322A` matches repo copy.
+- `src/team_router.py` remains a deterministic helper library. It records registry/ledger state, builds prompts, parses role protocol blocks, and exposes adapter-aware helper functions.
+- Real live orchestration still depends on a parent host adapter that can provide callable Codex thread tools such as `list_projects`, `create_thread`, `send_message_to_thread`, `read_thread`, and `set_thread_title`, plus the current parent thread id for `parent_thread_id`.
+- Adapter-created orchestration returns `tool_error` before first child-role dispatch when the parent/current thread id is unavailable, rather than pretending the parent rename happened.
+- Parent/current thread title normalization now happens only when the task ledger does not exist yet, so watcher/read/closeout loops do not repeatedly rename the parent thread.
+- Watcher/heartbeat behavior still depends on a host scheduler or automation loop calling `watch_team_task_with_adapter()` at `firstCheckAt` / `nextAllowedReadAt`. After the single short first check, the helper moves the next proactive read to at least 300 seconds after that read; it does not install or run the scheduler by itself.
+- If the parent host cannot pass callable thread tools into Python, use the manual/pre-created continuation path and feed actual send/read observations back into the helpers.
 
 ## Verification Record
 
-- `git status -sb --untracked-files=all` before implementation: `## master...origin/master [ahead 1]`.
-- CodeGraph review: `_capture_reviewer_review_from_manager_inbox()` and `_capture_verifier_verdict_from_manager_inbox()` lacked direct helper-level coverage; `_direct_return_protocol_message()` returned metadata for the last candidate rather than the actual marker-bearing candidate when a later same-source chat message existed.
-- `py -m unittest tests.test_team_router.TestTeamRouterProtocol.test_direct_return_protocol_message_uses_marker_bearing_message_metadata tests.test_team_router.TestTeamRouterProtocol.test_direct_return_protocol_message_filters_anchor_and_source_thread tests.test_team_router.TestTeamRouterManagerIntegration.test_capture_reviewer_direct_return_from_manager_inbox_records_receipt tests.test_team_router.TestTeamRouterManagerIntegration.test_capture_verifier_direct_return_from_manager_inbox_is_idempotent tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v`: pass, 5 tests.
-- `py -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_prefers_manager_inbox_direct_return_callback tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_captures_reviewer_direct_return_and_sends_verifier tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_prefers_manager_inbox_direct_return_verdict tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_ignores_malformed_manager_inbox_callback_and_uses_self_thread_fallback tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_ignores_malformed_manager_inbox_verdict_and_uses_self_thread_fallback -v`: pass, 5 tests.
-- `py -m unittest tests.test_team_router.TestTeamRouterProtocol -v`: pass, 15 tests.
-- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v`: pass, 27 tests.
-- `py -m unittest tests.test_team_router.TestTeamRouterManagerIntegration -v`: pass, 140 tests.
+Current verification:
+
+- `skills/codex-team-router/SKILL.md` size check: 7533 bytes, under the 8192-byte entrypoint cap.
+- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_skill_entrypoint_uses_progressive_disclosure_references tests.test_team_router.TestTeamRouterSkillDoc.test_manager_mode_docs_cover_intake_fast_path_gates tests.test_team_router.TestTeamRouterSkillDoc.test_contract_docs_cover_archived_role_visibility_and_degraded_delivery -v`: pass, 3 tests.
+- `py -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_waiting_executor_update_before_timeout_does_not_allow_convergence_without_observation tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_with_adapter_reaches_closeout_with_codex_desktop_shapes -v`: pass, 2 tests.
 - `py -m py_compile src\team_router.py tests\test_team_router.py`: pass.
-- `git diff --check`: pass.
-- `py -m unittest tests.test_team_router`: pass, 230 tests.
-- `py -m unittest tests.test_team_router.TestTeamRouterState.test_protocol_contract_snapshot_includes_role_handoff_review_package_policy tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v`: pass, 2 tests after task-content Chinese skill-rule edit.
-- `py -m py_compile src\team_router.py tests\test_team_router.py`: pass after task-content Chinese skill-rule edit.
-- `git diff --check`: pass after task-content Chinese skill-rule edit; CRLF warning only for `tests/test_team_router.py`.
-- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v`: pass, 27 tests after task-content Chinese skill-rule edit.
-- `Copy-Item -LiteralPath 'D:\codex\Team Router\skills\codex-team-router\references\role-handoff-and-review-package.md' -Destination 'C:\Users\Orz\.codex\skills\codex-team-router\references\role-handoff-and-review-package.md' -Force`: pass.
-- Repo/global role-handoff reference SHA256: `EB668B9F66B44ED4ADA8030F493BD6575F937E94FBCFB3E19B143ECE6753322A` matches.
-- Reviewer direct-return for `ctr-20260627-task-content-chinese-skill`: pass, `requiredChanges: none`.
-- Verifier direct-return for `ctr-20260627-task-content-chinese-skill`: pass, `requiredChanges: none`.
+- `git diff --check`: pass; CRLF warnings only for existing modified files.
+- `py -m unittest tests.test_team_router -v`: pass, 237 tests.
+- Repo/global installed skill sync: SHA256 matched for repo and installed `SKILL.md`; SHA256 matched for repo/global `references/manager-mode.md`.
 
 ## Review And Verification Gate
 
-- Reviewer: `ctr-20260627-task-content-chinese-skill` direct-return review passed; `requiredChanges: none`.
-- Verifier: `ctr-20260627-task-content-chinese-skill` direct-return verdict passed; `requiredChanges: none`.
+- Local verification: passed.
+- Reviewer/verifier role-thread gates: not run in this turn; no live thread-tool role orchestration was available in this workspace session.
 
 ## Next Gate
 
-- Commit this new local diff only after explicit commit authorization.
-- Do not push/PR/merge unless the user separately authorizes that release/closeout step.
+- Commit only after explicit commit authorization.
+- Push, PR, merge, publish, and release require separate explicit authorization.

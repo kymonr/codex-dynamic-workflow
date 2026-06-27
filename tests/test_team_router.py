@@ -382,6 +382,10 @@ risks: none
         self.assertIn("direct-send", model["proactiveReturnRule"])
         self.assertIn("key checks complete", model["proactiveReturnRule"])
         self.assertIn("must not rely on parent polling", model["proactiveReturnRule"])
+        self.assertIn("watcher-only", model["boundedControlFallback"])
+        self.assertIn("deliveryStatus: fallback_only", model["boundedControlFallback"])
+        self.assertIn("delivery degraded", model["boundedControlFallback"])
+        self.assertIn("not normal success", model["boundedControlFallback"])
         self.assertIn("bounded wait/read", model["boundedControlFallback"])
         self.assertIn("scope-limited closeout", model["boundedControlFallback"])
         self.assertIn("already-confirmed facts", model["boundedControlFallback"])
@@ -404,6 +408,12 @@ risks: none
         self.assertIn("isolation/audit boundary changes", reuse["newThreadOnlyWhen"])
         self.assertIn("concurrency conflict", reuse["newThreadOnlyWhen"])
         self.assertIn("model/capability requirement", reuse["newThreadOnlyWhen"])
+        self.assertIn("archived role/thread", reuse["archivedNoReuseRequirement"])
+        self.assertIn("unavailable for reuse, period", reuse["archivedNoReuseRequirement"])
+        self.assertIn("non-archived visible replacement role", reuse["archivedNoReuseRequirement"])
+        self.assertIn("replacement reason", reuse["archivedNoReuseRequirement"])
+        self.assertNotIn("unarchived", reuse["archivedNoReuseRequirement"])
+        self.assertNotIn("history/current turn load normally", reuse["archivedNoReuseRequirement"])
         self.assertIn("original executor", reuse["reworkExecutor"])
         self.assertIn("original reviewer", reuse["reworkReviewer"])
         self.assertIn("original verifier", reuse["reworkVerifier"])
@@ -684,6 +694,29 @@ risks: none
         self.assertEqual(decision["action"], "read_suppressed")
 
 
+    def test_waiting_read_discipline_moves_next_allowed_after_single_first_check(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-fast",
+            "objective": "restore README BOM",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "running",
+            "readDiscipline": {
+                "gateClass": "FAST",
+                "lastReadAt": None,
+                "nextAllowedReadAt": "2026-06-24T12:05:00+08:00",
+                "minimumIntervalSeconds": 300,
+                "directReturnExpected": True,
+            },
+        }
+
+        discipline = team_router._waiting_read_discipline(
+            ledger,
+            observed_at="2026-06-24T12:00:30+08:00",
+        )
+
+        self.assertEqual(discipline["lastReadAt"], "2026-06-24T12:00:30+08:00")
+        self.assertEqual(discipline["nextAllowedReadAt"], "2026-06-24T12:05:30+08:00")
+        self.assertEqual(discipline["minimumIntervalSeconds"], 300)
     def test_role_read_allowed_enforces_last_read_five_minute_interval(self):
         ledger = {
             "taskId": "ctr-20260624-120000-fast",
@@ -813,7 +846,8 @@ risks: none
 
         decision = team_router.verifier_evidence_only_fast_path(callback_fields, reviewer_result)
         self.assertTrue(decision["allowed"])
-        self.assertIn("requiredChanges none", decision["reason"])
+        self.assertIn("evidence is present", decision["reason"])
+        self.assertNotIn("complete", decision["reason"].lower())
 
     def test_verifier_evidence_only_fast_path_rejects_required_changes_or_missing_evidence(self):
         missing = team_router.verifier_evidence_only_fast_path({"status": "done"}, None)
@@ -1017,7 +1051,7 @@ risks: none
         self.assertIn("parent/current manager-dispatcher", title_policy["parentThread"]["scope"])
         self.assertIn("manager first renames", title_policy["parentThread"]["firstAction"])
         self.assertIn("before child-role dispatch", title_policy["parentThread"]["firstAction"])
-        self.assertIn("no callable current-thread title hook", title_policy["parentThread"]["runtimeStatus"])
+        self.assertIn("requires explicit parent_thread_id", title_policy["parentThread"]["runtimeStatus"])
         self.assertIn("verdictDelivery: direct-send", policy["verifierDirectReturn"]["requiredFields"])
         self.assertIn("verdictFallback: self-thread-marker", policy["verifierDirectReturn"]["requiredFields"])
         self.assertEqual(
@@ -1026,7 +1060,8 @@ risks: none
         )
 
         evidence_only = policy["verifierEvidenceOnlyFastPath"]
-        self.assertIn("executor evidence is complete", evidence_only["allowedWhen"][0])
+        self.assertIn("non-empty evidence", evidence_only["allowedWhen"][0])
+        self.assertNotIn("complete", evidence_only["allowedWhen"][0].lower())
         self.assertIn("reviewer result is pass", evidence_only["allowedWhen"][1])
         self.assertIn("requiredChanges is none", evidence_only["allowedWhen"][2])
         self.assertIn("requiredChanges is not none", evidence_only["forbiddenWhen"][0])
@@ -2461,7 +2496,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             observed_at="2026-06-22T20:02:10+08:00",
         )
 
-        self.assertEqual(update["readDiscipline"]["nextAllowedReadAt"], "2026-06-22T20:07:00+08:00")
+        self.assertEqual(update["readDiscipline"]["nextAllowedReadAt"], "2026-06-22T20:07:10+08:00")
         self.assertEqual(update["convergenceDecision"]["action"], "observe_only_wait")
         self.assertFalse(update["convergenceDecision"]["allowed"])
         self.assertEqual(update["convergenceDecision"]["readDecision"]["action"], "read_suppressed")
@@ -3542,7 +3577,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
-        self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertNotIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
         self.assertNotIn("without re-running commands or widening inspection", verifier_prompt)
 
     def test_send_verifier_request_with_adapter_offers_evidence_only_fast_path_after_clean_reviewer_pass(self):
@@ -3594,8 +3629,10 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
-        self.assertIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
+        self.assertIn("If the executor evidence plus reviewer result are sufficient", verifier_prompt)
         self.assertIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
 
     def test_verifier_request_mentions_evidence_only_fast_path_when_reviewer_passes_cleanly(self):
         callback_block = (
@@ -3626,8 +3663,10 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             reviewer_result=reviewer_result,
         )
 
-        self.assertIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
+        self.assertIn("If the executor evidence plus reviewer result are sufficient", verifier_prompt)
         self.assertIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
         self.assertIn("stage/commit/push/PR/release were not done", verifier_prompt)
 
     def test_verifier_request_without_reviewer_result_does_not_offer_evidence_only_fast_path(self):
@@ -3649,7 +3688,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             reviewer_result=None,
         )
 
-        self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
+        self.assertNotIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
         self.assertNotIn("without re-running commands or widening inspection", verifier_prompt)
     def test_verifier_accepted_closeout_adds_auto_stop_and_plain_language_metadata(self):
         ledger = self._verifying_ledger()
@@ -4776,6 +4815,98 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "TeamRouter verifier - project-123",
         )
 
+    def test_orchestrate_team_task_requires_parent_current_thread_rename_before_role_dispatch(self):
+        class ParentAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.thread_list = [
+                    {"threadId": "live-manager", "title": "Old manager title", "role": "manager", "projectId": "project-123"},
+                    {"threadId": "live-executor", "title": "TeamRouter executor - project-123"},
+                    {"threadId": "live-verifier", "title": "TeamRouter verifier - project-123"},
+                ]
+
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-123", "target": {"type": "project", "projectId": "project-123"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": list(self.thread_list)}
+
+        adapter = ParentAdapter()
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="role lifecycle fixes",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+            parent_thread_id="parent-manager-thread",
+        )
+
+        self.assertEqual(update["action"], "sent_manager_plan_request")
+        self.assertEqual(adapter.renamed[0], {"threadId": "parent-manager-thread", "title": "调度者-Team Router role lifecycle fixes"})
+        self.assertIn(
+            {"threadId": "live-executor", "title": "执行者-role lifecycle fixes"},
+            adapter.renamed[1:],
+        )
+        self.assertEqual(adapter.created, [])
+
+    def test_orchestrate_team_task_blocks_when_parent_thread_id_is_unavailable(self):
+        adapter = FullThreadAdapter()
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="role lifecycle fixes",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(update["status"], "tool_error")
+        self.assertEqual(update["action"], "tool_error_parent_title_unavailable")
+        self.assertIn("current thread id", update["userOutput"])
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+
+    def test_start_team_task_with_adapter_replaces_broken_registry_role_without_duplicate_active_roles(self):
+        adapter = FakeThreadAdapter()
+        existing_roles = {
+            "manager": self.roles["manager"],
+            "executor": dict(self.roles["executor"], status="broken"),
+            "verifier": self.roles["verifier"],
+        }
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            existing_roles,
+            "2026-06-22T19:00:00+08:00",
+        )
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="role lifecycle fixes",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        created_prompts = [record["kwargs"]["prompt"] for record in adapter.created]
+        self.assertEqual(len(created_prompts), 1)
+        self.assertIn("role: executor", created_prompts[0])
+        registry = team_router.load_registry(self.root, self.project_id)
+        project_roles = registry["projects"][self.project_id]["roles"]
+        self.assertEqual(project_roles["manager"]["threadId"], "thread-manager")
+        self.assertEqual(project_roles["executor"]["threadId"], "thread-executor")
+        self.assertEqual(project_roles["verifier"]["threadId"], "thread-verifier")
     def test_start_team_task_with_adapter_reuses_existing_registry_roles(self):
         adapter = FakeThreadAdapter()
         existing_roles = {
@@ -5115,6 +5246,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             thread_adapter=adapter,
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
+            parent_thread_id="parent-manager-thread",
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5127,6 +5259,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(
             adapter.renamed,
             [
+                {"threadId": "parent-manager-thread", "title": "调度者-Team Router inspect docs"},
                 {"threadId": "live-executor", "title": "执行者-inspect docs"},
                 {"threadId": "live-manager", "title": "规划者-inspect docs"},
                 {"threadId": "live-verifier", "title": "验证者-inspect docs"},
@@ -5186,6 +5319,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
             codex_project_id="D:\\codex\\codex-dynamic-workflow",
+            parent_thread_id="parent-manager-thread",
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5235,6 +5369,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
             codex_project_id="D:\\codex\\codex-dynamic-workflow",
+            parent_thread_id="parent-manager-thread",
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5385,6 +5520,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 permission="read-only",
                 observed_at=timestamp,
                 codex_project_id="D:\\codex\\codex-dynamic-workflow",
+            parent_thread_id="parent-manager-thread",
             )
             for timestamp in observed_at
         ]
@@ -5409,7 +5545,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "thread-executor",
             "thread-verifier",
         ])
-        self.assertEqual(adapter.renamed, [])
+        self.assertEqual(adapter.renamed, [{"threadId": "parent-manager-thread", "title": "调度者-Team Router inspect docs"}])
         self.assertTrue(updates[-1]["userOutput"].startswith("Team Router Closeout"))
         self.assertEqual(
             updates[-1]["ledger"]["observations"][-2]["parsedFields"]["summary"],
@@ -7309,6 +7445,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertIn("Codex 8KB cap", skill_text)
         self.assertIn("references/", skill_text)
         self.assertIn("part of the Team Router contract", skill_text)
+        self.assertIn("list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread", skill_text)
+        self.assertIn("Archived role/thread is unavailable for reuse, period", skill_text)
+        self.assertIn("non-archived visible role", skill_text)
+        self.assertIn("replacement reason", skill_text)
+        self.assertIn("no unarchive exception", skill_text)
+        self.assertIn("Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates", skill_text)
+        self.assertIn("ambiguous follow-ups never skip the next gate", skill_text)
+        self.assertNotIn("reuse it only after it is unarchived", skill_text)
+        self.assertNotIn("reuse only after it is unarchived", skill_text)
         for filename in self.REQUIRED_SKILL_REFERENCE_FILES:
             self.assertTrue((references_dir / filename).is_file(), filename)
             self.assertIn("references/%s" % filename, skill_text)
@@ -7323,6 +7468,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.",
         ):
             self.assertIn(needle, text)
+        self.assertNotIn(
+            "list_projects -> create_thread -> send_message_to_thread -> read_thread",
+            text,
+        )
 
     def test_skill_doc_contains_required_boundaries(self):
         text = self._skill_contract_text()
@@ -7353,24 +7502,31 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for needle in (
             "`src/team_router.py`",
             "`tests/test_team_router.py`",
-            "`skills/codex-team-router/references/role-handoff-and-review-package.md`",
             "`docs/workbench.md`",
+            "`docs/runbooks/codex-team-router-live-orchestration.md`",
+            "`skills/codex-team-router/SKILL.md`",
+            "`skills/codex-team-router/references/manager-mode.md`",
+            "`skills/codex-team-router/references/manager-polling-cadence.md`",
+            "`skills/codex-team-router/references/direct-return.md`",
+            "`docs/compounding.md`",
         ):
             self.assertIn(needle, current_diff_section)
-        self.assertIn("Global installed skill reference synced", current_diff_section)
-        self.assertIn(r"C:\Users\Orz\.codex\skills\codex-team-router", current_diff_section)
+        for stale_current_claim in (
+            "[ahead 1]",
+            "ahead of `origin/master` by 1",
+            "combined diff is not committed",
+            "previous helper-test commit `c9d41b3` is local-only",
+            "Global installed skill reference synced",
+            r"C:\Users\Orz\.codex\skills\codex-team-router",
+        ):
+            self.assertNotIn(stale_current_claim, text)
         for stale in (
             "`docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`",
             "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
             "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
-            "`docs/compounding.md`",
             "`README.md`",
-            "`docs/runbooks/codex-team-router-live-orchestration.md`",
-            "`skills/codex-team-router/references/direct-return.md`",
-            "`skills/codex-team-router/references/manager-mode.md`",
             "`skills/codex-team-router/references/manual-orchestration.md`",
             "`skills/codex-team-router/references/testing-and-quality-gates.md`",
-            "`skills/codex-team-router/SKILL.md`",
             "`skills/codex-team-router/references/agent-assist-policy.md`",
             "`skills/codex-team-router/references/role-closeout.md`",
         ):
@@ -7380,7 +7536,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         text = self._skill_contract_text()
         for needle in (
             "## Parent Thread Entry Flow",
-            "list_projects -> create_thread -> send_message_to_thread -> read_thread",
+            "list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread",
+            "parent_thread_id",
+            "before child-role dispatch",
             "parent_entry_guard()",
             "protocol_contract_snapshot()",
             "orchestrate_team_task_with_adapter()",
@@ -8348,5 +8506,70 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         self.assertIn("Do not manage this by a max role count.", text)
+
+    def test_manager_mode_docs_cover_intake_fast_path_gates(self):
+        text = (
+            ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md"
+        ).read_text(encoding="utf-8")
+        for needle in (
+            "Manager Intake Fast Path",
+            "classify the next manager action before acting",
+            "`READ_ONLY`: inspect current state",
+            "`DISPATCH_ONLY`: refine `TEAM_ROUTER_PLAN`",
+            "Terse follow-ups such as `修`, `继续`, or `do it` authorize at most this path.",
+            "`WORKSPACE_WRITE`: modify files",
+            "explicit current-turn authorization for the exact file-changing task",
+            "`LOCAL_CLOSEOUT`: after verifier pass plus an explicit commit request",
+            "`EXTERNAL_RELEASE`: push, PR, merge, deploy, publish, or release",
+            "return the current gate and the smallest concrete next step",
+            "Do not treat review acceptance, verifier pass, or user impatience as permission",
+        ):
+            self.assertIn(needle, text)
+        for forbidden in (
+            "verifier pass authorizes commit",
+            "commit authorizes push",
+            "terse follow-ups authorize workspace writes",
+        ):
+            self.assertNotIn(forbidden, text)
+
+    def test_contract_docs_cover_archived_role_visibility_and_degraded_delivery(self):
+        direct_return = (self._skill_references_dir() / "direct-return.md").read_text(encoding="utf-8")
+        manager_mode = (self._skill_references_dir() / "manager-mode.md").read_text(encoding="utf-8")
+        combined = direct_return + "\n" + manager_mode
+        for needle in (
+            "archived role/thread",
+            "unavailable for reuse, period",
+            "non-archived visible replacement role",
+            "replacement reason",
+            "watcher-only",
+            "deliveryStatus: fallback_only",
+            "delivery degraded",
+            "not normal success",
+        ):
+            self.assertIn(needle, combined)
+        for stale in (
+            "reuse it only after it is unarchived",
+            "reuse only after it is unarchived",
+            "history/current turn load normally",
+        ):
+            self.assertNotIn(stale, combined)
+
+    def test_compounding_log_records_role_visibility_and_delivery_lesson(self):
+        text = (ROOT / "docs" / "compounding.md").read_text(encoding="utf-8")
+        for needle in (
+            "compoundingDecision: recorded",
+            "archived role/thread no-reuse",
+            "proactive role-return reliability",
+            "unavailable for reuse, period",
+            "non-archived visible replacement role",
+            "deliveryStatus: fallback_only",
+            "delivery degraded",
+        ):
+            self.assertIn(needle, text)
+        for stale in (
+            "reuse requires the role to be unarchived",
+            "history/current turn normally",
+        ):
+            self.assertNotIn(stale, text)
 if __name__ == "__main__":
     unittest.main()
