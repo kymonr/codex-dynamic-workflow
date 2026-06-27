@@ -233,6 +233,94 @@ risks: none
                 )
                 self.assertIsNotNone(malformed)
                 self.assertIn("sourceRoleThreadId", malformed["error"])
+    def test_manager_direct_return_messages_reads_return_thread(self):
+        adapter = FakeThreadAdapter()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+        ]
+        adapter.messages["thread-executor"] = [
+            {
+                "messageId": "msg-fallback",
+                "sentAt": "2026-06-22T20:03:30+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: blocked\nfinal: true\nsummary: wrong inbox\nevidence: tests\nrisks: none\nnext: none",
+            },
+        ]
+
+        messages = team_router._manager_direct_return_messages_with_adapter(
+            adapter,
+            {"returnThreadId": "parent-manager-thread", "threadId": "thread-executor"},
+            turn_limit=7,
+        )
+
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["messageId"], "msg-return")
+        self.assertIn("summary: ok", messages[0]["text"])
+
+    def test_direct_return_protocol_message_filters_anchor_and_source_thread(self):
+        messages = [
+            {
+                "messageId": "msg-anchor",
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "dispatch anchor",
+            },
+            {
+                "messageId": "msg-wrong-source",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "sourceThreadId": "thread-other",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: wrong source\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:04:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: direct return\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+        ]
+
+        msg, malformed, manager_message = team_router._direct_return_protocol_message(
+            messages,
+            marker="TEAM_ROUTER_CALLBACK",
+            task_id="ctr-1",
+            source_thread_id="thread-executor",
+            anchor={"messageId": "msg-anchor"},
+        )
+
+        self.assertIsNone(malformed)
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.fields["summary"], "direct return")
+        self.assertEqual(manager_message["messageId"], "msg-return")
+
+    def test_direct_return_protocol_message_reports_wrong_task_for_candidate(self):
+        messages = [
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:04:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-other\nstatus: done\nfinal: true\nsummary: wrong task\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+        ]
+
+        msg, malformed, manager_message = team_router._direct_return_protocol_message(
+            messages,
+            marker="TEAM_ROUTER_CALLBACK",
+            task_id="ctr-1",
+            source_thread_id="thread-executor",
+            anchor=None,
+        )
+
+        self.assertIsNone(msg)
+        self.assertIsNotNone(malformed)
+        self.assertEqual(manager_message["messageId"], "msg-return")
+        self.assertEqual(malformed["messageId"], "msg-return")
+        self.assertIn("taskId", malformed["error"])
+
     def test_protocol_contract_snapshot_includes_active_role_return_model(self):
         policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
         model = policy["callbackDeliveryModel"]
