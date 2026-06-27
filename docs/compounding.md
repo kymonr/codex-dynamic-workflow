@@ -63,3 +63,18 @@ This is the project-level compounding ledger. Keep reusable lessons here when a 
 - Rule: any role that completes key checks must proactively return the final protocol block by direct-send and self-thread fallback; it must not rely on parent polling or parent follow-up.
 - Rule: after bounded wait/read with no final protocol block, manager CONTROL must request only scope-limited closeout from already-confirmed facts.
 - Enforced by: `skills/codex-team-router/SKILL.md`, `skills/codex-team-router/references/manager-mode.md`, `skills/codex-team-router/references/manual-orchestration.md`, `skills/codex-team-router/references/role-closeout.md`, `src/team_router.py`, and `tests/test_team_router.py`.
+
+### Codex And Claude Parallel Review Requires Stable Gates
+
+- compoundingDecision: recorded
+- reason: Codex+Claude 并行 review 发现本轮流程有可复用治理教训，尤其是 PACKAGE/STRICT 级任务的锚点、thread tool 异常、角色冻结和外部状态门需要前置稳定。
+- 触发条件：Complex Task Stack / PACKAGE 级任务需要 Codex 与 Claude 并行 review、隔离 worktree 多包执行、主工作区 integration，或用户明确要求 durable compounding 经验沉淀。
+- 越权/风险事实：管理者越权已被修正，后续写文件仍必须走 executor -> reviewer -> verifier；本轮 integration 正确派执行者执行 `cherry-pick`，没有由 manager 直接修改主工作区。
+- 越权/风险事实：`set_thread_title` / `list_threads` 等必要 thread tools 出现 `No handler registered for tool: ...` 时，应进入 `tool_error` 或明确 manual/pre-created path；不能把宿主能力异常默默降级为正常流程。
+- 影响面：影响 manager 派工、executor/reviewer/verifier 线程规划、taskId 绑定、role binding outcome、replacement/reuse reason、pending worktree threadId 查找、callback/closeout 可读性，以及用户对流程边界的理解。
+- 正确 delegation：并行包开始前必须冻结 executor/reviewer/verifier 线程规划、taskId 绑定、复用/替换原因和 return protocol，减少 B/C 期间临时补线程和 pending worktree threadId 查找造成的混淆风险。
+- 正确 delegation：Complex Task Stack / PACKAGE 级任务应在派工前建立稳定 brief/reviewPackage 锚点，例如 `.superpowers/sdd/<taskId>-brief.md`；不能只靠聊天记录承载任务边界。
+- 验收证据：检查派工里是否有稳定 `reviewPackagePath` 或等价 brief 锚点，检查 role closeout 是否说明 `role binding outcome: reused | new | replacement` 与原因，检查 callback 是否中文说明人读内容且保留 literal 协议 key、命令、路径和 hash。
+- 规则：repo/global skill mismatch 不能无限期悬空；push 和 global skill sync 是两个独立外部状态变更门，必须分别明确授权。`--check` mismatch 是待同步状态，不是失败，也不是自动授权 `--sync`。
+- 规则：用户看不懂英文时，closeout 和 callback 的人读内容必须中文；协议 key、命令、路径、hash 保持 literal。
+- Enforced by: `docs/compounding.md`, `docs/workbench.md`, `skills/codex-team-router/references/manager-mode.md`, `skills/codex-team-router/references/role-handoff-and-review-package.md`, `src/team_router.py`, and `tests/test_team_router.py`.
