@@ -1169,20 +1169,50 @@ risks: none
                 "taskId",
                 "objective",
                 "scope",
-                "touched/accepted files",
-                "diff summary",
-                "executor callback/report",
-                "test/verification evidence",
-                "reviewer requiredChanges when present",
-                "excluded unrelated untracked",
-                "risks/remainingTodos",
+                "protocol marker references",
+                "touched files",
+                "accepted files when different from touched files",
+                "behavior changes",
+                "diff summary without full diff",
+                "executor callback/report summary",
+                "reviewer findings and requiredChanges when present",
+                "verification evidence and actual commands/results",
+                "excluded unrelated changes and untracked files",
+                "risks",
+                "remainingTodos",
             ],
+        )
+        self.assertEqual(
+            policy["reviewPackage"]["defaultReviewPackagePath"],
+            "docs/team-router/packages/<taskId>.md",
+        )
+        self.assertIn("durable project evidence", policy["reviewPackage"]["gitPolicy"])
+        self.assertIn("must not be added to .gitignore", policy["reviewPackage"]["gitPolicy"])
+        self.assertIn("does not apply to taskBriefPath", policy["reviewPackage"]["defaultPathScope"])
+        self.assertIn("does not apply to executorReportPath", policy["reviewPackage"]["defaultPathScope"])
+        self.assertIn("full diff", policy["reviewPackage"]["diffPolicy"])
+        self.assertIn("must not include", policy["reviewPackage"]["diffPolicy"])
+        self.assertIn("free-text fields default to Chinese", policy["reviewPackage"]["languagePolicy"])
+        self.assertIn("field names", policy["reviewPackage"]["languagePolicy"])
+        self.assertIn("enum values", policy["reviewPackage"]["languagePolicy"])
+        self.assertIn("English classifier signals", policy["reviewPackage"]["languagePolicy"])
+        self.assertIn(
+            "Task Summary / 任务摘要",
+            policy["reviewPackage"]["bilingualTemplateSections"],
+        )
+        self.assertIn(
+            "Behavior Changes / 行为变化",
+            policy["reviewPackage"]["bilingualTemplateSections"],
+        )
+        self.assertIn(
+            "Diff Summary / Diff 摘要",
+            policy["reviewPackage"]["bilingualTemplateSections"],
         )
         self.assertIn("focused diff/evidence", policy["reviewPackage"]["reviewerUse"])
         self.assertIn("parent chat history", policy["reviewPackage"]["reviewerUse"])
         self.assertIn("executor callback", policy["reviewPackage"]["verifierUse"])
         self.assertIn("accepted files", policy["reviewPackage"]["verifierUse"])
-        self.assertIn("excluded untracked", policy["reviewPackage"]["verifierUse"])
+        self.assertIn("excluded changes", policy["reviewPackage"]["verifierUse"])
         self.assertIn("does not replace TEAM_ROUTER_CALLBACK", policy["reviewPackage"]["protocolMarkers"])
         self.assertIn("TEAM_ROUTER_REVIEW", policy["reviewPackage"]["protocolMarkers"])
         self.assertIn("TEAM_ROUTER_VERDICT", policy["reviewPackage"]["protocolMarkers"])
@@ -1196,7 +1226,7 @@ risks: none
         self.assertIn("PACKAGE default required", policy["handoff"]["pathFieldContracts"]["reviewPackagePath"])
         self.assertEqual(policy["reviewPackage"]["gateExpectation"]["FAST"], "optional")
         self.assertEqual(policy["reviewPackage"]["gateExpectation"]["NORMAL"], "optional")
-        self.assertEqual(policy["reviewPackage"]["gateExpectation"]["STRICT"], "recommended")
+        self.assertIn("recommended", policy["reviewPackage"]["gateExpectation"]["STRICT"])
         self.assertIn("default required", policy["reviewPackage"]["gateExpectation"]["PACKAGE"])
         self.assertIn("accepted files", policy["reviewPackage"]["shape"]["fileBoundarySection"])
         self.assertIn("review findings/required changes when present", policy["reviewPackage"]["shape"]["executionSection"])
@@ -1220,6 +1250,13 @@ risks: none
         self.assertIn("manager direct file edits", policy["sideEffectTaxonomy"])
         self.assertIn("READ_ONLY", policy["sideEffectTaxonomy"])
         self.assertIn("git diff --name-only omits untracked files", policy["commitCloseoutRisk"])
+        reference = Path("skills/codex-team-router/references/role-handoff-and-review-package.md").read_text(encoding="utf-8")
+        self.assertIn("docs/team-router/packages/<taskId>.md", reference)
+        self.assertIn("Task Summary / 任务摘要", reference)
+        self.assertIn("Behavior Changes / 行为变化", reference)
+        self.assertIn("Diff Summary / Diff 摘要", reference)
+        self.assertIn("must not include a full diff", reference)
+        self.assertIn("free-text fields default to Chinese", reference)
 
 class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
     def test_registry_path_uses_shared_state_root_not_worktree_root(self):
@@ -7497,13 +7534,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "taskId",
                     "objective",
                     "scope",
-                    "touched/accepted files",
                     "diff summary",
                     "executor callback/report",
-                    "test/verification evidence",
-                    "reviewer requiredChanges",
-                    "excluded unrelated untracked",
-                    "risks/remainingTodos",
                     "TEAM_ROUTER_CALLBACK",
                     "TEAM_ROUTER_REVIEW",
                     "TEAM_ROUTER_VERDICT",
@@ -7531,10 +7563,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     ("supplements evidence", "补充证据"),
                     ("validates and records supplied path metadata", "验证并记录这些 path metadata"),
                     ("stage new reference files explicitly", "显式 stage 新 reference files"),
-                    ("role threads can access the same workspace/path", "可访问同一 workspace/path"),
+                    ("role threads can access the same workspace/path", "shared workspace/path is accessible", "可访问同一 workspace/path"),
                     ("Writing workspace package artifacts", "写 workspace package artifacts"),
                     ("explicit current-turn user authorization for manager file edits", "authorizes manager file edits in the current turn", "当轮明确授权 manager file edits"),
                     ("READ_ONLY", "DISPATCH_ONLY"),
+                    ("touched/accepted files", "touched files"),
+                    ("test/verification evidence", "verification evidence and actual commands/results"),
+                    ("reviewer requiredChanges", "reviewer findings and `requiredChanges`"),
+                    ("excluded unrelated untracked", "excluded unrelated changes and untracked files"),
+                    ("risks/remainingTodos", "remainingTodos"),
                 )
                 for alternatives in common_alternatives:
                     self.assertTrue(
