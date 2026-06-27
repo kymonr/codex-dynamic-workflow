@@ -233,6 +233,124 @@ risks: none
                 )
                 self.assertIsNotNone(malformed)
                 self.assertIn("sourceRoleThreadId", malformed["error"])
+    def test_manager_direct_return_messages_reads_return_thread(self):
+        adapter = FakeThreadAdapter()
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+        ]
+        adapter.messages["thread-executor"] = [
+            {
+                "messageId": "msg-fallback",
+                "sentAt": "2026-06-22T20:03:30+08:00",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: blocked\nfinal: true\nsummary: wrong inbox\nevidence: tests\nrisks: none\nnext: none",
+            },
+        ]
+
+        messages = team_router._manager_direct_return_messages_with_adapter(
+            adapter,
+            {"returnThreadId": "parent-manager-thread", "threadId": "thread-executor"},
+            turn_limit=7,
+        )
+
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["messageId"], "msg-return")
+        self.assertIn("summary: ok", messages[0]["text"])
+
+    def test_direct_return_protocol_message_filters_anchor_and_source_thread(self):
+        messages = [
+            {
+                "messageId": "msg-anchor",
+                "sentAt": "2026-06-22T20:02:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "dispatch anchor",
+            },
+            {
+                "messageId": "msg-wrong-source",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "sourceThreadId": "thread-other",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: wrong source\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:04:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: direct return\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+        ]
+
+        msg, malformed, manager_message = team_router._direct_return_protocol_message(
+            messages,
+            marker="TEAM_ROUTER_CALLBACK",
+            task_id="ctr-1",
+            source_thread_id="thread-executor",
+            anchor={"messageId": "msg-anchor"},
+        )
+
+        self.assertIsNone(malformed)
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.fields["summary"], "direct return")
+        self.assertEqual(manager_message["messageId"], "msg-return")
+
+    def test_direct_return_protocol_message_uses_marker_bearing_message_metadata(self):
+        messages = [
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:04:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: direct return\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+            {
+                "messageId": "msg-later-chat",
+                "sentAt": "2026-06-22T20:05:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "I also left a plain-language note after the protocol block.",
+            },
+        ]
+
+        msg, malformed, manager_message = team_router._direct_return_protocol_message(
+            messages,
+            marker="TEAM_ROUTER_CALLBACK",
+            task_id="ctr-1",
+            source_thread_id="thread-executor",
+            anchor=None,
+        )
+
+        self.assertIsNone(malformed)
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.fields["summary"], "direct return")
+        self.assertEqual(manager_message["messageId"], "msg-return")
+        self.assertEqual(manager_message["sentAt"], "2026-06-22T20:04:00+08:00")
+
+    def test_direct_return_protocol_message_reports_wrong_task_for_candidate(self):
+        messages = [
+            {
+                "messageId": "msg-return",
+                "sentAt": "2026-06-22T20:04:00+08:00",
+                "sourceThreadId": "thread-executor",
+                "text": "TEAM_ROUTER_CALLBACK taskId=ctr-other\nstatus: done\nfinal: true\nsummary: wrong task\nevidence: tests\nrisks: none\nnext: verifier",
+            },
+        ]
+
+        msg, malformed, manager_message = team_router._direct_return_protocol_message(
+            messages,
+            marker="TEAM_ROUTER_CALLBACK",
+            task_id="ctr-1",
+            source_thread_id="thread-executor",
+            anchor=None,
+        )
+
+        self.assertIsNone(msg)
+        self.assertIsNotNone(malformed)
+        self.assertEqual(manager_message["messageId"], "msg-return")
+        self.assertEqual(malformed["messageId"], "msg-return")
+        self.assertIn("taskId", malformed["error"])
+
     def test_protocol_contract_snapshot_includes_active_role_return_model(self):
         policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
         model = policy["callbackDeliveryModel"]
@@ -1174,6 +1292,9 @@ risks: none
         self.assertIn("reviewer-gate/process/policy changes", policy["handoff"]["highRisk"])
         self.assertIn("shared workspace/path", policy["handoff"]["highRisk"])
         self.assertIn("inline protocol block fallback", policy["handoff"]["fallback"])
+        self.assertIn("role-request free-text task content defaults to Chinese", policy["handoff"]["taskContentLanguage"])
+        self.assertIn("protocol markers", policy["handoff"]["taskContentLanguage"])
+        self.assertIn("commands, filenames, and tool names stay English/literal", policy["handoff"]["taskContentLanguage"])
         self.assertEqual(
             policy["reviewPackage"]["minimumContent"],
             [
@@ -1204,6 +1325,7 @@ risks: none
         self.assertIn("full diff", policy["reviewPackage"]["diffPolicy"])
         self.assertIn("must not include", policy["reviewPackage"]["diffPolicy"])
         self.assertIn("free-text fields default to Chinese", policy["reviewPackage"]["languagePolicy"])
+        self.assertIn("role-request task-content language", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("field names", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("enum values", policy["reviewPackage"]["languagePolicy"])
         self.assertIn("English classifier signals", policy["reviewPackage"]["languagePolicy"])
@@ -1269,6 +1391,7 @@ risks: none
         self.assertIn("Diff Summary / Diff 摘要", reference)
         self.assertIn("must not include a full diff", reference)
         self.assertIn("free-text fields default to Chinese", reference)
+        self.assertIn("Task-content language: role-request free-text task content defaults to Chinese", reference)
 
 class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
     def test_registry_path_uses_shared_state_root_not_worktree_root(self):
@@ -2780,6 +2903,97 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["ledger"]["review"]["result"]["receipt"]["channel"], "manager-inbox")
         self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
         self.assertIn("TEAM_ROUTER_VERIFY taskId=%s" % self.task_id, adapter.sent[-1]["kwargs"]["prompt"])
+
+    def test_capture_reviewer_direct_return_from_manager_inbox_records_receipt(self):
+        self._record_reviewer_direct_return_request()
+        messages = [
+            {
+                "messageId": "msg-review-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "sourceThreadId": "thread-reviewer",
+                "text": (
+                    "TEAM_ROUTER_REVIEW taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-reviewer\n"
+                    "role: Reviewer\n"
+                    "result: pass\n"
+                    "summary: direct review\n"
+                    "findings: none\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: manager inbox\n"
+                    "risks: none" % self.task_id
+                ),
+            },
+        ]
+
+        updated = team_router._capture_reviewer_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        result = updated["review"]["result"]
+        self.assertEqual(result["fields"]["summary"], "direct review")
+        self.assertEqual(result["receipt"]["source"], "manager-inbox/direct-send")
+        self.assertEqual(result["receipt"]["channel"], "manager-inbox")
+        self.assertEqual(result["receipt"]["returnThreadId"], "parent-manager-thread")
+
+    def test_capture_verifier_direct_return_from_manager_inbox_is_idempotent(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+            return_thread_id="parent-manager-thread",
+        )
+        messages = [
+            {
+                "messageId": "msg-verdict-return",
+                "sentAt": "2026-06-22T20:06:00+08:00",
+                "sourceThreadId": "thread-verifier",
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-verifier\n"
+                    "role: Verifier\n"
+                    "result: pass\n"
+                    "summary: direct closeout\n"
+                    "requiredChanges: none\n"
+                    "evidenceChecked: manager inbox\n"
+                    "risks: none" % self.task_id
+                ),
+            },
+        ]
+
+        first = team_router._capture_verifier_verdict_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        second = team_router._capture_verifier_verdict_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:08:00+08:00",
+        )
+
+        self.assertEqual(first["status"], "done")
+        self.assertIsNone(second)
+        verdict = first["verification"]["verdict"]
+        self.assertEqual(verdict["fields"]["summary"], "direct closeout")
+        self.assertEqual(verdict["receipt"]["source"], "manager-inbox/direct-send")
+        self.assertEqual(verdict["receipt"]["channel"], "manager-inbox")
+        self.assertEqual(first["closeout"]["status"], "done")
+        self.assertEqual(first["closeout"]["summary"], "direct closeout")
 
     def test_watch_reviewer_direct_return_validates_protocol_source_role_thread_id(self):
         adapter = self._record_reviewer_direct_return_request()
@@ -7130,22 +7344,24 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("不支持 `workspace-write`", text)
 
-    def test_workbench_does_not_claim_uncommitted_diff_when_used_as_current_record(self):
+    def test_workbench_tracks_current_task_without_stale_diff_surface(self):
         text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
 
         self.assertIn("## Current Task", text)
-        self.assertNotIn("State: uncommitted local diff only", text)
+        self.assertNotIn("`r`n", text)
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
         for needle in (
-            "`docs/workbench.md`",
-            "`docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`",
-            "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
+            "`src/team_router.py`",
             "`tests/test_team_router.py`",
+            "`skills/codex-team-router/references/role-handoff-and-review-package.md`",
+            "`docs/workbench.md`",
         ):
             self.assertIn(needle, current_diff_section)
-        self.assertIn("Workspace-external sync", current_diff_section)
-        self.assertIn("C:\\Users\\Orz\\.codex\\skills\\codex-team-router", current_diff_section)
+        self.assertIn("Global installed skill reference synced", current_diff_section)
+        self.assertIn(r"C:\Users\Orz\.codex\skills\codex-team-router", current_diff_section)
         for stale in (
+            "`docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`",
+            "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
             "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
             "`docs/compounding.md`",
             "`README.md`",
@@ -7154,7 +7370,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`skills/codex-team-router/references/manager-mode.md`",
             "`skills/codex-team-router/references/manual-orchestration.md`",
             "`skills/codex-team-router/references/testing-and-quality-gates.md`",
-            "`src/team_router.py`",
             "`skills/codex-team-router/SKILL.md`",
             "`skills/codex-team-router/references/agent-assist-policy.md`",
             "`skills/codex-team-router/references/role-closeout.md`",

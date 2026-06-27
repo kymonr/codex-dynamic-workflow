@@ -504,6 +504,7 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
             "relevant package/report paths",
             "explicit protocol return format",
         ],
+        "taskContentLanguage": "role-request free-text task content defaults to Chinese for human-readable objective, scope, stop condition, notes, summaries, risks, and next-step descriptions; protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal",
         "smallTasks": "small/simple tasks may use inline protocol blocks only",
         "highRisk": "high-risk Team Router self changes, reviewer-gate/process/policy changes, long executor results, and manager-required STRICT evidence should use a review package when shared workspace/path is accessible",
         "writeDelegation": "for write packages, manager produces exact executor delegation with taskId, objective, scope/files, permission boundary, expected marker, required reviewer/verifier gates, and return protocol; local-package lets executor write only inside that explicit scope and never authorizes manager direct edits",
@@ -519,7 +520,7 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
         "defaultReviewPackagePath": "docs/team-router/packages/<taskId>.md",
         "defaultPathScope": "default reviewPackagePath only; does not apply to taskBriefPath and does not apply to executorReportPath",
         "gitPolicy": "review packages under docs/team-router/packages/ are durable project evidence, intended to be committed with the task, and must not be added to .gitignore",
-        "languagePolicy": "protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal; free-text fields default to Chinese for human-readable task descriptions, while gate-sensitive fields retain English classifier signals or explicit fields such as requiresReviewer: true or riskClass: high",
+        "languagePolicy": "protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal; free-text fields default to Chinese for human-readable task descriptions and match role-request task-content language, while gate-sensitive fields retain English classifier signals or explicit fields such as requiresReviewer: true or riskClass: high",
         "diffPolicy": "packages must include a diff summary, but must not include a full diff; use paths, symbols, behavior descriptions, and verification evidence instead of pasting the entire patch",
         "gateExpectation": {
             "FAST": "optional",
@@ -2818,10 +2819,7 @@ def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
                                     source_thread_id: str,
                                     anchor: Mapping[str, Any] | None) -> tuple[ProtocolMessage | None, dict[str, Any] | None, Mapping[str, Any] | None]:
     candidates = _direct_return_candidate_messages(messages, anchor, source_thread_id)
-    message = candidates[-1] if candidates and isinstance(candidates[-1], Mapping) else None
-    text = _messages_text(candidates)
-    if not text:
-        return None, None, message
+    last_message = candidates[-1] if candidates and isinstance(candidates[-1], Mapping) else None
     parser = parse_message
     if marker == "TEAM_ROUTER_VERDICT":
         parser = parse_verdict
@@ -2831,40 +2829,45 @@ def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
         parser = parse_callback
     elif marker == "TEAM_ROUTER_PLAN":
         parser = parse_plan
-    try:
-        marker_blocks = [block for block in _iter_marker_blocks(text) if block.marker == marker]
-    except ProtocolError as exc:
-        malformed = {
-            "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
-            "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
-            "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
-            "error": str(exc),
-        }
-        return None, malformed, message
-    if not marker_blocks:
-        return None, None, message
-    marker_block = marker_blocks[-1]
-    if marker_block.task_id != task_id:
-        malformed = {
-            "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
-            "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
-            "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
-            "error": "%s.taskId must be %r, got %r" % (marker, task_id, marker_block.task_id),
-        }
-        return None, malformed, message
-    try:
-        parsed = parser(marker_block.raw, task_id) if parser is not parse_message else parse_message(marker_block.raw, marker, task_id)
-        return parsed, None, message
-    except ProtocolError as exc:
-        if str(exc).startswith("missing "):
-            return None, None, message
-        malformed = {
-            "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
-            "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
-            "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
-            "error": str(exc),
-        }
-        return None, malformed, message
+    for message in reversed(candidates):
+        text = _message_text(message)
+        if not text:
+            continue
+        try:
+            marker_blocks = [block for block in _iter_marker_blocks(text) if block.marker == marker]
+        except ProtocolError as exc:
+            malformed = {
+                "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+                "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+                "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+                "error": str(exc),
+            }
+            return None, malformed, message
+        if not marker_blocks:
+            continue
+        marker_block = marker_blocks[-1]
+        if marker_block.task_id != task_id:
+            malformed = {
+                "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+                "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+                "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+                "error": "%s.taskId must be %r, got %r" % (marker, task_id, marker_block.task_id),
+            }
+            return None, malformed, message
+        try:
+            parsed = parser(marker_block.raw, task_id) if parser is not parse_message else parse_message(marker_block.raw, marker, task_id)
+            return parsed, None, message
+        except ProtocolError as exc:
+            if str(exc).startswith("missing "):
+                return None, None, message
+            malformed = {
+                "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+                "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+                "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+                "error": str(exc),
+            }
+            return None, malformed, message
+    return None, None, last_message
 
 
 def _normalize_direct_return_role(role: Any, *, expected_role: str) -> str:

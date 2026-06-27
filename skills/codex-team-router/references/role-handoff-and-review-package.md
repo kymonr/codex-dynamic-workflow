@@ -13,6 +13,8 @@ Role requests should hand off stable facts by file/path when available, not by a
 - relevant package/report paths
 - explicit protocol return format
 
+Task-content language: role-request free-text task content defaults to Chinese for human-readable objective, scope, stop condition, notes, summaries, risks, and next-step descriptions. Protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal.
+
 For write packages, this must be an exact executor delegation: include `taskId`, objective, explicit scope/files, permission boundary, expected marker, required reviewer/verifier gates, and return protocol. `local-package` lets the executor write only inside that explicit scope; it does not authorize manager direct edits or scope expansion.
 
 Path fields are explicit protocol contract fields, not merely future optional runtime fields:
@@ -65,7 +67,7 @@ Minimum content:
 - risks
 - remainingTodos
 
-Protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal. For package language, free-text fields default to Chinese for human-readable task descriptions. Gate-sensitive fields should preserve English classifier signals or use explicit fields such as `requiresReviewer: true` or `riskClass: high`.
+Protocol markers, field names, enum values, paths, commands, filenames, and tool names stay English/literal. For package language, free-text fields default to Chinese for human-readable task descriptions, matching role-request task-content language. Gate-sensitive fields should preserve English classifier signals or use explicit fields such as `requiresReviewer: true` or `riskClass: high`.
 
 Packages must include a diff summary, but must not include a full diff. Use paths, symbols, behavior descriptions, and verification evidence instead of pasting the entire patch.
 
