@@ -13,6 +13,8 @@ Role requests should hand off stable facts by file/path when available, not by a
 - relevant package/report paths
 - explicit protocol return format
 
+For write packages, this must be an exact executor delegation: include `taskId`, objective, explicit scope/files, permission boundary, expected marker, required reviewer/verifier gates, and return protocol. `local-package` lets the executor write only inside that explicit scope; it does not authorize manager direct edits or scope expansion.
+
 Path fields are explicit protocol contract fields, not merely future optional runtime fields:
 
 - `taskBriefPath`: stable brief handoff field. `FAST` / `NORMAL` optional, `STRICT` recommended, `PACKAGE` default required unless the manager marks inline fallback.
@@ -130,7 +132,7 @@ Do not absorb directly:
 
 ## Policy Links
 
-sideEffectTaxonomy: creating or reading package metadata is `READ_ONLY` or `DISPATCH_ONLY` when it only prepares routing metadata. Writing workspace package artifacts is `WORKSPACE_WRITE`; in active Manager Mode it is executor-delegated under explicit `local-package` authorization and required gates. Manager direct file edits require both an explicit role switch and explicit current-turn user authorization for manager file edits.
+sideEffectTaxonomy: creating or reading package metadata is `READ_ONLY` or `DISPATCH_ONLY` when it only prepares routing metadata. Writing workspace package artifacts is `WORKSPACE_WRITE`; in active Manager Mode it is executor-delegated under explicit `local-package` authorization, explicit scope/files, and required gates. Manager direct file edits require both an explicit role switch and explicit current-turn user authorization for manager file edits.
 
 Manager Mode: manager must not create implementation artifacts itself under active Manager Mode. It can prepare dispatch metadata and ask executor to produce reports/packages.
 

@@ -4,7 +4,7 @@
 
 - taskId: `ctr-20260627-info-format-impl`
 - objective: 实现 Team Router 双层跨线程信息格式：严格 protocol blocks + 持久 Markdown review package。
-- status: Tasks 1-5 implemented and verified locally.
+- status: Tasks 1-5 implemented and verified locally; 2026-06-27 closeout alignment follow-up reviewed and accepted.
 - reviewPackagePath: `docs/team-router/packages/ctr-20260627-info-format-impl.md`
 
 ## Scope / 范围
@@ -75,7 +75,7 @@ Manual edit note:
 - 未 stage、commit、push、PR、merge、deploy、publish。
 - 未编辑 README/runbook；测试对旧文档用 alternatives 兼容旧用语，新合同由 policy snapshot 和 reference doc 锁定。
 
-Current untracked files:
+Historical untracked files recorded during original implementation, now tracked on `master`:
 
 - `docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`
 - `docs/superpowers/specs/2026-06-27-team-router-cross-thread-information-format-design.md`
@@ -90,3 +90,13 @@ Current untracked files:
 
 - Manager Task 6: dispatch visible Team Router Reviewer and Verifier.
 - Commit/push/PR/merge/publish/release: not done; only after separate authorization.
+## Closeout Alignment Addendum / 收口对齐补充
+
+- taskId: `ctr-20260627-skill-sync-closeout`
+- objective: 同步全局 `codex-team-router` role handoff reference，刷新 `docs/workbench.md`，对齐 implementation plan checkbox 状态，并补 reviewer/verifier 收口记录。
+- globalSkillReference: `C:\Users\Orz\.codex\skills\codex-team-router\references\role-handoff-and-review-package.md`
+- repoReferenceHash: `554D6934EB820FD318B2C5C1CE91B1467A28EC5EDDF524B87C262A8192DBCFDF`
+- globalReferenceHash: `554D6934EB820FD318B2C5C1CE91B1467A28EC5EDDF524B87C262A8192DBCFDF`
+- changedInFollowUp: `docs/workbench.md`, `docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`, `docs/team-router/packages/ctr-20260627-info-format-impl.md`, `tests/test_team_router.py`, and the workspace-external global skill reference copy.
+- reviewerPrecheck: `019f0765-6694-7c90-a4ec-40086b5a8b5b` identified that the package/workbench state needed to stop presenting old untracked package files as current diff truth.
+- status: pending final reviewer/verifier pass after this addendum.

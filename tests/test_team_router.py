@@ -934,7 +934,12 @@ risks: none
         self.assertIn("写进规则", process_write_boundary["triggerExamples"])
         self.assertIn("active Manager Mode", process_write_boundary["defaultHandling"])
         self.assertIn("orchestration", process_write_boundary["defaultHandling"])
+        self.assertIn("classify sideEffect/Fast Lane", process_write_boundary["defaultHandling"])
+        self.assertIn("exact executor delegation", process_write_boundary["defaultHandling"])
+        self.assertIn("executor -> reviewer -> verifier", process_write_boundary["defaultHandling"])
         self.assertIn("explicitly switches role", process_write_boundary["defaultHandling"])
+        self.assertIn("classify side effect/gate", process_write_boundary["managerAllowedActions"])
+        self.assertIn("produce exact executor delegation", process_write_boundary["managerAllowedActions"])
         self.assertIn("dispatch executor/reviewer/verifier", process_write_boundary["managerAllowedActions"])
         self.assertIn("personally edit files", process_write_boundary["managerForbiddenActions"])
         self.assertIn("planning/TDD/debugging/verification", agent_policy["superpowersBoundary"])
@@ -1083,6 +1088,8 @@ risks: none
         self.assertIn("fixtures", policy["WORKSPACE_WRITE"]["description"])
         self.assertIn("executor", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("authorized local-package dispatch", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("explicit scope/files", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("only within that explicit scope", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("required reviewer/verifier gates", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("exact current-turn manager instruction", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("specific file edit/file-change action", policy["WORKSPACE_WRITE"]["boundary"])
@@ -1156,8 +1163,12 @@ risks: none
         self.assertIn("stable file/path handoff", policy["handoff"]["preferred"])
         self.assertIn("accumulated chat history", policy["handoff"]["preferred"])
         self.assertIn("taskId", policy["handoff"]["promptShape"])
+        self.assertIn("explicit scope/files", policy["handoff"]["promptShape"])
         self.assertIn("expected marker", policy["handoff"]["promptShape"])
         self.assertIn("explicit protocol return format", policy["handoff"]["promptShape"])
+        self.assertIn("exact executor delegation", policy["handoff"]["writeDelegation"])
+        self.assertIn("executor write only inside that explicit scope", policy["handoff"]["writeDelegation"])
+        self.assertIn("never authorizes manager direct edits", policy["handoff"]["writeDelegation"])
         self.assertIn("inline protocol blocks", policy["handoff"]["smallTasks"])
         self.assertIn("Team Router self changes", policy["handoff"]["highRisk"])
         self.assertIn("reviewer-gate/process/policy changes", policy["handoff"]["highRisk"])
@@ -1242,6 +1253,7 @@ risks: none
         self.assertIn("does not read, execute, trust, or auto-generate", policy["runtimeStatus"])
         self.assertIn("WORKSPACE_WRITE", policy["sideEffectTaxonomy"])
         self.assertIn("local-package authorization", policy["sideEffectTaxonomy"])
+        self.assertIn("explicit scope/files", policy["sideEffectTaxonomy"])
         self.assertIn("required gates", policy["sideEffectTaxonomy"])
         self.assertIn("exact current-turn manager instruction", policy["sideEffectTaxonomy"])
         self.assertIn("specific file-change action", policy["sideEffectTaxonomy"])
@@ -7125,25 +7137,30 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("State: uncommitted local diff only", text)
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
         for needle in (
+            "`docs/workbench.md`",
+            "`docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`",
+            "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
+            "`tests/test_team_router.py`",
+        ):
+            self.assertIn(needle, current_diff_section)
+        self.assertIn("Workspace-external sync", current_diff_section)
+        self.assertIn("C:\\Users\\Orz\\.codex\\skills\\codex-team-router", current_diff_section)
+        for stale in (
             "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
             "`docs/compounding.md`",
             "`README.md`",
             "`docs/runbooks/codex-team-router-live-orchestration.md`",
-            "`docs/workbench.md`",
             "`skills/codex-team-router/references/direct-return.md`",
             "`skills/codex-team-router/references/manager-mode.md`",
             "`skills/codex-team-router/references/manual-orchestration.md`",
             "`skills/codex-team-router/references/testing-and-quality-gates.md`",
             "`src/team_router.py`",
-            "`tests/test_team_router.py`",
-        ):
-            self.assertIn(needle, current_diff_section)
-        for stale in (
             "`skills/codex-team-router/SKILL.md`",
             "`skills/codex-team-router/references/agent-assist-policy.md`",
             "`skills/codex-team-router/references/role-closeout.md`",
         ):
             self.assertNotIn(stale, current_diff_section)
+
     def test_skill_doc_contains_parent_thread_operating_flow(self):
         text = self._skill_contract_text()
         for needle in (
@@ -7296,6 +7313,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`先处理`",
             "`按刚才说的修`",
             "propose rule updates",
+            "classifying sideEffectTaxonomy/Fast Lane",
+            "exact executor delegation",
+            "executor write authority stays inside the delegated explicit scope",
             "Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge",
             "If implementation is requested during active Manager Mode",
             "Do not personally edit files or run project commands from Manager Mode",
@@ -7318,6 +7338,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Superpowers can guide planning/TDD/debugging/verification",
             "does not grant manager write authority",
             "File changes must route through executor/reviewer/verifier",
+            "delegation must include `taskId`, objective, scope/files",
+            "route executor -> reviewer -> verifier",
         ):
             self.assertIn(needle, manager_mode)
 

@@ -1,12 +1,14 @@
 # Team Router Cross-Thread Information Format Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. For this Team Router self-change, do not use subagent-driven-development or multiple parallel writer roles: reviewer feedback for `ctr-20260627-info-format-review` requires one visible Team Router Executor followed by Reviewer and Verifier. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. For this Team Router self-change, do not use subagent-driven-development or multiple parallel writer roles: reviewer feedback for `ctr-20260627-info-format-review` requires one visible Team Router Executor followed by Reviewer and Verifier. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement the accepted Team Router dual-layer cross-thread information format: strict protocol blocks plus durable Markdown handoff packages.
 
 **Architecture:** Keep parser/runtime state transitions unchanged. Update the policy snapshot, reference documentation, and docs-contract tests so `reviewPackagePath` defaults to durable `docs/team-router/packages/<taskId>.md` evidence, package content has a bilingual Markdown shape, and package files carry diff summaries without full diffs.
 
 **Tech Stack:** Python standard library, `unittest`, Markdown contract docs, existing `src/team_router.py` protocol snapshot constants.
+
+**Status Note:** Checkboxes were aligned on 2026-06-27 after the implementation package had already landed on `master` as `b3b9024 docs: standardize Team Router handoff package format`; this plan is now a completed durable record, not an active task queue.
 
 ---
 
@@ -31,7 +33,7 @@
 - Modify: `tests/test_team_router.py`
 - Test: `tests/test_team_router.py`
 
-- [ ] **Step 1: Update `test_protocol_contract_snapshot_includes_role_handoff_review_package_policy` expected minimum content**
+- [x] **Step 1: Update `test_protocol_contract_snapshot_includes_role_handoff_review_package_policy` expected minimum content**
 
 In `tests/test_team_router.py`, replace the `policy["reviewPackage"]["minimumContent"]` expected list with:
 
@@ -57,7 +59,7 @@ In `tests/test_team_router.py`, replace the `policy["reviewPackage"]["minimumCon
         )
 ```
 
-- [ ] **Step 2: Add assertions for durable path, language, and diff policy**
+- [x] **Step 2: Add assertions for durable path, language, and diff policy**
 
 Immediately after the `minimumContent` assertion, add:
 
@@ -90,7 +92,7 @@ Immediately after the `minimumContent` assertion, add:
         )
 ```
 
-- [ ] **Step 3: Keep existing gate expectation assertions unchanged**
+- [x] **Step 3: Keep existing gate expectation assertions unchanged**
 
 Do not change these existing assertions:
 
@@ -103,7 +105,7 @@ Do not change these existing assertions:
 
 Expected reason: `STRICT` must remain recommended, not runtime-blocking.
 
-- [ ] **Step 4: Add reference-doc assertions**
+- [x] **Step 4: Add reference-doc assertions**
 
 In the same test method, after the existing policy assertions, load the reference doc if the test class already uses doc reads nearby. If no local variable exists, add this direct read:
 
@@ -125,7 +127,7 @@ from pathlib import Path
 
 Do not add a second import if `Path` already exists.
 
-- [ ] **Step 5: Run the focused test and verify it fails**
+- [x] **Step 5: Run the focused test and verify it fails**
 
 Run:
 
@@ -141,7 +143,7 @@ Expected: FAIL because `ROLE_HANDOFF_REVIEW_PACKAGE_POLICY` and the reference do
 - Modify: `src/team_router.py`
 - Test: `tests/test_team_router.py`
 
-- [ ] **Step 1: Update high-risk handoff wording**
+- [x] **Step 1: Update high-risk handoff wording**
 
 In `ROLE_HANDOFF_REVIEW_PACKAGE_POLICY["handoff"]["highRisk"]`, replace the current string with:
 
@@ -149,7 +151,7 @@ In `ROLE_HANDOFF_REVIEW_PACKAGE_POLICY["handoff"]["highRisk"]`, replace the curr
         "highRisk": "high-risk Team Router self changes, reviewer-gate/process/policy changes, long executor results, and manager-required STRICT evidence should use a review package when shared workspace/path is accessible",
 ```
 
-- [ ] **Step 2: Update `reviewPackage` policy fields**
+- [x] **Step 2: Update `reviewPackage` policy fields**
 
 Replace the `reviewPackage` mapping in `ROLE_HANDOFF_REVIEW_PACKAGE_POLICY` with this shape, preserving surrounding `handoff`, `externalMaterialSafety`, `thirdPartySkillIntake`, and `pathFields` keys:
 
@@ -208,7 +210,7 @@ Replace the `reviewPackage` mapping in `ROLE_HANDOFF_REVIEW_PACKAGE_POLICY` with
     },
 ```
 
-- [ ] **Step 3: Run the focused policy test**
+- [x] **Step 3: Run the focused policy test**
 
 Run:
 
@@ -224,7 +226,7 @@ Expected: still FAIL until the reference doc assertions are satisfied, or PASS i
 - Modify: `skills/codex-team-router/references/role-handoff-and-review-package.md`
 - Test: `tests/test_team_router.py`
 
-- [ ] **Step 1: Update the path-fields section**
+- [x] **Step 1: Update the path-fields section**
 
 In `skills/codex-team-router/references/role-handoff-and-review-package.md`, keep the existing three path field bullets, then add this paragraph after them:
 
@@ -238,7 +240,7 @@ docs/team-router/packages/<taskId>.md
 This default applies to `reviewPackagePath` only. It does not apply to `taskBriefPath` or `executorReportPath`. Package files under `docs/team-router/packages/` are durable project evidence, should be committed with the task when created, and must not be added to `.gitignore`. Commit closeout must explicitly account for package files because untracked files are not shown by `git diff --name-only`.
 ````
 
-- [ ] **Step 2: Update gate expectations**
+- [x] **Step 2: Update gate expectations**
 
 Keep the current bullets, but change the `STRICT` bullet to:
 
@@ -252,7 +254,7 @@ Keep the `PACKAGE` bullet as:
 - `PACKAGE`: default required unless explicit inline fallback is marked
 ```
 
-- [ ] **Step 3: Replace the minimum content list**
+- [x] **Step 3: Replace the minimum content list**
 
 Replace the old `Minimum content:` list with:
 
@@ -275,7 +277,7 @@ Minimum content:
 - remainingTodos
 ```
 
-- [ ] **Step 4: Add language and diff rules**
+- [x] **Step 4: Add language and diff rules**
 
 After the minimum content list, add:
 
@@ -285,7 +287,7 @@ Protocol markers, field names, enum values, paths, commands, filenames, and tool
 Packages must include a diff summary, but must not include a full diff. Use paths, symbols, behavior descriptions, and verification evidence instead of pasting the entire patch.
 ```
 
-- [ ] **Step 5: Replace recommended shape with bilingual template**
+- [x] **Step 5: Replace recommended shape with bilingual template**
 
 Replace the current `Recommended shape:` bullets with:
 
@@ -308,7 +310,7 @@ Recommended shape:
 ```
 ````
 
-- [ ] **Step 6: Add legacy package warning**
+- [x] **Step 6: Add legacy package warning**
 
 Before `## External Material Safety`, add:
 
@@ -316,7 +318,7 @@ Before `## External Material Safety`, add:
 Legacy note: older ignored `.superpowers/sdd/` packages may include full diffs. They predate this contract and must not be used as the template for new durable `docs/team-router/packages/<taskId>.md` packages.
 ```
 
-- [ ] **Step 7: Run the focused policy/reference test**
+- [x] **Step 7: Run the focused policy/reference test**
 
 Run:
 
@@ -333,7 +335,7 @@ Expected: PASS.
 - Test: `tests/test_team_router.py`
 - Test: `skills/codex-team-router/references/role-handoff-and-review-package.md`
 
-- [ ] **Step 1: Confirm parser functions were not edited**
+- [x] **Step 1: Confirm parser functions were not edited**
 
 Run:
 
@@ -347,7 +349,7 @@ Expected:
 - No new Markdown file reads in runtime package metadata code.
 - `_apply_review_package_path_metadata` may appear only because nearby policy constants changed, not because runtime now reads package content.
 
-- [ ] **Step 2: Confirm `.gitignore` did not ignore durable packages**
+- [x] **Step 2: Confirm `.gitignore` did not ignore durable packages**
 
 Run:
 
@@ -357,7 +359,7 @@ Select-String -Path .gitignore -Pattern "docs/team-router/packages|team-router/p
 
 Expected: no matches.
 
-- [ ] **Step 3: Confirm reference doc includes the exact durable path**
+- [x] **Step 3: Confirm reference doc includes the exact durable path**
 
 Run:
 
@@ -374,7 +376,7 @@ Expected: all four patterns found.
 - Test: `src/team_router.py`
 - Test: `skills/codex-team-router/references/role-handoff-and-review-package.md`
 
-- [ ] **Step 1: Run the focused docs/policy test**
+- [x] **Step 1: Run the focused docs/policy test**
 
 Run:
 
@@ -384,7 +386,7 @@ py -m unittest tests.test_team_router.TestTeamRouterState.test_protocol_contract
 
 Expected: PASS.
 
-- [ ] **Step 2: Run Python compile check**
+- [x] **Step 2: Run Python compile check**
 
 Run:
 
@@ -394,7 +396,7 @@ py -m py_compile src\team_router.py tests\test_team_router.py
 
 Expected: no output and exit code 0.
 
-- [ ] **Step 3: Run the full Team Router test file**
+- [x] **Step 3: Run the full Team Router test file**
 
 Run:
 
@@ -410,7 +412,7 @@ $env:TMP='C:\tmp'; $env:TEMP='C:\tmp'; $env:PYTHONPYCACHEPREFIX='C:\tmp\team-rou
 
 Expected: PASS.
 
-- [ ] **Step 4: Run whitespace check**
+- [x] **Step 4: Run whitespace check**
 
 Run:
 
@@ -420,7 +422,7 @@ git diff --check
 
 Expected: PASS, or only known CRLF/LF context warnings already accepted by the project and no whitespace errors.
 
-- [ ] **Step 5: Inspect final diff surface**
+- [x] **Step 5: Inspect final diff surface**
 
 Run:
 
@@ -441,7 +443,7 @@ Expected:
 **Files:**
 - Review: all files changed by Tasks 1-5.
 
-- [ ] **Step 1: Dispatch one visible Team Router Reviewer**
+- [x] **Step 1: Dispatch one visible Team Router Reviewer**
 
 Create or reuse one reviewer role thread. Prompt boundary:
 
@@ -451,7 +453,7 @@ Review the Team Router cross-thread information format implementation. Read-only
 
 Expected: `TEAM_ROUTER_REVIEW result: pass`.
 
-- [ ] **Step 2: Dispatch one visible Team Router Verifier**
+- [x] **Step 2: Dispatch one visible Team Router Verifier**
 
 After reviewer pass, create or reuse one verifier role thread. Prompt boundary:
 
@@ -461,7 +463,7 @@ Verify the executor callback and reviewer result for the Team Router cross-threa
 
 Expected: `TEAM_ROUTER_VERDICT result: pass`.
 
-- [ ] **Step 3: Closeout without commit unless separately authorized**
+- [x] **Step 3: Closeout without commit unless separately authorized**
 
 Report:
 
