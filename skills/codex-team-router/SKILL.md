@@ -27,8 +27,8 @@ Visible Codex desktop thread titles use `角色-任务名`, e.g. `调度者-Team
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
-Manager Mode is sticky for the current task. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
-Skill/rule/Superpowers write requests such as `记录进skill`, `改进skill`, `superpowers修`, or `写进规则` still route through executor/reviewer/verifier unless the user explicitly switches role and authorizes manager direct edits.
+Manager Mode is sticky for the current task. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement, classification, or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
+Skill/rule/Superpowers write requests such as `记录进skill`, `改进skill`, `superpowers修`, or `写进规则` still route through executor/reviewer/verifier. Manager classifies and delegates exact `local-package` scope; `local-package` is executor-only, not manager direct-edit permission.
 
 ## Minimal Live Tool Order
 

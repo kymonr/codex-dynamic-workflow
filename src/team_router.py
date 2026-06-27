@@ -261,8 +261,8 @@ MANAGER_ORCHESTRATION_POLICY = {
         "teamRouterContextDefault": "when the user asks in a Team Router project context to dispatch a role, reviewer, executor, or verifier, default to creating or reusing the visible Team Router role thread; do not reinterpret that as a multi_agent/subagent request unless the user explicitly asks for external subagents",
         "managerModeProcessWriteBoundary": {
             "triggerExamples": ("记录进skill", "改进skill", "superpowers修", "写进规则"),
-            "defaultHandling": "active Manager Mode treats file-writing skill/process requests as orchestration unless the user explicitly switches role and authorizes manager direct edits",
-            "managerAllowedActions": ("rename parent thread", "classify scope", "dispatch executor/reviewer/verifier", "report status"),
+            "defaultHandling": "active Manager Mode treats file-writing skill/process requests as orchestration: classify sideEffect/Fast Lane, produce exact executor delegation, and route executor -> reviewer -> verifier unless the user explicitly switches role and authorizes manager direct edits",
+            "managerAllowedActions": ("rename parent thread", "classify side effect/gate", "produce exact executor delegation", "dispatch executor/reviewer/verifier", "report status"),
             "managerForbiddenActions": ("personally edit files", "run implementation commands"),
         },
         "superpowersBoundary": "superpowers skills may guide planning/TDD/debugging/verification, but in Team Router Manager Mode they do not grant manager write authority; file changes route through executor/reviewer/verifier",
@@ -459,7 +459,7 @@ SIDE_EFFECT_TAXONOMY_POLICY = {
     },
     "WORKSPACE_WRITE": {
         "description": "project file modifications, formatters that write, fixtures, package artifacts, runtime/docs/tests changes",
-        "boundary": "active Manager Mode delegates WORKSPACE_WRITE to executor under explicit authorized local-package dispatch and required reviewer/verifier gates; manager direct file edits require an exact current-turn manager instruction for that specific file edit/file-change action; commit/PR/publish/release require prompt and wait for explicit authorization",
+        "boundary": "active Manager Mode delegates WORKSPACE_WRITE to executor under explicit authorized local-package dispatch, explicit scope/files, and required reviewer/verifier gates; executor writes stay only within that explicit scope; manager direct file edits require an exact current-turn manager instruction for that specific file edit/file-change action; commit/PR/publish/release require prompt and wait for explicit authorization",
         "managerOverreachRegression": "small artifact/docs/.gitignore policy tasks require authorized executor dispatch or asking for role/authorization unless the current turn gives a specific manager file-edit instruction; role switch alone is not sufficient for active Manager Mode to edit files or run write-prone verification",
         "managerFileEditAuthorization": "executor local-package authorization does not authorize manager direct edits; manager file edits require current-turn explicit manager instruction for the specific file change; historical authorization, terse approvals, and role switch alone are not enough",
     },
@@ -498,6 +498,7 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
         "promptShape": [
             "taskId",
             "objective",
+            "explicit scope/files",
             "expected marker",
             "permission boundary",
             "relevant package/report paths",
@@ -505,6 +506,7 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
         ],
         "smallTasks": "small/simple tasks may use inline protocol blocks only",
         "highRisk": "high-risk Team Router self changes, reviewer-gate/process/policy changes, long executor results, and manager-required STRICT evidence should use a review package when shared workspace/path is accessible",
+        "writeDelegation": "for write packages, manager produces exact executor delegation with taskId, objective, scope/files, permission boundary, expected marker, required reviewer/verifier gates, and return protocol; local-package lets executor write only inside that explicit scope and never authorizes manager direct edits",
         "fallback": "if role thread cannot access the same filesystem/path, inline protocol block fallback is allowed and manager must mark the fallback while keeping protocol fields exact",
         "pathFieldContracts": {
             "taskBriefPath": "explicit protocol field for stable brief handoff, not merely future optional runtime fields; FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless manager marks inline fallback",
@@ -595,7 +597,7 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
         "reviewPackagePath",
     ],
     "runtimeStatus": "path fields are explicit protocol contract fields with gate-based expectations; runtime validates and records supplied path metadata but does not read, execute, trust, or auto-generate package files",
-    "sideEffectTaxonomy": "package writing in active Manager Mode is WORKSPACE_WRITE delegated to executor under explicit local-package authorization and required gates; manager direct file edits require exact current-turn manager instruction for the specific file-change action; commit/PR/publish/release require prompt and wait for explicit authorization; reading package metadata is READ_ONLY or DISPATCH_ONLY metadata",
+    "sideEffectTaxonomy": "package writing in active Manager Mode is WORKSPACE_WRITE delegated to executor under explicit local-package authorization, explicit scope/files, and required gates; manager direct file edits require exact current-turn manager instruction for the specific file-change action; commit/PR/publish/release require prompt and wait for explicit authorization; reading package metadata is READ_ONLY or DISPATCH_ONLY metadata",
     "commitCloseoutRisk": "commit closeout must explicitly stage new reference files because git diff --name-only omits untracked files",
 }
 

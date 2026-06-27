@@ -8,6 +8,8 @@ Ordinary small fixes and clearly low-risk tasks use executor -> verifier.
 
 Router/manager/orchestration policy, permission or safety boundary rules, process rules, role protocol, and shared/high-risk logic must use executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance).
 
+Team Router skill/rule/process self-changes and Manager Mode boundary optimizations are process/policy changes. When they require local-package writes, keep one executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance) chain.
+
 The reviewer independently looks for design risks, rule gaps, omissions, and new bad modes; it does not implement changes and is not final acceptance. The verifier remains final acceptance and confirms the executor result plus any reviewer requiredChanges are satisfied.
 
 Runtime adapters execute this gate with `send_reviewer_request_with_adapter()`, `read_reviewer_review_update_with_adapter()`, and `capture_reviewer_review_from_read()`:
