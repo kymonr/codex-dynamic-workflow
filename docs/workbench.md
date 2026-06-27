@@ -4,36 +4,49 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- Objective: Team Router skill/global reference sync and cross-thread information-format closeout alignment.
-- State: local alignment updated, locally verified, reviewed, and accepted; global installed `codex-team-router` role handoff reference is synced from the repo copy.
-- Last refreshed: 2026-06-27 skill reference sync and closeout alignment.
+- Objective: Team Router role-task content Chinese default skill rule plus direct-return receipt hardening follow-up.
+- State: local implementation complete, validated, reviewer-approved, verifier-accepted, and global installed skill reference synced; previous helper-test commit `c9d41b3` is local-only and `master` is ahead of `origin/master` by 1; this combined diff is not committed.
+- Last refreshed: 2026-06-27 role task-content Chinese skill rule verifier acceptance.
 - Not done: commit, push, PR, merge, publish, release.
 
 ## Current Diff Surface
 
-- `docs/workbench.md`
-- `docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`
-- `docs/team-router/packages/ctr-20260627-info-format-impl.md`
+- `src/team_router.py`
 - `tests/test_team_router.py`
+- `skills/codex-team-router/references/role-handoff-and-review-package.md`
+- `docs/workbench.md`
 
 Workspace-external sync:
 
-- `C:\Users\Orz\.codex\skills\codex-team-router\references\role-handoff-and-review-package.md` copied from `skills/codex-team-router/references/role-handoff-and-review-package.md`.
+- Global installed skill reference synced: `skills/codex-team-router/references/role-handoff-and-review-package.md` copied to `C:\Users\Orz\.codex\skills\codex-team-router\references\role-handoff-and-review-package.md`; SHA256 `EB668B9F66B44ED4ADA8030F493BD6575F937E94FBCFB3E19B143ECE6753322A` matches repo copy.
 
 ## Verification Record
 
-- `git status -sb`: clean before this task began.
-- Global skill reference drift check before sync: only `references\role-handoff-and-review-package.md` differed between repo and `C:\Users\Orz\.codex\skills\codex-team-router`.
+- `git status -sb --untracked-files=all` before implementation: `## master...origin/master [ahead 1]`.
+- CodeGraph review: `_capture_reviewer_review_from_manager_inbox()` and `_capture_verifier_verdict_from_manager_inbox()` lacked direct helper-level coverage; `_direct_return_protocol_message()` returned metadata for the last candidate rather than the actual marker-bearing candidate when a later same-source chat message existed.
+- `py -m unittest tests.test_team_router.TestTeamRouterProtocol.test_direct_return_protocol_message_uses_marker_bearing_message_metadata tests.test_team_router.TestTeamRouterProtocol.test_direct_return_protocol_message_filters_anchor_and_source_thread tests.test_team_router.TestTeamRouterManagerIntegration.test_capture_reviewer_direct_return_from_manager_inbox_records_receipt tests.test_team_router.TestTeamRouterManagerIntegration.test_capture_verifier_direct_return_from_manager_inbox_is_idempotent tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v`: pass, 5 tests.
+- `py -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_prefers_manager_inbox_direct_return_callback tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_captures_reviewer_direct_return_and_sends_verifier tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_prefers_manager_inbox_direct_return_verdict tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_ignores_malformed_manager_inbox_callback_and_uses_self_thread_fallback tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_team_task_ignores_malformed_manager_inbox_verdict_and_uses_self_thread_fallback -v`: pass, 5 tests.
+- `py -m unittest tests.test_team_router.TestTeamRouterProtocol -v`: pass, 15 tests.
+- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v`: pass, 27 tests.
+- `py -m unittest tests.test_team_router.TestTeamRouterManagerIntegration -v`: pass, 140 tests.
+- `py -m py_compile src\team_router.py tests\test_team_router.py`: pass.
+- `git diff --check`: pass.
+- `py -m unittest tests.test_team_router`: pass, 230 tests.
+- `py -m unittest tests.test_team_router.TestTeamRouterState.test_protocol_contract_snapshot_includes_role_handoff_review_package_policy tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v`: pass, 2 tests after task-content Chinese skill-rule edit.
+- `py -m py_compile src\team_router.py tests\test_team_router.py`: pass after task-content Chinese skill-rule edit.
+- `git diff --check`: pass after task-content Chinese skill-rule edit; CRLF warning only for `tests/test_team_router.py`.
+- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v`: pass, 27 tests after task-content Chinese skill-rule edit.
 - `Copy-Item -LiteralPath 'D:\codex\Team Router\skills\codex-team-router\references\role-handoff-and-review-package.md' -Destination 'C:\Users\Orz\.codex\skills\codex-team-router\references\role-handoff-and-review-package.md' -Force`: pass.
-- Implementation plan checkbox state changed from open to completed for the already-landed cross-thread information-format package.`r`n- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_does_not_claim_uncommitted_diff_when_used_as_current_record -v`: pass.`r`n- `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v`: pass, 27 tests.`r`n- `py -m unittest tests.test_team_router.TestTeamRouterState.test_protocol_contract_snapshot_includes_role_handoff_review_package_policy -v`: pass.`r`n- `py -m py_compile src\\team_router.py tests\\test_team_router.py`: pass.`r`n- `git diff --check`: pass; CRLF/LF warnings only for changed Markdown/test files.
+- Repo/global role-handoff reference SHA256: `EB668B9F66B44ED4ADA8030F493BD6575F937E94FBCFB3E19B143ECE6753322A` matches.
+- Reviewer direct-return for `ctr-20260627-task-content-chinese-skill`: pass, `requiredChanges: none`.
+- Verifier direct-return for `ctr-20260627-task-content-chinese-skill`: pass, `requiredChanges: none`.
 
 ## Review And Verification Gate
 
-- Reviewer: pending in this turn.
-- Verifier: pending in this turn after reviewer pass.
+- Reviewer: `ctr-20260627-task-content-chinese-skill` direct-return review passed; `requiredChanges: none`.
+- Verifier: `ctr-20260627-task-content-chinese-skill` direct-return verdict passed; `requiredChanges: none`.
 
 ## Next Gate
 
-- Run focused local validation after docs/package alignment.
-- Dispatch or record reviewer/verifier closeout.
-- Keep changes uncommitted unless the user separately authorizes commit.
+- Commit this new local diff only after explicit commit authorization.
+- Do not push/PR/merge unless the user separately authorizes that release/closeout step.
