@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1098,6 +1099,10 @@ risks: none
         self.assertIn("planning/TDD/debugging/verification", agent_policy["superpowersBoundary"])
         self.assertIn("do not grant manager write authority", agent_policy["superpowersBoundary"])
         self.assertIn("file changes route through executor/reviewer/verifier", agent_policy["superpowersBoundary"])
+        for needle in ("优化 skill", "改规则", "修", "继续", "复利"):
+            self.assertIn(needle, process_write_boundary["triggerExamples"])
+        self.assertIn("dispatch-only", process_write_boundary["defaultHandling"])
+        self.assertIn("must not personally edit files", process_write_boundary["defaultHandling"])
         self.assertIn("read-only auxiliary", "\n".join(agent_policy["allowedAuxUse"]))
         self.assertIn("gstack browser QA", "\n".join(agent_policy["allowedAuxUse"]))
         self.assertIn("subagent fallback is not allowed", "\n".join(agent_policy["forbiddenAuxUse"]))
@@ -7630,6 +7635,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "verdictFallback: self-thread-marker",
             "deliveryStatus: fallback_only",
             "deliveryError",
+            "fallback-only is degraded delivery",
+            "not normal proactive return",
+            "watcher 300s fallback",
             "Manager accepts direct-send only when `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry, including that `sourceThreadId` matches the pending ledger `returnThreadId`.",
             "rejected/quarantined",
             "cannot expand scope",
@@ -7645,6 +7653,68 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "The role still writes its final marker in its own thread, then sends",
         ):
             self.assertNotIn(stale, text)
+
+    def test_skill_sync_check_script_defaults_to_read_only_check(self):
+        script = ROOT / "scripts" / "team_router_skill_sync_check.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo_skill = tmp_path / "repo" / "codex-team-router"
+            global_skill = tmp_path / "global" / "codex-team-router"
+            repo_skill.mkdir(parents=True)
+            global_skill.mkdir(parents=True)
+            (repo_skill / "SKILL.md").write_text("repo\n", encoding="utf-8")
+            (global_skill / "SKILL.md").write_text("global\n", encoding="utf-8")
+
+            before = (global_skill / "SKILL.md").read_text(encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--repo-skill",
+                    str(repo_skill),
+                    "--global-skill",
+                    str(global_skill),
+                ],
+                cwd=str(ROOT),
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("mode: check-only", result.stdout)
+            self.assertIn("status: mismatch", result.stdout)
+            self.assertIn("SKILL.md", result.stdout)
+            self.assertEqual((global_skill / "SKILL.md").read_text(encoding="utf-8"), before)
+
+    def test_skill_sync_check_script_reports_match_without_writes(self):
+        script = ROOT / "scripts" / "team_router_skill_sync_check.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo_skill = tmp_path / "repo" / "codex-team-router"
+            global_skill = tmp_path / "global" / "codex-team-router"
+            repo_skill.mkdir(parents=True)
+            global_skill.mkdir(parents=True)
+            (repo_skill / "SKILL.md").write_text("same\n", encoding="utf-8")
+            (global_skill / "SKILL.md").write_text("same\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--repo-skill",
+                    str(repo_skill),
+                    "--global-skill",
+                    str(global_skill),
+                    "--check",
+                ],
+                cwd=str(ROOT),
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("mode: check-only", result.stdout)
+            self.assertIn("status: match", result.stdout)
     def test_skill_doc_contains_chinese_role_model(self):
         text = self._skill_contract_text()
         for needle in (
@@ -7708,6 +7778,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("update the rules", manager_mode)
         for needle in (
             "skill/process requests such as `记录进skill`",
+            "`优化 skill`",
+            "`改规则`",
+            "`修`",
+            "`继续`",
+            "`复利`",
             "Superpowers can guide planning/TDD/debugging/verification",
             "does not grant manager write authority",
             "File changes must route through executor/reviewer/verifier",

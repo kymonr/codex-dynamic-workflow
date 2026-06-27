@@ -260,8 +260,8 @@ MANAGER_ORCHESTRATION_POLICY = {
         "visibleRoleBoundary": "manager/executor/reviewer/verifier protocol roles must not be replaced by native-subagent, cli-runner, gstack, Claude, or other auxiliary agents; Team Router self changes still require the visible reviewer role conversation when gated",
         "teamRouterContextDefault": "when the user asks in a Team Router project context to dispatch a role, reviewer, executor, or verifier, default to creating or reusing the visible Team Router role thread; do not reinterpret that as a multi_agent/subagent request unless the user explicitly asks for external subagents",
         "managerModeProcessWriteBoundary": {
-            "triggerExamples": ("记录进skill", "改进skill", "superpowers修", "写进规则"),
-            "defaultHandling": "active Manager Mode treats file-writing skill/process requests as orchestration: classify sideEffect/Fast Lane, produce exact executor delegation, and route executor -> reviewer -> verifier unless the user explicitly switches role and authorizes manager direct edits",
+            "triggerExamples": ("记录进skill", "改进skill", "优化 skill", "改规则", "superpowers修", "写进规则", "修", "继续", "复利"),
+            "defaultHandling": "active Manager Mode treats file-writing skill/process requests and terse repair/continue/compounding requests as dispatch-only orchestration: classify sideEffect/Fast Lane, produce exact executor delegation, and route executor -> reviewer -> verifier unless the user explicitly switches role and authorizes manager direct edits; the manager must not personally edit files",
             "managerAllowedActions": ("rename parent thread", "classify side effect/gate", "produce exact executor delegation", "dispatch executor/reviewer/verifier", "report status"),
             "managerForbiddenActions": ("personally edit files", "run implementation commands"),
         },

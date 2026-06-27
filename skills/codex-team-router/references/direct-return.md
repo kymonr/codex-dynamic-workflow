@@ -51,7 +51,7 @@ Manager accepts direct-send only when `taskId`, protocol-block `sourceThreadId`,
 
 Duplicate direct callbacks are ignored after the ledger advances past that role. Do not record duplicate observations and do not let old executor/reviewer/verifier callbacks trigger the next state twice.
 
-Keep `self-thread-marker` as the fallback/audit path. If direct-send is unavailable or misses delivery, watcher/heartbeat must read the role thread at the normal 5 minutes / 300 seconds fallback cadence and capture the self-thread marker. watcher-only collection is `deliveryStatus: fallback_only` / delivery degraded, not normal success, and manager closeout must record that degraded path instead of presenting it as proactive role return.
+Keep `self-thread-marker` as the fallback/audit path. If direct-send is unavailable or misses delivery, watcher/heartbeat must read the role thread at the normal 5 minutes / 300 seconds fallback cadence and capture the self-thread marker. watcher-only collection is `deliveryStatus: fallback_only` / delivery degraded, not normal success, and manager closeout must record that degraded path instead of presenting it as proactive role return. User-facing wording must say fallback-only is degraded delivery, not normal proactive return, and name the watcher 300s fallback path when that is how the result was collected.
 
 ## Protocols
 
