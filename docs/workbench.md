@@ -4,47 +4,54 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active local package implementation for `ctr-20260628-team-router-optimization-1-6`; P2-5 is the current workbench/package-state refresh.
-- Current git truth before this P2-5 document refresh was sourced from `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, and `py -B scripts\team_router_closeout_check.py --json`.
-- Current next gate: P2-5 docs update -> reviewer pass -> verifier pass -> P2-6 final verification.
-- Not done: no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync. Those remain separate parent-thread gates after verifier acceptance.
+- State: active local package implementation for `ctr-20260628-trust-and-modularity`; scope is P0 current-state truth checker, P1 module split plan, and router doctor/status UX.
+- Current git truth is sourced from `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_closeout_check.py --json`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
+- Current next gate: executor implementation -> reviewer pass -> verifier pass -> local closeout.
+- Reviewer note: pre-save reviewer threads `019f0e79-746a-7bb2-b509-7ca9f74a7bf2` and `019f0e7b-5c1c-7b22-b6fe-32be6bc8b5c2` did not return final `TEAM_ROUTER_REVIEW`; post-implementation reviewer thread `019f0e86-513b-7901-acc2-025652491814` first returned `needs_rework`, then `pass` after the doctor nextAction fix.
+- Not done: no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync. Those remain separate parent-thread gates after reviewer/verifier acceptance.
 
 ## Current Diff Surface
 
-Latest `git status -s --untracked-files=all` for the current workbench/package refresh reports:
+Current truth is command-derived, not a copied package list. Regenerate the current surface with:
 
-- `M docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md`
-- `M docs/workbench.md`
-- `M skills/codex-team-router/SKILL.md`
-- `M src/team_router.py`
-- `M tests/test_team_router.py`
+- `git status -sb --untracked-files=all`
+- `git status -s --untracked-files=all`
+- `git diff --name-only`
+- `py -B scripts\team_router_truth_check.py --json`
+- `py -B scripts\team_router_doctor.py --json`
 
-Latest `git diff --name-only` reports the same five tracked files. Current closeout must use fresh `git status -s --untracked-files=all` and the read-only closeout helper, not historical package lists.
+During this package, expected touched areas are tests, read-only status scripts, this workbench, package docs, `docs/team-router/module-map.md`, and `skills/codex-team-router/references/testing-and-quality-gates.md`. The exact list must be taken from fresh commands because the package is still active.
+
+`scripts/team_router_truth_check.py` is the stale-claim gate for workbench/package current-state text. `scripts/team_router_doctor.py` is the plain manager-facing status summary and must not claim live role dispatch unless explicit readiness evidence exists.
 
 ## Verification Record
 
 Active package verification so far:
 
-- P1/P2 runtime and skill work have passed focused reviewer/verifier gates through P2-4.
-- P2-4 closeout helper review initially requested stronger unauthorized-gate assertions for `pullRequest`, `merge`, and `deploy`; the focused test was updated with those assertions.
-- P2-4 reviewer pass: rework satisfied the unauthorized-gate assertion gap; no required changes remained.
-- P2-4 verifier pass: closeout helper accepted after `docs/workbench.md` was explicitly accounted as out-of-scope dirty and the helper correctly reported it in `diffFiles`.
-- Focused closeout test: `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_closeout_check_reports_read_only_status_and_unauthorized_gates` -> OK.
-- Manager full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-p2-4-manager'; py -B -m unittest tests.test_team_router` -> Ran 265 tests OK.
-- `py -B scripts\team_router_closeout_check.py --json` reports `skill.entrypointBytes: 6969`, `skill.underTarget: true`, `authorization` all false, and `skillSync.status: mismatch` because repo `SKILL.md` changed while global sync is unauthorized.
-- Remaining verification: P2-5 document review/verifier, then P2-6 py_compile, full unittest, `git diff --check`, repo/global skill drift check, and read-only closeout check.
+- RED: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` failed because `scripts/team_router_truth_check.py` and `scripts/team_router_doctor.py` did not exist.
+- GREEN: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` -> Ran 38 tests OK after adding the read-only truth and doctor scripts.
+- RED docs gate: targeted `TestTeamRouterSkillDoc` workbench/module-map/quality-gates tests failed against stale workbench text, missing `docs/team-router/module-map.md`, and missing truth/doctor quality-gate documentation.
+- Final compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-trust'; py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py scripts\team_router_truth_check.py scripts\team_router_doctor.py` -> OK.
+- Final whitespace check: `git diff --check` -> exit 0 with CRLF/LF warnings only.
+- Final full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-trust'; py -B -m unittest tests.test_team_router` -> Ran 269 tests OK.
+- Final closeout check: `py -B scripts\team_router_closeout_check.py --json` -> read-only, unauthorized gates false, `skill.entrypointBytes: 6969`, `skill.underTarget: true`.
+- Final truth check: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`, `truthStatus` inputs dirty because this package is active.
+- Final doctor check: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`, `orchestrationStatus: manual_only`, no live-dispatch claim.
+- Final skill sync check: `py -B scripts\team_router_skill_sync_check.py --check` -> `status: mismatch`, changed `references/testing-and-quality-gates.md`; this is expected until a separately authorized global skill sync.
+- Reviewer/verifier gates: reviewer thread `019f0e86-513b-7901-acc2-025652491814` -> `pass` after rework; verifier thread `019f0e8c-163e-7ba0-82b0-b16b592168ea` -> `pass`.
 
 ## Historical Records
 
 Older entries are history only. They must not be treated as current git truth / current next gate unless rechecked in the current worktree.
 
+- Previous `ctr-20260628-team-router-optimization-1-6` is a completed historical package. Its recorded dirty surface, skill sync result, reviewer evidence, and P2 step labels are not current git truth.
 - Previous `ctr-20260628-team-router-optimization-local-package` records are historical baseline only; they are not the current active package.
 - Previous `ctr-20260628-anchor-and-closeout-freshness-fix` records: verifier accepted/pass; prior local closeout/commit language is historical and no longer the Current Task.
 - Previous `ctr-20260628-role-request-direct-send-and-waiting-fix` records are accepted/pass at reviewer and verifier gates.
 - Previous `ctr-20260628-live-capability-state-fix` records clarified exposed app tools vs missing Python adapter/runtime orchestration. That remains true but is not the current task.
 - Previous `ctr-20260628-workbench-tool-error-governance` records described a no-tools governance state. That wording is historical and must not be copied into the current state now that the Codex app thread tool surface is exposed.
 - Older ahead/behind, stale current diff surface, isolated-worktree status, and old executor callback references are not current status. If a completed task still points at an old executor callback, collect fresh role-thread evidence or mark it historical instead of reusing it as current truth.
-- Historical records may explain why a rule exists, but current status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, and the latest role-thread marker evidence.
+- Historical records may explain why a rule exists, but current status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, the truth/doctor scripts, and latest role-thread marker evidence.
 
 ## Integration Boundary
 
@@ -64,12 +71,13 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- `docs/workbench.md` includes the Addy note above as an out-of-scope dirty item; it is accounted here and must not be treated as a Team Router runtime/protocol change.
-- `skillSync.status` remains `mismatch` until a separately authorized global skill sync is run.
-- Git may print CRLF/LF replacement warnings for `src/team_router.py` and `tests/test_team_router.py`.
+- Reviewer pre-save attempts were unreachable, so post-implementation reviewer/verifier gates remain required before closeout can claim acceptance.
+- Current docs are intentionally dirty while this package is active; use command output rather than copied lists.
+- Repo/global skill comparison may be match or mismatch depending on whether separately authorized global sync has happened; the current value must come from `scripts/team_router_truth_check.py`, not prose.
+- Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: P2-5 document-state refresh.
-- Next gated step: reviewer pass, then verifier pass, then P2-6 final verification.
+- Current gate: local implementation, reviewer, and verifier gates complete.
+- Next gated step: local closeout decision only; commit, push, PR, merge, deploy, publish, release, and global skill sync remain separate unauthorized gates.
 - Commit, push, PR, merge, deploy, publish, release, and global skill sync remain unauthorized.

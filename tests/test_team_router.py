@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import importlib.util
 import json
 import os
 import re
@@ -578,6 +579,133 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertFalse(report["authorization"]["push"])
         self.assertFalse(report["authorization"]["globalSync"])
         self.assertIn("does not stage, commit, push, or sync", report["readOnlyGuarantee"])
+
+    def test_truth_check_reports_stale_claims_and_is_read_only(self):
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            stale_file = tmp_path / "stale-workbench.md"
+            stale_file.write_text(
+                "\n".join(
+                    [
+                        "# stale",
+                        "State: active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
+                        "Latest `git status -s --untracked-files=all` reports:",
+                        "- `M docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md`",
+                        "- `M docs/workbench.md`",
+                        "- `M skills/codex-team-router/SKILL.md`",
+                        "- `M src/team_router.py`",
+                        "- `M tests/test_team_router.py`",
+                        "`skillSync.status: mismatch`",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            before = {
+                str(path.relative_to(global_skill)): path.read_bytes()
+                for path in global_skill.rglob("*")
+                if path.is_file()
+            }
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_truth_check.py"),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--scan-file",
+                    str(stale_file),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["mode"], "read-only")
+            self.assertIn("gitStatusBranch", report)
+            self.assertIn("gitStatusShort", report)
+            self.assertIn("diffFiles", report)
+            self.assertEqual(report["skillSync"]["status"], "match")
+            self.assertFalse(report["authorization"]["commit"])
+            self.assertFalse(report["authorization"]["push"])
+            self.assertFalse(report["authorization"]["pullRequest"])
+            self.assertFalse(report["authorization"]["merge"])
+            self.assertFalse(report["authorization"]["deploy"])
+            self.assertFalse(report["authorization"]["globalSync"])
+            self.assertIn("does not stage, commit, push, PR, merge, deploy, or sync", report["readOnlyGuarantee"])
+            claim_reasons = "\n".join(claim["reason"] for claim in report["staleClaims"])
+            self.assertIn("old optimization package is not the current task", claim_reasons)
+            self.assertIn("skillSync.status mismatch", claim_reasons)
+            after = {
+                str(path.relative_to(global_skill)): path.read_bytes()
+                for path in global_skill.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(after, before)
+
+    def test_router_doctor_dirty_next_action_requires_reviewer_then_verifier(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        next_action = module._next_action("dirty", {"skillSync": {"status": "match"}})
+
+        self.assertIn("reviewer pass", next_action)
+        self.assertIn("verifier pass", next_action)
+        self.assertLess(next_action.index("reviewer pass"), next_action.index("verifier pass"))
+    def test_router_doctor_reports_plain_status_without_dispatch(self):
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            stale_file = tmp_path / "stale-workbench.md"
+            stale_file.write_text(
+                "State: active local package implementation for `ctr-20260628-team-router-optimization-1-6`\n"
+                "`skillSync.status: mismatch`\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_doctor.py"),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--scan-file",
+                    str(stale_file),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["mode"], "read-only")
+            self.assertIn(report["truthStatus"], {"dirty_or_stale", "dirty", "stale"})
+            self.assertIn(report["orchestrationStatus"], {"manual_only", "tool_error", "unknown"})
+            self.assertIn("currentMode", report["summary"])
+            self.assertIn("nextAction", report["summary"])
+            self.assertIn("unauthorized", report["summary"])
+            self.assertNotIn("created role thread", report["summary"])
+            self.assertFalse(report["authorization"]["commit"])
+            self.assertFalse(report["authorization"]["push"])
     def test_callback_unreachable_is_recoverable_not_terminal(self):
         self.assertNotIn("callback_unreachable", team_router.TERMINAL_STATUSES)
         self.assertEqual(
@@ -8487,45 +8615,40 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
 
         self.assertIn("## Current Task", text)
+        current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
+        current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
+        historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
+
         for needle in (
-            "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
-            "P2-5 is the current workbench/package-state refresh",
+            "active local package implementation for `ctr-20260628-trust-and-modularity`",
+            "P0 current-state truth checker",
+            "P1 module split plan",
+            "router doctor/status UX",
             "Current git truth",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
+            "`py -B scripts\\team_router_truth_check.py --json`",
+            "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "P2-5 docs update -> reviewer pass -> verifier pass -> P2-6 final verification",
+            "executor implementation -> reviewer pass -> verifier pass -> local closeout",
             "no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync",
             "Current Diff Surface",
-            "Latest `git status -s --untracked-files=all`",
-            "Latest `git diff --name-only` reports the same five tracked files",
-            "docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md",
-            "docs/workbench.md",
+            "Current truth is command-derived, not a copied package list",
+            "scripts/team_router_truth_check.py",
+            "scripts/team_router_doctor.py",
             "Historical Records",
-            "historical and no longer the Current Task",
-            "old executor callback",
+            "completed historical package",
+            "not current git truth",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
-        current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
-        current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
-        for current_file in (
-            "M docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md",
-            "M docs/workbench.md",
-            "M skills/codex-team-router/SKILL.md",
-            "M src/team_router.py",
-            "M tests/test_team_router.py",
-        ):
-            self.assertIn(current_file, current_diff_section)
-        for no_longer_current in (
-            "?? scripts/team_router_closeout_check.py",
-            "M skills/codex-team-router/references/adapter-runtime.md",
-            "M skills/codex-team-router/references/testing-and-quality-gates.md",
-            "?? docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md",
-        ):
-            self.assertNotIn(no_longer_current, current_diff_section)
+        self.assertIn("ctr-20260628-team-router-optimization-1-6", historical_section)
         for stale_current in (
+            "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
+            "P2-5 is the current workbench/package-state refresh",
+            "Latest `git diff --name-only` reports the same five tracked files",
+            "`skillSync.status: mismatch`",
             "idle / no active local package task",
             "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
             "wait for a new explicit dispatch or user authorization",
@@ -8537,12 +8660,43 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "ahead of `origin/master` by 1",
             "previous helper-test commit `c9d41b3` is local-only",
             "Global installed skill reference synced",
-            r"C:\Users\Orz\.codex\skills\codex-team-router",
+            r"C:\\Users\\Orz\\.codex\\skills\\codex-team-router",
             "implementation in progress in isolated worktree",
             "thread tools unavailable",
         ):
             self.assertNotIn(stale_current_claim, text)
 
+    def test_module_map_documents_future_split_without_runtime_extraction(self):
+        text = (ROOT / "docs" / "team-router" / "module-map.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "no runtime extraction in this package",
+            "public imports continue through `src/team_router.py`",
+            "protocol parsing",
+            "policy snapshot",
+            "registry/ledger state",
+            "adapter runtime",
+            "direct return",
+            "watcher/heartbeat",
+            "closeout/status",
+            "docs/skill contract tests",
+            "policy constants -> protocol parsing -> direct return -> state/ledger -> adapter runtime",
+            "First tests to move",
+            "Acceptance gate",
+        ):
+            self.assertIn(needle, text)
+
+    def test_quality_gates_name_truth_and_doctor_read_only_tools(self):
+        text = (ROOT / "skills" / "codex-team-router" / "references" / "testing-and-quality-gates.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "scripts/team_router_truth_check.py",
+            "scripts/team_router_doctor.py",
+            "must not stage, commit, push, PR, merge, deploy, or sync",
+            "do not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`",
+        ):
+            self.assertIn(needle, text)
+        self.assertLess(len(self._skill_path().read_bytes()), 7200)
     def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
         text = self._skill_contract_text()
 
