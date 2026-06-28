@@ -545,6 +545,74 @@ risks: none
         self.assertIn("requiredChanges", messages[4])
         self.assertIn("evidenceChecked", messages[4])
 
+    def test_role_request_templates_default_to_compact_path_based_outputs(self):
+        task_id = "ctr-20260628-compact-templates"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "模板默认变短并且测试通过",
+            "riskBoundary": "不改变 gate 语义，不做 push/global sync",
+            "executorPrompt": "把 Team Router 角色模板默认改短。",
+            "taskBriefPath": "docs/team-router/packages/ctr-compact-brief.md",
+            "executorReportPath": "docs/team-router/packages/ctr-compact-executor.md",
+            "reviewPackagePath": "docs/team-router/packages/ctr-compact-review.md",
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: 模板已改短\n"
+            "evidence: tests\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % task_id
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": plan_fields["taskBriefPath"],
+                "executorReportPath": plan_fields["executorReportPath"],
+                "reviewPackagePath": plan_fields["reviewPackagePath"],
+            },
+        }
+
+        messages = (
+            team_router.make_executor_dispatch_message(
+                task_id,
+                plan_fields,
+                "local-package",
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-28T10:00:00+08:00"},
+                review_package=review_package,
+            ),
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                review_package=review_package,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                review_package=review_package,
+            ),
+        )
+
+        for message in messages:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", message)
+                self.assertIn("deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>", message)
+                self.assertIn("taskBriefPath", message)
+                self.assertIn("executorReportPath", message)
+                self.assertIn("reviewPackagePath", message)
+                self.assertIn("不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
+                self.assertIn("保留 executor/reviewer/verifier gate；省 token 只改变交接形状", message)
+        self.assertIn("executorReportPath: <报告路径或 inline>", messages[0])
+        self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
+        self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
+
 class TestTeamRouterState(unittest.TestCase):
     def test_closeout_check_reports_read_only_status_and_unauthorized_gates(self):
         global_skill = Path("C:/tmp/team-router-closeout-missing-global-skill")

@@ -109,6 +109,8 @@ Manager closeout should report acceptedBy, changed, verified, remainingRisk, nex
 
 Budget hints are non-authoritative token targets: dispatch 300-500, executorCallback 500-800, reviewer 400-700, verifier 300-600. If a role needs more, write or update a package/report path instead of expanding the chat transcript.
 
+Role request templates should make this default explicit with `roleCommunicationMode: concise-protocol-plus-paths`, `deltaSince`, and the relevant `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` fields. Executor, reviewer, and verifier final protocol blocks should point to long evidence instead of copying complete diffs, logs, background, or role reasoning.
+
 Legacy note: older ignored `.superpowers/sdd/` packages may include full diffs. They predate this contract and must not be used as the template for new durable `docs/team-router/packages/<taskId>.md` packages.
 
 ## External Material Safety
