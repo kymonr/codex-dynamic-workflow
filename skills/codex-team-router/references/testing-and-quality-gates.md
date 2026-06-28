@@ -86,6 +86,13 @@ Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, pr
 - `scripts/team_router_truth_check.py` is read-only current-truth evidence: report branch status, short status, diff files, SKILL cap/target, repo/global skill comparison, stale workbench/package claims, and the same unauthorized gates. It must not stage, commit, push, PR, merge, deploy, or sync.
 - `scripts/team_router_doctor.py` is read-only manager-facing status UX: summarize currentMode, truthStatus, orchestrationStatus, nextAction, and unauthorized actions without claiming role-thread creation or live dispatch unless explicit readiness evidence exists. It must not stage, commit, push, PR, merge, deploy, or sync.
 - These tools do not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`; they are evidence inputs for executor/reviewer/verifier gates, not protocol acceptance.
+## Host Readiness Snapshots
+
+- `scripts/team_router_doctor.py --host-readiness-json <path> --json` accepts an evidence-only host adapter readiness snapshot and reports `hostReadiness` plus a derived `orchestrationStatus`.
+- Without a host readiness snapshot, doctor remains `orchestrationStatus: manual_only` and must not infer callable adapter support from model-side tool descriptors.
+- When Codex app thread tools are exposed but the Python helper lacks a callable adapter, explicit `parent_thread_id`, callable `set_thread_title`, or callable heartbeat scheduler evidence, doctor reports `host_contract_blocked` with missing items such as `callable adapter`, `parent_thread_id`, and `callable heartbeat scheduler`.
+- Only a supplied snapshot proving callable thread tools, callable `set_thread_title`, explicit `parent_thread_id`, and callable heartbeat scheduler may report `adapter_smoke_ready`.
+- The boundary text must keep this sentence true: model-side Codex app tool exposure is not a Python callable adapter. This status surface is evidence-only; it does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync.
 ## Role Thread Status Snapshots
 
 - `scripts/team_router_doctor.py --role-status-json <path> --json` accepts a bounded, caller-supplied role-thread snapshot and reports `roleThreadStatus`.

@@ -783,7 +783,112 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertEqual(statuses["reviewer"], "protocol_returned")
             self.assertEqual(statuses["verifier"], "missing")
             self.assertEqual(report["roleThreadStatus"]["mode"], "read-only")
-            self.assertIn("roleThreadStatus", report)
+            self.assertIn("hostReadiness", report)
+
+    def test_router_doctor_classifies_host_readiness_snapshot(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        blocked = module.classify_host_readiness_snapshot(
+            {
+                "codexAppThreadToolsExposed": True,
+                "adapterCallable": False,
+                "callableTools": {tool: False for tool in module.REQUIRED_THREAD_TOOLS},
+                "parentThreadId": "",
+                "heartbeatSchedulerCallable": False,
+            }
+        )
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["orchestrationStatus"], "host_contract_blocked")
+        self.assertTrue(blocked["evidence"]["threadToolSurfaceExposed"])
+        self.assertIn("callable adapter", blocked["missing"])
+        self.assertIn("callable set_thread_title", blocked["missing"])
+        self.assertIn("parent_thread_id", blocked["missing"])
+        self.assertIn("callable heartbeat scheduler", blocked["missing"])
+        self.assertIn("model-side Codex app tool exposure is not a Python callable adapter", blocked["boundary"])
+
+        ready = module.classify_host_readiness_snapshot(
+            {
+                "adapterCallable": True,
+                "callableTools": list(module.REQUIRED_THREAD_TOOLS),
+                "parentThreadId": "019f0ebf-9047-71d2-86b9-efbf7bc4612d",
+                "heartbeatScheduler": {"scheduleCallable": True},
+            }
+        )
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["orchestrationStatus"], "adapter_smoke_ready")
+        self.assertEqual(ready["missing"], [])
+        self.assertTrue(ready["capabilities"]["set_thread_title"])
+        self.assertTrue(ready["capabilities"]["heartbeat_scheduler"])
+
+    def test_router_doctor_includes_host_readiness_snapshot(self):
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            host_snapshot = tmp_path / "host-readiness.json"
+            host_snapshot.write_text(
+                json.dumps(
+                    {
+                        "codexAppThreadTools": [
+                            "list_projects",
+                            "create_thread",
+                            "list_threads",
+                            "read_thread",
+                            "send_message_to_thread",
+                            "set_thread_title",
+                        ],
+                        "adapterCallable": False,
+                        "callableTools": {
+                            "list_projects": False,
+                            "create_thread": False,
+                            "list_threads": False,
+                            "read_thread": False,
+                            "send_message_to_thread": False,
+                            "set_thread_title": False,
+                        },
+                        "parentThreadId": "019f0ebf-9047-71d2-86b9-efbf7bc4612d",
+                        "heartbeatSchedulerCallable": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_doctor.py"),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--host-readiness-json",
+                    str(host_snapshot),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["orchestrationStatus"], "host_contract_blocked")
+            self.assertEqual(report["hostReadiness"]["status"], "blocked")
+            self.assertTrue(report["hostReadiness"]["evidence"]["threadToolSurfaceExposed"])
+            self.assertTrue(report["hostReadiness"]["evidence"]["parentThreadIdPresent"])
+            self.assertIn("callable adapter", report["hostReadiness"]["missing"])
+            self.assertIn("callable heartbeat scheduler", report["hostReadiness"]["missing"])
+            self.assertIn("hostReadiness=blocked", report["summary"])
+            self.assertNotIn("created role thread", report["summary"])
     def test_router_doctor_reports_plain_status_without_dispatch(self):
         with workspace_temp_dir() as tmp:
             tmp_path = Path(tmp)
@@ -8740,10 +8845,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "local package accepted, committed, and global skill synced for `ctr-20260628-role-thread-readiness-status`",
-            "read-only role-thread readiness/status UX",
-            "--role-status-json",
-            "roleThreadStatus",
+            "active local package implementation for `ctr-20260628-host-adapter-heartbeat-smoke`",
+            "host adapter readiness and heartbeat scheduler contract",
+            "--host-readiness-json",
+            "hostReadiness",
             "Current git truth",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -8751,8 +8856,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "executor implementation -> reviewer pass -> verifier pass -> local closeout",
-            "no push, no PR, no merge, no deploy, and no publish/release",
+            "reviewer/verifier focused acceptance for the sync-truth rework",
+            "no commit, no stage, no push, no PR, no merge, no deploy, and no publish/release",
+            "Global skill sync is complete and reports `status: match`",
             "Current Diff Surface",
             "Current truth is command-derived, not a copied package list",
             "scripts/team_router_truth_check.py",
@@ -8784,7 +8890,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "implementation in progress in isolated worktree",
             "thread tools unavailable",
             "reviewer re-review is next",
-            "pending reviewer pass",
         ):
             self.assertNotIn(stale_current_claim, text)
 
@@ -8801,7 +8906,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, package)
         for stale in (
             "Reviewer re-review: pending",
-            "pending reviewer pass",
             "Send the current diff to reviewer re-review",
             "If reviewer passes",
             "Send the package to verifier in read-only mode",
@@ -8845,8 +8949,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         text = (ROOT / "skills" / "codex-team-router" / "references" / "testing-and-quality-gates.md").read_text(encoding="utf-8")
 
         for needle in (
-            "--role-status-json",
-            "roleThreadStatus",
+            "--host-readiness-json",
+            "hostReadiness",
             "missing",
             "created_not_visible",
             "visible_waiting",
@@ -8854,6 +8958,22 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "protocol_returned",
             "caller-supplied role-thread snapshot",
             "does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync",
+        ):
+            self.assertIn(needle, text)
+
+    def test_quality_gates_document_host_readiness_snapshots(self):
+        text = (ROOT / "skills" / "codex-team-router" / "references" / "testing-and-quality-gates.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "--host-readiness-json",
+            "hostReadiness",
+            "host_contract_blocked",
+            "adapter_smoke_ready",
+            "callable adapter",
+            "parent_thread_id",
+            "callable heartbeat scheduler",
+            "model-side Codex app tool exposure is not a Python callable adapter",
+            "evidence-only host adapter readiness snapshot",
         ):
             self.assertIn(needle, text)
     def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
