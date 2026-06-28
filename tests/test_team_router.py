@@ -358,6 +358,9 @@ risks: none
         model = policy["callbackDeliveryModel"]
 
         self.assertIn("direct-send", model["primaryDelivery"])
+        self.assertIn("threadId=<returnThreadId>", model["primaryDelivery"])
+        self.assertIn("prompt=<完整 TEAM_ROUTER_* block>", model["primaryDelivery"])
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", model["primaryDelivery"])
         self.assertIn("self-thread-marker", model["fallback"])
         self.assertIn("sourceThreadId", model["requiredDispatchFields"])
         self.assertIn("sourceRoleThreadId", model["requiredDispatchFields"])
@@ -1056,7 +1059,8 @@ risks: none
         delivery_model = policy["callbackDeliveryModel"]
         self.assertIn("direct-send", delivery_model["primaryDelivery"])
         self.assertIn("send_message_to_thread", delivery_model["primaryDelivery"])
-        self.assertIn("sourceThreadId", delivery_model["primaryDelivery"])
+        self.assertIn("threadId=<returnThreadId>", delivery_model["primaryDelivery"])
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", delivery_model["primaryDelivery"])
         self.assertIn("self-thread-marker", delivery_model["fallback"])
         self.assertIn("mandatory audit and recovery path", delivery_model["fallback"])
         self.assertIn("sourceThreadId", delivery_model["requiredDispatchFields"])
@@ -2171,7 +2175,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
         self.assertIn(
-            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_CALLBACK block。",
+            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>) 发送最终 TEAM_ROUTER_CALLBACK block。",
             message,
         )
         self.assertIn(
@@ -2619,6 +2623,89 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("nextAllowedReadAt: 2026-06-22T20:07:00+08:00", update["userOutput"])
         self.assertIn("expectedMarker: TEAM_ROUTER_CALLBACK", update["userOutput"])
 
+    def test_watch_executor_public_helper_suppresses_repeated_reads_before_next_allowed(self):
+        class CountingAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.read_count = 0
+
+            def read_thread(self, **kwargs):
+                self.read_count += 1
+                return super().read_thread(**kwargs)
+
+        adapter = CountingAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+            "still working",
+            message_id="msg-later",
+            sent_at="2026-06-22T20:02:20+08:00",
+        )
+
+        first = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:02:30+08:00",
+        )
+        second = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:03:00+08:00",
+        )
+
+        self.assertEqual(first["action"], "watch_read_executor_callback")
+        self.assertEqual(second["action"], "watch_read_suppressed")
+        self.assertEqual(second["readDecision"]["action"], "read_suppressed")
+        self.assertEqual(second["readDecision"]["nextAllowedReadAt"], "2026-06-22T20:07:30+08:00")
+        self.assertEqual(adapter.read_count, 1)
+
+    def test_watch_executor_public_helper_user_status_bypasses_read_throttle(self):
+        class CountingAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.read_count = 0
+
+            def read_thread(self, **kwargs):
+                self.read_count += 1
+                return super().read_thread(**kwargs)
+
+        adapter = CountingAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply("thread-executor", "dispatch", message_id="msg-dispatch", sent_at="2026-06-22T20:02:00+08:00")
+        adapter.append_reply("thread-executor", "still working", message_id="msg-later", sent_at="2026-06-22T20:02:20+08:00")
+        team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:02:30+08:00",
+        )
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:03:00+08:00",
+            read_reason="user-triggered status check",
+        )
+
+        self.assertEqual(update["action"], "watch_read_executor_callback")
+        self.assertEqual(adapter.read_count, 2)
     def test_watch_executor_first_check_with_valid_marker_advances_immediately(self):
         adapter = FakeThreadAdapter()
         self._awaiting_callback_ledger()
@@ -3424,8 +3511,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         reviewing = team_router.record_reviewer_request_sent(
             self.root, self.project_id, self.task_id, reviewer_thread_id="thread-reviewer", sent_at="2026-06-22T20:05:00+08:00", message_id="msg-review"
         )
+        review_request = reviewing["review"]["request"]
         pass_messages = [
-            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review"},
+            {"messageId": review_request["messageId"], "sentAt": review_request["sentAt"], "text": "review"},
             {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
         ]
         passed = team_router.capture_reviewer_review_from_read(
@@ -3626,7 +3714,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             callback_messages,
             captured_at="2026-06-22T20:04:00+08:00",
         )
-        team_router.record_reviewer_request_sent(
+        reviewing = team_router.record_reviewer_request_sent(
             self.root,
             self.project_id,
             self.task_id,
@@ -3634,8 +3722,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             sent_at="2026-06-22T20:05:00+08:00",
             message_id="msg-review",
         )
+        review_request = reviewing["review"]["request"]
         review_messages = [
-            {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review"},
+            {"messageId": review_request["messageId"], "sentAt": review_request["sentAt"], "text": "review"},
             {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: confirm regression tests\nevidenceChecked: tests\nrisks: none"},
         ]
         passed = team_router.capture_reviewer_review_from_read(
@@ -3700,7 +3789,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             callback_messages,
             captured_at="2026-06-22T20:04:00+08:00",
         )
-        team_router.record_reviewer_request_sent(
+        reviewing = team_router.record_reviewer_request_sent(
             self.root,
             self.project_id,
             self.task_id,
@@ -3708,12 +3797,13 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             sent_at="2026-06-22T20:05:00+08:00",
             message_id="msg-review",
         )
+        review_request = reviewing["review"]["request"]
         team_router.capture_reviewer_review_from_read(
             self.root,
             self.project_id,
             self.task_id,
             [
-                {"messageId": "msg-review", "sentAt": "2026-06-22T20:05:00+08:00", "text": "review"},
+                {"messageId": review_request["messageId"], "sentAt": review_request["sentAt"], "text": "review"},
                 {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
             ],
             captured_at="2026-06-22T20:07:00+08:00",
@@ -3911,7 +4001,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
         self.assertIn(
-            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_VERDICT block。",
+            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_VERDICT block>) 发送最终 TEAM_ROUTER_VERDICT block。",
             verify_message,
         )
         self.assertIn(
@@ -3968,7 +4058,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("reviewDelivery: direct-send", review_message)
         self.assertIn("reviewFallback: self-thread-marker", review_message)
         self.assertIn(
-            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_REVIEW block。",
+            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_REVIEW block>) 发送最终 TEAM_ROUTER_REVIEW block。",
             review_message,
         )
         self.assertIn(
@@ -5100,6 +5190,149 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(project_roles["executor"]["threadId"], "thread-executor")
         self.assertEqual(project_roles["verifier"]["threadId"], "thread-verifier")
 
+    def test_start_team_task_with_adapter_ignores_archived_discovered_role_threads(self):
+        class DiscoveryAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.thread_list = [
+                    {
+                        "threadId": "archived-executor",
+                        "title": "TeamRouter executor - project-123",
+                        "status": "archived",
+                    },
+                    {
+                        "threadId": "live-manager",
+                        "title": "TeamRouter manager - project-123",
+                    },
+                ]
+
+            def list_threads(self, **kwargs):
+                return {"threads": list(self.thread_list)}
+
+        adapter = DiscoveryAdapter()
+
+        ledger = team_router.start_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="inspect docs",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            target={"type": "projectless"},
+            observed_at="2026-06-22T20:00:00+08:00",
+        )
+
+        self.assertEqual(ledger["status"], "roles_ready")
+        created_prompts = [record["kwargs"]["prompt"] for record in adapter.created]
+        self.assertTrue(any("role: executor" in prompt for prompt in created_prompts))
+        registry = team_router.load_registry(self.root, self.project_id)
+        executor = registry["projects"][self.project_id]["roles"]["executor"]
+        self.assertEqual(executor["threadId"], "thread-executor")
+        self.assertNotEqual(executor["threadId"], "archived-executor")
+
+    def test_send_executor_dispatch_with_adapter_replaces_archived_registry_role(self):
+        class ReplacementAdapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-123", "target": {"type": "projectless"}}]}
+
+        adapter = ReplacementAdapter()
+        self._planned_ledger()
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"executor": {"threadId": "archived-executor", "title": "执行者-old", "status": "archived"}},
+            "2026-06-22T19:59:00+08:00",
+        )
+
+        updated = team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+
+        self.assertEqual(updated["dispatches"][-1]["threadId"], "thread-executor")
+        self.assertNotEqual(updated["dispatches"][-1]["threadId"], "archived-executor")
+        registry = team_router.load_registry(self.root, self.project_id)
+        executor = registry["projects"][self.project_id]["roles"]["executor"]
+        self.assertEqual(executor["replacesThreadId"], "archived-executor")
+        self.assertIn("archived", executor["replacementReason"])
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-executor")
+
+    def test_reviewer_and_verifier_requests_replace_unavailable_registry_roles(self):
+        class ReplacementAdapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-123", "target": {"type": "projectless"}}]}
+
+        adapter = ReplacementAdapter()
+        self._high_risk_awaiting_callback_ledger()
+        callback_messages = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {"messageId": "msg-callback", "sentAt": "2026-06-22T20:03:00+08:00", "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: callback\nevidence: tests\nrisks: none\nnext: reviewer"},
+        ]
+        team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            callback_messages,
+            captured_at="2026-06-22T20:04:00+08:00",
+        )
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"reviewer": {"threadId": "archived-reviewer", "title": "审查者-old", "status": "archived"}},
+            "2026-06-22T20:04:30+08:00",
+        )
+
+        reviewed = team_router.send_reviewer_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+
+        self.assertEqual(reviewed["review"]["request"]["threadId"], "thread-reviewer")
+        registry = team_router.load_registry(self.root, self.project_id)
+        reviewer = registry["projects"][self.project_id]["roles"]["reviewer"]
+        self.assertEqual(reviewer["replacesThreadId"], "archived-reviewer")
+        self.assertIn("archived", reviewer["replacementReason"])
+        review_request = reviewed["review"]["request"]
+
+        reviewed = team_router.capture_reviewer_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": review_request["messageId"], "sentAt": review_request["sentAt"], "text": "review"},
+                {"messageId": "msg-review-result", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        self.assertEqual(reviewed["status"], "verifying")
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"verifier": {"threadId": "broken-verifier", "title": "验证者-old", "status": "broken"}},
+            "2026-06-22T20:07:30+08:00",
+        )
+        verified = team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:08:00+08:00",
+        )
+
+        self.assertEqual(verified["verification"]["request"]["threadId"], "thread-verifier")
+        registry = team_router.load_registry(self.root, self.project_id)
+        verifier = registry["projects"][self.project_id]["roles"]["verifier"]
+        self.assertEqual(verifier["replacesThreadId"], "broken-verifier")
+        self.assertIn("broken", verifier["replacementReason"])
     def test_start_team_task_with_adapter_discovers_existing_role_threads(self):
         class DiscoveryAdapter(FakeThreadAdapter):
             def __init__(self):
@@ -7470,9 +7703,15 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("Team Router Closeout", closeout)
         self.assertIn("summary: complete", closeout)
         self.assertIn("remainingTodos: none", closeout)
+        self.assertIn("evidenceChecked: tests", closeout)
+        self.assertIn("risks: none", closeout)
+        self.assertIn("nextAction: none", closeout)
+        self.assertIn("plainLanguageReport: required", closeout)
+        self.assertIn("notDone: stage/commit/push/PR/publish/release were not done", closeout)
         self.assertIn("compoundingDecision: skipped", closeout)
         self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", closeout)
         self.assertNotIn("read_thread anchors", closeout)
+        self.assertNotIn("TEAM_ROUTER_VERDICT", closeout)
 
     def test_read_verifier_verdict_update_with_adapter_returns_user_output(self):
         adapter = FakeThreadAdapter()
@@ -7606,21 +7845,36 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         self.assertIn("## Current Task", text)
         for needle in (
-            "ctr-20260628-anchor-and-closeout-freshness-fix",
-            "anchor cleanup and closeout freshness after verifier pass",
+            "idle / no active local package task",
             "Current git truth",
+            "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
+            "`master` synchronized with `origin/master`",
+            "global installed `codex-team-router` skill check matched repo before this package",
             "Current next gate",
-            "Historical records",
+            "wait for a new explicit dispatch or user authorization",
+            "No local closeout, commit, push, PR, merge, publish, release, or global skill sync is pending",
+            "No current diff surface is expected in idle state",
+            "Historical Records",
+            "ctr-20260628-anchor-and-closeout-freshness-fix",
+            "historical and no longer the Current Task",
             "current git truth / current next gate",
-            "Do not copy older ahead/behind, diff-surface, next-gate, or role-callback claims into the current state without refreshing them",
             "`git status -sb --untracked-files=all`",
+            "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
             "old executor callback",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
+        current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
-        for needle in (
+        self.assertIn("No current diff surface is expected in idle state", current_diff_section)
+        for stale_current in (
+            "anchor cleanup and closeout freshness after verifier pass",
+            "local closeout/commit",
+            "Current package diff",
+        ):
+            self.assertNotIn(stale_current, current_task_section)
+        for stale_current_diff in (
             "`tests/test_team_router.py`",
             "`docs/workbench.md`",
             "`skills/codex-team-router/references/manager-mode.md`",
@@ -7630,7 +7884,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`docs/team-router/packages/ctr-20260628-role-request-direct-send-and-waiting-fix.md`",
             "`docs/team-router/packages/ctr-20260628-anchor-and-closeout-freshness-fix.md`",
         ):
-            self.assertIn(needle, current_diff_section)
+            self.assertNotIn(stale_current_diff, current_diff_section)
         for stale_current_claim in (
             "[ahead 1]",
             "ahead of `origin/master` by 1",
@@ -7657,7 +7911,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`docs/compounding.md`",
         ):
             self.assertNotIn(stale, current_diff_section)
-
 
     def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
         text = self._skill_contract_text()
@@ -7791,7 +8044,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "callbackMarker: TEAM_ROUTER_REVIEW taskId=<taskId>",
             "callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>",
             "returnThreadId",
-            "send_message_to_thread(sourceThreadId, protocolBlock)",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)",
             "watcher/scheduler polling is the fallback",
             "self-thread-marker writes only to the role thread",
             "does not automatically appear in the manager/main thread",
@@ -7799,6 +8052,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "one deliberate collection check",
         ):
             self.assertIn(needle, text)
+        skill_entrypoint = self._skill_path().read_text(encoding="utf-8-sig")
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", skill_entrypoint)
+        direct_return_reference = (
+            self._skill_references_dir() / "direct-return.md"
+        ).read_text(encoding="utf-8")
+        legacy_section = direct_return_reference.split("Compatibility anchor: legacy shorthand", 1)[1]
+        self.assertIn("send_message_to_thread(sourceThreadId, protocolBlock)", legacy_section)
 
     def test_team_router_docs_describe_active_role_return(self):
         docs = "\n".join(
@@ -7815,7 +8075,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "direct-send + self-thread-marker fallback",
             "Bare `create_thread` plus `read_thread` is not formal role dispatch or direct-return completion",
             "A manager-read child-thread result is degraded/manual collection",
-            "send_message_to_thread(sourceThreadId, protocolBlock)",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)",
             "sourceRoleThreadId",
             "role",
             "taskId",
@@ -7837,9 +8097,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "first call `send_message_to_thread(sourceThreadId, protocolBlock)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback",
+            "first call `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback",
             runbook,
         )
+        runbook_main = runbook.split("Compatibility anchor:", 1)[0]
+        runbook_compatibility = runbook.split("Compatibility anchor:", 1)[1]
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", runbook_main)
+        self.assertNotIn(
+            "first call `send_message_to_thread(sourceThreadId, protocolBlock)`",
+            runbook_main,
+        )
+        self.assertIn("send_message_to_thread(sourceThreadId, protocolBlock)", runbook_compatibility)
         for needle in (
             "Bare `create_thread` plus `read_thread` is not formal role dispatch or direct-return completion",
             "A manager-read child-thread result is degraded/manual collection",
@@ -7854,7 +8122,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
     def test_direct_return_reference_matches_active_role_return_contract(self):
         text = (self._skill_references_dir() / "direct-return.md").read_text(encoding="utf-8")
         for needle in (
-            "first call `send_message_to_thread(sourceThreadId, protocolBlock)`",
+            "first call `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`",
             "then output the same protocol block body",
             "sourceThreadId",
             "sourceRoleThreadId",
@@ -7893,6 +8161,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "The role still writes its final marker in its own thread, then sends",
         ):
             self.assertNotIn(stale, text)
+        active_contract = text.split("Compatibility anchor: legacy shorthand", 1)[0]
+        legacy_contract = text.split("Compatibility anchor: legacy shorthand", 1)[1]
+        self.assertNotIn(
+            "first call `send_message_to_thread(sourceThreadId, protocolBlock)`",
+            active_contract,
+        )
+        self.assertIn("send_message_to_thread(sourceThreadId, protocolBlock)", legacy_contract)
+        self.assertIn(
+            "Legacy wording: first call `send_message_to_thread(sourceThreadId, protocolBlock)`",
+            legacy_contract,
+        )
 
     def test_skill_sync_check_script_defaults_to_read_only_check(self):
         script = ROOT / "scripts" / "team_router_skill_sync_check.py"
@@ -8108,7 +8387,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "callbackMarker: TEAM_ROUTER_REVIEW taskId=<taskId>",
             "callbackMarker: TEAM_ROUTER_VERDICT taskId=<taskId>",
             "returnThreadId",
-            "send_message_to_thread(sourceThreadId, protocolBlock)",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)",
             "Watcher polling is the fallback path",
             "self-thread-marker writes only to the role thread",
             "does not automatically appear in the manager/main thread",
@@ -8474,7 +8753,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "isolation requirement",
                     "verdictDelivery: direct-send",
                     "verdictFallback: self-thread-marker",
-                    "send_message_to_thread(sourceThreadId, protocolBlock)",
                     "FAST",
                     "NORMAL",
                     "STRICT",
@@ -8486,6 +8764,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                 ):
                     self.assertIn(needle, text)
                 self.assertNotIn("Role threads do not actively push back", text)
+        runbook = (
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        ).read_text(encoding="utf-8")
+        runbook_main = runbook.split("Compatibility anchor:", 1)[0]
+        runbook_compatibility = runbook.split("Compatibility anchor:", 1)[1]
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", runbook_main)
+        self.assertIn("send_message_to_thread(sourceThreadId, protocolBlock)", runbook_compatibility)
 
         focused_docs = (
             ("codex-team-router skill contract", self._skill_contract_text()),
@@ -8515,54 +8800,62 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                 self.assertIn("scope-limited closeout from already-confirmed facts", text)
 
     def test_manager_and_manual_docs_cover_closeout_reporting_and_compounding_decision(self):
-        docs = (
-            (
-                "manager-mode.md",
-                (ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md").read_text(
-                    encoding="utf-8"
-                ),
-            ),
-            (
-                "manual-orchestration.md",
-                (ROOT / "skills" / "codex-team-router" / "references" / "manual-orchestration.md").read_text(
-                    encoding="utf-8"
-                ),
-            ),
-        )
-        for name, text in docs:
-            with self.subTest(path=name):
-                for needle in (
-                    "Closeout reporting policy",
-                    "用户可读中文 closeout",
-                    "changed",
-                    "verified",
-                    "accepted by",
-                    "not done",
-                    "risks",
-                    "next gated step",
-                    "implemented changes",
-                    "verification actually run and results",
-                    "blockers/exceptions",
-                    "remaining risks",
-                    "current state and next step",
-                    "compounding decision",
-                    "manager overreach",
-                    "role conflict",
-                    "permission/sandbox issue",
-                    "test instability",
-                    "temp-file/workspace pollution",
-                    "user explicitly adds a reusable process preference",
-                    "role-authority confusion",
-                    "Reusable lessons belong in `docs/compounding.md`",
-                    "dated incident facts belong in `docs/evidence/`",
-                    "ordinary successful implementation/testing",
-                    "no new reusable risk",
-                    "compoundingDecision: recorded | skipped",
-                    "compoundingDecision: skipped",
-                    "reason: ordinary successful implementation/testing",
-                ):
-                    self.assertIn(needle, text)
+        manager_mode = (
+            ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md"
+        ).read_text(encoding="utf-8")
+        for needle in (
+            "Closeout reporting policy",
+            "用户可读中文 closeout",
+            "changed",
+            "verified",
+            "accepted by",
+            "not done",
+            "risks",
+            "next gated step",
+            "implemented changes",
+            "verification actually run and results",
+            "what this task actually completed",
+            "which key files/areas/rules changed",
+            "what was not done and why",
+            "the next suggested step / next gated step",
+            "Raw `TEAM_ROUTER_*` blocks",
+            "requiredChanges: none",
+            "blockers/exceptions",
+            "remaining risks",
+            "current state and next step",
+            "compounding decision",
+            "manager overreach",
+            "role conflict",
+            "permission/sandbox issue",
+            "test instability",
+            "temp-file/workspace pollution",
+            "user explicitly adds a reusable process preference",
+            "role-authority confusion",
+            "Reusable lessons belong in `docs/compounding.md`",
+            "dated incident facts belong in `docs/evidence/`",
+            "ordinary successful implementation/testing",
+            "no new reusable risk",
+            "compoundingDecision: recorded | skipped",
+            "compoundingDecision: skipped",
+            "reason: ordinary successful implementation/testing",
+        ):
+            self.assertIn(needle, manager_mode)
 
+        role_closeout = (
+            ROOT / "skills" / "codex-team-router" / "references" / "role-closeout.md"
+        ).read_text(encoding="utf-8")
+        for needle in (
+            "用户听得懂的人话 closeout",
+            "before any protocol appendix or raw helper output",
+            "what this task actually completed",
+            "which key files/areas/rules changed",
+            "what verification actually ran and what the result was",
+            "what was not done and why it stayed out of scope",
+            "the next suggested step or next gated step",
+            "Raw `TEAM_ROUTER_*` blocks",
+            "requiredChanges: none",
+        ):
+            self.assertIn(needle, role_closeout)
     def test_role_closeout_reference_covers_compounding_ownership(self):
         text = (ROOT / "skills" / "codex-team-router" / "references" / "role-closeout.md").read_text(encoding="utf-8")
         for needle in (
@@ -8758,10 +9051,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "proactively return",
             "must not rely on parent polling",
             "scope-limited to already-confirmed facts",
+            "not sufficient by themselves as the user-facing parent closeout",
         ):
             self.assertIn(needle, role_closeout)
-
-
     def test_conditional_reviewer_docs_cover_role_policy_reuse_and_direct_return(self):
         docs = (
             ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
@@ -8786,7 +9078,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "original reviewer",
                     "reviewDelivery: direct-send",
                     "reviewFallback: self-thread-marker",
-                    "send_message_to_thread(sourceThreadId, protocolBlock)",
                     "send_reviewer_request_with_adapter()",
                     "read_reviewer_review_update_with_adapter()",
                     "capture_reviewer_review_from_read()",
@@ -8797,6 +9088,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                     "shared/high-risk logic",
                 ):
                     self.assertIn(needle, text)
+        runbook = (
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        ).read_text(encoding="utf-8")
+        runbook_main = runbook.split("Compatibility anchor:", 1)[0]
+        runbook_compatibility = runbook.split("Compatibility anchor:", 1)[1]
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", runbook_main)
+        self.assertIn("send_message_to_thread(sourceThreadId, protocolBlock)", runbook_compatibility)
 
 
         reviewer_gate = (self._skill_references_dir() / "reviewer-gate.md").read_text(

@@ -11,7 +11,18 @@ Commit closeout is not implementation authorization. Manager must not use commit
 
 ## Parent user closeout
 
-Every completed Team Router flow needs a parent-thread report in ordinary, user-readable language. Protocol blocks close the role threads, but the manager still tells the user what changed, what verification actually ran, who accepted it, what was not done, remaining risks, current state, and the next gated step. Keep it short, concrete, and free of unnecessary internal jargon; use protocol names only where they clarify evidence.
+Every completed Team Router flow needs a parent-thread report in ordinary, user-readable language. Lead with a 用户听得懂的人话 closeout before any protocol appendix or raw helper output. Protocol blocks close the role threads, but they do not replace the parent-thread explanation.
+
+That human-readable closeout must explicitly cover:
+
+- what this task actually completed
+- which key files/areas/rules changed
+- what verification actually ran and what the result was
+- what was not done and why it stayed out of scope
+- remaining risks, or state clearly that there are none
+- the next suggested step or next gated step
+
+Keep it short, concrete, and free of unnecessary internal jargon. Use literal protocol keys, paths, commands, and thread ids only where they help the user inspect evidence. Raw `TEAM_ROUTER_*` blocks, `pass`, `requiredChanges: none`, or helper/state labels alone are not an acceptable parent closeout.
 
 Compounding落实 ownership: the manager reports `compoundingDecision`, concrete reason, and evidence. Durable lesson writes are executor-owned and gated through executor/reviewer/verifier; the manager may not self-write the lesson as an exception. Project-level reusable lessons are continuously recorded in `docs/compounding.md`; current task state is recorded in `docs/workbench.md` as a living record and must be refreshed when task state, diff surface, verification, or next gate changes. If no durable file is written, parent closeout states why the compounding record is pending/blocked/skipped rather than silently omitting it.
 
@@ -25,7 +36,7 @@ final protocol block is the closeout:
 - reviewer `TEAM_ROUTER_REVIEW`
 - verifier `TEAM_ROUTER_VERDICT`
 
-These protocol blocks are sufficient task-ending anchors.
+These protocol blocks are sufficient task-ending anchors for the role threads, but they are not sufficient by themselves as the user-facing parent closeout.
 
 When key checks are complete, the role must proactively return its protocol block by direct-send and self-thread fallback; it must not rely on parent polling. If the manager sends CONTROL after bounded wait/read because no final protocol block arrived, the role closeout is scope-limited to already-confirmed facts.
 

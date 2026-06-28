@@ -170,7 +170,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "defaultReturnThread": "none without explicit parent/source thread id",
         "targetThread": "current orchestrator/parent thread, not the manager/planner role thread",
         "requiredLedgerFields": ("returnThreadId", "orchestratorThreadId", "roleThreadId"),
-        "delivery": "direct-send via send_message_to_thread when an explicit parent/source returnThreadId is available",
+        "delivery": "direct-send via send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>) when an explicit parent/source returnThreadId is available",
         "fallback": "self-thread-marker plus watcher/heartbeat read_thread capture remains mandatory 5 minutes fallback",
         "completionReceipt": "role result is received only when direct-send reaches returnThreadId or watcher/heartbeat captures the expected self-thread marker and advances the ledger; child-thread output alone is not parent receipt",
         "manualThreadBoundary": "bare create_thread plus read_thread is not a valid Team Router role return; manual role threads must be registered in the ledger and formally dispatched with returnThreadId/sourceRoleThreadId before results can count",
@@ -185,7 +185,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         },
     },
     "callbackDeliveryModel": {
-        "primaryDelivery": "direct-send via send_message_to_thread(sourceThreadId, protocolBlock)",
+        "primaryDelivery": "direct-send via send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)",
         "fallback": "self-thread-marker in the role thread remains mandatory audit and recovery path",
         "requiredDispatchFields": (
             "sourceThreadId",
@@ -1994,10 +1994,26 @@ def _thread_id_from_create_result(create_result: Any, role: str) -> str:
     raise StateStoreError("create_thread result missing thread id for role: %s" % role)
 
 
+def _role_unavailable_reason(record: Mapping[str, Any], role: str) -> str | None:
+    if record.get("archived") is True:
+        return "%s role/thread is archived and unavailable for reuse" % role
+    for key in ("status", "state", "threadStatus", "availability"):
+        value = record.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in UNAVAILABLE_ROLE_STATUSES:
+            return "%s role/thread status %s is unavailable for reuse" % (role, normalized)
+    return None
+
+
 def _role_thread_id(state_root: str | Path, project_id: str, role: str) -> str:
     registry = load_registry(state_root, project_id)
     roles = _project_roles_from_registry(registry, project_id)
     role_record = _as_mapping(roles.get(role), "registry.roles.%s" % role, default_empty=False)
+    reason = _role_unavailable_reason(role_record, role)
+    if reason is not None:
+        raise StateStoreError(reason)
     return _required_str(role_record.get("threadId"), "registry.roles.%s.threadId" % role)
 
 
@@ -2154,6 +2170,14 @@ def _listed_thread_id_and_title(item: Mapping[str, Any]) -> tuple[str | None, st
     return thread_id, title
 
 
+def _listed_thread_unavailable_reason(item: Mapping[str, Any], role: str) -> str | None:
+    for candidate in _candidate_mappings(item):
+        reason = _role_unavailable_reason(candidate, role)
+        if reason is not None:
+            return reason
+    return None
+
+
 def _listed_thread_role(project_id: str,
                         item: Mapping[str, Any],
                         task_title: str | None = None) -> str | None:
@@ -2190,6 +2214,8 @@ def discover_role_threads_with_adapter(thread_adapter: Any,
     for item in _thread_list_items(result):
         role = _listed_thread_role(project_id, item, task_title)
         if role is None or role not in selected_roles:
+            continue
+        if _listed_thread_unavailable_reason(item, role) is not None:
             continue
         thread_id, title = _listed_thread_id_and_title(item)
         if thread_id is None:
@@ -2246,8 +2272,7 @@ def _existing_role_threads_from_registry(state_root: str | Path,
         if not isinstance(record, Mapping):
             raise StateStoreError("registry.roles.%s must be a JSON object" % role)
         normalized = _normalize_role_record(role, record, observed_at)
-        status = str(normalized.get("status") or "").strip().lower()
-        if status in UNAVAILABLE_ROLE_STATUSES:
+        if _role_unavailable_reason(normalized, role) is not None:
             continue
         roles[role] = normalized
     return roles
@@ -2303,6 +2328,78 @@ def create_role_threads_with_adapter(thread_adapter: Any,
         )
     return roles
 
+
+def _role_replacement_reason(existing_record: Mapping[str, Any] | None, role: str) -> tuple[str | None, str | None]:
+    if existing_record is None:
+        return None, None
+    thread_id = existing_record.get("threadId") if isinstance(existing_record.get("threadId"), str) else None
+    reason = _role_unavailable_reason(existing_record, role)
+    if reason is None:
+        return thread_id, None
+    return thread_id, reason
+
+
+def _ensure_role_with_adapter(state_root: str | Path,
+                              project_id: str,
+                              role: str,
+                              ledger: Mapping[str, Any],
+                              *,
+                              thread_adapter: Any,
+                              observed_at: str) -> str:
+    try:
+        return _role_thread_id(state_root, project_id, role)
+    except StateStoreError as exc:
+        unavailable_reason = str(exc)
+    registry = load_registry(state_root, project_id)
+    project_roles = _project_roles_from_registry(registry, project_id)
+    existing = project_roles.get(role) if isinstance(project_roles.get(role), Mapping) else None
+    replaced_thread_id, replacement_reason = _role_replacement_reason(existing, role)
+    if replacement_reason is None:
+        replacement_reason = unavailable_reason
+    objective = str(ledger.get("objective") or "Team Router role replacement")
+    task_title = _task_title_from_objective(objective)
+    discovered = discover_role_threads_with_adapter(
+        thread_adapter,
+        project_id=project_id,
+        observed_at=observed_at,
+        task_title=task_title,
+        role_names=[role],
+    )
+    if role in discovered:
+        record = _normalize_adapter_role_title(
+            thread_adapter,
+            project_id,
+            role,
+            discovered[role],
+            task_title,
+        )
+    else:
+        target = _resolve_target_argument(thread_adapter, project_id, None)
+        created = create_role_threads_with_adapter(
+            thread_adapter,
+            project_id=project_id,
+            objective=objective,
+            target=target,
+            observed_at=observed_at,
+            task_title=task_title,
+            role_names=[role],
+        )
+        record = created.get(role)
+        if not isinstance(record, Mapping):
+            raise StateStoreError("failed to create replacement role conversation for %s" % role)
+        record = _normalize_adapter_role_title(
+            thread_adapter,
+            project_id,
+            role,
+            dict(record),
+            task_title,
+        )
+    record = dict(record)
+    if replaced_thread_id is not None:
+        record["replacesThreadId"] = replaced_thread_id
+    record["replacementReason"] = replacement_reason
+    update_registry_roles(state_root, project_id, {role: record}, observed_at)
+    return _required_str(record.get("threadId"), "%s.threadId" % role)
 
 def resolve_role_threads_with_adapter(state_root: str | Path,
                                       project_id: str,
@@ -2605,7 +2702,7 @@ def make_executor_dispatch_message(task_id: str,
         lines.extend((*direct_lines,
             "callbackDelivery: direct-send",
             "callbackFallback: self-thread-marker",
-            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_CALLBACK block。",
+            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>) 发送最终 TEAM_ROUTER_CALLBACK block。",
             "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
@@ -3249,7 +3346,7 @@ def make_reviewer_request_message(task_id: str,
         lines.extend((*direct_lines,
             "reviewDelivery: direct-send",
             "reviewFallback: self-thread-marker",
-            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_REVIEW block。",
+            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_REVIEW block>) 发送最终 TEAM_ROUTER_REVIEW block。",
             "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
@@ -3470,7 +3567,7 @@ def make_verifier_request_message(task_id: str,
         lines.extend((*direct_lines,
             "verdictDelivery: direct-send",
             "verdictFallback: self-thread-marker",
-            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_VERDICT block。",
+            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_VERDICT block>) 发送最终 TEAM_ROUTER_VERDICT block。",
             "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
@@ -3777,7 +3874,14 @@ def send_executor_dispatch_with_adapter(state_root: str | Path,
     plan_fields = plan.get("fields") if isinstance(plan, Mapping) else None
     if not isinstance(plan_fields, Mapping):
         raise StateStoreError("missing manager plan fields for task: %s" % task_id)
-    executor_thread_id = _role_thread_id(state_root, project_id, "executor")
+    executor_thread_id = _ensure_role_with_adapter(
+        state_root,
+        project_id,
+        "executor",
+        ledger,
+        thread_adapter=thread_adapter,
+        observed_at=sent_at,
+    )
     provisional_anchor = {"messageId": None, "sentAt": sent_at}
     prompt = make_executor_dispatch_message(
         task_id,
@@ -3851,38 +3955,13 @@ def _ensure_reviewer_role_with_adapter(state_root: str | Path,
                                        thread_adapter: Any,
                                        observed_at: str) -> str:
     try:
-        return _role_thread_id(state_root, project_id, "reviewer")
-    except StateStoreError:
-        pass
-    objective = str(ledger.get("objective") or "review Team Router work")
-    task_title = _task_title_from_objective(objective)
-    discovered = discover_role_threads_with_adapter(
-        thread_adapter,
-        project_id=project_id,
-        observed_at=observed_at,
-        task_title=task_title,
-        role_names=["reviewer"],
-    )
-    if "reviewer" in discovered:
-        record = _normalize_adapter_role_title(
-            thread_adapter,
+        return _ensure_role_with_adapter(
+            state_root,
             project_id,
             "reviewer",
-            discovered["reviewer"],
-            task_title,
-        )
-        update_registry_roles(state_root, project_id, {"reviewer": record}, observed_at)
-        return _required_str(record.get("threadId"), "reviewer.threadId")
-    try:
-        target = _resolve_target_argument(thread_adapter, project_id, None)
-        created = create_role_threads_with_adapter(
-            thread_adapter,
-            project_id=project_id,
-            objective=objective,
-            target=target,
+            ledger,
+            thread_adapter=thread_adapter,
             observed_at=observed_at,
-            task_title=task_title,
-            role_names=["reviewer"],
         )
     except StateStoreError as exc:
         raise StateStoreError(
@@ -3890,22 +3969,6 @@ def _ensure_reviewer_role_with_adapter(state_root: str | Path,
             "create/register reviewer role conversation explicitly before continuing; "
             "subagent fallback is not allowed: %s" % exc
         ) from exc
-    record = created.get("reviewer")
-    if not isinstance(record, Mapping):
-        raise StateStoreError(
-            "conditional reviewer gate requires reviewer role conversation; "
-            "create/register reviewer role conversation explicitly before continuing; "
-            "subagent fallback is not allowed"
-        )
-    record = _normalize_adapter_role_title(
-        thread_adapter,
-        project_id,
-        "reviewer",
-        dict(record),
-        task_title,
-    )
-    update_registry_roles(state_root, project_id, {"reviewer": record}, observed_at)
-    return _required_str(record.get("threadId"), "reviewer.threadId")
 
 
 def send_reviewer_request_with_adapter(state_root: str | Path,
@@ -4030,7 +4093,14 @@ def send_verifier_request_with_adapter(state_root: str | Path,
     plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
     plan_fields = plan.get("fields") if isinstance(plan, Mapping) else {}
     scope = str(plan_fields.get("scope") or "unknown")
-    verifier_thread_id = _role_thread_id(state_root, project_id, "verifier")
+    verifier_thread_id = _ensure_role_with_adapter(
+        state_root,
+        project_id,
+        "verifier",
+        ledger,
+        thread_adapter=thread_adapter,
+        observed_at=sent_at,
+    )
     review = ledger.get("review") if isinstance(ledger.get("review"), Mapping) else {}
     reviewer_result = review.get("result") if isinstance(review.get("result"), Mapping) else None
     prompt = make_verifier_request_message(
@@ -4447,6 +4517,37 @@ def _watch_next_wakeup(ledger: Mapping[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _watcher_read_allowed(ledger: Mapping[str, Any], *, observed_at: str, read_reason: str) -> dict[str, Any]:
+    reason = _required_str(read_reason, "readReason")
+    lowered = reason.lower()
+    if any(term in lowered for term in EXPLICIT_ROLE_READ_BYPASS_TERMS) or "timeout" in lowered or "blocker" in lowered:
+        return {"allowed": True, "action": "read_allowed", "reason": reason}
+    watcher = _watcher_ledger(ledger)
+    if watcher is None:
+        return {"allowed": True, "action": "read_allowed", "reason": reason}
+    first_check_at = watcher.get("firstCheckAt") if isinstance(watcher.get("firstCheckAt"), str) else None
+    anchor = watcher.get("searchAnchor") if isinstance(watcher.get("searchAnchor"), Mapping) else {}
+    anchor_sent_at = anchor.get("sentAt") if isinstance(anchor.get("sentAt"), str) else None
+    discipline = ledger.get("readDiscipline") if isinstance(ledger.get("readDiscipline"), Mapping) else {}
+    last_read_at = discipline.get("lastReadAt") if isinstance(discipline.get("lastReadAt"), str) else None
+    first_check_unused = (
+        last_read_at is None
+        or (anchor_sent_at is not None and last_read_at == anchor_sent_at)
+        or (anchor_sent_at is not None and _iso_timestamp_before(last_read_at, anchor_sent_at))
+    )
+    if (
+        first_check_at is not None
+        and not _iso_timestamp_before(observed_at, first_check_at)
+        and first_check_unused
+    ):
+        return {
+            "allowed": True,
+            "action": "first_check_read_allowed",
+            "reason": "firstCheckAt reached for one short observation-only read",
+            "firstCheckAt": first_check_at,
+        }
+    return role_read_allowed(ledger, observed_at=observed_at, reason=reason)
+
 def _watch_task_update(action: str,
                        state_root: str | Path,
                        project_id: str,
@@ -4468,7 +4569,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
                                  permission: str,
                                  observed_at: str,
                                  return_thread_id: str | None = None,
-                                 turn_limit: int | None = None) -> dict[str, Any]:
+                                 turn_limit: int | None = None,
+                                 read_reason: str = "scheduled watcher heartbeat") -> dict[str, Any]:
     """Advance an existing task from a host-side watcher invocation.
 
     This helper does not create role threads or run unattended by itself. A host
@@ -4478,6 +4580,11 @@ def watch_team_task_with_adapter(state_root: str | Path,
     """
     _validate_permission(permission)
     ledger = load_task_ledger(state_root, project_id, task_id)
+    read_decision = _watcher_read_allowed(ledger, observed_at=observed_at, read_reason=read_reason)
+    if not read_decision["allowed"]:
+        update = _watch_task_update("watch_read_suppressed", state_root, project_id, ledger, observed_at=observed_at)
+        update["readDecision"] = read_decision
+        return update
     status = ledger["status"]
     needs_feedback_role = _needs_feedback_role(ledger) if status == "needs_feedback" else None
     if status in {"awaiting_plan", "plan_unreachable"} or needs_feedback_role == "manager":

@@ -57,7 +57,7 @@ Small low-risk tasks use executor -> verifier. Router/manager policy, safety/pro
 
 ## roleCloseoutPolicy
 
-After completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT`; protocol blocks are anchors. Parent manager still gives plain-language closeout: changed, verified, accepted by, not done, risks, next gated step. compact is native, not chat prompt. Records: durable -> `docs/compounding.md`; task living -> `docs/workbench.md`.
+After completion, default is 不 clear role thread and no extra `ROLE_CLOSEOUT`; protocol blocks are anchors. Parent manager still gives plain-language closeout first in user terms: what actually changed, key places touched, verification and result, not done/boundary, risks, next gated step. Protocol/evidence may follow, but cannot replace that human-readable closeout. compact is native, not chat prompt. Records: durable -> `docs/compounding.md`; task living -> `docs/workbench.md`.
 
 ## sideEffectTaxonomy
 
