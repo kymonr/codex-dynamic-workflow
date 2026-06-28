@@ -1,14 +1,52 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
+import uuid
 from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _test_tmp_root():
+    configured = os.environ.get("TEAM_ROUTER_TEST_TMP_ROOT")
+    if configured:
+        return Path(configured)
+    if os.name == "nt":
+        return Path("C:/tmp/team-router-test-tmp")
+    return ROOT / "test-tmp" / "test_team_router"
+
+
+TEST_TMP_ROOT = _test_tmp_root()
+
+
+class _WorkspaceTempDir:
+    def __init__(self, suffix=None, prefix=None, dir=None):
+        self.root = Path(dir) if dir is not None else TEST_TMP_ROOT
+        dirname = "%s%s%s" % (prefix or "tmp", uuid.uuid4().hex, suffix or "")
+        self.name = str(self.root / dirname)
+
+    def __enter__(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        Path(self.name).mkdir(parents=True, exist_ok=False)
+        return self.name
+
+    def __exit__(self, exc_type, exc, tb):
+        self.cleanup()
+        return False
+
+    def cleanup(self):
+        shutil.rmtree(self.name, ignore_errors=True)
+
+
+def workspace_temp_dir():
+    return _WorkspaceTempDir()
+
 _SRC = str(ROOT / "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
@@ -499,6 +537,36 @@ risks: none
         self.assertIn("evidenceChecked", messages[4])
 
 class TestTeamRouterState(unittest.TestCase):
+    def test_closeout_check_reports_read_only_status_and_unauthorized_gates(self):
+        global_skill = Path("C:/tmp/team-router-closeout-missing-global-skill")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "scripts" / "team_router_closeout_check.py"),
+                "--repo-root",
+                str(ROOT),
+                "--global-skill",
+                str(global_skill),
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["mode"], "read-only")
+        self.assertIn("gitStatusShort", report)
+        self.assertIn("diffFiles", report)
+        self.assertLess(report["skill"]["entrypointBytes"], report["skill"]["hardCapBytes"])
+        self.assertEqual(report["skill"]["targetBytes"], 7200)
+        self.assertIn(report["skillSync"]["status"], {"match", "mismatch", "blocked"})
+        self.assertFalse(report["authorization"]["commit"])
+        self.assertFalse(report["authorization"]["push"])
+        self.assertFalse(report["authorization"]["globalSync"])
+        self.assertIn("does not stage, commit, push, or sync", report["readOnlyGuarantee"])
     def test_callback_unreachable_is_recoverable_not_terminal(self):
         self.assertNotIn("callback_unreachable", team_router.TERMINAL_STATUSES)
         self.assertEqual(
@@ -651,6 +719,109 @@ risks: none
 
         self.assertEqual(team_router.classify_team_router_gate(ledger), "PACKAGE")
         self.assertTrue(team_router.gate_class_requires_reviewer("PACKAGE"))
+
+    def test_explain_team_router_gate_names_classification_reasons(self):
+        cases = (
+            (
+                {
+                    "objective": "ordinary helper",
+                    "plan": {"fields": {"acknowledgedPermission": "local-package", "scope": "src"}},
+                },
+                "STRICT",
+                "local-package permission requires reviewer gate",
+            ),
+            (
+                {
+                    "objective": "same task family discipline hardening",
+                    "plan": {"fields": {"riskBoundary": "package gate", "notes": "package"}},
+                },
+                "PACKAGE",
+                "package term",
+            ),
+            (
+                {
+                    "objective": "Team Router manager orchestration policy",
+                    "plan": {"fields": {"scope": "role protocol and safety boundary"}},
+                },
+                "STRICT",
+                "reviewer-required term",
+            ),
+            (
+                {
+                    "objective": "restore README BOM",
+                    "plan": {"fields": {"scope": "README.md", "riskBoundary": "docs-only single phrase"}},
+                },
+                "FAST",
+                "fast docs term",
+            ),
+            (
+                {
+                    "objective": "update ordinary helper",
+                    "plan": {"fields": {"scope": "src/local_helper.py", "riskBoundary": "ordinary"}},
+                },
+                "NORMAL",
+                "normal fallback",
+            ),
+        )
+        for ledger, expected_gate, expected_reason in cases:
+            with self.subTest(expected_gate=expected_gate, expected_reason=expected_reason):
+                explanation = team_router.explain_team_router_gate(ledger)
+                self.assertEqual(explanation["gateClass"], expected_gate)
+                self.assertEqual(team_router.classify_team_router_gate(ledger), expected_gate)
+                self.assertIn(expected_reason, explanation["reasons"])
+
+    def test_live_orchestration_readiness_reports_missing_host_contracts(self):
+        missing_adapter = team_router.assess_live_orchestration_readiness(
+            thread_adapter=None,
+            parent_thread_id="parent-thread",
+            heartbeat_scheduler=True,
+        )
+        self.assertEqual(missing_adapter["status"], "blocked")
+        self.assertIn("callable adapter", " ".join(missing_adapter["missing"]))
+
+        missing_parent = team_router.assess_live_orchestration_readiness(
+            thread_adapter=FullThreadAdapter(),
+            parent_thread_id=None,
+            heartbeat_scheduler=True,
+        )
+        self.assertEqual(missing_parent["status"], "blocked")
+        self.assertIn("parent_thread_id", missing_parent["missing"])
+
+        class AdapterWithoutTitle:
+            def create_thread(self, **kwargs):
+                return {}
+
+            def send_message_to_thread(self, **kwargs):
+                return {}
+
+            def read_thread(self, **kwargs):
+                return {}
+
+        adapter_without_title = AdapterWithoutTitle()
+        missing_title = team_router.assess_live_orchestration_readiness(
+            thread_adapter=adapter_without_title,
+            parent_thread_id="parent-thread",
+            heartbeat_scheduler=True,
+            required_tools=("create_thread", "send_message_to_thread", "read_thread", "set_thread_title"),
+        )
+        self.assertEqual(missing_title["status"], "blocked")
+        self.assertIn("callable set_thread_title", missing_title["missing"])
+
+        missing_scheduler = team_router.assess_live_orchestration_readiness(
+            thread_adapter=FullThreadAdapter(),
+            parent_thread_id="parent-thread",
+            heartbeat_scheduler=False,
+        )
+        self.assertEqual(missing_scheduler["status"], "blocked")
+        self.assertIn("heartbeat scheduler", missing_scheduler["missing"])
+
+        ready = team_router.assess_live_orchestration_readiness(
+            thread_adapter=FullThreadAdapter(),
+            parent_thread_id="parent-thread",
+            heartbeat_scheduler=True,
+        )
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["missing"], [])
 
     def test_role_read_interval_uses_five_minute_minimum(self):
         self.assertEqual(team_router.role_read_interval_seconds("FAST"), 300)
@@ -1525,7 +1696,7 @@ risks: none
 
 class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
     def test_registry_path_uses_shared_state_root_not_worktree_root(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             base = Path(td)
             canonical = base / "repo"
             worktree = base / "repo-wt"
@@ -1540,7 +1711,7 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
             )
 
     def test_state_root_rejects_codex_tmp(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             forbidden_root = Path(td) / ".codex-tmp" / "team-router"
             project_root = Path(td) / "repo"
 
@@ -1593,7 +1764,7 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
 
 class TestTeamRouterJsonState(unittest.TestCase):
     def test_registry_round_trip_normalizes_missing_fields(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             path = team_router.registry_path(root, project_id)
@@ -1624,7 +1795,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), registry)
 
     def test_task_ledger_round_trip_normalizes_missing_fields(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             task_id = "ctr-20260622-160000-a7f3"
@@ -1653,7 +1824,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             )
 
     def test_missing_task_ledger_raises_state_store_error(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             task_id = "ctr-20260622-160000-a7f3"
@@ -1664,7 +1835,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             self.assertIn("missing JSON file", str(caught.exception))
 
     def test_new_task_ledger_rejects_invalid_inputs(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             task_id = "ctr-20260622-160000-a7f3"
@@ -1708,7 +1879,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
                     self.assertIn(message, str(caught.exception))
 
     def test_bad_registry_json_raises_state_store_error(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             path = team_router.registry_path(root, project_id)
@@ -1721,7 +1892,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             self.assertIn("invalid JSON", str(caught.exception))
 
     def test_bad_task_ledger_json_raises_state_store_error(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             task_id = "ctr-20260622-160000-a7f3"
@@ -1735,7 +1906,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             self.assertIn("invalid JSON", str(caught.exception))
 
     def test_task_ledger_read_permission_error_raises_state_store_error(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             task_id = "ctr-20260622-160000-a7f3"
@@ -1747,7 +1918,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             self.assertIn("cannot read JSON file", str(caught.exception))
 
     def test_atomic_save_leaves_no_temp_file(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             root = Path(td) / "state"
             project_id = "project-123"
             task_id = "ctr-20260622-160000-a7f3"
@@ -1766,7 +1937,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
     def test_two_worktrees_share_registry_via_canonical_root(self):
-        with tempfile.TemporaryDirectory() as td:
+        with workspace_temp_dir() as td:
             base = Path(td)
             canonical = base / "repo"
             worktree = base / "repo-wt"
@@ -1793,7 +1964,7 @@ class TestTeamRouterJsonState(unittest.TestCase):
 
 class TestTeamRouterManagerIntegration(unittest.TestCase):
     def setUp(self):
-        self.td = tempfile.TemporaryDirectory()
+        self.td = workspace_temp_dir()
         self.root = Path(self.td.name) / "state"
         self.project_id = "project-123"
         self.task_id = "ctr-20260622-160000-a7f3"
@@ -2214,6 +2385,80 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             {"messageId": None, "sentAt": "2026-06-22T20:02:00+08:00"},
         )
 
+    def test_malformed_direct_return_records_wrong_protocol_fields_and_keeps_fallback(self):
+        self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        messages = [{
+            "messageId": "msg-direct-bad",
+            "sentAt": "2026-06-22T20:03:00+08:00",
+            "sourceThreadId": "thread-executor",
+            "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: none\nsourceThreadId: wrong-parent\nrole: verifier\nsourceRoleThreadId: wrong-role-thread",
+        }]
+
+        result = team_router._capture_executor_callback_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:03:30+08:00",
+        )
+
+        self.assertIsNone(result)
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertEqual(saved["status"], "awaiting_callback")
+        malformed = saved["malformedDirectReturns"][-1]
+        self.assertEqual(malformed["recovery"], "self-thread-marker fallback")
+        self.assertEqual(malformed["sourceThreadId"], "thread-executor")
+        self.assertEqual(malformed["protocolSourceThreadId"], "wrong-parent")
+        self.assertEqual(malformed["protocolRole"], "verifier")
+        self.assertEqual(malformed["protocolSourceRoleThreadId"], "wrong-role-thread")
+        self.assertIn("TEAM_ROUTER_CALLBACK.sourceThreadId", malformed["error"])
+        self.assertIn("TEAM_ROUTER_CALLBACK.role", malformed["error"])
+        self.assertIn("TEAM_ROUTER_CALLBACK.sourceRoleThreadId", malformed["error"])
+
+    def test_malformed_direct_return_records_missing_protocol_fields_and_keeps_fallback(self):
+        self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        messages = [{
+            "messageId": "msg-direct-missing",
+            "sentAt": "2026-06-22T20:03:00+08:00",
+            "sourceThreadId": "thread-executor",
+            "text": "TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: none",
+        }]
+
+        result = team_router._capture_executor_callback_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-06-22T20:03:30+08:00",
+        )
+
+        self.assertIsNone(result)
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        malformed = saved["malformedDirectReturns"][-1]
+        self.assertEqual(malformed["protocolSourceThreadId"], "")
+        self.assertEqual(malformed["protocolRole"], "")
+        self.assertEqual(malformed["protocolSourceRoleThreadId"], "")
+        self.assertIn("TEAM_ROUTER_CALLBACK.sourceThreadId is required", malformed["error"])
+        self.assertIn("TEAM_ROUTER_CALLBACK.role is required", malformed["error"])
+        self.assertIn("TEAM_ROUTER_CALLBACK.sourceRoleThreadId is required", malformed["error"])
     def test_send_executor_dispatch_with_adapter_includes_startup_failure_recovery_policy(self):
         adapter = FakeThreadAdapter()
         self._planned_ledger()
@@ -7787,7 +8032,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         references_dir = self._skill_references_dir()
         skill_text = skill_path.read_text(encoding="utf-8-sig")
 
-        self.assertLessEqual(len(skill_path.read_bytes()), 8192)
+        self.assertLess(len(skill_path.read_bytes()), 7200)
         self.assertTrue(references_dir.is_dir())
         self.assertIn("Codex 8KB cap", skill_text)
         self.assertIn("references/", skill_text)
@@ -7845,73 +8090,49 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         self.assertIn("## Current Task", text)
         for needle in (
-            "idle / no active local package task",
+            "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
             "Current git truth",
-            "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
-            "`master` synchronized with `origin/master`",
-            "global installed `codex-team-router` skill check matched repo before this package",
-            "Current next gate",
-            "wait for a new explicit dispatch or user authorization",
-            "No local closeout, commit, push, PR, merge, publish, release, or global skill sync is pending",
-            "No current diff surface is expected in idle state",
-            "Historical Records",
-            "ctr-20260628-anchor-and-closeout-freshness-fix",
-            "historical and no longer the Current Task",
-            "current git truth / current next gate",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
+            "branch is `master...origin/master`",
+            "Current next gate",
+            "executor callback -> reviewer pass -> verifier pass",
+            "No local closeout, commit, push, PR, merge, publish, release, or global skill sync is authorized",
+            "No commit, no push, no PR, no merge, no deploy, no global skill sync",
+            "Current Diff Surface",
+            "docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md",
+            "docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md",
+            "scripts/team_router_closeout_check.py",
+            "git diff --name-only` reports tracked modified files only",
+            "Historical Records",
+            "historical and no longer the Current Task",
             "old executor callback",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
         current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
-        self.assertIn("No current diff surface is expected in idle state", current_diff_section)
+        self.assertIn("M src/team_router.py", current_diff_section)
+        self.assertIn("M tests/test_team_router.py", current_diff_section)
+        self.assertIn("?? scripts/team_router_closeout_check.py", current_diff_section)
         for stale_current in (
-            "anchor cleanup and closeout freshness after verifier pass",
-            "local closeout/commit",
-            "Current package diff",
+            "idle / no active local package task",
+            "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
+            "wait for a new explicit dispatch or user authorization",
+            "No current diff surface is expected in idle state",
         ):
-            self.assertNotIn(stale_current, current_task_section)
-        for stale_current_diff in (
-            "`tests/test_team_router.py`",
-            "`docs/workbench.md`",
-            "`skills/codex-team-router/references/manager-mode.md`",
-            "`skills/codex-team-router/references/manual-orchestration.md`",
-            "`skills/codex-team-router/references/testing-and-quality-gates.md`",
-            "`skills/codex-team-router/references/direct-return.md`",
-            "`docs/team-router/packages/ctr-20260628-role-request-direct-send-and-waiting-fix.md`",
-            "`docs/team-router/packages/ctr-20260628-anchor-and-closeout-freshness-fix.md`",
-        ):
-            self.assertNotIn(stale_current_diff, current_diff_section)
+            self.assertNotIn(stale_current, current_task_section + current_diff_section)
         for stale_current_claim in (
             "[ahead 1]",
             "ahead of `origin/master` by 1",
-            "combined diff is not committed",
             "previous helper-test commit `c9d41b3` is local-only",
             "Global installed skill reference synced",
             r"C:\Users\Orz\.codex\skills\codex-team-router",
             "implementation in progress in isolated worktree",
-            "local C-package verification, then local commit in this isolated worktree, then reviewer gate",
             "thread tools unavailable",
         ):
             self.assertNotIn(stale_current_claim, text)
-        for stale in (
-            "`docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`",
-            "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
-            "`docs/team-router/packages/ctr-20260628-workbench-tool-error-governance.md`",
-            "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
-            "`README.md`",
-            "`skills/codex-team-router/references/agent-assist-policy.md`",
-            "`skills/codex-team-router/references/role-closeout.md`",
-            "`src/team_router.py`",
-            "`docs/runbooks/codex-team-router-live-orchestration.md`",
-            "`skills/codex-team-router/SKILL.md`",
-            "`docs/compounding.md`",
-        ):
-            self.assertNotIn(stale, current_diff_section)
-
     def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
         text = self._skill_contract_text()
 
@@ -8175,7 +8396,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
     def test_skill_sync_check_script_defaults_to_read_only_check(self):
         script = ROOT / "scripts" / "team_router_skill_sync_check.py"
-        with tempfile.TemporaryDirectory() as tmp:
+        with workspace_temp_dir() as tmp:
             tmp_path = Path(tmp)
             repo_skill = tmp_path / "repo" / "codex-team-router"
             global_skill = tmp_path / "global" / "codex-team-router"
@@ -8207,7 +8428,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
     def test_skill_sync_check_script_reports_match_without_writes(self):
         script = ROOT / "scripts" / "team_router_skill_sync_check.py"
-        with tempfile.TemporaryDirectory() as tmp:
+        with workspace_temp_dir() as tmp:
             tmp_path = Path(tmp)
             repo_skill = tmp_path / "repo" / "codex-team-router"
             global_skill = tmp_path / "global" / "codex-team-router"

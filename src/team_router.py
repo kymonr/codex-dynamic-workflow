@@ -832,6 +832,35 @@ def classify_team_router_gate(ledger: Mapping[str, Any]) -> str:
     return "NORMAL"
 
 
+def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    text = _reviewer_gate_text(ledger)
+    reasons: list[str] = []
+    package_terms = [term for term in PACKAGE_GATE_TERMS if term in text]
+    fast_terms = [term for term in FAST_GATE_TERMS if term in text]
+    reviewer_terms = [term for term in REVIEWER_GATE_REQUIRED_TERMS if term in text]
+    team_router_qualifiers = [
+        term for term in REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS if term in text
+    ]
+    if package_terms:
+        reasons.append("package term")
+    if _ledger_has_local_package_permission(ledger):
+        reasons.append("local-package permission requires reviewer gate")
+    if _reviewer_gate_explicitly_required(ledger):
+        reasons.append("explicit reviewer requirement")
+    if reviewer_terms or ("team router" in text and team_router_qualifiers):
+        reasons.append("reviewer-required term")
+    if fast_terms and not reasons:
+        reasons.append("fast docs term")
+    gate = classify_team_router_gate(ledger)
+    if gate == "NORMAL" and not reasons:
+        reasons.append("normal fallback")
+    return {
+        "gateClass": gate,
+        "requiresReviewer": gate_class_requires_reviewer(gate),
+        "reasons": reasons,
+    }
+
+
 def gate_class_requires_reviewer(gate_class: str) -> bool:
     gate = _required_str(gate_class, "gateClass").upper()
     if gate not in GATE_CLASSES:
@@ -1642,6 +1671,39 @@ def parent_entry_guard(thread_adapter: Any | None = None,
     )
 
 
+
+def assess_live_orchestration_readiness(
+    thread_adapter: Any | None,
+    *,
+    parent_thread_id: str | None,
+    heartbeat_scheduler: Any,
+    required_tools: Iterable[str] = THREAD_TOOL_NAMES,
+) -> dict[str, Any]:
+    missing: list[str] = []
+    capabilities: dict[str, bool] = {}
+    if thread_adapter is None:
+        missing.append("callable adapter")
+    else:
+        for tool_name in required_tools:
+            is_callable = callable(_adapter_method(thread_adapter, tool_name))
+            capabilities[tool_name] = is_callable
+            if not is_callable:
+                missing.append("callable %s" % tool_name)
+    if not str(parent_thread_id or "").strip():
+        missing.append("parent_thread_id")
+    if not heartbeat_scheduler:
+        missing.append("heartbeat scheduler")
+    status = "ready" if not missing else "blocked"
+    return {
+        "status": status,
+        "missing": missing,
+        "capabilities": capabilities,
+        "reason": (
+            "live orchestration ready"
+            if status == "ready"
+            else "live orchestration requires " + ", ".join(missing)
+        ),
+    }
 
 def _clear_waiting_read_state(ledger: dict[str, Any]) -> dict[str, Any]:
     ledger.pop("roleThreadStatus", None)
@@ -3048,6 +3110,9 @@ def _validate_direct_return_receipt(msg: ProtocolMessage,
         "messageId": message.get("messageId"),
         "sentAt": message.get("sentAt"),
         "sourceThreadId": message.get("sourceThreadId"),
+        "protocolSourceThreadId": protocol_source_thread_id,
+        "protocolRole": role_value,
+        "protocolSourceRoleThreadId": source_role_thread_id,
         "error": "; ".join(errors),
     }
 
@@ -3084,6 +3149,9 @@ def _record_malformed_direct_return(ledger: dict[str, Any],
         "messageId": malformed.get("messageId"),
         "sentAt": malformed.get("sentAt"),
         "capturedAt": captured_at,
+        "protocolSourceThreadId": malformed.get("protocolSourceThreadId", ""),
+        "protocolRole": malformed.get("protocolRole", ""),
+        "protocolSourceRoleThreadId": malformed.get("protocolSourceRoleThreadId", ""),
         "error": malformed.get("error"),
         "recovery": "self-thread-marker fallback",
     }

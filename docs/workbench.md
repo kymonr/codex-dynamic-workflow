@@ -4,29 +4,39 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: idle / no active local package task.
-- Current git truth: repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch; `master` synchronized with `origin/master`; global installed `codex-team-router` skill check matched repo before this package.
-- Current next gate: wait for a new explicit dispatch or user authorization. No local closeout, commit, push, PR, merge, publish, release, or global skill sync is pending.
-- Not done: no current task actions are pending.
+- State: active local package implementation for `ctr-20260628-team-router-optimization-1-6`.
+- Current git truth: refreshed during this package with `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, and `git diff --name-only`; branch is `master...origin/master` with no ahead/behind marker shown, and the worktree has the package diff listed below.
+- Current next gate: executor callback -> reviewer pass -> verifier pass. No local closeout, commit, push, PR, merge, publish, release, or global skill sync is authorized in this executor package.
+- Not done: No commit, no push, no PR, no merge, no deploy, no global skill sync. Final commit/global sync decisions remain parent-thread gates after verifier pass.
 
 ## Current Diff Surface
 
-No current diff surface is expected in idle state. For any new package, refresh from `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, and `git diff --name-only` before reporting scope.
+Fresh `git status -s --untracked-files=all` for this active package currently reports:
+
+- `M skills/codex-team-router/SKILL.md`
+- `M skills/codex-team-router/references/adapter-runtime.md`
+- `M skills/codex-team-router/references/testing-and-quality-gates.md`
+- `M src/team_router.py`
+- `M tests/test_team_router.py`
+- `?? docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md`
+- `?? docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md`
+- `?? scripts/team_router_closeout_check.py`
+
+Fresh `git diff --name-only` reports tracked modified files only and does not include untracked plan/script/package files until they are tracked. Closeout/package scope must therefore use `git status -s --untracked-files=all` as the current diff surface source, not `git diff --name-only` alone.
 
 ## Verification Record
 
-Idle-state verification baseline before the current optimization package:
+Active package verification so far:
 
-- repo clean.
-- `master` and `origin/master` synchronized.
-- global skill check matched repo.
-
-Current package verification belongs in the active package callback, not in this idle baseline.
+- RED: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` failed as expected for missing `explain_team_router_gate`, missing `assess_live_orchestration_readiness`, and missing closeout check script; one environment-only temp cleanup issue was corrected to avoid Windows restricted-token Temp cleanup.
+- GREEN focused: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` passed after helper/script implementation.
+- Remaining verification: py_compile, focused/full unittest, `git diff --check`, `py -B scripts/team_router_skill_sync_check.py --check`, and `py -B scripts/team_router_closeout_check.py`.
 
 ## Historical Records
 
 Older entries are history only. They must not be treated as current git truth / current next gate unless rechecked in the current worktree.
 
+- Previous `ctr-20260628-team-router-optimization-local-package` records are historical baseline only; they are not the current active package.
 - Previous `ctr-20260628-anchor-and-closeout-freshness-fix` records: verifier accepted/pass; prior local closeout/commit language is historical and no longer the Current Task.
 - Previous `ctr-20260628-role-request-direct-send-and-waiting-fix` records are accepted/pass at reviewer and verifier gates.
 - Previous `ctr-20260628-live-capability-state-fix` records clarified exposed app tools vs missing Python adapter/runtime orchestration. That remains true but is not the current task.
@@ -42,5 +52,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none while idle.
-- Next gated step: wait for explicit dispatch or user authorization.
+- Current gate: active executor package; next is reviewer.
+- Next gated step: reviewer pass, then verifier pass. Commit, push, PR, merge, deploy, publish, release, and global skill sync remain unauthorized.
