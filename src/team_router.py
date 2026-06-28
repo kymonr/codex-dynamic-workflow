@@ -1672,6 +1672,12 @@ def parent_entry_guard(thread_adapter: Any | None = None,
 
 
 
+def _is_callable_heartbeat_scheduler(heartbeat_scheduler: Any) -> bool:
+    if callable(heartbeat_scheduler):
+        return True
+    return callable(getattr(heartbeat_scheduler, "schedule", None))
+
+
 def assess_live_orchestration_readiness(
     thread_adapter: Any | None,
     *,
@@ -1689,10 +1695,11 @@ def assess_live_orchestration_readiness(
             capabilities[tool_name] = is_callable
             if not is_callable:
                 missing.append("callable %s" % tool_name)
+    capabilities["heartbeat_scheduler"] = _is_callable_heartbeat_scheduler(heartbeat_scheduler)
     if not str(parent_thread_id or "").strip():
         missing.append("parent_thread_id")
-    if not heartbeat_scheduler:
-        missing.append("heartbeat scheduler")
+    if not capabilities["heartbeat_scheduler"]:
+        missing.append("callable heartbeat scheduler")
     status = "ready" if not missing else "blocked"
     return {
         "status": status,
@@ -5054,21 +5061,40 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        turn_limit: int | None = None,
                                        confirm_rework: bool = False,
                                        return_thread_id: str | None = None,
-                                       parent_thread_id: str | None = None) -> dict[str, Any]:
-    entry = parent_entry_guard(thread_adapter)
-    capabilities = entry["capabilities"]
-    if parent_thread_id is None:
+                                       parent_thread_id: str | None = None,
+                                       heartbeat_scheduler: Any = None) -> dict[str, Any]:
+    readiness = assess_live_orchestration_readiness(
+        thread_adapter,
+        parent_thread_id=parent_thread_id,
+        heartbeat_scheduler=heartbeat_scheduler,
+    )
+    capabilities = readiness["capabilities"]
+    if readiness["status"] != "ready":
+        if "parent_thread_id" in readiness["missing"]:
+            return {
+                "action": "tool_error_parent_title_unavailable",
+                "status": "tool_error",
+                "userOutput": (
+                    "Team Router tool_error: adapter-created orchestration requires "
+                    "the current thread id before child-role dispatch so the parent/current "
+                    "manager conversation can be renamed with set_thread_title."
+                ),
+                "capabilities": capabilities,
+                "readiness": readiness,
+                "codexProjectId": codex_project_id or project_id,
+            }
         return {
-            "action": "tool_error_parent_title_unavailable",
+            "action": "tool_error_live_orchestration_unavailable",
             "status": "tool_error",
-            "userOutput": (
-                "Team Router tool_error: adapter-created orchestration requires "
-                "the current thread id before child-role dispatch so the parent/current "
-                "manager conversation can be renamed with set_thread_title."
-            ),
+            "userOutput": "Team Router tool_error: %s." % readiness["reason"],
             "capabilities": capabilities,
+            "readiness": readiness,
             "codexProjectId": codex_project_id or project_id,
         }
+    entry = parent_entry_guard(thread_adapter)
+    capabilities = dict(capabilities)
+    capabilities.update(entry["capabilities"])
+    capabilities["heartbeat_scheduler"] = readiness["capabilities"].get("heartbeat_scheduler", False)
     task_title = _task_title_from_objective(objective)
     if not task_path(state_root, project_id, task_id).exists():
         _adapter_call(

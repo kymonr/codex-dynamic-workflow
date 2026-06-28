@@ -117,6 +117,14 @@ class FullThreadAdapter(FakeThreadAdapter):
         return {"threadId": kwargs["threadId"], "title": kwargs["title"]}
 
 
+class FakeHeartbeatScheduler:
+    def __init__(self):
+        self.scheduled = []
+
+    def schedule(self, **kwargs):
+        self.scheduled.append(dict(kwargs))
+        return {"scheduled": True}
+
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
@@ -771,10 +779,11 @@ risks: none
                 self.assertIn(expected_reason, explanation["reasons"])
 
     def test_live_orchestration_readiness_reports_missing_host_contracts(self):
+        scheduler = FakeHeartbeatScheduler()
         missing_adapter = team_router.assess_live_orchestration_readiness(
             thread_adapter=None,
             parent_thread_id="parent-thread",
-            heartbeat_scheduler=True,
+            heartbeat_scheduler=scheduler,
         )
         self.assertEqual(missing_adapter["status"], "blocked")
         self.assertIn("callable adapter", " ".join(missing_adapter["missing"]))
@@ -782,7 +791,7 @@ risks: none
         missing_parent = team_router.assess_live_orchestration_readiness(
             thread_adapter=FullThreadAdapter(),
             parent_thread_id=None,
-            heartbeat_scheduler=True,
+            heartbeat_scheduler=scheduler,
         )
         self.assertEqual(missing_parent["status"], "blocked")
         self.assertIn("parent_thread_id", missing_parent["missing"])
@@ -801,7 +810,7 @@ risks: none
         missing_title = team_router.assess_live_orchestration_readiness(
             thread_adapter=adapter_without_title,
             parent_thread_id="parent-thread",
-            heartbeat_scheduler=True,
+            heartbeat_scheduler=scheduler,
             required_tools=("create_thread", "send_message_to_thread", "read_thread", "set_thread_title"),
         )
         self.assertEqual(missing_title["status"], "blocked")
@@ -810,19 +819,18 @@ risks: none
         missing_scheduler = team_router.assess_live_orchestration_readiness(
             thread_adapter=FullThreadAdapter(),
             parent_thread_id="parent-thread",
-            heartbeat_scheduler=False,
+            heartbeat_scheduler=True,
         )
         self.assertEqual(missing_scheduler["status"], "blocked")
-        self.assertIn("heartbeat scheduler", missing_scheduler["missing"])
+        self.assertIn("callable heartbeat scheduler", missing_scheduler["missing"])
 
         ready = team_router.assess_live_orchestration_readiness(
             thread_adapter=FullThreadAdapter(),
             parent_thread_id="parent-thread",
-            heartbeat_scheduler=True,
+            heartbeat_scheduler=scheduler,
         )
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["missing"], [])
-
     def test_role_read_interval_uses_five_minute_minimum(self):
         self.assertEqual(team_router.role_read_interval_seconds("FAST"), 300)
         self.assertEqual(team_router.role_read_interval_seconds("NORMAL"), 300)
@@ -5284,6 +5292,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
             parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5306,11 +5315,35 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             thread_adapter=adapter,
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
         )
 
         self.assertEqual(update["status"], "tool_error")
         self.assertEqual(update["action"], "tool_error_parent_title_unavailable")
         self.assertIn("current thread id", update["userOutput"])
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+
+    def test_orchestrate_team_task_blocks_when_heartbeat_scheduler_is_not_callable(self):
+        adapter = FullThreadAdapter()
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="role lifecycle fixes",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+            parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=True,
+        )
+
+        self.assertEqual(update["status"], "tool_error")
+        self.assertEqual(update["action"], "tool_error_live_orchestration_unavailable")
+        self.assertIn("callable heartbeat scheduler", update["userOutput"])
+        self.assertEqual(adapter.renamed, [])
         self.assertEqual(adapter.created, [])
         self.assertEqual(adapter.sent, [])
 
@@ -5831,6 +5864,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
             parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5904,6 +5938,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             observed_at="2026-06-22T20:00:00+08:00",
             codex_project_id="D:\\codex\\codex-dynamic-workflow",
             parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5954,6 +5989,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             observed_at="2026-06-22T20:00:00+08:00",
             codex_project_id="D:\\codex\\codex-dynamic-workflow",
             parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -6104,7 +6140,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 permission="read-only",
                 observed_at=timestamp,
                 codex_project_id="D:\\codex\\codex-dynamic-workflow",
-            parent_thread_id="parent-manager-thread",
+                parent_thread_id="parent-manager-thread",
+                heartbeat_scheduler=FakeHeartbeatScheduler(),
             )
             for timestamp in observed_at
         ]
