@@ -572,6 +572,9 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertEqual(report["skill"]["targetBytes"], 7200)
         self.assertIn(report["skillSync"]["status"], {"match", "mismatch", "blocked"})
         self.assertFalse(report["authorization"]["commit"])
+        self.assertFalse(report["authorization"]["pullRequest"])
+        self.assertFalse(report["authorization"]["merge"])
+        self.assertFalse(report["authorization"]["deploy"])
         self.assertFalse(report["authorization"]["push"])
         self.assertFalse(report["authorization"]["globalSync"])
         self.assertIn("does not stage, commit, push, or sync", report["readOnlyGuarantee"])
@@ -2460,6 +2463,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertIsNone(result)
         saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertEqual(saved["status"], "awaiting_callback")
         malformed = saved["malformedDirectReturns"][-1]
         self.assertEqual(malformed["protocolSourceThreadId"], "")
         self.assertEqual(malformed["protocolRole"], "")
@@ -2804,6 +2808,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
     def test_watch_executor_still_working_keeps_observe_only_convergence_decision(self):
         adapter = FakeThreadAdapter()
+        scheduler = FakeHeartbeatScheduler()
         self._awaiting_callback_ledger()
         adapter.append_reply(
             "thread-executor",
@@ -2825,6 +2830,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             thread_adapter=adapter,
             permission="read-only",
             observed_at="2026-06-22T20:04:00+08:00",
+            heartbeat_scheduler=scheduler,
         )
 
         self.assertEqual(update["status"], "awaiting_callback")
@@ -2835,7 +2841,62 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(update["convergenceDecision"]["action"], "observe_only_wait")
         self.assertFalse(update["convergenceDecision"]["allowed"])
         self.assertEqual(adapter.sent, [])
+        self.assertEqual(len(scheduler.scheduled), 1)
+        self.assertEqual(update["heartbeatSchedule"]["runAt"], "2026-06-22T20:09:00+08:00")
+        self.assertEqual(scheduler.scheduled[0]["runAt"], "2026-06-22T20:09:00+08:00")
+        self.assertEqual(scheduler.scheduled[0]["callback"], "watch_team_task_with_adapter")
+        self.assertEqual(scheduler.scheduled[0]["role"], "executor")
+        self.assertEqual(scheduler.scheduled[0]["watchArgs"]["read_reason"], "scheduled watcher heartbeat")
 
+    def test_watch_rejects_non_callable_heartbeat_scheduler_when_waiting(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_callback_ledger()
+        adapter.append_reply(
+            "thread-executor",
+            "dispatch",
+            message_id="msg-dispatch",
+            sent_at="2026-06-22T20:02:00+08:00",
+        )
+        adapter.append_reply(
+            "thread-executor",
+            "still working",
+            message_id="msg-later",
+            sent_at="2026-06-22T20:03:00+08:00",
+        )
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.watch_team_task_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                observed_at="2026-06-22T20:04:00+08:00",
+                heartbeat_scheduler=True,
+            )
+
+        self.assertIn("heartbeat scheduler", str(ctx.exception))
+
+    def test_watch_terminal_status_does_not_schedule_heartbeat(self):
+        adapter = FakeThreadAdapter()
+        scheduler = FakeHeartbeatScheduler()
+        ledger = self._awaiting_callback_ledger()
+        ledger["status"] = "done"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+            heartbeat_scheduler=scheduler,
+        )
+
+        self.assertEqual(update["action"], "watch_no_action")
+        self.assertEqual(scheduler.scheduled, [])
+        self.assertNotIn("heartbeatSchedule", update)
     def test_waiting_executor_update_before_timeout_does_not_allow_convergence_without_observation(self):
         ledger = self._awaiting_callback_ledger()
 
@@ -4928,20 +4989,29 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
     def test_parent_entry_guard_blocks_adapter_runner_without_callable_tools(self):
         with self.assertRaises(team_router.StateStoreError) as ctx:
-            team_router.parent_entry_guard(FakeThreadAdapter())
+            team_router.parent_entry_guard(
+                FakeThreadAdapter(),
+                parent_thread_id="parent-manager-thread",
+                heartbeat_scheduler=FakeHeartbeatScheduler(),
+            )
 
         self.assertIn("adapter-created path unavailable", str(ctx.exception))
         self.assertIn("manual/pre-created continuation", str(ctx.exception))
+        self.assertIn("callable list_projects", str(ctx.exception))
 
     def test_parent_entry_guard_allows_manual_precreated_when_adapter_unusable(self):
         entry = team_router.parent_entry_guard(
             FakeThreadAdapter(),
             precreated_roles=self.roles,
+            parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
         )
 
         self.assertEqual(entry["path"], "manual-precreated")
         self.assertFalse(entry["adapterUsable"])
         self.assertIn("list_projects", entry["reason"])
+        self.assertEqual(entry["readiness"]["status"], "blocked")
+        self.assertIn("callable list_projects", entry["readiness"]["missing"])
 
     def test_parent_entry_guard_rejects_manual_precreated_without_thread_ids(self):
         invalid_roles = {
@@ -4956,11 +5026,38 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("roles.manager.threadId", str(ctx.exception))
 
     def test_parent_entry_guard_accepts_full_callable_adapter_path(self):
-        entry = team_router.parent_entry_guard(FullThreadAdapter())
+        entry = team_router.parent_entry_guard(
+            FullThreadAdapter(),
+            parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
+        )
 
         self.assertEqual(entry["path"], "adapter-created")
         self.assertTrue(entry["adapterUsable"])
         self.assertTrue(entry["capabilities"]["send_message_to_thread"])
+        self.assertTrue(entry["capabilities"]["heartbeat_scheduler"])
+        self.assertEqual(entry["readiness"]["status"], "ready")
+
+    def test_parent_entry_guard_blocks_missing_parent_thread_id(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.parent_entry_guard(
+                FullThreadAdapter(),
+                heartbeat_scheduler=FakeHeartbeatScheduler(),
+            )
+
+        self.assertIn("adapter-created path unavailable", str(ctx.exception))
+        self.assertIn("parent_thread_id", str(ctx.exception))
+
+    def test_parent_entry_guard_blocks_non_callable_heartbeat_scheduler(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.parent_entry_guard(
+                FullThreadAdapter(),
+                parent_thread_id="parent-manager-thread",
+                heartbeat_scheduler=True,
+            )
+
+        self.assertIn("adapter-created path unavailable", str(ctx.exception))
+        self.assertIn("callable heartbeat scheduler", str(ctx.exception))
 
     def test_thread_adapter_capability_probe_rejects_model_tool_descriptors(self):
         descriptor_adapter = {
@@ -5281,6 +5378,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
                 return {"threads": list(self.thread_list)}
 
         adapter = ParentAdapter()
+        scheduler = FakeHeartbeatScheduler()
 
         update = team_router.orchestrate_team_task_with_adapter(
             self.root,
@@ -5292,7 +5390,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             permission="read-only",
             observed_at="2026-06-22T20:00:00+08:00",
             parent_thread_id="parent-manager-thread",
-            heartbeat_scheduler=FakeHeartbeatScheduler(),
+            heartbeat_scheduler=scheduler,
         )
 
         self.assertEqual(update["action"], "sent_manager_plan_request")
@@ -5302,6 +5400,122 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             adapter.renamed[1:],
         )
         self.assertEqual(adapter.created, [])
+        self.assertEqual(len(scheduler.scheduled), 1)
+        self.assertEqual(update["heartbeatSchedule"]["runAt"], update["watcher"]["firstCheckAt"])
+        self.assertEqual(scheduler.scheduled[0]["runAt"], update["watcher"]["firstCheckAt"])
+        self.assertEqual(scheduler.scheduled[0]["managerAction"], "watch_team_task_with_adapter")
+        self.assertEqual(scheduler.scheduled[0]["role"], update["watcher"]["role"])
+        self.assertEqual(scheduler.scheduled[0]["threadId"], update["watcher"]["threadId"])
+        self.assertEqual(scheduler.scheduled[0]["watchArgs"]["task_id"], self.task_id)
+        self.assertEqual(scheduler.scheduled[0]["watchArgs"]["permission"], "read-only")
+
+    def test_orchestrate_team_task_accepts_live_host_context(self):
+        class ParentAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.thread_list = [
+                    {"threadId": "live-manager", "title": "Old manager title", "role": "manager", "projectId": "project-123"},
+                    {"threadId": "live-executor", "title": "TeamRouter executor - project-123"},
+                    {"threadId": "live-verifier", "title": "TeamRouter verifier - project-123"},
+                ]
+
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-123", "target": {"type": "project", "projectId": "project-123"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": list(self.thread_list)}
+
+        adapter = ParentAdapter()
+        scheduler = FakeHeartbeatScheduler()
+        host_context = team_router.make_live_orchestration_host_context(
+            adapter,
+            parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=scheduler,
+            codex_project_id="project-123",
+        )
+
+        update = team_router.orchestrate_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective="role lifecycle fixes",
+            project_local_path="D:\\codex\\codex-dynamic-workflow",
+            permission="read-only",
+            observed_at="2026-06-22T20:00:00+08:00",
+            host_context=host_context,
+        )
+
+        self.assertEqual(host_context.readiness["status"], "ready")
+        self.assertEqual(update["action"], "sent_manager_plan_request")
+        self.assertEqual(update["codexProjectId"], "project-123")
+        self.assertEqual(adapter.renamed[0], {"threadId": "parent-manager-thread", "title": "调度者-Team Router role lifecycle fixes"})
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(len(scheduler.scheduled), 1)
+        self.assertEqual(update["heartbeatSchedule"]["runAt"], update["watcher"]["firstCheckAt"])
+        self.assertEqual(scheduler.scheduled[0]["runAt"], update["watcher"]["firstCheckAt"])
+        self.assertEqual(scheduler.scheduled[0]["watchArgs"]["task_id"], self.task_id)
+
+    def test_live_host_context_blocks_missing_parent_thread_id_without_side_effects(self):
+        adapter = FullThreadAdapter()
+        scheduler = FakeHeartbeatScheduler()
+
+        with self.assertRaises(team_router.StateStoreError) as caught:
+            team_router.make_live_orchestration_host_context(
+                adapter,
+                parent_thread_id=None,
+                heartbeat_scheduler=scheduler,
+            )
+
+        self.assertIn("parent_thread_id", str(caught.exception))
+        self.assertEqual(adapter.renamed, [])
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(scheduler.scheduled, [])
+
+    def test_live_host_context_blocks_non_callable_scheduler_without_side_effects(self):
+        adapter = FullThreadAdapter()
+
+        with self.assertRaises(team_router.StateStoreError) as caught:
+            team_router.make_live_orchestration_host_context(
+                adapter,
+                parent_thread_id="parent-manager-thread",
+                heartbeat_scheduler=True,
+            )
+
+        self.assertIn("callable heartbeat scheduler", str(caught.exception))
+        self.assertEqual(adapter.renamed, [])
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+
+    def test_orchestrate_team_task_rejects_host_context_conflicts_before_side_effects(self):
+        adapter = FullThreadAdapter()
+        scheduler = FakeHeartbeatScheduler()
+        host_context = team_router.make_live_orchestration_host_context(
+            adapter,
+            parent_thread_id="parent-manager-thread",
+            heartbeat_scheduler=scheduler,
+        )
+
+        with self.assertRaises(team_router.StateStoreError) as caught:
+            team_router.orchestrate_team_task_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                objective="role lifecycle fixes",
+                project_local_path="D:\\codex\\codex-dynamic-workflow",
+                thread_adapter=adapter,
+                permission="read-only",
+                observed_at="2026-06-22T20:00:00+08:00",
+                parent_thread_id="other-parent-thread",
+                heartbeat_scheduler=scheduler,
+                host_context=host_context,
+            )
+
+        self.assertIn("host_context conflicts with explicit parent_thread_id", str(caught.exception))
+        self.assertEqual(adapter.renamed, [])
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(scheduler.scheduled, [])
 
     def test_orchestrate_team_task_blocks_when_parent_thread_id_is_unavailable(self):
         adapter = FullThreadAdapter()
@@ -6917,6 +7131,153 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         telemetry = update["ledger"]["malformedDirectReturns"]
         self.assertEqual(len(telemetry), 1)
         self.assertIn("sourceThreadId", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["protocolSourceThreadId"], "wrong-parent-thread")
+        self.assertEqual(telemetry[0]["protocolRole"], "Executor")
+        self.assertEqual(telemetry[0]["protocolSourceRoleThreadId"], "thread-executor")
+        self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
+
+    def test_watch_executor_direct_return_rejects_wrong_protocol_role(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: thread-executor\n"
+                    "role: Verifier\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: manager inbox\n"
+                    "evidence: direct return\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: fallback callback\n"
+                    "evidence: executor self-thread\n"
+                    "risks: none\n"
+                    "next: verifier" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "fallback callback")
+        self.assertEqual(update["ledger"]["observations"][-1]["receipt"]["source"], "self-thread-fallback/read_thread")
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertEqual(telemetry[0]["protocolSourceThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["protocolRole"], "Verifier")
+        self.assertEqual(telemetry[0]["protocolSourceRoleThreadId"], "thread-executor")
+        self.assertIn("TEAM_ROUTER_CALLBACK.role", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
+
+    def test_watch_executor_direct_return_rejects_wrong_protocol_source_role_thread_id(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        team_router.record_executor_dispatch_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            executor_thread_id="thread-executor",
+            sent_at="2026-06-22T20:02:00+08:00",
+            message_id="msg-dispatch",
+            return_thread_id="parent-manager-thread",
+        )
+        adapter.messages["parent-manager-thread"] = [
+            {
+                "messageId": "msg-manager-callback",
+                "sentAt": "2026-06-22T20:03:00+08:00",
+                "text": (
+                    "<codex_delegation>\n"
+                    "  <source_thread_id>thread-executor</source_thread_id>\n"
+                    "  <input>TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "sourceThreadId: parent-manager-thread\n"
+                    "sourceRoleThreadId: wrong-executor-thread\n"
+                    "role: Executor\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: manager inbox\n"
+                    "evidence: direct return\n"
+                    "risks: none\n"
+                    "next: verifier</input>\n"
+                    "</codex_delegation>" % self.task_id
+                ),
+            },
+        ]
+        adapter.messages["thread-executor"] = [
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-22T20:02:00+08:00", "text": "dispatch"},
+            {
+                "messageId": "msg-callback",
+                "sentAt": "2026-06-22T20:03:30+08:00",
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\n"
+                    "status: done\n"
+                    "final: true\n"
+                    "summary: fallback callback\n"
+                    "evidence: executor self-thread\n"
+                    "risks: none\n"
+                    "next: verifier" % self.task_id
+                ),
+            },
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:04:00+08:00",
+        )
+
+        self.assertEqual(update["action"], "watch_sent_verifier_request")
+        self.assertEqual(update["status"], "verifying")
+        self.assertEqual(update["ledger"]["observations"][-1]["parsedFields"]["summary"], "fallback callback")
+        self.assertEqual(update["ledger"]["observations"][-1]["receipt"]["source"], "self-thread-fallback/read_thread")
+        telemetry = update["ledger"]["malformedDirectReturns"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertEqual(telemetry[0]["protocolSourceThreadId"], "parent-manager-thread")
+        self.assertEqual(telemetry[0]["protocolRole"], "Executor")
+        self.assertEqual(telemetry[0]["protocolSourceRoleThreadId"], "wrong-executor-thread")
+        self.assertIn("TEAM_ROUTER_CALLBACK.sourceRoleThreadId", telemetry[0]["error"])
+        self.assertEqual(telemetry[0]["recovery"], "self-thread-marker fallback")
+
 
     def test_watch_team_task_ignores_manager_inbox_callback_with_wrong_source_thread_id(self):
         adapter = FakeThreadAdapter()
@@ -8128,20 +8489,19 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertIn("## Current Task", text)
         for needle in (
             "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
+            "P2-5 is the current workbench/package-state refresh",
             "Current git truth",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
-            "branch is `master...origin/master`",
             "Current next gate",
-            "executor callback -> reviewer pass -> verifier pass",
-            "No local closeout, commit, push, PR, merge, publish, release, or global skill sync is authorized",
-            "No commit, no push, no PR, no merge, no deploy, no global skill sync",
+            "P2-5 docs update -> reviewer pass -> verifier pass -> P2-6 final verification",
+            "no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync",
             "Current Diff Surface",
-            "docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md",
+            "Latest `git status -s --untracked-files=all`",
+            "Latest `git diff --name-only` reports the same five tracked files",
             "docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md",
-            "scripts/team_router_closeout_check.py",
-            "git diff --name-only` reports tracked modified files only",
+            "docs/workbench.md",
             "Historical Records",
             "historical and no longer the Current Task",
             "old executor callback",
@@ -8150,9 +8510,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`r`n", text)
         current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
-        self.assertIn("M src/team_router.py", current_diff_section)
-        self.assertIn("M tests/test_team_router.py", current_diff_section)
-        self.assertIn("?? scripts/team_router_closeout_check.py", current_diff_section)
+        for current_file in (
+            "M docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md",
+            "M docs/workbench.md",
+            "M skills/codex-team-router/SKILL.md",
+            "M src/team_router.py",
+            "M tests/test_team_router.py",
+        ):
+            self.assertIn(current_file, current_diff_section)
+        for no_longer_current in (
+            "?? scripts/team_router_closeout_check.py",
+            "M skills/codex-team-router/references/adapter-runtime.md",
+            "M skills/codex-team-router/references/testing-and-quality-gates.md",
+            "?? docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md",
+        ):
+            self.assertNotIn(no_longer_current, current_diff_section)
         for stale_current in (
             "idle / no active local package task",
             "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
@@ -8170,6 +8542,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "thread tools unavailable",
         ):
             self.assertNotIn(stale_current_claim, text)
+
     def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
         text = self._skill_contract_text()
 

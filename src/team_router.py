@@ -1629,35 +1629,41 @@ def _has_complete_precreated_roles(precreated_roles: Mapping[str, Any] | None) -
 def parent_entry_guard(thread_adapter: Any | None = None,
                        *,
                        precreated_roles: Mapping[str, Any] | None = None,
+                       parent_thread_id: str | None = None,
+                       heartbeat_scheduler: Any = None,
                        required_tools: Iterable[str] = THREAD_TOOL_NAMES) -> dict[str, Any]:
     """Select the only safe parent entry path for the available boundary.
 
-    Adapter-created orchestration requires callable thread tools. When those are
-    absent, the parent may only continue through a manual/pre-created role path
-    that already supplies manager/executor/verifier bindings.
+    Adapter-created orchestration requires callable thread tools, a parent
+    thread id, and a callable heartbeat scheduler. When those are absent, the
+    parent may only continue through a manual/pre-created role path that already
+    supplies manager/executor/verifier bindings.
     """
     if thread_adapter is not None:
-        try:
-            capabilities = probe_thread_adapter_capabilities(
-                thread_adapter,
-                required_tools=required_tools,
-            )
-        except StateStoreError as exc:
+        readiness = assess_live_orchestration_readiness(
+            thread_adapter,
+            parent_thread_id=parent_thread_id,
+            heartbeat_scheduler=heartbeat_scheduler,
+            required_tools=required_tools,
+        )
+        if readiness["status"] != "ready":
             if _has_complete_precreated_roles(precreated_roles):
                 return {
                     "path": "manual-precreated",
                     "adapterUsable": False,
-                    "reason": str(exc),
+                    "reason": readiness["reason"],
+                    "readiness": readiness,
                 }
             raise StateStoreError(
                 "adapter-created path unavailable; use manual/pre-created "
                 "continuation with existing manager/executor/verifier role "
-                "bindings"
-            ) from exc
+                "bindings; %s" % readiness["reason"]
+            )
         return {
             "path": "adapter-created",
             "adapterUsable": True,
-            "capabilities": capabilities,
+            "capabilities": readiness["capabilities"],
+            "readiness": readiness,
         }
     if _has_complete_precreated_roles(precreated_roles):
         return {
@@ -1677,6 +1683,14 @@ def _is_callable_heartbeat_scheduler(heartbeat_scheduler: Any) -> bool:
         return True
     return callable(getattr(heartbeat_scheduler, "schedule", None))
 
+
+def _heartbeat_scheduler_call(heartbeat_scheduler: Any) -> Any:
+    if callable(heartbeat_scheduler):
+        return heartbeat_scheduler
+    schedule = getattr(heartbeat_scheduler, "schedule", None)
+    if callable(schedule):
+        return schedule
+    raise StateStoreError("heartbeat scheduler must be callable or expose callable .schedule(**kwargs)")
 
 def assess_live_orchestration_readiness(
     thread_adapter: Any | None,
@@ -1711,6 +1725,53 @@ def assess_live_orchestration_readiness(
             else "live orchestration requires " + ", ".join(missing)
         ),
     }
+
+
+@dataclass(frozen=True)
+class LiveOrchestrationHostContext:
+    thread_adapter: Any
+    parent_thread_id: str
+    heartbeat_scheduler: Any
+    codex_project_id: str | None
+    readiness: Mapping[str, Any]
+    capabilities: Mapping[str, bool]
+
+
+def make_live_orchestration_host_context(
+    thread_adapter: Any | None,
+    *,
+    parent_thread_id: str | None,
+    heartbeat_scheduler: Any,
+    codex_project_id: str | None = None,
+    required_tools: Iterable[str] = THREAD_TOOL_NAMES,
+) -> LiveOrchestrationHostContext:
+    readiness = assess_live_orchestration_readiness(
+        thread_adapter,
+        parent_thread_id=parent_thread_id,
+        heartbeat_scheduler=heartbeat_scheduler,
+        required_tools=required_tools,
+    )
+    if readiness["status"] != "ready":
+        raise StateStoreError("live orchestration host context unavailable; %s" % readiness["reason"])
+    return LiveOrchestrationHostContext(
+        thread_adapter=thread_adapter,
+        parent_thread_id=str(parent_thread_id or "").strip(),
+        heartbeat_scheduler=heartbeat_scheduler,
+        codex_project_id=str(codex_project_id).strip() if codex_project_id is not None and str(codex_project_id).strip() else None,
+        readiness=readiness,
+        capabilities=dict(readiness["capabilities"]),
+    )
+
+
+def _raise_if_host_context_conflict(name: str, explicit_value: Any, context_value: Any) -> None:
+    if explicit_value is None:
+        return
+    if name in {"thread_adapter", "heartbeat_scheduler"}:
+        conflicts = explicit_value is not context_value
+    else:
+        conflicts = explicit_value != context_value
+    if conflicts:
+        raise StateStoreError("host_context conflicts with explicit %s" % name)
 
 def _clear_waiting_read_state(ledger: dict[str, Any]) -> dict[str, Any]:
     ledger.pop("roleThreadStatus", None)
@@ -4498,6 +4559,105 @@ def _watcher_ledger(ledger: Mapping[str, Any], *, observed_at: str | None = None
     }
 
 
+def _schedule_watcher_heartbeat(heartbeat_scheduler: Any,
+                                update: dict[str, Any],
+                                *,
+                                state_root: str | Path,
+                                project_id: str,
+                                task_id: str,
+                                permission: str,
+                                return_thread_id: str | None = None,
+                                read_reason: str = "scheduled watcher heartbeat") -> dict[str, Any] | None:
+    if heartbeat_scheduler is None:
+        return None
+    watcher = update.get("watcher") if isinstance(update.get("watcher"), Mapping) else None
+    next_wakeup = update.get("nextWakeup") if isinstance(update.get("nextWakeup"), Mapping) else None
+    if watcher is None and next_wakeup is None:
+        return None
+    if update.get("status") in TERMINAL_STATUSES or update.get("status") == "needs_rework":
+        return None
+    if update.get("action") in {"watch_no_action"}:
+        return None
+    if watcher is None:
+        watcher = _watcher_ledger(update.get("ledger", {}))
+    if watcher is None:
+        return None
+    first_check_at = watcher.get("firstCheckAt") if isinstance(watcher.get("firstCheckAt"), str) else None
+    next_allowed_at = watcher.get("nextAllowedReadAt") if isinstance(watcher.get("nextAllowedReadAt"), str) else None
+    last_read_at = watcher.get("lastReadAt") if isinstance(watcher.get("lastReadAt"), str) else None
+    run_at = next_allowed_at
+    if first_check_at is not None and (
+        last_read_at is None or _iso_timestamp_before(last_read_at, first_check_at)
+    ):
+        run_at = first_check_at
+    if run_at is None:
+        run_at = first_check_at
+    if run_at is None:
+        return None
+    role = watcher.get("role")
+    thread_id = watcher.get("threadId")
+    expected_marker = watcher.get("expectedMarker")
+    watch_args = {
+        "state_root": str(Path(state_root)),
+        "stateRoot": str(Path(state_root)),
+        "project_id": project_id,
+        "projectId": project_id,
+        "task_id": task_id,
+        "taskId": task_id,
+        "permission": permission,
+        "read_reason": read_reason,
+        "readReason": read_reason,
+    }
+    if return_thread_id is not None:
+        watch_args["return_thread_id"] = return_thread_id
+        watch_args["returnThreadId"] = return_thread_id
+    payload = {
+        "taskId": task_id,
+        "projectId": project_id,
+        "runAt": run_at,
+        "callback": "watch_team_task_with_adapter",
+        "managerAction": "watch_team_task_with_adapter",
+        "threadId": thread_id,
+        "role": role,
+        "expectedMarker": expected_marker,
+        "readReason": read_reason,
+        "watchArgs": watch_args,
+        "kwargs": dict(watch_args),
+    }
+    result = _heartbeat_scheduler_call(heartbeat_scheduler)(**payload)
+    schedule = dict(payload)
+    schedule["scheduled"] = True
+    if result is not None:
+        schedule["result"] = result
+    return schedule
+
+
+def _attach_watcher_heartbeat_schedule(update: dict[str, Any],
+                                       heartbeat_scheduler: Any,
+                                       *,
+                                       state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       permission: str,
+                                       return_thread_id: str | None = None,
+                                       read_reason: str = "scheduled watcher heartbeat") -> dict[str, Any]:
+    if heartbeat_scheduler is None:
+        return update
+    schedule = _schedule_watcher_heartbeat(
+        heartbeat_scheduler,
+        update,
+        state_root=state_root,
+        project_id=project_id,
+        task_id=task_id,
+        permission=permission,
+        return_thread_id=return_thread_id,
+        read_reason=read_reason,
+    )
+    if schedule is not None:
+        update["heartbeatSchedule"] = schedule
+    return update
+
+
 def _refresh_watcher_ledger(ledger: dict[str, Any], *, observed_at: str | None = None) -> dict[str, Any]:
     watcher = _watcher_ledger(ledger, observed_at=observed_at)
     if watcher is None:
@@ -4645,6 +4805,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                                  observed_at: str,
                                  return_thread_id: str | None = None,
                                  turn_limit: int | None = None,
+                                 heartbeat_scheduler: Any = None,
                                  read_reason: str = "scheduled watcher heartbeat") -> dict[str, Any]:
     """Advance an existing task from a host-side watcher invocation.
 
@@ -4654,12 +4815,25 @@ def watch_team_task_with_adapter(state_root: str | Path,
     parent-side continuation that does not require user approval.
     """
     _validate_permission(permission)
+
+    def finish(update: dict[str, Any]) -> dict[str, Any]:
+        return _attach_watcher_heartbeat_schedule(
+            update,
+            heartbeat_scheduler,
+            state_root=state_root,
+            project_id=project_id,
+            task_id=task_id,
+            permission=permission,
+            return_thread_id=return_thread_id,
+            read_reason=read_reason,
+        )
+
     ledger = load_task_ledger(state_root, project_id, task_id)
     read_decision = _watcher_read_allowed(ledger, observed_at=observed_at, read_reason=read_reason)
     if not read_decision["allowed"]:
         update = _watch_task_update("watch_read_suppressed", state_root, project_id, ledger, observed_at=observed_at)
         update["readDecision"] = read_decision
-        return update
+        return finish(update)
     status = ledger["status"]
     needs_feedback_role = _needs_feedback_role(ledger) if status == "needs_feedback" else None
     if status in {"awaiting_plan", "plan_unreachable"} or needs_feedback_role == "manager":
@@ -4681,8 +4855,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 sent_at=observed_at,
                 return_thread_id=return_thread_id,
             )
-            return _watch_task_update("watch_sent_executor_dispatch", state_root, project_id, ledger, observed_at=observed_at)
-        return _watch_task_update("watch_read_manager_plan", state_root, project_id, ledger, observed_at=observed_at)
+            return finish(_watch_task_update("watch_sent_executor_dispatch", state_root, project_id, ledger, observed_at=observed_at))
+        return finish(_watch_task_update("watch_read_manager_plan", state_root, project_id, ledger, observed_at=observed_at))
     if (
         status == "awaiting_callback"
         or (status == "callback_unreachable" and not _ledger_has_verifier_request(ledger))
@@ -4712,7 +4886,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_return_thread_id_from_record(dispatch, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, direct_ledger, observed_at=observed_at)
+                return finish(_watch_task_update("watch_sent_reviewer_request", state_root, project_id, direct_ledger, observed_at=observed_at))
             if direct_ledger is not None and direct_ledger["status"] == "verifying":
                 direct_ledger = send_verifier_request_with_adapter(
                     state_root,
@@ -4723,7 +4897,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_return_thread_id_from_record(dispatch, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger, observed_at=observed_at)
+                return finish(_watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger, observed_at=observed_at))
         ledger = read_executor_callback_with_adapter(
             state_root,
             project_id,
@@ -4742,7 +4916,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 sent_at=observed_at,
                 return_thread_id=_inherited_reviewer_return_thread_id(ledger, return_thread_id),
             )
-            return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at)
+            return finish(_watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at))
         if ledger["status"] == "verifying":
             ledger = send_verifier_request_with_adapter(
                 state_root,
@@ -4753,8 +4927,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 sent_at=observed_at,
                 return_thread_id=_inherited_verifier_return_thread_id(ledger, return_thread_id),
             )
-            return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at)
-        return _watch_task_update("watch_read_executor_callback", state_root, project_id, ledger, observed_at=observed_at)
+            return finish(_watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at))
+        return finish(_watch_task_update("watch_read_executor_callback", state_root, project_id, ledger, observed_at=observed_at))
     if status in {"reviewing", "review_unreachable"} or needs_feedback_role == "reviewer":
         request = _direct_return_record(ledger, "reviewer")
         if request is not None:
@@ -4780,9 +4954,9 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_return_thread_id_from_record(request, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger, observed_at=observed_at)
+                return finish(_watch_task_update("watch_sent_verifier_request", state_root, project_id, direct_ledger, observed_at=observed_at))
             if direct_ledger is not None:
-                return _watch_task_update("watch_read_reviewer_review", state_root, project_id, direct_ledger, observed_at=observed_at)
+                return finish(_watch_task_update("watch_read_reviewer_review", state_root, project_id, direct_ledger, observed_at=observed_at))
         if _ledger_has_reviewer_request(ledger):
             update = read_reviewer_review_update_with_adapter(
                 state_root,
@@ -4803,14 +4977,14 @@ def watch_team_task_with_adapter(state_root: str | Path,
                     sent_at=observed_at,
                     return_thread_id=_inherited_verifier_return_thread_id(ledger, return_thread_id),
                 )
-                return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at)
+                return finish(_watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at))
             update["action"] = "watch_read_reviewer_review"
             update["status"] = ledger.get("status")
             update["nextWakeup"] = _watch_next_wakeup(ledger)
             update["automationBoundary"] = (
                 "host watcher must call watch_team_task_with_adapter again with one short observation-only first check after dispatch/read registration, then low-frequency event-driven read_thread polling no more often than every 5 minutes for the same role/thread; user-visible updates only on status changes, timeout, blocked states, or completion"
             )
-            return update
+            return finish(update)
         ledger = send_reviewer_request_with_adapter(
             state_root,
             project_id,
@@ -4820,7 +4994,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
             sent_at=observed_at,
             return_thread_id=_inherited_reviewer_return_thread_id(ledger, return_thread_id),
         )
-        return _watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at)
+        return finish(_watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at))
     if (
         status == "verifying"
         or (status == "callback_unreachable" and _ledger_has_verifier_request(ledger))
@@ -4841,7 +5015,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
                 captured_at=observed_at,
             )
             if direct_ledger is not None:
-                return _watch_task_update("watch_read_verifier_verdict", state_root, project_id, direct_ledger, observed_at=observed_at)
+                return finish(_watch_task_update("watch_read_verifier_verdict", state_root, project_id, direct_ledger, observed_at=observed_at))
         if _ledger_has_verifier_request(ledger):
             update = read_verifier_verdict_update_with_adapter(
                 state_root,
@@ -4858,7 +5032,7 @@ def watch_team_task_with_adapter(state_root: str | Path,
             update["automationBoundary"] = (
                 "host watcher must call watch_team_task_with_adapter again with one short observation-only first check after dispatch/read registration, then low-frequency event-driven read_thread polling no more often than every 5 minutes for the same role/thread; user-visible updates only on status changes, timeout, blocked states, or completion"
             )
-            return update
+            return finish(update)
         ledger = send_verifier_request_with_adapter(
             state_root,
             project_id,
@@ -4868,8 +5042,8 @@ def watch_team_task_with_adapter(state_root: str | Path,
             sent_at=observed_at,
             return_thread_id=_inherited_verifier_return_thread_id(ledger, return_thread_id),
         )
-        return _watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at)
-    return _watch_task_update("watch_no_action", state_root, project_id, ledger, observed_at=observed_at)
+        return finish(_watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at))
+    return finish(_watch_task_update("watch_no_action", state_root, project_id, ledger, observed_at=observed_at))
 
 
 def run_team_task_with_adapter(state_root: str | Path,
@@ -5052,7 +5226,7 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        *,
                                        objective: str,
                                        project_local_path: str | Path,
-                                       thread_adapter: Any,
+                                       thread_adapter: Any | None = None,
                                        permission: str,
                                        observed_at: str,
                                        target: Mapping[str, Any] | None = None,
@@ -5062,7 +5236,19 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        confirm_rework: bool = False,
                                        return_thread_id: str | None = None,
                                        parent_thread_id: str | None = None,
-                                       heartbeat_scheduler: Any = None) -> dict[str, Any]:
+                                       heartbeat_scheduler: Any = None,
+                                       host_context: LiveOrchestrationHostContext | None = None) -> dict[str, Any]:
+    if host_context is not None:
+        _raise_if_host_context_conflict("thread_adapter", thread_adapter, host_context.thread_adapter)
+        _raise_if_host_context_conflict("parent_thread_id", parent_thread_id, host_context.parent_thread_id)
+        _raise_if_host_context_conflict("heartbeat_scheduler", heartbeat_scheduler, host_context.heartbeat_scheduler)
+        if codex_project_id is not None and host_context.codex_project_id is not None:
+            _raise_if_host_context_conflict("codex_project_id", codex_project_id, host_context.codex_project_id)
+        thread_adapter = host_context.thread_adapter
+        parent_thread_id = host_context.parent_thread_id
+        heartbeat_scheduler = host_context.heartbeat_scheduler
+        if codex_project_id is None:
+            codex_project_id = host_context.codex_project_id
     readiness = assess_live_orchestration_readiness(
         thread_adapter,
         parent_thread_id=parent_thread_id,
@@ -5091,7 +5277,11 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
             "readiness": readiness,
             "codexProjectId": codex_project_id or project_id,
         }
-    entry = parent_entry_guard(thread_adapter)
+    entry = parent_entry_guard(
+        thread_adapter,
+        parent_thread_id=parent_thread_id,
+        heartbeat_scheduler=heartbeat_scheduler,
+    )
     capabilities = dict(capabilities)
     capabilities.update(entry["capabilities"])
     capabilities["heartbeat_scheduler"] = readiness["capabilities"].get("heartbeat_scheduler", False)
@@ -5127,7 +5317,15 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
     update["capabilities"] = capabilities
     update["codexProjectId"] = project_lookup_id
     update["projectTarget"] = project_target
-    return update
+    return _attach_watcher_heartbeat_schedule(
+        update,
+        heartbeat_scheduler,
+        state_root=state_root,
+        project_id=project_id,
+        task_id=task_id,
+        permission=permission,
+        return_thread_id=return_thread_id,
+    )
 
 
 def _role_thread_lines(registry: Mapping[str, Any], project_id: str) -> list[str]:

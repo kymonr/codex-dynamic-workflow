@@ -4,82 +4,70 @@
 
 Implement `ctr-20260628-team-router-optimization-1-6` local package items 1-6 without push, PR, merge, deploy, release, or global skill sync.
 
-## Scope
+## Current Scope
 
-Current touched files:
+Current expected dirty surface after this P2-5 document refresh:
 
-- `README.md`
-- `docs/workbench.md`
-- `docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md`
-- `docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md`
-- `skills/codex-team-router/SKILL.md`
+- `docs/workbench.md` - workbench current-state refresh and out-of-scope Addy note accounting.
+- `docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md` - this review package refresh.
+- `skills/codex-team-router/SKILL.md` - slimmed entrypoint, currently 6969 bytes and under the 7200 target.
+- `src/team_router.py` - runtime helper and live orchestration readiness/heartbeat/direct-return support.
+- `tests/test_team_router.py` - focused and integration coverage, including closeout authorization gates.
+
+Tracked clean or not in the current diff surface before this P2-5 refresh:
+
+- `scripts/team_router_closeout_check.py`
 - `skills/codex-team-router/references/adapter-runtime.md`
 - `skills/codex-team-router/references/testing-and-quality-gates.md`
-- `src/team_router.py`
-- `tests/test_team_router.py`
-- `scripts/team_router_closeout_check.py`
+- `README.md`
+- `docs/superpowers/plans/2026-06-28-team-router-optimization-1-6.md`
 
 Out of scope:
 
 - `C:\Users\Orz\.codex\skills\codex-team-router`
 - push, PR, merge, deploy, release, publish
 - global skill sync
-- extra write threads/subagents
+- commit until a later explicit local closeout/commit gate
+- reverting unrelated user or external dirty work without explicit instruction
 
 ## Diff Summary
 
-- Slimmed `skills/codex-team-router/SKILL.md` to 7192 bytes while preserving hard entry rules, current Manager Mode trigger language, stable file/path handoff, Skill/rule/Superpowers write routing, and reference navigation.
-- Added `explain_team_router_gate()` for readable FAST/NORMAL/STRICT/PACKAGE reasons while preserving `classify_team_router_gate()` compatibility.
-- Added `assess_live_orchestration_readiness()` for pure host contract readiness reporting: callable adapter, `parent_thread_id`, callable `set_thread_title`, and heartbeat scheduler.
-- Strengthened malformed direct-return telemetry for wrong/missing protocol `sourceThreadId`, `role`, and `sourceRoleThreadId` while keeping self-thread-marker fallback and no ledger advancement.
-- Added read-only `scripts/team_router_closeout_check.py` to report git status, diff files, SKILL size, repo/global skill sync status, and unauthorized commit/push/global sync gates.
-- Updated tests for gate explanations, readiness, malformed direct-return recovery, 7200-byte entrypoint target, closeout check, and active workbench state.
-- Reworked test temp strategy to remove the global `tempfile.TemporaryDirectory` monkeypatch and use local `workspace_temp_dir()` calls only. On Windows it defaults to `C:\tmp\team-router-test-tmp` because workspace `test-tmp` blocks `os.replace`; `TEAM_ROUTER_TEST_TMP_ROOT` can override it.
-- Updated `README.md`, adapter/testing references, and `docs/workbench.md` so current truth and historical records stay separated.
+- Slimmed `skills/codex-team-router/SKILL.md` to 6969 bytes while preserving hard Manager Mode, live boundary, direct return, reviewer/verifier, closeout, and authorization rules.
+- Added/connected deterministic runtime helpers for readable gate explanations, live orchestration readiness, parent thread id, host adapter context, callable heartbeat scheduling, and malformed direct-return telemetry.
+- Strengthened malformed direct-return tests for wrong/missing protocol `sourceThreadId`, `role`, and `sourceRoleThreadId` while preserving self-thread fallback behavior.
+- Added and validated read-only closeout reporting for git status, diff files, SKILL size/cap/target, repo/global skill drift, and unauthorized commit/push/PR/merge/deploy/global sync gates.
+- Updated `tests/test_team_router.py` closeout coverage after reviewer found missing `pullRequest`, `merge`, and `deploy` false assertions.
+- Accounted for `docs/workbench.md` Addy Engineering Checklists note as out-of-scope dirty, not a Team Router runtime, protocol, package, role-contract, or authorization change.
+- Refreshed workbench/package state so historical package records are not reused as current git truth.
 
-## TDD Evidence
+## TDD And Review Evidence
 
-RED:
+- Earlier RED work exposed missing helper/readiness/closeout contracts; implementation then moved through focused GREEN tests.
+- P2-1 heartbeat scheduler interface: reviewer/verifier accepted callable/interface scheduler validation and scheduling behavior.
+- P2-2 host context helper: reviewer/verifier accepted readiness-based host context and conflict-before-side-effect behavior.
+- P2-3 direct-return malformed telemetry: reviewer/verifier accepted telemetry/fallback test hardening.
+- P2-4 closeout helper: reviewer first requested missing unauthorized-gate assertions; after rework, reviewer passed and verifier passed after `docs/workbench.md` was explicitly accounted as out-of-scope dirty.
 
-- `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` failed as expected for missing `explain_team_router_gate`, missing `assess_live_orchestration_readiness`, and missing closeout check script.
-- Parent full-suite verification later failed with 254 tests, 297 errors, 1 failure due broad `C:\tmp` temp usage and one missing Skill/docs contract phrase.
-- Parent rework inspection rejected the global `tempfile.TemporaryDirectory = _WorkspaceTemporaryDirectory` monkeypatch as too broad.
-- Non-escalated probe showed workspace `test-tmp` allows mkdir but blocks `os.replace`, while `C:\tmp` allows the atomic replace path used by JSON state tests.
+## Tests And Checks
 
-GREEN / Current:
+Passed in the current package sequence:
 
-- Runtime helpers, closeout script, Skill/docs phrases, and local `workspace_temp_dir()` helper are implemented.
-- No global stdlib monkeypatch remains in `tests/test_team_router.py`.
-- Focused state, malformed direct-return, and Skill/workbench contract tests pass.
-- Full non-escalated `tests.test_team_router` suite passes.
+- `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_closeout_check_reports_read_only_status_and_unauthorized_gates` -> OK.
+- `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-p2-4-manager'; py -B -m unittest tests.test_team_router` -> Ran 265 tests OK.
+- `git diff --check` -> exit 0, with CRLF/LF warnings only for `src/team_router.py` and `tests/test_team_router.py`.
+- `py -B scripts\team_router_closeout_check.py --json` -> reports read-only mode, `authorization` all false, `skill.entrypointBytes: 6969`, `skill.underTarget: true`, and `skillSync.status: mismatch` due unsynced repo `SKILL.md`.
 
-## Tests
+Required for P2-6 final verification:
 
-Passed:
-
-- `(Get-Item skills\codex-team-router\SKILL.md).Length` -> `7192`, below 7200.
-- `py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py` with `PYTHONPYCACHEPREFIX=C:\tmp\pycache-team-router-parent` -> PASS.
-- `py -B -m unittest tests.test_team_router.TestTeamRouterJsonState ... TestTeamRouterSkillDoc.test_team_router_docs_describe_active_role_return` with `PYTHONPYCACHEPREFIX=C:\tmp\pycache-team-router-parent` -> PASS, 16 tests.
-- `py -B -m unittest tests.test_team_router` with `PYTHONPYCACHEPREFIX=C:\tmp\pycache-team-router-parent` -> PASS, 254 tests.
-
-Pending manager/reviewer rerun after this package file update:
-
+- `py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py`
+- `py -B -m unittest tests.test_team_router`
 - `git diff --check`
 - `py -B scripts\team_router_skill_sync_check.py --check`
 - `py -B scripts\team_router_closeout_check.py`
 
-## Temp Hygiene
-
-- `tests/test_team_router.py` no longer assigns to `tempfile.TemporaryDirectory`.
-- `workspace_temp_dir()` uses a local context manager with `Path.mkdir` and `shutil.rmtree(ignore_errors=True)`.
-- Default Windows temp root is `C:\tmp\team-router-test-tmp`; this avoids repo-local `os.replace` denial and keeps generated state outside the git worktree.
-- Safe cleanup removed task-created roots after path verification:
-  - `D:\codex\Team Router\test-tmp`
-  - `D:\codex\Team Router\.tmp\test_team_router`
-  - `C:\tmp\team-router-test-tmp`
-
 ## Not Done
 
+- no commit
 - no push
 - no PR
 - no merge
@@ -89,12 +77,13 @@ Pending manager/reviewer rerun after this package file update:
 
 ## Risks
 
-- `py -B scripts\team_router_skill_sync_check.py --check` is expected to report `status: mismatch` after repo skill changes because global sync is not authorized in this package.
+- `py -B scripts\team_router_skill_sync_check.py --check` is expected to report `status: mismatch` until a separately authorized global skill sync copies the changed repo skill entrypoint.
+- `docs/workbench.md` contains an out-of-scope Addy checklist note. It is explicitly accounted, but it should remain separate from the Team Router runtime/protocol package.
 - Git may print CRLF/LF replacement warnings for existing text files.
-- The original executor thread became stuck around a sandbox escalation attempt; parent manager performed a narrow temp-helper rescue and will require reviewer/verifier scrutiny before any local commit.
+- Several executor attempts were blocked by the Windows `apply_patch` sandbox wrapper; parent manager applied narrow, reviewed edits where required.
 
 ## Global Sync / Commit / Push Status
 
 - globalSyncStatus: not run with `--sync`; repo/global expected mismatch until separate authorization.
-- commitStatus: not committed yet; local commit allowed only after reviewer and verifier pass for this Complex Task Stack package.
+- commitStatus: not committed; local commit requires a separate explicit gate after reviewer and verifier acceptance.
 - pushStatus: not pushed / not authorized.

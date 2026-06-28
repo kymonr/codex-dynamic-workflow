@@ -1,25 +1,25 @@
 ---
 name: codex-team-router
-description: Use for AGENTS-aware Codex desktop Team Router orchestration with visible manager/executor/verifier threads, conditional reviewer gates, cross-session routing, explicit manager requests or terse Manager Mode follow-ups, Team Router self-change governance, repo/global skill sync gates, and optimization backlog triage. Manager Mode is orchestration-only.
+description: Use for AGENTS-aware Codex desktop Team Router orchestration: visible roles, Manager Mode, reviewer/verifier gates, direct return, self-change governance, repo/global skill sync gates, and backlog triage. Manager Mode is orchestration-only.
 ---
 
 # Codex Team Router
 
-Short entrypoint only. Keep this file under the Codex 8KB cap and current 7200 byte target; deep protocol details live in `references/` and are part of the Team Router contract.
+Short entrypoint only. Keep this file under the Codex 8KB cap; deep protocol details live in `references/` and are part of the Team Router contract.
 
-Team Router is a Codex desktop thread-tools control plane for role threads, local registry/ledger state, direct return, and conditional reviewer gates.
+Team Router controls Codex desktop role threads, registry/ledger state, direct return, and conditional reviewer gates.
 
 ## Roles
 
-- 调度者 / Orchestrator: parent-side step choice and closeout.
-- 工具宿主边界 / Adapter Host Boundary: real callable Codex thread tools.
+- 调度者 / Orchestrator: parent step choice and closeout.
+- 工具宿主边界 / Adapter Host Boundary: callable Codex thread tools.
 - 状态控制器 / State Controller: registry, ledger, anchors, transitions.
-- 规划者 / Manager: role thread; `TEAM_ROUTER_PLAN` only.
-- 执行者 / Executor: role thread; delegated work; `TEAM_ROUTER_CALLBACK`.
+- 规划者 / Manager: role thread; `TEAM_ROUTER_PLAN`.
+- 执行者 / Executor: delegated work; `TEAM_ROUTER_CALLBACK`.
 - 审查者 / Reviewer: conditional read-only/adversarial gate; `TEAM_ROUTER_REVIEW`.
 - 验证者 / Verifier: final acceptance; `TEAM_ROUTER_VERDICT`.
 
-Visible titles use `角色-任务名`. Manager first renames parent/current to `调度者-Team Router <task>` with callable `set_thread_title`; adapter-created orchestration also requires `parent_thread_id`. Missing either means `tool_error` / blocked before child dispatch. Normalize child role titles with `set_thread_title`.
+Visible titles use `角色-任务名`. Manager first renames parent/current to `调度者-Team Router <task>` with callable `set_thread_title`; adapter-created orchestration also requires `parent_thread_id`. Missing either means `tool_error` before child dispatch. Normalize child role titles with `set_thread_title`.
 
 ## Manager Mode Hard Rules
 
@@ -37,13 +37,13 @@ Before live orchestration, probe required Codex app tools and stop with `tool_er
 list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread
 ```
 
-Use one role-thread creation path per task. Adapter-created orchestration requires in-process Python callables, `parent_thread_id`, callable `set_thread_title`, and a host heartbeat scheduler for `watch_team_task_with_adapter()` at `firstCheckAt` / `nextAllowedReadAt`. Model-side tool descriptors are not Python callables. Without that contract, status is `tool_error` / `manual orchestration only`; copy-paste prompts are handoff text, not live dispatch evidence. Use `assess_live_orchestration_readiness()` / `parent_entry_guard()` to explain blocked readiness.
+Use one role-thread creation path per task. Adapter-created orchestration requires in-process Python callables, `parent_thread_id`, callable `set_thread_title`, and a host heartbeat scheduler for `watch_team_task_with_adapter()` at `firstCheckAt` / `nextAllowedReadAt`. Model-side tool descriptors are not Python callables. Without that contract, status is `tool_error` / `manual orchestration only`; copy-paste prompts are handoff text, not live dispatch evidence. Explain blocked readiness with `assess_live_orchestration_readiness()` / `parent_entry_guard()`.
 
-Reuse existing roles for the same task/task family. Rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception.
+Reuse existing roles for the same task/task family; rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception.
 
 ## Direct Return
 
-With explicit parent id, role records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send to `returnThreadId` with `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`, then output the same protocol block body as self-thread-marker fallback. Manager validates `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; malformed direct returns are recorded for fallback recovery and cannot advance scope. See `references/direct-return.md`.
+With explicit parent id, role records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send to `returnThreadId` with `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`, then output the same protocol block body as self-thread-marker fallback. Manager validates `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; malformed returns are recorded for fallback recovery and cannot advance scope. See `references/direct-return.md`.
 
 Team Router dispatch uses Codex desktop thread roles, not `multi_agent_v1` workers/subagents.
 
