@@ -78,3 +78,15 @@ This is the project-level compounding ledger. Keep reusable lessons here when a 
 - 规则：repo/global skill mismatch 不能无限期悬空；push 和 global skill sync 是两个独立外部状态变更门，必须分别明确授权。`--check` mismatch 是待同步状态，不是失败，也不是自动授权 `--sync`。
 - 规则：用户看不懂英文时，closeout 和 callback 的人读内容必须中文；协议 key、命令、路径、hash 保持 literal。
 - Enforced by: `docs/compounding.md`, `docs/workbench.md`, `skills/codex-team-router/references/manager-mode.md`, `skills/codex-team-router/references/role-handoff-and-review-package.md`, `src/team_router.py`, and `tests/test_team_router.py`.
+
+### Manager Waiting Must Not Become Short-Interval Polling
+
+- compoundingDecision: recorded
+- reason: 本轮管理者在执行者 inProgress 且没有 callback 时，短时间内多次 `read_thread`，把 bounded/event-driven result collection 误执行成了连续轮询。
+- 触发条件：Team Router role thread 已经派发，状态仍是 `inProgress`，尚未出现 `TEAM_ROUTER_CALLBACK` / `TEAM_ROUTER_REVIEW` / `TEAM_ROUTER_VERDICT`，或管理者已经发送 CONTROL 要求 scope-limited closeout。
+- 越权/风险事实：频繁 `read_thread` 会制造噪音、消耗工具调用、干扰用户对流程状态的理解，并违反 300 秒 heartbeat / user-triggered status check 纪律。
+- 影响面：影响调度者等待策略、执行者/审查者/验证者回调收集、用户可见状态更新、watcher/heartbeat 语义，以及 closeout 可信度。
+- 正确 delegation：派发 role thread 后，调度者只做一次短 observation；如果没有 final marker，应停止主动读取，等待 direct-send、用户触发状态请求、已约定 `firstCheckAt` / `nextAllowedReadAt`，或明确 timeout/blocker 窗口。发送 CONTROL 后也不得连续读；下一步只能等 callback/blocker 或按 300 秒 cadence 读取。
+- 验收证据：检查调度者 closeout 或 handoff 是否记录 `lastReadAt`、`nextAllowedReadAt` 或明确的用户触发状态请求；检查没有在同一等待窗口内反复 `read_thread` 同一 role thread。
+- 规则：`inProgress` 不是轮询许可。没有 final marker 时，管理者必须报告“等待中/下次允许读取时间/用户可手动要求状态”，而不是继续短间隔读取。
+- Enforced by: `docs/compounding.md`, `skills/codex-team-router/references/manager-mode.md`, `skills/codex-team-router/references/manual-orchestration.md`, `docs/runbooks/codex-team-router-live-orchestration.md`, and future tests in `tests/test_team_router.py`.

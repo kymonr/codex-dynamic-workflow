@@ -4,7 +4,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 Terminology: Codex delegation wrapper metadata may expose the sender role thread as `<source_thread_id>` / normalized message `sourceThreadId`. That wrapper source identifies the role thread that sent the message. Inside the Team Router protocol block, `sourceThreadId` is the parent/orchestrator return thread id and must match the pending ledger `returnThreadId`; `sourceRoleThreadId` is the role thread id and must match the expected `roleThreadId` / role thread record for the pending role ledger entry.
 
-Direct return is the primary completion path when the current orchestrator/parent thread id is known. The role must first call `send_message_to_thread(sourceThreadId, protocolBlock)` to direct-send the final protocol block to Manager, then output the same protocol block body in its own thread as the `self-thread-marker` fallback/audit copy.
+Direct return is the primary completion path when the current orchestrator/parent thread id is known. protocol direct-send is allowed and is not a workspace/file write; it is a protocol delivery action to the parent thread. The role must first call `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)` to direct-send the final protocol block to Manager, then output the same protocol block body as the self-thread-marker fallback in its own thread as the audit copy.
 
 Use these explicit fields together:
 
@@ -31,10 +31,10 @@ Prompt metadata by role:
 
 Compatibility anchors:
 
-- executor direct-return specifically means `send_message_to_thread(sourceThreadId, protocolBlock)` with a `TEAM_ROUTER_CALLBACK` block body.
-- reviewer direct-return specifically means `send_message_to_thread(sourceThreadId, protocolBlock)` with a `TEAM_ROUTER_REVIEW` block body.
-- verifier direct-return specifically means `send_message_to_thread(sourceThreadId, protocolBlock)` with a `TEAM_ROUTER_VERDICT` block body.
-- the fallback invariant is unchanged: after any direct-send attempt, output the same protocol block body in the role thread as the `self-thread-marker` fallback/audit copy.
+- executor direct-return specifically means `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>)` with a `TEAM_ROUTER_CALLBACK` block body.
+- reviewer direct-return specifically means `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_REVIEW block>)` with a `TEAM_ROUTER_REVIEW` block body.
+- verifier direct-return specifically means `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_VERDICT block>)` with a `TEAM_ROUTER_VERDICT` block body.
+- the fallback invariant is unchanged: after any direct-send attempt, then output the same protocol block body as the self-thread-marker fallback in the role thread audit copy.
 
 Manager inbox capture is part of the ledger state machine. A direct-return callback, review, or verdict captured from the return thread must update ledger state, not just notify the manager.
 
@@ -110,7 +110,7 @@ deliveryStatus: fallback_only
 deliveryError: <short error only when direct-send was unavailable or failed>
 ```
 
-Use `callbackDelivery: direct-send` when an explicit orchestrator/parent `sourceThreadId` is available and the role can call `send_message_to_thread`; direct-send return is preferred, and `callbackMode: self-thread-marker` keeps the role thread recoverable by `read_thread`. The normal order is: first call `send_message_to_thread(sourceThreadId, protocolBlock)`, then output the same protocol block body locally. Include `deliveryStatus: fallback_only` only on the local fallback block when direct-send was unavailable or failed. Use the last matching final callback for fallback/audit reads.
+Use `callbackDelivery: direct-send` when an explicit orchestrator/parent `sourceThreadId` is available and the role can call `send_message_to_thread`; direct-send return is preferred, and `callbackMode: self-thread-marker` keeps the role thread recoverable by `read_thread`. The normal order is: first call `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>)`, then output the same protocol block body as the self-thread-marker fallback locally. Include `deliveryStatus: fallback_only` only on the local fallback block when direct-send was unavailable or failed. Use the last matching final callback for fallback/audit reads.
 
 ### Reviewer Review
 
@@ -170,3 +170,7 @@ deliveryError: <short error only when direct-send was unavailable or failed>
 ```
 
 Natural-language verdicts do not move state.
+
+Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, protocolBlock) means the same protocol delivery target as send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>); prefer the explicit `threadId=<returnThreadId>` form in role request templates.
+
+Legacy wording: first call `send_message_to_thread(sourceThreadId, protocolBlock)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback. New role request templates must prefer the explicit `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)` form.

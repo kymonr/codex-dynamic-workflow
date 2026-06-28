@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -7562,6 +7563,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         self.assertIn("## Current Task", text)
         for needle in (
+            "ctr-20260628-anchor-and-closeout-freshness-fix",
+            "anchor cleanup and closeout freshness after verifier pass",
             "Current git truth",
             "Current next gate",
             "Historical records",
@@ -7578,8 +7581,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`tests/test_team_router.py`",
             "`docs/workbench.md`",
             "`skills/codex-team-router/references/manager-mode.md`",
-            "`skills/codex-team-router/references/reviewer-gate.md`",
             "`skills/codex-team-router/references/manual-orchestration.md`",
+            "`skills/codex-team-router/references/testing-and-quality-gates.md`",
+            "`skills/codex-team-router/references/direct-return.md`",
+            "`docs/team-router/packages/ctr-20260628-role-request-direct-send-and-waiting-fix.md`",
+            "`docs/team-router/packages/ctr-20260628-anchor-and-closeout-freshness-fix.md`",
         ):
             self.assertIn(needle, current_diff_section)
         for stale_current_claim in (
@@ -7589,24 +7595,129 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "previous helper-test commit `c9d41b3` is local-only",
             "Global installed skill reference synced",
             r"C:\Users\Orz\.codex\skills\codex-team-router",
+            "implementation in progress in isolated worktree",
+            "local C-package verification, then local commit in this isolated worktree, then reviewer gate",
+            "thread tools unavailable",
         ):
             self.assertNotIn(stale_current_claim, text)
         for stale in (
             "`docs/superpowers/plans/2026-06-27-team-router-cross-thread-information-format.md`",
             "`docs/team-router/packages/ctr-20260627-info-format-impl.md`",
+            "`docs/team-router/packages/ctr-20260628-workbench-tool-error-governance.md`",
             "`docs/superpowers/plans/2026-06-26-team-router-direct-return-contract-hardening.md`",
             "`README.md`",
-            "`skills/codex-team-router/references/testing-and-quality-gates.md`",
             "`skills/codex-team-router/references/agent-assist-policy.md`",
             "`skills/codex-team-router/references/role-closeout.md`",
             "`src/team_router.py`",
             "`docs/runbooks/codex-team-router-live-orchestration.md`",
             "`skills/codex-team-router/SKILL.md`",
-            "`skills/codex-team-router/references/direct-return.md`",
             "`docs/compounding.md`",
         ):
             self.assertNotIn(stale, current_diff_section)
 
+
+    def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
+        text = self._skill_contract_text()
+
+        for needle in (
+            "When required thread tools are not exposed in the current host",
+            "`tool_error` / `manual orchestration only`",
+            "must not claim that visible role threads were created, dispatched, reused, watched, or completed",
+            "copy-paste executor/reviewer/verifier prompts are handoff text, not live Team Router dispatch evidence",
+        ):
+            self.assertIn(needle, text)
+
+        self.assertNotIn(
+            "If required tools are missing, continue by describing created role threads",
+            text,
+        )
+
+    def test_workbench_tracks_live_capability_state_without_tool_surface_drift(self):
+        workbench = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
+        package = (
+            ROOT
+            / "docs"
+            / "team-router"
+            / "packages"
+            / "ctr-20260628-live-capability-state-fix.md"
+        ).read_text(encoding="utf-8")
+        combined = workbench + "\n" + package
+
+        for needle in (
+            "tool surface available",
+            "callable adapter unavailable",
+            "live orchestration not ready",
+            "list_projects/create_thread/read_thread/send_message_to_thread/list_threads/set_thread_title",
+            "Python callable adapter",
+            "parent_thread_id",
+            "scheduler/heartbeat",
+        ):
+            self.assertIn(needle, combined)
+
+        self.assertNotIn("thread tools unavailable", workbench)
+        self.assertNotIn("thread tools unavailable", package)
+
+    def test_role_requests_require_direct_send_and_bounded_waiting_contract(self):
+        contract = self._skill_contract_text()
+        workbench = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
+        package = (
+            ROOT
+            / "docs"
+            / "team-router"
+            / "packages"
+            / "ctr-20260628-role-request-direct-send-and-waiting-fix.md"
+        ).read_text(encoding="utf-8")
+        combined = contract + "\n" + workbench + "\n" + package
+
+        for needle in (
+            "callbackDelivery: direct-send",
+            "callbackFallback: self-thread-marker",
+            "reviewDelivery: direct-send",
+            "reviewFallback: self-thread-marker",
+            "verdictDelivery: direct-send",
+            "verdictFallback: self-thread-marker",
+            "protocol direct-send is allowed and is not a workspace/file write",
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)",
+            "then output the same protocol block body as the self-thread-marker fallback",
+            "one short observation-only first check, then stop proactive reads until firstCheckAt or nextAllowedReadAt",
+            "inProgress is not polling permission",
+            "CONTROL after bounded wait/read is not permission for immediate continuous read_thread polling",
+            "wait for direct-send, user-triggered status/stop/immediate, firstCheckAt, nextAllowedReadAt, known expected completion window, or timeout/blocker handling",
+        ):
+            self.assertIn(needle, combined)
+
+    def test_anchor_and_closeout_freshness_after_verifier_pass(self):
+        contract = self._skill_contract_text()
+        workbench = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
+        role_package = (
+            ROOT
+            / "docs"
+            / "team-router"
+            / "packages"
+            / "ctr-20260628-role-request-direct-send-and-waiting-fix.md"
+        ).read_text(encoding="utf-8")
+        cleanup_package = (
+            ROOT
+            / "docs"
+            / "team-router"
+            / "packages"
+            / "ctr-20260628-anchor-and-closeout-freshness-fix.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIsNone(re.search(r"(?<!t)hreadId=(?:<|&lt;|&amp;lt;)", contract))
+        self.assertNotIn("\\threadId=<returnThreadId>", contract)
+        self.assertIn("`threadId=<returnThreadId>`", contract)
+        self.assertIn("ctr-20260628-anchor-and-closeout-freshness-fix", cleanup_package)
+        self.assertIn("verifier accepted/pass", workbench)
+        self.assertIn("verifier accepted/pass", role_package)
+        self.assertIn("remainingTodos: none for this local package", role_package)
+        for stale in (
+            "then verifier acceptance",
+            "verifier acceptance remains the external gate",
+        ):
+            self.assertNotIn(stale, workbench)
+            self.assertNotIn(stale, role_package)
+            self.assertNotIn(stale, cleanup_package)
     def test_skill_doc_contains_parent_thread_operating_flow(self):
         text = self._skill_contract_text()
         for needle in (
@@ -7719,7 +7830,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         )
         for stale in (
             "directReturnAttempt",
-            "send_message_to_thread(threadId=<returnThreadId>",
             "The role still writes its final marker in its own thread, then sends",
         ):
             self.assertNotIn(stale, text)
