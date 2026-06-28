@@ -43,7 +43,7 @@ Use one role-thread creation path per task. Reuse existing roles for the same ta
 
 ## Direct Return
 
-When an explicit parent id is available, records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send final markers to `returnThreadId` and keep self-thread markers as fallback. Manager validates source/task/marker/role ids; duplicates are ignored after ledger advance. Watcher heartbeat remains the 5 minute fallback. See `references/direct-return.md`.
+When an explicit parent id is available, records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send final markers to `returnThreadId` and keep self-thread markers as fallback. Bare `create_thread` plus `read_thread` is not formal return; manually created roles must be registered, dispatched with return metadata, and captured by direct-send or watcher ledger advancement. Manager validates source/task/marker/role ids; duplicates are ignored after ledger advance. Watcher heartbeat remains the 5 minute fallback. See `references/direct-return.md`.
 
 Team Router dispatch uses Codex desktop thread roles, not `multi_agent_v1` workers/subagents, because role threads need thread tools and reliable direct-return.
 

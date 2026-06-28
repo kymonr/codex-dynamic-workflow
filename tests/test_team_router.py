@@ -445,6 +445,16 @@ risks: none
             "next: reviewer"
         ) % task_id
         messages = (
+            team_router.make_role_thread_prompt(
+                task_id,
+                "executor",
+                "用中文完成 Team Router 任务。",
+            ),
+            team_router.make_plan_request_message(
+                task_id,
+                "规划一次中文 Team Router 任务。",
+                "local-package",
+            ),
             team_router.make_executor_dispatch_message(
                 task_id,
                 plan_fields,
@@ -469,14 +479,21 @@ risks: none
 
         for message in messages:
             with self.subTest(marker=message.splitlines()[0]):
-                self.assertIn("Language rule: keep protocol field names English", message)
-                self.assertIn("Chinese by default", message)
-                self.assertIn("commands, paths, filenames, logs, errors", message)
+                self.assertIn("语言规则：协议 marker、字段名和枚举值保持英文", message)
+                self.assertIn("默认用中文", message)
+                self.assertIn("命令、路径、文件名", message)
                 self.assertIn("TEAM_ROUTER_", message)
-        self.assertIn("summary/evidence/risks/next", messages[0])
-        self.assertIn("summary/findings/requiredChanges/evidenceChecked/risks", messages[1])
-        self.assertIn("summary/requiredChanges/evidenceChecked/risks", messages[2])
-
+        self.assertIn("等待 TEAM_ROUTER_* 协议消息后再行动。", messages[0])
+        self.assertIn("请在本线程按以下格式回复：", messages[1])
+        self.assertIn("summary", messages[2])
+        self.assertIn("evidence", messages[2])
+        self.assertIn("risks", messages[2])
+        self.assertIn("next", messages[2])
+        self.assertIn("findings", messages[3])
+        self.assertIn("requiredChanges", messages[3])
+        self.assertIn("evidenceChecked", messages[3])
+        self.assertIn("requiredChanges", messages[4])
+        self.assertIn("evidenceChecked", messages[4])
 
 class TestTeamRouterState(unittest.TestCase):
     def test_callback_unreachable_is_recoverable_not_terminal(self):
@@ -877,10 +894,11 @@ risks: none
 
         retry = team_router.command_startup_retry_decision(-1073741502, "", "", probes_recovered=True)
         self.assertEqual(retry["action"], "retry_same_scope")
-        self.assertIn("same narrow package", retry["reason"])
+        self.assertIn("只重试同一个窄 package", retry["reason"])
 
         blocked = team_router.command_startup_retry_decision(-1073741502, "", "", probes_recovered=False)
         self.assertEqual(blocked["action"], "environment_blocked")
+        self.assertIn("环境仍被阻断", blocked["reason"])
 
     def test_verifier_evidence_only_fast_path_requires_complete_evidence_and_pass_review(self):
         callback_fields = {
@@ -1010,6 +1028,11 @@ risks: none
         self.assertIn("direct-send", direct_return["delivery"])
         self.assertIn("self-thread-marker", direct_return["fallback"])
         self.assertIn("5 minutes", direct_return["fallback"])
+        self.assertIn("child-thread output alone is not parent receipt", direct_return["completionReceipt"])
+        self.assertIn("bare create_thread plus read_thread", direct_return["manualThreadBoundary"])
+        self.assertIn("formally dispatched with returnThreadId/sourceRoleThreadId", direct_return["manualThreadBoundary"])
+        self.assertIn("deliveryStatus: fallback_only", direct_return["degradedCollection"])
+        self.assertIn("normal proactive return", direct_return["degradedCollection"])
         self.assertIn("taskId", direct_return["managerReceiptValidation"])
         self.assertIn("protocol-block `sourceThreadId`", direct_return["managerReceiptValidation"])
         self.assertIn("role", direct_return["managerReceiptValidation"])
@@ -1062,6 +1085,9 @@ risks: none
         self.assertIn("must direct-send", delivery_model["proactiveReturnRule"])
         self.assertIn("key checks complete", delivery_model["proactiveReturnRule"])
         self.assertIn("must not rely on parent polling", delivery_model["proactiveReturnRule"])
+        self.assertIn("bare create_thread plus read_thread", delivery_model["bareCreateThreadBoundary"])
+        self.assertIn("manual/degraded collection only", delivery_model["bareCreateThreadBoundary"])
+        self.assertIn("registered", delivery_model["bareCreateThreadBoundary"])
         self.assertIn("bounded wait/read", delivery_model["boundedControlFallback"])
         self.assertIn("scope-limited closeout", delivery_model["boundedControlFallback"])
         self.assertIn("already-confirmed facts", delivery_model["boundedControlFallback"])
@@ -1082,8 +1108,8 @@ risks: none
         self.assertIn("cmd.exe /c ver", startup["managerSequence"][1])
         self.assertIn("Get-Location", startup["managerSequence"][1])
         self.assertIn("git status", startup["managerSequence"][1])
-        self.assertIn("retry the same narrow package only", startup["managerSequence"][2])
-        self.assertIn("mark environment blocked", startup["managerSequence"][3])
+        self.assertIn("只重试同一个窄 package", startup["managerSequence"][2])
+        self.assertIn("环境阻断", startup["managerSequence"][3])
         self.assertIn("preserve the original authorized scope", startup["retryScope"])
         self.assertIn("reuse existing executor", policy["roleReuse"]["default"])
         self.assertIn("existing verifier", policy["roleReuse"]["default"])
@@ -1884,10 +1910,10 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertIn("permission: local-package", local_message)
         self.assertIn("acknowledgedPermission: read-only | design-only | local-package | escalation-required", local_message)
-        self.assertIn("Optional PACKAGE/STRICT handoff fields when relevant:", local_message)
-        self.assertIn("taskBriefPath: <workspace path to task brief>", local_message)
-        self.assertIn("executorReportPath: <workspace path to executor report>", local_message)
-        self.assertIn("reviewPackagePath: <workspace path to review package> | inline", local_message)
+        self.assertIn("相关时可填写 PACKAGE/STRICT 交接字段：", local_message)
+        self.assertIn("taskBriefPath: <任务 brief 的 workspace 路径>", local_message)
+        self.assertIn("executorReportPath: <执行者报告的 workspace 路径>", local_message)
+        self.assertIn("reviewPackagePath: <review package 的 workspace 路径> | inline", local_message)
         self.assertIn("inlineFallback: true", local_message)
 
         awaiting = team_router.record_plan_request_sent(
@@ -2145,21 +2171,22 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
         self.assertIn(
-            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_CALLBACK block.",
+            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_CALLBACK block。",
             message,
         )
         self.assertIn(
-            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             message,
         )
-        self.assertIn("Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.", message)
+        self.assertIn("直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。", message)
         self.assertIn(
-            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
             message,
         )
-        self.assertIn("same protocol block body", message)
+        self.assertIn("同一个 protocol block body", message)
         self.assertIn("deliveryStatus: fallback_only", message)
         self.assertIn("deliveryError", message)
+        self.assertNotIn("short error only when direct-send failed", message)
         self.assertIn("callbackMarker: TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", message)
 
         updated = team_router.record_executor_dispatch_sent(
@@ -2201,9 +2228,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("cmd.exe /c ver", prompt)
         self.assertIn("Get-Location", prompt)
         self.assertIn("git status -s --untracked-files=all", prompt)
-        self.assertIn("not a task-code failure", prompt)
-        self.assertIn("retry the same narrow package only", prompt)
-        self.assertIn("Do not widen scope beyond the original narrow package", prompt)
+        self.assertIn("不当作任务代码失败", prompt)
+        self.assertIn("只重试同一个窄 package", prompt)
+        self.assertIn("不得把范围扩大到原始窄 package 之外", prompt)
+        self.assertNotIn("retry the same narrow package only", prompt)
+        self.assertNotIn("environment is blocked", prompt)
 
     def test_executor_dispatch_search_anchor_serializes_null_message_id(self):
         ledger = self._planned_ledger()
@@ -2271,8 +2300,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         for message in messages:
             self.assertIn("riskBoundary: workspace writes only; no external release", message)
-            self.assertIn("Review package metadata (evidence only):", message)
-            self.assertIn("Runtime boundary: Team Router runtime must not read, execute, trust, or auto-generate", message)
+            self.assertIn("审查包元数据（仅作为证据）：", message)
+            self.assertIn("运行时边界：Team Router runtime 不得读取、执行、信任或自动生成", message)
             self.assertIn("packageEvidenceBoundary:", message)
             self.assertIn("gateClass: PACKAGE", message)
             self.assertIn("metadataStatus: recorded", message)
@@ -3092,8 +3121,14 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(verdict["fields"]["summary"], "direct closeout")
         self.assertEqual(verdict["receipt"]["source"], "manager-inbox/direct-send")
         self.assertEqual(verdict["receipt"]["channel"], "manager-inbox")
-        self.assertEqual(first["closeout"]["status"], "done")
+        self.assertEqual(first["closeout"]["status"], "accepted")
         self.assertEqual(first["closeout"]["summary"], "direct closeout")
+        self.assertEqual(first["closeout"]["receiptSource"], "manager-inbox/direct-send")
+        self.assertEqual(first["closeout"]["receiptChannel"], "manager-inbox")
+        registry = team_router.load_registry(self.root, self.project_id)
+        closeout = team_router.format_closeout_for_user(first, registry)
+        self.assertIn("receiptSource: manager-inbox/direct-send", closeout)
+        self.assertIn("receiptChannel: manager-inbox", closeout)
 
     def test_watch_reviewer_direct_return_validates_protocol_source_role_thread_id(self):
         adapter = self._record_reviewer_direct_return_request()
@@ -3520,7 +3555,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertNotIn("Review package metadata", verifier_prompt)
         self.assertNotIn("reviewPackagePath:", verifier_prompt)
         self.assertNotIn("inlineFallback:", verifier_prompt)
-        self.assertNotIn("Reviewer result context:", verifier_prompt)
+        self.assertNotIn("审查者结果上下文：", verifier_prompt)
 
     def test_reviewer_request_rejects_fast_gate_callback(self):
         adapter = FakeThreadAdapter()
@@ -3622,8 +3657,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
-        self.assertIn("Reviewer result context:", verifier_prompt)
-        self.assertIn("Verifier must confirm reviewer requiredChanges are satisfied before returning pass.", verifier_prompt)
+        self.assertIn("审查者结果上下文：", verifier_prompt)
+        self.assertIn("验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。", verifier_prompt)
         self.assertIn("TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", verifier_prompt)
         self.assertIn("requiredChanges: confirm regression tests", verifier_prompt)
 
@@ -3642,8 +3677,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
-        self.assertNotIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
-        self.assertNotIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertNotIn("本次验证可考虑 evidence-only fast path。", verifier_prompt)
+        self.assertNotIn("不重新运行命令，也不扩大检查范围", verifier_prompt)
 
     def test_send_verifier_request_with_adapter_offers_evidence_only_fast_path_after_clean_reviewer_pass(self):
         adapter = FakeThreadAdapter()
@@ -3694,9 +3729,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
-        self.assertIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
-        self.assertIn("If the executor evidence plus reviewer result are sufficient", verifier_prompt)
-        self.assertIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertIn("本次验证可考虑 evidence-only fast path。", verifier_prompt)
+        self.assertIn("如果执行者 evidence 加 reviewer result 已足够覆盖授权范围", verifier_prompt)
+        self.assertIn("不重新运行命令，也不扩大检查范围", verifier_prompt)
         self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
 
     def test_verifier_request_mentions_evidence_only_fast_path_when_reviewer_passes_cleanly(self):
@@ -3728,11 +3763,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             reviewer_result=reviewer_result,
         )
 
-        self.assertIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
-        self.assertIn("If the executor evidence plus reviewer result are sufficient", verifier_prompt)
-        self.assertIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertIn("本次验证可考虑 evidence-only fast path。", verifier_prompt)
+        self.assertIn("如果执行者 evidence 加 reviewer result 已足够覆盖授权范围", verifier_prompt)
+        self.assertIn("不重新运行命令，也不扩大检查范围", verifier_prompt)
         self.assertNotIn("Evidence-only fast path is allowed for this verification.", verifier_prompt)
-        self.assertIn("stage/commit/push/PR/release were not done", verifier_prompt)
+        self.assertIn("stage/commit/push/PR/release 未执行", verifier_prompt)
 
     def test_verifier_request_without_reviewer_result_does_not_offer_evidence_only_fast_path(self):
         callback_block = (
@@ -3753,8 +3788,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             reviewer_result=None,
         )
 
-        self.assertNotIn("Evidence-only fast path may be considered for this verification.", verifier_prompt)
-        self.assertNotIn("without re-running commands or widening inspection", verifier_prompt)
+        self.assertNotIn("本次验证可考虑 evidence-only fast path。", verifier_prompt)
+        self.assertNotIn("不重新运行命令，也不扩大检查范围", verifier_prompt)
     def test_verifier_accepted_closeout_adds_auto_stop_and_plain_language_metadata(self):
         ledger = self._verifying_ledger()
         team_router.record_verifier_request_sent(
@@ -3771,7 +3806,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             self.task_id,
             [
                 {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
-{"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nstatus: accepted\nsummary: accepted fast\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+{"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: accepted fast\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
             ],
             captured_at="2026-06-22T20:07:00+08:00",
         )
@@ -3781,12 +3816,16 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertEqual(accepted["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
         self.assertIn("plain language", accepted["closeout"]["reportAction"])
         self.assertIn("stage/commit/push/PR/publish/release were not done", accepted["closeout"]["notDone"])
+        self.assertEqual(accepted["closeout"]["receiptSource"], "self-thread-fallback/read_thread")
+        self.assertEqual(accepted["closeout"]["receiptChannel"], "read_thread")
         self.assertNotIn("watcher", accepted)
         registry = team_router.load_registry(self.root, self.project_id)
         closeout = team_router.format_closeout_for_user(accepted, registry)
         self.assertIn("heartbeatAction: stop_and_delete_heartbeat", closeout)
         self.assertIn("plainLanguageReport: required", closeout)
         self.assertIn("notDone: stage/commit/push/PR/publish/release were not done", closeout)
+        self.assertIn("receiptSource: self-thread-fallback/read_thread", closeout)
+        self.assertIn("receiptChannel: read_thread", closeout)
 
     def test_verifier_needs_rework_does_not_produce_accepted_closeout_action(self):
         ledger = self._verifying_ledger()
@@ -3848,7 +3887,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
 
         self.assertEqual(updated["status"], "done")
         self.assertEqual(updated["verification"]["verdict"]["fields"]["result"], "pass")
-        self.assertEqual(updated["closeout"]["status"], "done")
+        self.assertEqual(updated["closeout"]["status"], "accepted")
         self.assertEqual(updated["closeout"]["remainingTodos"], "none")
 
     def test_verifier_request_supports_direct_return_delivery_metadata(self):
@@ -3872,21 +3911,22 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
         self.assertIn(
-            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_VERDICT block.",
+            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_VERDICT block。",
             verify_message,
         )
         self.assertIn(
-            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             verify_message,
         )
-        self.assertIn("Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.", verify_message)
+        self.assertIn("直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。", verify_message)
         self.assertIn(
-            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
             verify_message,
         )
-        self.assertIn("same protocol block body", verify_message)
+        self.assertIn("同一个 protocol block body", verify_message)
         self.assertIn("deliveryStatus: fallback_only", verify_message)
         self.assertIn("deliveryError", verify_message)
+        self.assertNotIn("short error only when direct-send failed", verify_message)
         self.assertIn("callbackMarker: TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3", verify_message)
 
         requested = team_router.record_verifier_request_sent(
@@ -3928,21 +3968,22 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("reviewDelivery: direct-send", review_message)
         self.assertIn("reviewFallback: self-thread-marker", review_message)
         self.assertIn(
-            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_REVIEW block.",
+            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_REVIEW block。",
             review_message,
         )
         self.assertIn(
-            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
+            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             review_message,
         )
-        self.assertIn("Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.", review_message)
+        self.assertIn("直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。", review_message)
         self.assertIn(
-            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
             review_message,
         )
-        self.assertIn("same protocol block body", review_message)
+        self.assertIn("同一个 protocol block body", review_message)
         self.assertIn("deliveryStatus: fallback_only", review_message)
         self.assertIn("deliveryError", review_message)
+        self.assertNotIn("short error only when direct-send failed", review_message)
         self.assertIn("reviewMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
         self.assertIn("callbackMarker: TEAM_ROUTER_REVIEW taskId=ctr-20260622-160000-a7f3", review_message)
         self.assertIn("reviewerMode: read-only/adversarial", review_message)
@@ -4412,7 +4453,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
 
         self.assertEqual(done["status"], "done")
-        self.assertEqual(done["closeout"]["status"], "done")
+        self.assertEqual(done["closeout"]["status"], "accepted")
         self.assertEqual(done["closeout"]["summary"], "ok after rework")
 
     def test_manager_capture_requires_plan_request_anchor(self):
@@ -7366,6 +7407,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("manager: thread-manager", closeout)
         self.assertIn("summary: ok", closeout)
         self.assertIn("remainingTodos: none", closeout)
+        self.assertIn("receiptSource: self-thread-fallback/read_thread", closeout)
+        self.assertIn("receiptChannel: read_thread", closeout)
         self.assertIn("compoundingDecision: skipped", closeout)
         self.assertIn("reason: ordinary successful implementation/testing with no new reusable risk", closeout)
         legacy_done = dict(done)
@@ -7770,6 +7813,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         )
         for needle in (
             "direct-send + self-thread-marker fallback",
+            "Bare `create_thread` plus `read_thread` is not formal role dispatch or direct-return completion",
+            "A manager-read child-thread result is degraded/manual collection",
             "send_message_to_thread(sourceThreadId, protocolBlock)",
             "sourceRoleThreadId",
             "role",
@@ -7793,6 +7838,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "first call `send_message_to_thread(sourceThreadId, protocolBlock)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback",
             runbook,
         )
+        for needle in (
+            "Bare `create_thread` plus `read_thread` is not formal role dispatch or direct-return completion",
+            "A manager-read child-thread result is degraded/manual collection",
+            "formally dispatched with `returnThreadId` and `sourceRoleThreadId`",
+            "Bare `create_thread` plus later `read_thread` is not a valid Team Router role return",
+            "manual/degraded collection only",
+        ):
+            self.assertIn(needle, runbook)
+
     def test_direct_return_reference_matches_active_role_return_contract(self):
         text = (self._skill_references_dir() / "direct-return.md").read_text(encoding="utf-8")
         for needle in (
@@ -7819,6 +7873,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "fallback-only is degraded delivery",
             "not normal proactive return",
             "watcher 300s fallback",
+            "Bare `create_thread` plus later `read_thread` is not a valid Team Router role return.",
+            "formally dispatched with `returnThreadId` and `sourceRoleThreadId`",
             "Manager accepts direct-send only when `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId` all match the pending role ledger entry, including that `sourceThreadId` matches the pending ledger `returnThreadId`.",
             "rejected/quarantined",
             "cannot expand scope",

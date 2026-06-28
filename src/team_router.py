@@ -59,6 +59,11 @@ ROLE_DISPLAY_NAMES = {
     "reviewer": "审查者",
     "verifier": "验证者",
 }
+ROLE_HUMAN_LANGUAGE_RULE = (
+    "语言规则：协议 marker、字段名和枚举值保持英文；给人看的目标、范围、总结、证据、风险、"
+    "requiredChanges、evidenceChecked、next 等内容默认用中文。只有命令、路径、文件名、"
+    "日志、报错、工具名和不可避免的技术标识保留英文。"
+)
 PARENT_SIDE_ROLES = {
     "parent_orchestrator": {
         "displayName": "调度者",
@@ -167,6 +172,9 @@ MANAGER_ORCHESTRATION_POLICY = {
         "requiredLedgerFields": ("returnThreadId", "orchestratorThreadId", "roleThreadId"),
         "delivery": "direct-send via send_message_to_thread when an explicit parent/source returnThreadId is available",
         "fallback": "self-thread-marker plus watcher/heartbeat read_thread capture remains mandatory 5 minutes fallback",
+        "completionReceipt": "role result is received only when direct-send reaches returnThreadId or watcher/heartbeat captures the expected self-thread marker and advances the ledger; child-thread output alone is not parent receipt",
+        "manualThreadBoundary": "bare create_thread plus read_thread is not a valid Team Router role return; manual role threads must be registered in the ledger and formally dispatched with returnThreadId/sourceRoleThreadId before results can count",
+        "degradedCollection": "if the manager manually reads a child role thread and relays the marker because direct-send was bypassed or unavailable, report deliveryStatus: fallback_only / delivery degraded instead of normal proactive return",
         "managerReceiptValidation": "manager accepts direct-send protocol blocks only when taskId, protocol-block `sourceThreadId`, role, and sourceRoleThreadId match the pending role ledger entry, including protocol-block `sourceThreadId` matching pending `returnThreadId`; expected marker, returnThreadId/orchestratorThreadId target, and roleThreadId/source role validation still apply",
         "inboxValidation": "manager inbox capture validates taskId, sourceThreadId, expected marker, and consumes only the role currently awaited by the ledger",
         "deduplication": "duplicate direct callbacks are ignored after the ledger advances past that role; observations are not recorded twice",
@@ -200,6 +208,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "fallbackMetadata": "local fallback may append deliveryStatus: fallback_only and deliveryError when direct-send is unavailable or failed",
         "normalCadence": "manager waits for direct-send first; perform one bounded read/check only on failed/unknown send, expected idle role, user completion signal, or timeout; avoid continuous polling",
         "proactiveReturnRule": "roles must direct-send the final protocol block as soon as key checks complete and must not rely on parent polling",
+        "bareCreateThreadBoundary": "bare create_thread plus read_thread is manual/degraded collection only; it is not direct-return completion unless the role thread was registered, formally dispatched, and captured through returnThreadId or watcher ledger advancement",
         "boundedControlFallback": "watcher-only collection after a missed proactive direct-send is deliveryStatus: fallback_only / delivery degraded, not normal success; after bounded wait/read with no final protocol block, manager sends CONTROL requiring scope-limited closeout from already-confirmed facts",
     },
     "fastLane": {
@@ -250,8 +259,8 @@ MANAGER_ORCHESTRATION_POLICY = {
         "managerSequence": (
             "pause role escalation and avoid widening the task",
             "run parent-thread minimal probes: cmd.exe /c ver, Get-Location, lightweight git status",
-            "if probes recover, retry the same narrow package only",
-            "if probes still fail even with escalation, mark environment blocked",
+            "如果探针恢复，只重试同一个窄 package",
+            "如果探针在 escalation 后仍失败，标记为环境阻断",
         ),
         "retryScope": "preserve the original authorized scope; do not expand a BOM/encoding or other narrow rework into broader changes during recovery",
     },
@@ -1086,12 +1095,12 @@ def command_startup_retry_decision(exit_code: int, stdout: str | None, stderr: s
         return {
             "startupFailure": True,
             "action": "retry_same_scope",
-            "reason": "parent-thread probes recovered; retry the same narrow package only",
+            "reason": "parent-thread 探针已恢复；只重试同一个窄 package",
         }
     return {
         "startupFailure": True,
         "action": "environment_blocked",
-        "reason": "parent-thread probes still fail; environment is blocked",
+        "reason": "parent-thread 探针仍失败；环境仍被阻断",
     }
 def _validate_task_id(task_id: str) -> None:
     if not isinstance(task_id, str) or not TASK_ID_RE.match(task_id):
@@ -1732,18 +1741,16 @@ def _orchestration_convergence_decision(ledger: Mapping[str, Any], *, observed_a
 
 def _executor_startup_failure_prompt_lines() -> tuple[str, ...]:
     first_step = command_startup_retry_decision(-1073741502, "", "")
-    recovered = command_startup_retry_decision(-1073741502, "", "", probes_recovered=True)
-    blocked = command_startup_retry_decision(-1073741502, "", "", probes_recovered=False)
     probes = first_step.get("probes") if isinstance(first_step.get("probes"), tuple) else ()
     probe_text = ", ".join(str(probe) for probe in probes)
     return (
-        "Startup failure policy:",
-        "Treat exit code -1073741502 with no stdout/stderr as an environment/tooling startup failure, not a task-code failure.",
-        "Pause role escalation before retrying broader actions.",
-        "Parent-thread minimal probes first: %s." % probe_text,
-        "If those probes recover, %s." % recovered["reason"],
-        "If those probes still fail even with escalation, %s." % blocked["reason"],
-        "Do not widen scope beyond the original narrow package while recovering from startup failure.",
+        "启动失败处理规则：",
+        "遇到 exit code -1073741502 且没有 stdout/stderr 时，按环境/工具启动失败处理，不当作任务代码失败。",
+        "在重试更宽动作前，先暂停 role 升级。",
+        "先做 parent-thread 最小探针：%s。" % probe_text,
+        "如果探针恢复：只重试同一个窄 package。",
+        "如果探针在 escalation 后仍失败：环境仍被阻断，按 blocked 处理。",
+        "恢复启动失败时，不得把范围扩大到原始窄 package 之外。",
     )
 
 
@@ -2005,11 +2012,12 @@ def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
     _validate_role(role)
     _required_str(objective, "objective")
     return "\n".join((
-        "Codex Team Router role thread",
+        "Codex Team Router 角色线程",
         "projectId: %s" % project_id,
         "role: %s" % role,
         "objective: %s" % objective,
-        "Wait for TEAM_ROUTER_* protocol messages before acting.",
+        "等待 TEAM_ROUTER_* 协议消息后再行动。",
+        ROLE_HUMAN_LANGUAGE_RULE,
     ))
 
 
@@ -2415,9 +2423,9 @@ def _review_package_prompt_lines(plan_fields: Mapping[str, Any],
         return []
 
     lines = [
-        "Review package metadata (evidence only):",
-        "Runtime boundary: Team Router runtime must not read, execute, trust, or auto-generate these paths or inline evidence.",
-        "packageEvidenceBoundary: use metadata only as declared handoff evidence; verify claims separately within permission and riskBoundary.",
+        "审查包元数据（仅作为证据）：",
+        "运行时边界：Team Router runtime 不得读取、执行、信任或自动生成这些路径或 inline evidence。",
+        "packageEvidenceBoundary: 只把 metadata 当作声明的交接证据；所有主张都要在 permission 和 riskBoundary 内另行核验。",
     ]
     gate_class = _prompt_str(package.get("gateClass"))
     status = _prompt_str(package.get("status"))
@@ -2457,12 +2465,12 @@ def _reviewer_result_prompt_lines(reviewer_result: Mapping[str, Any] | str | Non
         raw = _prompt_str(reviewer_result)
         fields = {}
     lines = [
-        "Reviewer result context:",
-        "Verifier must confirm reviewer requiredChanges are satisfied before returning pass.",
+        "审查者结果上下文：",
+        "验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。",
     ]
     if raw is not None:
         lines.extend((
-            "Reviewer review follows verbatim:",
+            "以下是审查者 review 原文：",
             raw,
         ))
         return lines
@@ -2511,21 +2519,22 @@ def make_plan_request_message(task_id: str, objective: str, permission: str) -> 
         "TEAM_ROUTER_PLAN_REQUEST taskId=%s" % task_id,
         "objective: %s" % objective,
         "permission: %s" % permission,
+        ROLE_HUMAN_LANGUAGE_RULE,
         "",
-        "Please reply in this thread with:",
+        "请在本线程按以下格式回复：",
         "TEAM_ROUTER_PLAN taskId=%s" % task_id,
         "status: planned | blocked",
         "acknowledgedPermission: read-only | design-only | local-package | escalation-required",
-        "scope: <clear scope>",
-        "stopWhen: <done or blocked condition>",
-        "riskBoundary: <permission/data/external-system boundary>",
-        "executorPrompt: <prompt for executor>",
-        "Optional PACKAGE/STRICT handoff fields when relevant:",
-        "taskBriefPath: <workspace path to task brief>",
-        "executorReportPath: <workspace path to executor report>",
-        "reviewPackagePath: <workspace path to review package> | inline",
+        "scope: <清晰范围>",
+        "stopWhen: <完成或 blocked 条件>",
+        "riskBoundary: <权限/数据/外部系统边界>",
+        "executorPrompt: <给执行者的中文任务说明>",
+        "相关时可填写 PACKAGE/STRICT 交接字段：",
+        "taskBriefPath: <任务 brief 的 workspace 路径>",
+        "executorReportPath: <执行者报告的 workspace 路径>",
+        "reviewPackagePath: <review package 的 workspace 路径> | inline",
         "inlineFallback: true",
-        "notes: <none or notes>",
+        "notes: <无或补充说明>",
     ))
 
 
@@ -2596,34 +2605,34 @@ def make_executor_dispatch_message(task_id: str,
         lines.extend((*direct_lines,
             "callbackDelivery: direct-send",
             "callbackFallback: self-thread-marker",
-            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_CALLBACK block.",
-            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
-            "Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.",
-            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_CALLBACK block。",
+            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+            "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
+            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
         ))
     lines.extend((
         "",
         *_executor_startup_failure_prompt_lines(),
         "",
-        "Goal:",
+        "目标：",
         executor_prompt,
         "",
-        "Language rule: keep protocol field names English, but write human-readable summary/evidence/risks/next in Chinese by default; use English only for commands, paths, filenames, logs, errors, enum values, and unavoidable technical identifiers.",
+        ROLE_HUMAN_LANGUAGE_RULE,
         "",
-        "Delivery format:",
+        "交付格式：",
         "TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
         "status: done | blocked",
         "final: true",
-        "summary: <3-7 lines>",
-        "evidence: <paths, command summaries, or thread observations>",
-        "risks: <none or risks>",
-        "next: <none or next step>",
+        "summary: <中文 3-7 行>",
+        "evidence: <路径、命令摘要或线程观察>",
+        "risks: <none 或风险>",
+        "next: <none 或下一步>",
     ))
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
-            "directReturnTarget: <returnThreadId when applicable>",
-            "directReturnError: <short error only when failed>",
+            "directReturnTarget: <适用时填写 returnThreadId>",
+            "directReturnError: <仅 failed 时填写短错误>",
         ))
     return "\n".join(lines)
 
@@ -3218,7 +3227,7 @@ def make_reviewer_request_message(task_id: str,
         "permission: %s" % permission,
         "scope: %s" % scope,
         "reviewerMode: read-only/adversarial",
-        "responsibility: identify design risks, rule gaps, omissions, and new bad modes; not final acceptance",
+        "responsibility: 识别设计风险、规则缺口、遗漏和新的坏模式；不是最终验收",
     ]
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
     if handoff_lines:
@@ -3240,32 +3249,32 @@ def make_reviewer_request_message(task_id: str,
         lines.extend((*direct_lines,
             "reviewDelivery: direct-send",
             "reviewFallback: self-thread-marker",
-            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_REVIEW block.",
-            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
-            "Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.",
-            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_REVIEW block。",
+            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+            "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
+            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
         ))
     lines.extend((
         "",
-        "Executor callback follows verbatim:",
+        "以下是执行者 callback 原文：",
         callback_block,
         "",
-        "Language rule: keep protocol field names English, but write human-readable summary/findings/requiredChanges/evidenceChecked/risks in Chinese by default; use English only for commands, paths, filenames, logs, errors, enum values, and unavoidable technical identifiers.",
+        ROLE_HUMAN_LANGUAGE_RULE,
         "",
-        "Please reply in this thread with:",
+        "请在本线程按以下格式回复：",
         "TEAM_ROUTER_REVIEW taskId=%s" % task_id,
         "result: pass | needs_rework | blocked",
-        "summary: <review summary>",
-        "findings: <adversarial findings or none>",
-        "requiredChanges: <none or changes>",
-        "evidenceChecked: <checked evidence>",
-        "risks: <none or risks>",
+        "summary: <中文审查摘要>",
+        "findings: <对抗性发现或 none>",
+        "requiredChanges: <none 或需要修改的内容>",
+        "evidenceChecked: <已核验证据>",
+        "risks: <none 或风险>",
     ))
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
-            "directReturnTarget: <returnThreadId when applicable>",
-            "directReturnError: <short error only when failed>",
+            "directReturnTarget: <适用时填写 returnThreadId>",
+            "directReturnError: <仅 failed 时填写短错误>",
         ))
     return "\n".join(lines)
 
@@ -3461,20 +3470,20 @@ def make_verifier_request_message(task_id: str,
         lines.extend((*direct_lines,
             "verdictDelivery: direct-send",
             "verdictFallback: self-thread-marker",
-            "Direct return contract: first call send_message_to_thread(sourceThreadId, protocolBlock) with the final TEAM_ROUTER_VERDICT block.",
-            "Direct return contract: then output the same protocol block body in this role thread final answer for self-thread-marker fallback.",
-            "Direct return validation fields: taskId, role, sourceThreadId, sourceRoleThreadId.",
-            "Direct return fallback metadata: deliveryStatus: fallback_only; deliveryError: <short error only when direct-send failed>.",
+            "直接回传约定：先调用 send_message_to_thread(sourceThreadId, protocolBlock) 发送最终 TEAM_ROUTER_VERDICT block。",
+            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+            "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
+            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
         ))
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result)
     lines.extend((
         "",
-        "Verifier checks:",
-        "Confirm executor evidence satisfies scope/stopWhen and stays within permission, riskBoundary, and any packageEvidenceBoundary.",
+        "验证者检查项：",
+        "确认执行者 evidence 满足 scope/stopWhen，并且没有越过 permission、riskBoundary 或 packageEvidenceBoundary。",
     ))
     if reviewer_lines:
         lines.extend((
-            "Confirm reviewer requiredChanges are satisfied before returning pass.",
+            "返回 pass 前，确认 reviewer requiredChanges 已满足。",
             "",
         ))
         lines.extend(reviewer_lines)
@@ -3482,30 +3491,30 @@ def make_verifier_request_message(task_id: str,
     if evidence_only["allowed"]:
         lines.extend((
             "",
-            "Evidence-only fast path may be considered for this verification.",
-            "If the executor evidence plus reviewer result are sufficient for the authorized scope, you may accept without re-running commands or widening inspection.",
-            "Still list residual risks and explicitly state that stage/commit/push/PR/release were not done.",
+            "本次验证可考虑 evidence-only fast path。",
+            "如果执行者 evidence 加 reviewer result 已足够覆盖授权范围，可以不重新运行命令，也不扩大检查范围。",
+            "仍需列出剩余风险，并明确说明 stage/commit/push/PR/release 未执行。",
         ))
     lines.extend((
         "",
-        "Executor callback follows verbatim:",
+        "以下是执行者 callback 原文：",
         callback_block,
         "",
-        "Language rule: keep protocol field names English, but write human-readable summary/requiredChanges/evidenceChecked/risks in Chinese by default; use English only for commands, paths, filenames, logs, errors, enum values, and unavoidable technical identifiers.",
+        ROLE_HUMAN_LANGUAGE_RULE,
         "",
-        "Please reply in this thread with:",
+        "请在本线程按以下格式回复：",
         "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
         "result: pass | needs_rework | blocked",
-        "summary: <verdict summary>",
-        "requiredChanges: <none or changes>",
-        "evidenceChecked: <checked evidence>",
-        "risks: <none or risks>",
+        "summary: <中文验收摘要>",
+        "requiredChanges: <none 或需要修改的内容>",
+        "evidenceChecked: <已核验证据>",
+        "risks: <none 或风险>",
     ))
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
-            "directReturnTarget: <returnThreadId when applicable>",
-            "directReturnError: <short error only when failed>",
+            "directReturnTarget: <适用时填写 returnThreadId>",
+            "directReturnError: <仅 failed 时填写短错误>",
         ))
     return "\n".join(lines)
 
@@ -3555,7 +3564,10 @@ def record_verifier_request_sent(state_root: str | Path,
 def _make_closeout(ledger: Mapping[str, Any],
                    verdict_fields: Mapping[str, Any],
                    captured_at: str) -> dict[str, Any]:
-    accepted = ledger.get("status") == "done" and verdict_fields.get("status") == "accepted"
+    accepted = ledger.get("status") == "done" and (
+        verdict_fields.get("result") == "pass"
+        or verdict_fields.get("status") == "accepted"
+    )
     status_value = "accepted" if accepted else ledger.get("status")
     next_action = "none" if ledger.get("status") == "done" else verdict_fields.get("requiredChanges", "")
     closeout = {
@@ -3570,6 +3582,22 @@ def _make_closeout(ledger: Mapping[str, Any],
         "compoundingDecision": "skipped",
         "reason": "ordinary successful implementation/testing with no new reusable risk",
     }
+    verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+    verdict = verification.get("verdict") if isinstance(verification, Mapping) else None
+    receipt = verdict.get("receipt") if isinstance(verdict, Mapping) else None
+    if isinstance(receipt, Mapping):
+        source = str(receipt.get("source", "")).strip()
+        channel = str(receipt.get("channel", "")).strip()
+        if source:
+            closeout["receiptSource"] = source
+        if channel:
+            closeout["receiptChannel"] = channel
+        role_thread_id = receipt.get("roleThreadId")
+        if role_thread_id:
+            closeout["receiptRoleThreadId"] = str(role_thread_id)
+        return_thread_id = receipt.get("returnThreadId")
+        if return_thread_id:
+            closeout["returnThreadId"] = str(return_thread_id)
     if accepted:
         closeout.update({
             "watcherAction": "stop_and_delete_heartbeat",
@@ -4967,6 +4995,17 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
         "risks: %s" % closeout.get("risks", ""),
         "nextAction: %s" % closeout.get("nextAction", ""),
         "remainingTodos: %s" % closeout.get("remainingTodos", closeout.get("nextAction", "")),
+    ))
+    if closeout.get("receiptSource") or closeout.get("receiptChannel"):
+        lines.extend((
+            "receiptSource: %s" % closeout.get("receiptSource", ""),
+            "receiptChannel: %s" % closeout.get("receiptChannel", ""),
+        ))
+        if closeout.get("receiptRoleThreadId"):
+            lines.append("receiptRoleThreadId: %s" % closeout.get("receiptRoleThreadId", ""))
+        if closeout.get("returnThreadId"):
+            lines.append("returnThreadId: %s" % closeout.get("returnThreadId", ""))
+    lines.extend((
         "compoundingDecision: %s" % compounding_decision,
         "reason: %s" % compounding_reason,
     ))

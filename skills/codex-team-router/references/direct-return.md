@@ -17,6 +17,8 @@ Use these explicit fields together:
 
 Do not default `returnThreadId` to the manager/planner role thread. If no explicit parent/source thread id is available, omit direct-send metadata and rely on watcher/heartbeat fallback.
 
+Bare `create_thread` plus later `read_thread` is not a valid Team Router role return. A manually created role thread counts only after it is registered in the ledger, formally dispatched with `returnThreadId` and `sourceRoleThreadId`, and then received by direct-send to the parent or by watcher/heartbeat capture that advances the ledger. If Manager merely reads a child thread and relays the marker because direct-send was bypassed or unavailable, label the result `deliveryStatus: fallback_only` / delivery degraded; do not present it as normal proactive return.
+
 ## Role Thread Requirement
 
 Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to `multi_agent_v1` workers/subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
