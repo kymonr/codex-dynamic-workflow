@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active local package implementation for `ctr-20260628-trust-and-modularity`; scope is P0 current-state truth checker, P1 module split plan, and router doctor/status UX.
+- State: local package accepted, committed, and global skill synced for `ctr-20260628-role-thread-readiness-status`; scope is read-only role-thread readiness/status UX in `scripts/team_router_doctor.py`.
 - Current git truth is sourced from `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_closeout_check.py --json`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current next gate: executor implementation -> reviewer pass -> verifier pass -> local closeout.
-- Reviewer note: pre-save reviewer threads `019f0e79-746a-7bb2-b509-7ca9f74a7bf2` and `019f0e7b-5c1c-7b22-b6fe-32be6bc8b5c2` did not return final `TEAM_ROUTER_REVIEW`; post-implementation reviewer thread `019f0e86-513b-7901-acc2-025652491814` first returned `needs_rework`, then `pass` after the doctor nextAction fix.
-- Not done: no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync. Those remain separate parent-thread gates after reviewer/verifier acceptance.
+- New status surface: `scripts/team_router_doctor.py --role-status-json <path> --json` reports `roleThreadStatus` from a caller-supplied snapshot only; it does not create, read, poll, or send to role threads.
+- Current next gate: push/PR decision or stop; local package commit and global skill sync are complete. Gate sequence completed: executor implementation -> reviewer pass -> verifier pass -> local closeout.
+- Not done: no push, no PR, no merge, no deploy, and no publish/release. Those remain separate parent-thread gates after local commit and global skill sync.
 
 ## Current Diff Surface
 
@@ -20,7 +20,7 @@ Current truth is command-derived, not a copied package list. Regenerate the curr
 - `py -B scripts\team_router_truth_check.py --json`
 - `py -B scripts\team_router_doctor.py --json`
 
-During this package, expected touched areas are tests, read-only status scripts, this workbench, package docs, `docs/team-router/module-map.md`, and `skills/codex-team-router/references/testing-and-quality-gates.md`. The exact list must be taken from fresh commands because the package is still active.
+During this package, expected touched areas are `scripts/team_router_doctor.py`, `tests/test_team_router.py`, this workbench, package docs, the saved Superpowers plan, and `skills/codex-team-router/references/testing-and-quality-gates.md`. The exact list must be taken from fresh commands because the package is still active.
 
 `scripts/team_router_truth_check.py` is the stale-claim gate for workbench/package current-state text. `scripts/team_router_doctor.py` is the plain manager-facing status summary and must not claim live role dispatch unless explicit readiness evidence exists.
 
@@ -28,22 +28,31 @@ During this package, expected touched areas are tests, read-only status scripts,
 
 Active package verification so far:
 
-- RED: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` failed because `scripts/team_router_truth_check.py` and `scripts/team_router_doctor.py` did not exist.
-- GREEN: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` -> Ran 38 tests OK after adding the read-only truth and doctor scripts.
-- RED docs gate: targeted `TestTeamRouterSkillDoc` workbench/module-map/quality-gates tests failed against stale workbench text, missing `docs/team-router/module-map.md`, and missing truth/doctor quality-gate documentation.
-- Final compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-trust'; py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py scripts\team_router_truth_check.py scripts\team_router_doctor.py` -> OK.
+- Plan saved: `docs/superpowers/plans/2026-06-28-role-thread-readiness-status.md`.
+- RED classifier: `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_classifies_role_thread_readiness_states -v` failed because `classify_role_thread_status` did not exist.
+- GREEN classifier: same command -> OK after adding read-only role-thread state classification.
+- RED CLI: `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_includes_role_thread_status_snapshot -v` failed because `--role-status-json` was unrecognized.
+- GREEN CLI: focused classifier + CLI tests -> OK after adding `--role-status-json` and `roleThreadStatus`.
+- RED docs gate: `py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_quality_gates_document_role_thread_status_snapshots -v` failed because quality gates did not document the role status snapshot contract.
+- GREEN docs gate: `py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_quality_gates_document_role_thread_status_snapshots tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v` -> OK.
+- Focused state tests: `py -B -m unittest tests.test_team_router.TestTeamRouterState -v` -> Ran 41 tests OK.
+- Focused docs tests: `py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v` -> Ran 39 tests OK.
+- Final compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-role-status'; py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py scripts\team_router_truth_check.py scripts\team_router_doctor.py` -> OK.
+- Final full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-role-status'; py -B -m unittest tests.test_team_router` -> Ran 274 tests OK.
 - Final whitespace check: `git diff --check` -> exit 0 with CRLF/LF warnings only.
-- Final full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-trust'; py -B -m unittest tests.test_team_router` -> Ran 269 tests OK.
-- Final closeout check: `py -B scripts\team_router_closeout_check.py --json` -> read-only, unauthorized gates false, `skill.entrypointBytes: 6969`, `skill.underTarget: true`.
-- Final truth check: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`, `truthStatus` inputs dirty because this package is active.
-- Final doctor check: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`, `orchestrationStatus: manual_only`, no live-dispatch claim.
-- Final skill sync check: `py -B scripts\team_router_skill_sync_check.py --check` -> `status: mismatch`, changed `references/testing-and-quality-gates.md`; this is expected until a separately authorized global skill sync.
-- Reviewer/verifier gates: reviewer thread `019f0e86-513b-7901-acc2-025652491814` -> `pass` after rework; verifier thread `019f0e8c-163e-7ba0-82b0-b16b592168ea` -> `pass`.
+- Post-sync truth check: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`, `gitStatusShort: []`, `diffFiles: []`, `skillSync.status: match`, branch `master...origin/master [ahead 2]`.
+- Post-sync doctor check: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: clean_synced`, `orchestrationStatus: manual_only`, `roleThreadStatus: {mode: read-only, roles: []}` by default.
+- Post-sync skill sync check: `py -B scripts\team_router_skill_sync_check.py --check` -> `status: match`.
+- Reviewer gate: reviewer thread `019f0ea7-0ad7-7931-9e2e-89c13401c14a` first returned `needs_rework` because this workbench and the package doc still described verification as pending; after current-state documentation rework, reviewer re-review returned `pass` with `requiredChanges: none`.
+- Verifier gate: verifier thread `019f0eaa-ac70-7831-9b12-5d7f28686c72` first returned `needs_rework` on stale reviewer-gate wording; after docs rework and tests, verifier re-check returned `pass` with `requiredChanges: none`.
+- Local commit: `73596fa Add role thread readiness status`.
+- Global skill sync: `py -B scripts\\team_router_skill_sync_check.py --sync` -> `status: match`.
 
 ## Historical Records
 
 Older entries are history only. They must not be treated as current git truth / current next gate unless rechecked in the current worktree.
 
+- Previous `ctr-20260628-trust-and-modularity` is a completed historical package covering the current-state truth checker, module split plan, and initial doctor/status UX. Its recorded diff surface, verifier evidence, and sync state are not current git truth.
 - Previous `ctr-20260628-team-router-optimization-1-6` is a completed historical package. Its recorded dirty surface, skill sync result, reviewer evidence, and P2 step labels are not current git truth.
 - Previous `ctr-20260628-team-router-optimization-local-package` records are historical baseline only; they are not the current active package.
 - Previous `ctr-20260628-anchor-and-closeout-freshness-fix` records: verifier accepted/pass; prior local closeout/commit language is historical and no longer the Current Task.
@@ -58,6 +67,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
+- Role-thread readiness/status in this package is evidence-only UX; it does not modify dispatch, watcher cadence, registry, ledger, or protocol parsing.
 
 ## Addy Engineering Checklists Workbench Note
 
@@ -71,13 +81,11 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- Reviewer pre-save attempts were unreachable, so post-implementation reviewer/verifier gates remain required before closeout can claim acceptance.
-- Current docs are intentionally dirty while this package is active; use command output rather than copied lists.
-- Repo/global skill comparison may be match or mismatch depending on whether separately authorized global sync has happened; the current value must come from `scripts/team_router_truth_check.py`, not prose.
+- This package intentionally documents role-thread state from supplied snapshots only; live visibility still depends on the host thread tools and explicit manager observations.
+- Reviewer re-review passed, verifier accepted/pass, local commit completed, and global skill sync completed for this package. Push, PR, merge, deploy, publish, and release remain separate gates.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: local implementation, reviewer, and verifier gates complete.
-- Next gated step: local closeout decision only; commit, push, PR, merge, deploy, publish, release, and global skill sync remain separate unauthorized gates.
-- Commit, push, PR, merge, deploy, publish, release, and global skill sync remain unauthorized.
+- Current gate: push/PR decision or stop; verifier accepted/pass, local commit complete, global skill sync complete.
+- Next gated step: push/PR decision only if explicitly authorized; merge, deploy, publish, and release remain separate unauthorized gates.

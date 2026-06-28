@@ -664,6 +664,126 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertIn("reviewer pass", next_action)
         self.assertIn("verifier pass", next_action)
         self.assertLess(next_action.index("reviewer pass"), next_action.index("verifier pass"))
+
+    def test_router_doctor_classifies_role_thread_readiness_states(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        cases = [
+            (
+                {"role": "executor"},
+                "missing",
+                "no role thread id recorded",
+            ),
+            (
+                {"role": "executor", "threadId": "thread-exec", "visible": False},
+                "created_not_visible",
+                "thread id exists but is not visible/readable",
+            ),
+            (
+                {"role": "reviewer", "threadId": "thread-review", "readError": "not found"},
+                "created_not_visible",
+                "read_thread failed",
+            ),
+            (
+                {"role": "executor", "threadId": "thread-exec", "visible": True, "turnStatus": "inProgress"},
+                "active_wait",
+                "role thread has an active turn",
+            ),
+            (
+                {
+                    "role": "executor",
+                    "threadId": "thread-exec",
+                    "visible": True,
+                    "messages": [{"text": "TEAM_ROUTER_CALLBACK taskId=ctr-role-status status=done"}],
+                },
+                "protocol_returned",
+                "expected protocol marker found",
+            ),
+            (
+                {"role": "verifier", "threadId": "thread-verify", "visible": True, "messages": ["still working"]},
+                "visible_waiting",
+                "visible but no expected protocol marker",
+            ),
+        ]
+
+        for snapshot, expected_status, expected_summary in cases:
+            with self.subTest(snapshot=snapshot):
+                result = module.classify_role_thread_status(snapshot)
+                self.assertEqual(result["status"], expected_status)
+                self.assertIn(expected_summary, result["summary"])
+
+        snapshot_result = module.classify_role_thread_status_snapshot(
+            {
+                "roles": [
+                    {
+                        "role": "manager",
+                        "threadId": "thread-manager",
+                        "visible": True,
+                        "messages": [{"text": "TEAM_ROUTER_PLAN taskId=ctr-role-status status=planned"}],
+                    }
+                ],
+                "expectedMarkers": {"manager": "TEAM_ROUTER_PLAN"},
+            }
+        )
+        self.assertEqual(snapshot_result["roles"][0]["expectedMarker"], "TEAM_ROUTER_PLAN")
+        self.assertEqual(snapshot_result["roles"][0]["status"], "protocol_returned")
+
+    def test_router_doctor_includes_role_thread_status_snapshot(self):
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            role_snapshot = tmp_path / "role-status.json"
+            role_snapshot.write_text(
+                json.dumps(
+                    {
+                        "roles": [
+                            {"role": "executor", "threadId": "thread-exec", "visible": True, "turnStatus": "inProgress"},
+                            {
+                                "role": "reviewer",
+                                "threadId": "thread-review",
+                                "visible": True,
+                                "messages": [{"text": "TEAM_ROUTER_REVIEW taskId=ctr-role-status status=pass"}],
+                            },
+                            {"role": "verifier"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_doctor.py"),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--role-status-json",
+                    str(role_snapshot),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            statuses = {role["role"]: role["status"] for role in report["roleThreadStatus"]["roles"]}
+            self.assertEqual(statuses["executor"], "active_wait")
+            self.assertEqual(statuses["reviewer"], "protocol_returned")
+            self.assertEqual(statuses["verifier"], "missing")
+            self.assertEqual(report["roleThreadStatus"]["mode"], "read-only")
+            self.assertIn("roleThreadStatus", report)
     def test_router_doctor_reports_plain_status_without_dispatch(self):
         with workspace_temp_dir() as tmp:
             tmp_path = Path(tmp)
@@ -8620,10 +8740,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "active local package implementation for `ctr-20260628-trust-and-modularity`",
-            "P0 current-state truth checker",
-            "P1 module split plan",
-            "router doctor/status UX",
+            "local package accepted, committed, and global skill synced for `ctr-20260628-role-thread-readiness-status`",
+            "read-only role-thread readiness/status UX",
+            "--role-status-json",
+            "roleThreadStatus",
             "Current git truth",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -8632,7 +8752,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
             "executor implementation -> reviewer pass -> verifier pass -> local closeout",
-            "no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync",
+            "no push, no PR, no merge, no deploy, and no publish/release",
             "Current Diff Surface",
             "Current truth is command-derived, not a copied package list",
             "scripts/team_router_truth_check.py",
@@ -8663,8 +8783,32 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             r"C:\\Users\\Orz\\.codex\\skills\\codex-team-router",
             "implementation in progress in isolated worktree",
             "thread tools unavailable",
+            "reviewer re-review is next",
+            "pending reviewer pass",
         ):
             self.assertNotIn(stale_current_claim, text)
+
+    def test_role_thread_readiness_package_tracks_reviewer_pass_before_verifier(self):
+        package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260628-role-thread-readiness-status.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "reviewer re-review returned `pass`",
+            "verifier re-check returned `pass`",
+            "Ask for the next explicit gate",
+            "Global skill sync",
+            "status: match",
+        ):
+            self.assertIn(needle, package)
+        for stale in (
+            "Reviewer re-review: pending",
+            "pending reviewer pass",
+            "Send the current diff to reviewer re-review",
+            "If reviewer passes",
+            "Send the package to verifier in read-only mode",
+            "global sync remains a separate gate",
+            "local closeout/commit, global skill sync, or stop",
+        ):
+            self.assertNotIn(stale, package)
 
     def test_module_map_documents_future_split_without_runtime_extraction(self):
         text = (ROOT / "docs" / "team-router" / "module-map.md").read_text(encoding="utf-8")
@@ -8697,6 +8841,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         self.assertLess(len(self._skill_path().read_bytes()), 7200)
+    def test_quality_gates_document_role_thread_status_snapshots(self):
+        text = (ROOT / "skills" / "codex-team-router" / "references" / "testing-and-quality-gates.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "--role-status-json",
+            "roleThreadStatus",
+            "missing",
+            "created_not_visible",
+            "visible_waiting",
+            "active_wait",
+            "protocol_returned",
+            "caller-supplied role-thread snapshot",
+            "does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync",
+        ):
+            self.assertIn(needle, text)
     def test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch(self):
         text = self._skill_contract_text()
 

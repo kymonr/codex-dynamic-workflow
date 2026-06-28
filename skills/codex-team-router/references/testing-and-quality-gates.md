@@ -86,3 +86,10 @@ Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, pr
 - `scripts/team_router_truth_check.py` is read-only current-truth evidence: report branch status, short status, diff files, SKILL cap/target, repo/global skill comparison, stale workbench/package claims, and the same unauthorized gates. It must not stage, commit, push, PR, merge, deploy, or sync.
 - `scripts/team_router_doctor.py` is read-only manager-facing status UX: summarize currentMode, truthStatus, orchestrationStatus, nextAction, and unauthorized actions without claiming role-thread creation or live dispatch unless explicit readiness evidence exists. It must not stage, commit, push, PR, merge, deploy, or sync.
 - These tools do not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`; they are evidence inputs for executor/reviewer/verifier gates, not protocol acceptance.
+## Role Thread Status Snapshots
+
+- `scripts/team_router_doctor.py --role-status-json <path> --json` accepts a bounded, caller-supplied role-thread snapshot and reports `roleThreadStatus`.
+- The snapshot status vocabulary is `missing`, `created_not_visible`, `visible_waiting`, `active_wait`, and `protocol_returned`.
+- This is evidence-only status UX. It does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync.
+- `active_wait` means observe under the existing cadence; it is not permission for immediate continuous `read_thread` polling.
+- `protocol_returned` means the expected marker was present in supplied evidence; final acceptance still requires reviewer/verifier protocol gates as applicable.
