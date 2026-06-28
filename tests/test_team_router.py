@@ -8945,6 +8945,48 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         self.assertLess(len(self._skill_path().read_bytes()), 7200)
+
+    def test_role_communication_economy_policy_keeps_gates_but_limits_chat(self):
+        snapshot = team_router.protocol_contract_snapshot()
+        economy = snapshot["roleHandoffReviewPackagePolicy"]["roleCommunicationEconomy"]
+        text = self._skill_contract_text()
+
+        self.assertEqual(
+            economy["accuracyBoundary"],
+            "do not remove executor/reviewer/verifier gates to save tokens",
+        )
+        self.assertEqual(economy["defaultMode"], "protocol block plus stable path references")
+        self.assertIn("delta-only follow-up", economy["followUpPolicy"])
+        self.assertIn("do not restate background", economy["followUpPolicy"])
+        self.assertEqual(
+            economy["longContextPolicy"],
+            "move long context, diff evidence, logs, and detailed reports into taskBriefPath, executorReportPath, or reviewPackagePath",
+        )
+        self.assertEqual(
+            economy["managerCloseoutPolicy"],
+            "manager closeout reports acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning",
+        )
+        self.assertEqual(
+            economy["budgetHintsTokens"],
+            {
+                "dispatch": "300-500",
+                "executorCallback": "500-800",
+                "reviewer": "400-700",
+                "verifier": "300-600",
+            },
+        )
+        for needle in (
+            "Role Communication Economy",
+            "do not remove executor/reviewer/verifier gates to save tokens",
+            "protocol block plus stable path references",
+            "delta-only follow-up",
+            "taskBriefPath",
+            "executorReportPath",
+            "reviewPackagePath",
+            "acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision",
+        ):
+            self.assertIn(needle, text)
+
     def test_quality_gates_document_role_thread_status_snapshots(self):
         text = (ROOT / "skills" / "codex-team-router" / "references" / "testing-and-quality-gates.md").read_text(encoding="utf-8")
 

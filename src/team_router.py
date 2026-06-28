@@ -526,6 +526,20 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
             "reviewPackagePath": "explicit protocol field for stable reviewer/verifier evidence bundle handoff, not merely future optional runtime fields; FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless manager marks inline fallback",
         },
     },
+    "roleCommunicationEconomy": {
+        "accuracyBoundary": "do not remove executor/reviewer/verifier gates to save tokens",
+        "defaultMode": "protocol block plus stable path references",
+        "protocolBlockPolicy": "TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, and TEAM_ROUTER_VERDICT carry only parser-compatible fields, short human summaries, evidence pointers, risks, and next steps",
+        "followUpPolicy": "delta-only follow-up; do not restate background, full plans, unchanged risks, or already supplied evidence",
+        "longContextPolicy": "move long context, diff evidence, logs, and detailed reports into taskBriefPath, executorReportPath, or reviewPackagePath",
+        "managerCloseoutPolicy": "manager closeout reports acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning",
+        "budgetHintsTokens": {
+            "dispatch": "300-500",
+            "executorCallback": "500-800",
+            "reviewer": "400-700",
+            "verifier": "300-600",
+        },
+    },
     "reviewPackage": {
         "preferredFor": "reviewer/verifier evidence bundle on high-risk work",
         "defaultReviewPackagePath": "docs/team-router/packages/<taskId>.md",

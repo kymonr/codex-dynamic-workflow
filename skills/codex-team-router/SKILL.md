@@ -61,6 +61,8 @@ Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WOR
 
 Prefer stable file/path handoff. `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` are explicit protocol fields: FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless explicit inline fallback is marked. Review packages supplement protocol blocks. Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.
 
+Role Communication Economy: preserve gates; use protocol block plus stable path references and delta-only follow-up. Put long context in `taskBriefPath`, `executorReportPath`, or `reviewPackagePath`.
+
 Use `scripts/team_router_closeout_check.py` for read-only closeout status: git status, diff files, SKILL size, repo/global skill drift, and unauthorized commit/push/global sync gates. It reports only; it must not sync, stage, commit, push, PR, merge, or deploy.
 
 ## References

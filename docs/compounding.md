@@ -90,3 +90,15 @@ This is the project-level compounding ledger. Keep reusable lessons here when a 
 - 验收证据：检查调度者 closeout 或 handoff 是否记录 `lastReadAt`、`nextAllowedReadAt` 或明确的用户触发状态请求；检查没有在同一等待窗口内反复 `read_thread` 同一 role thread。
 - 规则：`inProgress` 不是轮询许可。没有 final marker 时，管理者必须报告“等待中/下次允许读取时间/用户可手动要求状态”，而不是继续短间隔读取。
 - Enforced by: `docs/compounding.md`, `skills/codex-team-router/references/manager-mode.md`, `skills/codex-team-router/references/manual-orchestration.md`, `docs/runbooks/codex-team-router-live-orchestration.md`, and future tests in `tests/test_team_router.py`.
+
+### Role Token Savings Must Preserve Gates
+
+- compoundingDecision: recorded
+- reason: 角色间对话越来越长是可复用流程风险；省 token 的办法必须被固定为通信形状规则，而不是减少 executor/reviewer/verifier 验收门。
+- 触发条件：Team Router 角色线程、Complex Task Stack、PACKAGE/STRICT 任务、reviewer/verifier 验收或 manager closeout 因重复背景、完整 diff、完整日志、全量角色推理而变长。
+- 越权/风险事实：如果为了省 token 跳过 reviewer/verifier、压缩掉 evidence，或把长上下文塞回 manager 聊天，会降低验收可信度并让后续 closeout 无法从当前证据复核。
+- 影响面：影响 manager 派工、executor callback、reviewer adversarial review、verifier final acceptance、review package、closeout 和用户对任务是否准确完成的判断。
+- 正确 delegation：保持原 gate class；角色协议块只传 parser-compatible 字段、短中文摘要、证据指针、风险和下一步。长背景、diff evidence、logs、详细报告放入 `taskBriefPath`、`executorReportPath` 或 `reviewPackagePath`。后续消息采用 delta-only follow-up，不重复背景、未变化 scope、未变化 risks 或已给 evidence。
+- 验收证据：检查 `protocol_contract_snapshot()["roleHandoffReviewPackagePolicy"]["roleCommunicationEconomy"]`，检查 `skills/codex-team-router/SKILL.md` 和 `skills/codex-team-router/references/role-handoff-and-review-package.md`，运行 `py -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_role_communication_economy_policy_keeps_gates_but_limits_chat`。
+- 规则：准确性靠 executor/reviewer/verifier gates 和当前证据；省 token 靠 protocol block plus stable path references、delta-only follow-up、review package/report path 和短 manager closeout。
+- Enforced by: `src/team_router.py`, `tests/test_team_router.py`, `skills/codex-team-router/SKILL.md`, `skills/codex-team-router/references/role-handoff-and-review-package.md`, and `docs/team-router/packages/ctr-20260628-role-communication-economy.md`.
