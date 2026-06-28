@@ -7822,6 +7822,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "two-step bootstrap",
             "deliveryStatus: fallback_only",
             "deliveryError",
+            "receiptSource: <manager-inbox/direct-send or self-thread-fallback/read_thread>",
+            "receiptChannel: <manager-inbox or read_thread>",
             "same protocol block body",
             "bounded result-collection read/check",
             "continuous polling is not the default",
@@ -7844,6 +7846,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "formally dispatched with `returnThreadId` and `sourceRoleThreadId`",
             "Bare `create_thread` plus later `read_thread` is not a valid Team Router role return",
             "manual/degraded collection only",
+            "receiptSource: <manager-inbox/direct-send or self-thread-fallback/read_thread>",
+            "receiptChannel: <manager-inbox or read_thread>",
         ):
             self.assertIn(needle, runbook)
 

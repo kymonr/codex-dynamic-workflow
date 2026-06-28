@@ -63,6 +63,8 @@ evidenceChecked: <checked evidence>
 risks: <none or risks>
 nextAction: none
 remainingTodos: none
+receiptSource: <manager-inbox/direct-send or self-thread-fallback/read_thread>
+receiptChannel: <manager-inbox or read_thread>
 compoundingDecision: skipped
 reason: ordinary successful implementation/testing with no new reusable risk
 ```
