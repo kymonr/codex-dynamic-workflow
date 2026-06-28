@@ -95,6 +95,22 @@ Verifier should check executor callback, reviewer result if present, package evi
 
 The final protocol marker remains required. The package supplements evidence; it does not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`.
 
+## Role Communication Economy
+
+Token savings must not remove executor/reviewer/verifier gates; do not remove executor/reviewer/verifier gates to save tokens. Accuracy comes from the same gate class, protocol marker, permission boundary, and verification evidence; economy comes from shorter transport.
+
+Default role communication mode is protocol block plus stable path references. `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, and `TEAM_ROUTER_VERDICT` should carry parser-compatible fields, short Chinese human summaries, evidence pointers, risks, and next steps. They should not copy full plans, full diffs, full logs, or complete role reasoning.
+
+Long context, diff evidence, logs, detailed reports, and reviewer/verifier evidence bundles should move into `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` when the role can access the same workspace. If a shared path is unavailable, mark inline fallback explicitly and keep the inline block bounded.
+
+Follow-up messages should be delta-only follow-up: state what changed since the prior protocol block or package, what remains blocked, and the next gate. Do not restate background, unchanged scope, unchanged risks, or already supplied evidence.
+
+Manager closeout should report acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning.
+
+Budget hints are non-authoritative token targets: dispatch 300-500, executorCallback 500-800, reviewer 400-700, verifier 300-600. If a role needs more, write or update a package/report path instead of expanding the chat transcript.
+
+Role request templates should make this default explicit with `roleCommunicationMode: concise-protocol-plus-paths`, `deltaSince`, and the relevant `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` fields. Executor, reviewer, and verifier final protocol blocks should point to long evidence instead of copying complete diffs, logs, background, or role reasoning.
+
 Legacy note: older ignored `.superpowers/sdd/` packages may include full diffs. They predate this contract and must not be used as the template for new durable `docs/team-router/packages/<taskId>.md` packages.
 
 ## External Material Safety

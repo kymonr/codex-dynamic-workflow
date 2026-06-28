@@ -79,3 +79,24 @@ Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, pr
 - `explain_team_router_gate()` must keep `classify_team_router_gate()` compatible while reporting readable reasons for local-package, package term, reviewer-required term, fast docs term, and normal fallback.
 - Malformed direct-return tests must cover wrong or missing protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; `_record_malformed_direct_return` should preserve the observed protocol field values and keep `self-thread-marker fallback` recovery without advancing the ledger.
 - `scripts/team_router_closeout_check.py` is read-only closeout evidence: report git status, diff files, SKILL hard cap and 7200 target, repo/global skill sync status, and unauthorized commit/push/global sync gates. It must not stage, commit, push, PR, merge, deploy, or sync.
+
+## Read-only Current-State Tools
+
+- `scripts/team_router_closeout_check.py` remains read-only closeout evidence: report git status, diff files, SKILL hard cap and 7200 target, repo/global skill sync status, and unauthorized commit/push/global sync gates. It must not stage, commit, push, PR, merge, deploy, or sync.
+- `scripts/team_router_truth_check.py` is read-only current-truth evidence: report branch status, short status, diff files, SKILL cap/target, repo/global skill comparison, stale workbench/package claims, and the same unauthorized gates. It must not stage, commit, push, PR, merge, deploy, or sync.
+- `scripts/team_router_doctor.py` is read-only manager-facing status UX: summarize currentMode, truthStatus, orchestrationStatus, nextAction, and unauthorized actions without claiming role-thread creation or live dispatch unless explicit readiness evidence exists. It must not stage, commit, push, PR, merge, deploy, or sync.
+- These tools do not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`; they are evidence inputs for executor/reviewer/verifier gates, not protocol acceptance.
+## Host Readiness Snapshots
+
+- `scripts/team_router_doctor.py --host-readiness-json <path> --json` accepts an evidence-only host adapter readiness snapshot and reports `hostReadiness` plus a derived `orchestrationStatus`.
+- Without a host readiness snapshot, doctor remains `orchestrationStatus: manual_only` and must not infer callable adapter support from model-side tool descriptors.
+- When Codex app thread tools are exposed but the Python helper lacks a callable adapter, explicit `parent_thread_id`, callable `set_thread_title`, or callable heartbeat scheduler evidence, doctor reports `host_contract_blocked` with missing items such as `callable adapter`, `parent_thread_id`, and `callable heartbeat scheduler`.
+- Only a supplied snapshot proving callable thread tools, callable `set_thread_title`, explicit `parent_thread_id`, and callable heartbeat scheduler may report `adapter_smoke_ready`.
+- The boundary text must keep this sentence true: model-side Codex app tool exposure is not a Python callable adapter. This status surface is evidence-only; it does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync.
+## Role Thread Status Snapshots
+
+- `scripts/team_router_doctor.py --role-status-json <path> --json` accepts a bounded, caller-supplied role-thread snapshot and reports `roleThreadStatus`.
+- The snapshot status vocabulary is `missing`, `created_not_visible`, `visible_waiting`, `active_wait`, and `protocol_returned`.
+- This is evidence-only status UX. It does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync.
+- `active_wait` means observe under the existing cadence; it is not permission for immediate continuous `read_thread` polling.
+- `protocol_returned` means the expected marker was present in supplied evidence; final acceptance still requires reviewer/verifier protocol gates as applicable.

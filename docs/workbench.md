@@ -4,53 +4,65 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active local package implementation for `ctr-20260628-team-router-optimization-1-6`; P2-5 is the current workbench/package-state refresh.
-- Current git truth before this P2-5 document refresh was sourced from `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, and `py -B scripts\team_router_closeout_check.py --json`.
-- Current next gate: P2-5 docs update -> reviewer pass -> verifier pass -> P2-6 final verification.
-- Not done: no commit, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync. Those remain separate parent-thread gates after verifier acceptance.
+- State: active local package implementation for `ctr-20260628-host-adapter-heartbeat-smoke`; scope is read-only doctor/status smoke evidence for host adapter readiness and heartbeat scheduler contract.
+- Current git truth is sourced from `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
+- New status surface: `scripts/team_router_doctor.py --host-readiness-json <path> --json` reports `hostReadiness` from a caller-supplied evidence snapshot only. Default without that snapshot remains `orchestrationStatus: manual_only`.
+- Current boundary: Codex App thread tools may be exposed to the model, but doctor does not treat model-side tool descriptors as Python callables. `host_contract_blocked` means host evidence is present but callable adapter, `parent_thread_id`, callable `set_thread_title`, or callable heartbeat scheduler evidence is missing. `adapter_smoke_ready` requires all of those in supplied evidence.
+- Current next gate: reviewer/verifier focused acceptance for the sync-truth rework; global skill sync is complete and reports `status: match`.
+- Not done: no commit, no stage, no push, no PR, no merge, no deploy, and no publish/release. Global skill sync is complete and reports `status: match`.
 
 ## Current Diff Surface
 
-Latest `git status -s --untracked-files=all` for the current workbench/package refresh reports:
+Current truth is command-derived, not a copied package list. Regenerate the current surface with:
 
-- `M docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md`
-- `M docs/workbench.md`
-- `M skills/codex-team-router/SKILL.md`
-- `M src/team_router.py`
-- `M tests/test_team_router.py`
+- `git status -sb --untracked-files=all`
+- `git status -s --untracked-files=all`
+- `git diff --name-only`
+- `py -B scripts\team_router_truth_check.py --json`
+- `py -B scripts\team_router_doctor.py --json`
 
-Latest `git diff --name-only` reports the same five tracked files. Current closeout must use fresh `git status -s --untracked-files=all` and the read-only closeout helper, not historical package lists.
+During this package, expected touched areas are `scripts/team_router_doctor.py`, `tests/test_team_router.py`, `skills/codex-team-router/references/testing-and-quality-gates.md`, this workbench, and `docs/team-router/packages/ctr-20260628-host-adapter-heartbeat-smoke.md`. The exact list must be taken from fresh commands because the package is still active.
+
+`scripts/team_router_truth_check.py` is the stale-claim gate for workbench/package current-state text. `scripts/team_router_doctor.py` is the plain manager-facing status summary and must not claim live role dispatch unless explicit readiness evidence exists.
 
 ## Verification Record
 
 Active package verification so far:
 
-- P1/P2 runtime and skill work have passed focused reviewer/verifier gates through P2-4.
-- P2-4 closeout helper review initially requested stronger unauthorized-gate assertions for `pullRequest`, `merge`, and `deploy`; the focused test was updated with those assertions.
-- P2-4 reviewer pass: rework satisfied the unauthorized-gate assertion gap; no required changes remained.
-- P2-4 verifier pass: closeout helper accepted after `docs/workbench.md` was explicitly accounted as out-of-scope dirty and the helper correctly reported it in `diffFiles`.
-- Focused closeout test: `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_closeout_check_reports_read_only_status_and_unauthorized_gates` -> OK.
-- Manager full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-p2-4-manager'; py -B -m unittest tests.test_team_router` -> Ran 265 tests OK.
-- `py -B scripts\team_router_closeout_check.py --json` reports `skill.entrypointBytes: 6969`, `skill.underTarget: true`, `authorization` all false, and `skillSync.status: mismatch` because repo `SKILL.md` changed while global sync is unauthorized.
-- Remaining verification: P2-5 document review/verifier, then P2-6 py_compile, full unittest, `git diff --check`, repo/global skill drift check, and read-only closeout check.
+- Focused doctor host readiness tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_classifies_host_readiness_snapshot tests.test_team_router.TestTeamRouterState.test_router_doctor_includes_host_readiness_snapshot -v` -> OK.
+- Focused quality-gate docs test: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_quality_gates_document_host_readiness_snapshots -v` -> OK.
+- Default doctor check after code change: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B scripts\team_router_doctor.py --json` -> default `orchestrationStatus: manual_only`, `hostReadiness.status: not_supplied`; `truthStatus: dirty` because this package is active.
+- Focused state suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B -m unittest tests.test_team_router.TestTeamRouterState -v` -> Ran 43 tests OK.
+- Focused docs suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v` -> Ran 41 tests OK.
+- Final compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py scripts\team_router_truth_check.py scripts\team_router_doctor.py` -> OK.
+- Final full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B -m unittest tests.test_team_router` -> Ran 277 tests OK.
+- Host readiness blocked smoke: `py -B scripts\team_router_doctor.py --host-readiness-json C:\tmp\team-router-host-readiness-blocked.json --json` -> `orchestrationStatus: host_contract_blocked`, `hostReadiness.status: blocked`, `threadToolSurfaceExposed: true`, `parentThreadIdPresent: true`, missing callable adapter/tool methods and callable heartbeat scheduler.
+- Truth check: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`, `truthStatus` inputs dirty because this package is active, `skillSync.status: match` after authorized global skill sync.
+- Default doctor check: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-smoke'; py -B scripts\team_router_doctor.py --json` -> `orchestrationStatus: manual_only`, `hostReadiness.status: not_supplied`, `truthStatus: dirty`.
+- Git status: `git status -sb --untracked-files=all` -> `master...origin/master [ahead 2]` with modified `docs/workbench.md`, `scripts/team_router_doctor.py`, `skills/codex-team-router/references/testing-and-quality-gates.md`, `tests/test_team_router.py`, and untracked package doc.
+- Whitespace check: `git diff --check` -> exit 0; Git printed CRLF/LF normalization warnings for existing text files.
 
 ## Historical Records
 
 Older entries are history only. They must not be treated as current git truth / current next gate unless rechecked in the current worktree.
 
+- Previous `ctr-20260628-role-thread-readiness-status` completed read-only role-thread status UX in `scripts/team_router_doctor.py`; it added `--role-status-json` and `roleThreadStatus` from supplied snapshots only.
+- Previous `ctr-20260628-live-capability-state-fix` clarified exposed app tools versus missing Python callable adapter/runtime orchestration. That remains the baseline boundary for this package.
+- Previous `ctr-20260628-trust-and-modularity` is a completed historical package covering the current-state truth checker, module split plan, and initial doctor/status UX. Its recorded diff surface, verifier evidence, and sync state are not current git truth.
+- Previous `ctr-20260628-team-router-optimization-1-6` is a completed historical package. Its recorded dirty surface, skill sync result, reviewer evidence, and P2 step labels are not current git truth.
 - Previous `ctr-20260628-team-router-optimization-local-package` records are historical baseline only; they are not the current active package.
 - Previous `ctr-20260628-anchor-and-closeout-freshness-fix` records: verifier accepted/pass; prior local closeout/commit language is historical and no longer the Current Task.
 - Previous `ctr-20260628-role-request-direct-send-and-waiting-fix` records are accepted/pass at reviewer and verifier gates.
-- Previous `ctr-20260628-live-capability-state-fix` records clarified exposed app tools vs missing Python adapter/runtime orchestration. That remains true but is not the current task.
 - Previous `ctr-20260628-workbench-tool-error-governance` records described a no-tools governance state. That wording is historical and must not be copied into the current state now that the Codex app thread tool surface is exposed.
 - Older ahead/behind, stale current diff surface, isolated-worktree status, and old executor callback references are not current status. If a completed task still points at an old executor callback, collect fresh role-thread evidence or mark it historical instead of reusing it as current truth.
-- Historical records may explain why a rule exists, but current status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, and the latest role-thread marker evidence.
+- Historical records may explain why a rule exists, but current status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, the truth/doctor scripts, and latest role-thread marker evidence.
 
 ## Integration Boundary
 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
+- Host readiness/status in this package is evidence-only UX; it does not modify dispatch, watcher cadence, registry, ledger, or protocol parsing.
 
 ## Addy Engineering Checklists Workbench Note
 
@@ -64,12 +76,12 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- `docs/workbench.md` includes the Addy note above as an out-of-scope dirty item; it is accounted here and must not be treated as a Team Router runtime/protocol change.
-- `skillSync.status` remains `mismatch` until a separately authorized global skill sync is run.
-- Git may print CRLF/LF replacement warnings for `src/team_router.py` and `tests/test_team_router.py`.
+- This package still cannot prove live orchestration by itself; `adapter_smoke_ready` requires caller-supplied host evidence for Python callables, `parent_thread_id`, callable `set_thread_title`, and heartbeat scheduler.
+- `host_contract_blocked` is status evidence, not an adapter implementation or daemon.
+- Reviewer/verifier gates remain pending for this active local package; executor verification is complete.
+- Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: P2-5 document-state refresh.
-- Next gated step: reviewer pass, then verifier pass, then P2-6 final verification.
-- Commit, push, PR, merge, deploy, publish, release, and global skill sync remain unauthorized.
+- Current gate: send current diff and verification evidence to reviewer.
+- Next gated step: reviewer/verifier focused acceptance. Commit, push, PR, merge, deploy, and publish/release remain unauthorized; global skill sync is already complete/match.

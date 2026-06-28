@@ -526,6 +526,20 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
             "reviewPackagePath": "explicit protocol field for stable reviewer/verifier evidence bundle handoff, not merely future optional runtime fields; FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless manager marks inline fallback",
         },
     },
+    "roleCommunicationEconomy": {
+        "accuracyBoundary": "do not remove executor/reviewer/verifier gates to save tokens",
+        "defaultMode": "protocol block plus stable path references",
+        "protocolBlockPolicy": "TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, and TEAM_ROUTER_VERDICT carry only parser-compatible fields, short human summaries, evidence pointers, risks, and next steps",
+        "followUpPolicy": "delta-only follow-up; do not restate background, full plans, unchanged risks, or already supplied evidence",
+        "longContextPolicy": "move long context, diff evidence, logs, and detailed reports into taskBriefPath, executorReportPath, or reviewPackagePath",
+        "managerCloseoutPolicy": "manager closeout reports acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning",
+        "budgetHintsTokens": {
+            "dispatch": "300-500",
+            "executorCallback": "500-800",
+            "reviewer": "400-700",
+            "verifier": "300-600",
+        },
+    },
     "reviewPackage": {
         "preferredFor": "reviewer/verifier evidence bundle on high-risk work",
         "defaultReviewPackagePath": "docs/team-router/packages/<taskId>.md",
@@ -2666,10 +2680,18 @@ def _review_package_prompt_lines(plan_fields: Mapping[str, Any],
     return lines
 
 
+ROLE_COMMUNICATION_ECONOMY_PROMPT_LINES = (
+    "roleCommunicationMode: concise-protocol-plus-paths",
+    "tokenBoundary: 保留 executor/reviewer/verifier gate；省 token 只改变交接形状。",
+    "longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理；长内容写入 taskBriefPath、executorReportPath 或 reviewPackagePath。",
+    "followUpPolicy: delta-only；只写相对上一个 TEAM_ROUTER_* marker/package path 的变化、阻塞和下一 gate。",
+)
+
+
 def _role_handoff_prompt_lines(plan_fields: Mapping[str, Any] | None,
                                review_package: Mapping[str, Any] | None = None) -> list[str]:
     fields = plan_fields if isinstance(plan_fields, Mapping) else {}
-    lines: list[str] = []
+    lines: list[str] = list(ROLE_COMMUNICATION_ECONOMY_PROMPT_LINES)
     risk_boundary = _prompt_str(fields.get("riskBoundary"))
     if risk_boundary is not None:
         lines.append("riskBoundary: %s" % risk_boundary)
@@ -2813,6 +2835,10 @@ def make_executor_dispatch_message(task_id: str,
         "searchAnchor: %s" % json.dumps(dict(search_anchor), sort_keys=True),
     ]
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
+    path_handoff_enabled = any(
+        line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true"))
+        for line in handoff_lines
+    )
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
@@ -2850,11 +2876,14 @@ def make_executor_dispatch_message(task_id: str,
         "TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
         "status: done | blocked",
         "final: true",
-        "summary: <中文 3-7 行>",
-        "evidence: <路径、命令摘要或线程观察>",
+        "summary: <中文 3-5 行，不复述背景>",
+        "evidence: <路径、命令摘要或线程观察；长日志写 executorReportPath>",
         "risks: <none 或风险>",
         "next: <none 或下一步>",
+        "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
     ))
+    if path_handoff_enabled:
+        lines.append("executorReportPath: <报告路径或 inline>")
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
@@ -3463,6 +3492,10 @@ def make_reviewer_request_message(task_id: str,
         "responsibility: 识别设计风险、规则缺口、遗漏和新的坏模式；不是最终验收",
     ]
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
+    path_handoff_enabled = any(
+        line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true"))
+        for line in handoff_lines
+    )
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
@@ -3497,12 +3530,15 @@ def make_reviewer_request_message(task_id: str,
         "请在本线程按以下格式回复：",
         "TEAM_ROUTER_REVIEW taskId=%s" % task_id,
         "result: pass | needs_rework | blocked",
-        "summary: <中文审查摘要>",
+        "summary: <中文审查摘要，短句，不复述执行者 callback>",
         "findings: <对抗性发现或 none>",
         "requiredChanges: <none 或需要修改的内容>",
-        "evidenceChecked: <已核验证据>",
+        "evidenceChecked: <已核验证据；长证据写 reviewPackagePath>",
         "risks: <none 或风险>",
+        "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
     ))
+    if path_handoff_enabled:
+        lines.append("reviewPackagePath: <review package 路径或 inline>")
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
@@ -3684,6 +3720,10 @@ def make_verifier_request_message(task_id: str,
     ]
     callback_fields = parse_callback(callback_block, task_id).fields
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
+    path_handoff_enabled = any(
+        line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true"))
+        for line in handoff_lines
+    )
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
@@ -3738,11 +3778,14 @@ def make_verifier_request_message(task_id: str,
         "请在本线程按以下格式回复：",
         "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
         "result: pass | needs_rework | blocked",
-        "summary: <中文验收摘要>",
+        "summary: <中文验收摘要，短句，不复述执行者 callback 或 reviewer 原文>",
         "requiredChanges: <none 或需要修改的内容>",
-        "evidenceChecked: <已核验证据>",
+        "evidenceChecked: <已核验证据；长证据写 reviewPackagePath>",
         "risks: <none 或风险>",
+        "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
     ))
+    if path_handoff_enabled:
+        lines.append("reviewPackagePath: <review package 路径或 inline>")
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
