@@ -99,6 +99,14 @@ The final protocol marker remains required. The package supplements evidence; it
 
 Token savings must not remove executor/reviewer/verifier gates; do not remove executor/reviewer/verifier gates to save tokens. Accuracy comes from the same gate class, protocol marker, permission boundary, and verification evidence; economy comes from shorter transport.
 
+Design planning policy: preserve full brainstorming/spec/plan reasoning; do not compress design gates to save tokens. The brainstorming, spec, and plan gates are where the manager should keep the full design judgement, alternatives, risk reasoning, and acceptance boundary.
+
+Pass result policy: compact parent callback/verdict on pass/done; expand findings/evidence only for needs_rework/fail/blocked. Passing role results should not restate background or copy the prior role block; they should point to changed files, verification, remaining risk, and next gate.
+
+Verification output policy: passing tests report command, suite count, and OK; paste failure details or rerun verbose only on failure. Long passing unittest output belongs in the role thread or report path, not in the parent callback.
+
+Thread polling policy: manager inbox direct-return first; self-thread read_thread is bounded degraded fallback only. Role-thread polling previews should not become the normal receipt path when direct return is available.
+
 Default role communication mode is protocol block plus stable path references. `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, and `TEAM_ROUTER_VERDICT` should carry parser-compatible fields, short Chinese human summaries, evidence pointers, risks, and next steps. They should not copy full plans, full diffs, full logs, or complete role reasoning.
 
 Long context, diff evidence, logs, detailed reports, and reviewer/verifier evidence bundles should move into `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` when the role can access the same workspace. If a shared path is unavailable, mark inline fallback explicitly and keep the inline block bounded.
@@ -107,7 +115,7 @@ Follow-up messages should be delta-only follow-up: state what changed since the 
 
 Manager closeout should report acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning.
 
-Budget hints are non-authoritative token targets: dispatch 300-500, executorCallback 500-800, reviewer 400-700, verifier 300-600. If a role needs more, write or update a package/report path instead of expanding the chat transcript.
+Budget hints are non-authoritative token targets: dispatch 300-500, executorCallback 500-800, architect 400-700, reviewer 400-700, qa 400-700, verifier 300-600. If a role needs more, write or update a package/report path instead of expanding the chat transcript.
 
 Role request templates should make this default explicit with `roleCommunicationMode: concise-protocol-plus-paths`, `deltaSince`, and the relevant `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` fields. Executor, reviewer, and verifier final protocol blocks should point to long evidence instead of copying complete diffs, logs, background, or role reasoning.
 

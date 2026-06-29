@@ -549,14 +549,20 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
     "roleCommunicationEconomy": {
         "accuracyBoundary": "do not remove executor/reviewer/verifier gates to save tokens",
         "defaultMode": "protocol block plus stable path references",
+        "designPlanningPolicy": "preserve full brainstorming/spec/plan reasoning; do not compress design gates to save tokens",
         "protocolBlockPolicy": "TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, and TEAM_ROUTER_VERDICT carry only parser-compatible fields, short human summaries, evidence pointers, risks, and next steps",
+        "passResultPolicy": "compact parent callback/verdict on pass/done; expand findings/evidence only for needs_rework/fail/blocked",
+        "verificationOutputPolicy": "passing tests report command, suite count, and OK; paste failure details or rerun verbose only on failure",
+        "threadPollingPolicy": "manager inbox direct-return first; self-thread read_thread is bounded degraded fallback only",
         "followUpPolicy": "delta-only follow-up; do not restate background, full plans, unchanged risks, or already supplied evidence",
         "longContextPolicy": "move long context, diff evidence, logs, and detailed reports into taskBriefPath, executorReportPath, or reviewPackagePath",
         "managerCloseoutPolicy": "manager closeout reports acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning",
         "budgetHintsTokens": {
             "dispatch": "300-500",
             "executorCallback": "500-800",
+            "architect": "400-700",
             "reviewer": "400-700",
+            "qa": "400-700",
             "verifier": "300-600",
         },
     },
@@ -2845,8 +2851,12 @@ def _review_package_prompt_lines(plan_fields: Mapping[str, Any],
 ROLE_COMMUNICATION_ECONOMY_PROMPT_LINES = (
     "roleCommunicationMode: concise-protocol-plus-paths",
     "tokenBoundary: 保留 executor/reviewer/verifier gate；省 token 只改变交接形状。",
+    "designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。",
+    "passResultPolicy: pass/done 只回传短 summary、changed/verification/risks/nextGate；needs_rework/fail/blocked 才展开 findings/evidence。",
+    "verificationOutputPolicy: 通过的测试只报告 command + suite count + OK；失败时再粘贴失败详情或 rerun verbose。",
     "longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理；长内容写入 taskBriefPath、executorReportPath 或 reviewPackagePath。",
     "followUpPolicy: delta-only；只写相对上一个 TEAM_ROUTER_* marker/package path 的变化、阻塞和下一 gate。",
+    "fallbackReadPolicy: direct-return manager inbox 是默认；self-thread read_thread 只作为 bounded degraded fallback。",
 )
 
 
@@ -3799,8 +3809,7 @@ def make_architect_review_request_message(task_id: str,
         "architectMode: read-only/advisory",
         "responsibility: 在执行前识别架构边界、协议兼容性、替代方案和迁移风险；不能修改文件、commit、push、PR、deploy，也不替代 reviewer/verifier。",
     ]
-    if plan_fields:
-        lines.extend(_role_handoff_prompt_lines(plan_fields, None))
+    lines.extend(_role_handoff_prompt_lines(plan_fields, None))
     lines.extend(_role_review_direct_return_lines(
         marker="TEAM_ROUTER_ARCHITECT_REVIEW",
         return_thread_id=return_thread_id,
@@ -3858,8 +3867,7 @@ def make_qa_review_request_message(task_id: str,
         "qaMode: read-only/advisory",
         "responsibility: 独立检查测试策略、回归面、验收标准和证据缺口；不能修改文件、commit、push、PR、deploy，也不替代 verifier。",
     ]
-    if plan_fields:
-        lines.extend(_role_handoff_prompt_lines(plan_fields, None))
+    lines.extend(_role_handoff_prompt_lines(plan_fields, None))
     lines.extend(_role_review_direct_return_lines(
         marker="TEAM_ROUTER_QA_REVIEW",
         return_thread_id=return_thread_id,

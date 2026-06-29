@@ -835,6 +835,73 @@ regressionRisks: low
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
 
+    def test_role_request_templates_preserve_design_gates_but_compact_result_noise(self):
+        task_id = "ctr-20260629-token-economy"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "token economy policy is explicit",
+            "riskBoundary": "不改变 gate/state/direct-return 语义",
+            "executorPrompt": "实现 Team Router token economy policy。",
+            "taskBriefPath": "docs/team-router/packages/ctr-token-economy-brief.md",
+            "executorReportPath": "docs/team-router/packages/ctr-token-economy-executor.md",
+            "reviewPackagePath": "docs/team-router/packages/ctr-token-economy-review.md",
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: 已完成 token economy policy\n"
+            "evidence: tests\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % task_id
+        messages = (
+            team_router.make_executor_dispatch_message(
+                task_id,
+                plan_fields,
+                "local-package",
+                {"messageId": "msg-dispatch", "sentAt": "2026-06-29T10:00:00+08:00"},
+            ),
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+            ),
+            team_router.make_architect_review_request_message(
+                task_id,
+                plan_fields["executorPrompt"],
+                plan_fields["scope"],
+                return_thread_id="thread-manager",
+                role_thread_id="thread-architect",
+                plan_fields=plan_fields,
+            ),
+            team_router.make_qa_review_request_message(
+                task_id,
+                callback_block,
+                plan_fields["scope"],
+                return_thread_id="thread-manager",
+                role_thread_id="thread-qa",
+                plan_fields=plan_fields,
+            ),
+        )
+
+        for message in messages:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。", message)
+                self.assertIn("passResultPolicy: pass/done 只回传短 summary、changed/verification/risks/nextGate；needs_rework/fail/blocked 才展开 findings/evidence。", message)
+                self.assertIn("verificationOutputPolicy: 通过的测试只报告 command + suite count + OK；失败时再粘贴失败详情或 rerun verbose。", message)
+                self.assertIn("fallbackReadPolicy: direct-return manager inbox 是默认；self-thread read_thread 只作为 bounded degraded fallback。", message)
+                self.assertIn("longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
+
 class TestTeamRouterState(unittest.TestCase):
     def test_closeout_check_reports_read_only_status_and_unauthorized_gates(self):
         global_skill = Path("C:/tmp/team-router-closeout-missing-global-skill")
@@ -10100,6 +10167,22 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "do not remove executor/reviewer/verifier gates to save tokens",
         )
         self.assertEqual(economy["defaultMode"], "protocol block plus stable path references")
+        self.assertEqual(
+            economy["designPlanningPolicy"],
+            "preserve full brainstorming/spec/plan reasoning; do not compress design gates to save tokens",
+        )
+        self.assertEqual(
+            economy["passResultPolicy"],
+            "compact parent callback/verdict on pass/done; expand findings/evidence only for needs_rework/fail/blocked",
+        )
+        self.assertEqual(
+            economy["verificationOutputPolicy"],
+            "passing tests report command, suite count, and OK; paste failure details or rerun verbose only on failure",
+        )
+        self.assertEqual(
+            economy["threadPollingPolicy"],
+            "manager inbox direct-return first; self-thread read_thread is bounded degraded fallback only",
+        )
         self.assertIn("delta-only follow-up", economy["followUpPolicy"])
         self.assertIn("do not restate background", economy["followUpPolicy"])
         self.assertEqual(
@@ -10115,7 +10198,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             {
                 "dispatch": "300-500",
                 "executorCallback": "500-800",
+                "architect": "400-700",
                 "reviewer": "400-700",
+                "qa": "400-700",
                 "verifier": "300-600",
             },
         )
@@ -10128,6 +10213,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "executorReportPath",
             "reviewPackagePath",
             "acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision",
+            "preserve full brainstorming/spec/plan reasoning",
+            "pass/done",
+            "passing tests report command, suite count, and OK",
+            "manager inbox direct-return first",
         ):
             self.assertIn(needle, text)
 

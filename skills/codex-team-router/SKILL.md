@@ -1,6 +1,6 @@
 ---
 name: codex-team-router
-description: Use for AGENTS-aware Codex desktop Team Router orchestration: visible roles, Manager Mode, reviewer/verifier gates, direct return, self-change governance, repo/global skill sync gates, and backlog triage. Manager Mode is orchestration-only.
+description: Use for Codex Team Router orchestration: visible roles, Manager Mode, gates, direct return, architect/qa, self-change, sync gates.
 ---
 
 # Codex Team Router
