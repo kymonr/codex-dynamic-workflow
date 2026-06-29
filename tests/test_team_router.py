@@ -53,6 +53,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 import team_router
+import team_router_state
 import team_router_policy
 import team_router_protocol
 
@@ -143,6 +144,14 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(team_router.parse_verdict, team_router_protocol.parse_verdict)
         self.assertIs(team_router.classify_team_router_gate, team_router_policy.classify_team_router_gate)
         self.assertIs(team_router.gate_class_requires_reviewer, team_router_policy.gate_class_requires_reviewer)
+
+
+    def test_facade_reexports_extracted_state_symbols(self):
+        self.assertIs(team_router.StateStoreError, team_router_state.StateStoreError)
+        self.assertIs(team_router.create_task_id, team_router_state.create_task_id)
+        self.assertIs(team_router.load_registry, team_router_state.load_registry)
+        self.assertIs(team_router.save_task_ledger, team_router_state.save_task_ledger)
+        self.assertIs(team_router.STATE_MACHINE_SNAPSHOT, team_router_state.STATE_MACHINE_SNAPSHOT)
 
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
