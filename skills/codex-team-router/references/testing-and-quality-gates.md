@@ -85,6 +85,8 @@ Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, pr
 - `scripts/team_router_closeout_check.py` remains read-only closeout evidence: report git status, diff files, SKILL hard cap and 7200 target, repo/global skill sync status, and unauthorized commit/push/global sync gates. It must not stage, commit, push, PR, merge, deploy, or sync.
 - `scripts/team_router_truth_check.py` is read-only current-truth evidence: report branch status, short status, diff files, SKILL cap/target, repo/global skill comparison, stale workbench/package claims, and the same unauthorized gates. It must not stage, commit, push, PR, merge, deploy, or sync.
 - `scripts/team_router_doctor.py` is read-only manager-facing status UX: summarize currentMode, truthStatus, orchestrationStatus, nextAction, and unauthorized actions without claiming role-thread creation or live dispatch unless explicit readiness evidence exists. It must not stage, commit, push, PR, merge, deploy, or sync.
+- When `scripts/team_router_truth_check.py` reports `staleClaims`, `scripts/team_router_doctor.py` must tell the manager to refresh workbench/package current-state text from truth_check/doctor evidence before claiming current truth.
+- Stale current-state detection should focus on explicit Current Task / Current Diff Surface / current-state sections, so completed historical package archives do not become false current blockers.
 - These tools do not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`; they are evidence inputs for executor/reviewer/verifier gates, not protocol acceptance.
 ## Host Readiness Snapshots
 

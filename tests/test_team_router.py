@@ -947,6 +947,7 @@ class TestTeamRouterState(unittest.TestCase):
                 "\n".join(
                     [
                         "# stale",
+                        "## Current Task",
                         "State: active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
                         "Latest `git status -s --untracked-files=all` reports:",
                         "- `M docs/team-router/packages/ctr-20260628-team-router-optimization-1-6.md`",
@@ -1008,6 +1009,84 @@ class TestTeamRouterState(unittest.TestCase):
             }
             self.assertEqual(after, before)
 
+    def test_truth_check_detects_stale_current_state_when_clean_synced(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {"skillSync": {"status": "match"}, "gitStatusShort": [], "diffFiles": []}
+        text = "\n".join(
+            [
+                "# Workbench",
+                "## Current Task",
+                "- State: active local package implementation for `ctr-stale-active`.",
+                "- Current next gate: reviewer/verifier focused acceptance.",
+                "## Current Diff Surface",
+                "- `M docs/workbench.md`",
+                "## Historical Records",
+                "- Previous stale package is historical only.",
+            ]
+        )
+
+        claims = module.find_stale_state_claims(report, {"docs/workbench.md": text})
+
+        reasons = "\n".join(claim["reason"] for claim in claims)
+        self.assertIn("current-state claims active package while live git/skill truth is clean/synced", reasons)
+        self.assertIn("current-state claims pending reviewer/verifier gate while live git/skill truth is clean/synced", reasons)
+        self.assertIn("current-state claims dirty diff surface while live git/skill truth is clean/synced", reasons)
+
+    def test_truth_check_does_not_flag_clean_synced_neutral_current_sections(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {"skillSync": {"status": "match"}, "gitStatusShort": [], "diffFiles": []}
+        text = "\n".join(
+            [
+                "# Workbench",
+                "## Current Task",
+                "- State: clean/synced; no active package.",
+                "- Current next gate: none; no action required.",
+                "## Current Diff Surface",
+                "Current truth is clean.",
+                "No current diff entries are present.",
+                "## Review And Verification Gate",
+                "Current gate: none; no action required.",
+            ]
+        )
+
+        claims = module.find_stale_state_claims(report, {"docs/workbench.md": text})
+
+        self.assertEqual(claims, [])
+
+    def test_truth_check_does_not_flag_historical_package_records_as_current(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {"skillSync": {"status": "match"}, "gitStatusShort": [], "diffFiles": []}
+        text = "\n".join(
+            [
+                "# Package Archive",
+                "## Historical Records",
+                "- State: active local package implementation for `ctr-old`.",
+                "- Current next gate: reviewer/verifier focused acceptance.",
+                "- `M docs/workbench.md`",
+                "## Integration Boundary",
+                "- historical only, not current truth.",
+            ]
+        )
+
+        claims = module.find_stale_state_claims(report, {"docs/team-router/packages/old.md": text})
+
+        self.assertEqual(claims, [])
+
     def test_router_doctor_dirty_next_action_requires_reviewer_then_verifier(self):
         spec = importlib.util.spec_from_file_location(
             "team_router_doctor_under_test",
@@ -1021,6 +1100,20 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertIn("reviewer pass", next_action)
         self.assertIn("verifier pass", next_action)
         self.assertLess(next_action.index("reviewer pass"), next_action.index("verifier pass"))
+
+    def test_router_doctor_stale_next_action_names_truth_check_and_doctor(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        next_action = module._next_action("stale", {"skillSync": {"status": "match"}})
+
+        self.assertIn("truth_check/doctor", next_action)
+        self.assertIn("current-state text", next_action)
+        self.assertIn("before claiming current truth", next_action)
 
     def test_router_doctor_classifies_role_thread_readiness_states(self):
         spec = importlib.util.spec_from_file_location(
@@ -1245,6 +1338,7 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertIn("callable adapter", report["hostReadiness"]["missing"])
             self.assertIn("callable heartbeat scheduler", report["hostReadiness"]["missing"])
             self.assertIn("hostReadiness=blocked", report["summary"])
+            self.assertIn("nextAction", report)
             self.assertNotIn("created role thread", report["summary"])
     def test_router_doctor_reports_plain_status_without_dispatch(self):
         with workspace_temp_dir() as tmp:
@@ -1284,6 +1378,7 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertIn(report["orchestrationStatus"], {"manual_only", "tool_error", "unknown"})
             self.assertIn("currentMode", report["summary"])
             self.assertIn("nextAction", report["summary"])
+            self.assertIn("nextAction", report)
             self.assertIn("unauthorized", report["summary"])
             self.assertNotIn("created role thread", report["summary"])
             self.assertFalse(report["authorization"]["commit"])
@@ -10056,24 +10151,27 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "active local package implementation for `ctr-20260628-host-adapter-heartbeat-smoke`",
-            "host adapter readiness and heartbeat scheduler contract",
-            "--host-readiness-json",
-            "hostReadiness",
-            "Current git truth",
+            "closeout recorded for `ctr-20260629-workbench-current-truth-doctor-ux`",
+            "review and verification gates accepted",
+            "stale workbench/package current-state claims",
+            "refresh current-state text from fresh truth tools",
+            "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "reviewer/verifier focused acceptance for the sync-truth rework",
-            "no commit, no stage, no push, no PR, no merge, no deploy, and no publish/release",
-            "Global skill sync is complete and reports `status: match`",
+            "module extraction phase 1: policy/protocol split",
+            "no push, no PR, no merge, no deploy, no publish/release",
+            "Global skill sync for `codex-team-router` is complete and reports `status: match`",
             "Current Diff Surface",
-            "Current truth is command-derived, not a copied package list",
+            "Current truth is command-derived",
+            "This file intentionally does not list a live diff surface",
             "scripts/team_router_truth_check.py",
             "scripts/team_router_doctor.py",
+            "Current Task / Current Diff Surface style sections",
+            "historical package archives are not treated as live truth",
             "Historical Records",
             "completed historical package",
             "not current git truth",
@@ -10083,10 +10181,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertIn("ctr-20260628-team-router-optimization-1-6", historical_section)
         for stale_current in (
             "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
+            "active local package implementation for `ctr-20260628-host-adapter-heartbeat-smoke`",
+            "host adapter readiness and heartbeat scheduler contract",
             "P2-5 is the current workbench/package-state refresh",
             "Latest `git diff --name-only` reports the same five tracked files",
             "`skillSync.status: mismatch`",
-            "idle / no active local package task",
+            "active local package implementation for `ctr-20260629-workbench-current-truth-doctor-ux`",
+            "active while this local package is awaiting reviewer/verifier gates",
             "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
             "wait for a new explicit dispatch or user authorization",
             "No current diff surface is expected in idle state",
@@ -10096,7 +10197,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "[ahead 1]",
             "ahead of `origin/master` by 1",
             "previous helper-test commit `c9d41b3` is local-only",
-            "Global installed skill reference synced",
             r"C:\\Users\\Orz\\.codex\\skills\\codex-team-router",
             "implementation in progress in isolated worktree",
             "thread tools unavailable",
@@ -10152,6 +10252,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "scripts/team_router_truth_check.py",
             "scripts/team_router_doctor.py",
             "must not stage, commit, push, PR, merge, deploy, or sync",
+            "refresh workbench/package current-state text from truth_check/doctor evidence before claiming current truth",
+            "Current Task / Current Diff Surface / current-state sections",
             "do not replace `TEAM_ROUTER_CALLBACK`, `TEAM_ROUTER_REVIEW`, or `TEAM_ROUTER_VERDICT`",
         ):
             self.assertIn(needle, text)

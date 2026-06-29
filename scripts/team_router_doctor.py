@@ -55,7 +55,7 @@ def _truth_status(truth: dict[str, object]) -> str:
 
 def _next_action(truth_status: str, truth: dict[str, object]) -> str:
     if truth_status in {"dirty_or_stale", "stale"}:
-        return "refresh workbench/package current-state docs from team_router_truth_check.py before claiming current truth"
+        return "refresh workbench/package current-state text from truth_check/doctor before claiming current truth"
     if truth_status == "dirty":
         return "review the local diff, run the required reviewer pass, then run the required verifier pass before closeout"
     if truth["skillSync"]["status"] != "match":
@@ -341,6 +341,7 @@ def build_doctor_report(
         "truthStatus": truth_status,
         "orchestrationStatus": orchestration_status,
         "summary": summary,
+        "nextAction": next_action,
         "authorization": truth["authorization"],
         "roleThreadStatus": role_status,
         "hostReadiness": host_readiness,

@@ -18,6 +18,51 @@ DEFAULT_SCAN_FILES = (
 HARD_CAP_BYTES = 8192
 TARGET_BYTES = 7200
 OLD_OPTIMIZATION_PACKAGE = "ctr-20260628-team-router-optimization-1-6"
+CURRENT_STATE_HEADINGS = {
+    "current task",
+    "current state",
+    "current status",
+    "current truth",
+    "current diff surface",
+    "current next gate",
+    "review and verification gate",
+}
+ACTIVE_CURRENT_STATE_MARKERS = (
+    "State: active",
+    "active local package implementation",
+    "active local package",
+    "implementation in progress",
+    "package is still active",
+    "because this package is active",
+)
+PENDING_GATE_MARKERS = (
+    "reviewer/verifier",
+    "reviewer gate required",
+    "verifier gate required",
+    "reviewer re-review",
+    "verifier re-check",
+    "pending reviewer",
+    "pending verifier",
+)
+NEUTRAL_GATE_MARKERS = (
+    "current next gate: none",
+    "current gate: none",
+    "no action required",
+    "no current gate",
+    "no reviewer gate",
+    "no verifier gate",
+    "not pending reviewer",
+    "not pending verifier",
+)
+DIRTY_DIFF_MARKERS = (
+    "dirty because this package is active",
+    "`M ",
+    "`A ",
+    "`D ",
+    "`?? ",
+    "modified `",
+    "untracked package",
+)
 
 
 def _run_git(repo_root: Path, args: list[str]) -> dict[str, object]:
@@ -101,15 +146,69 @@ def _claim(path: str, reason: str, evidence: str) -> dict[str, str]:
     return {"path": path, "reason": reason, "evidence": evidence}
 
 
+def _heading_name(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return None
+    return stripped.lstrip("#").strip().lower()
+
+
+def _current_state_lines(text: str) -> list[str]:
+    lines = text.splitlines()
+    sections: list[str] = []
+    in_current_section = False
+    saw_heading = False
+    saw_current_heading = False
+    for line in lines:
+        heading = _heading_name(line)
+        if heading is not None:
+            saw_heading = True
+            in_current_section = heading in CURRENT_STATE_HEADINGS
+            saw_current_heading = saw_current_heading or in_current_section
+        if in_current_section:
+            sections.append(line)
+    if saw_current_heading:
+        return sections
+    if saw_heading:
+        return []
+    return lines
+
+
+def _first_marker_line(lines: list[str], markers: tuple[str, ...]) -> str | None:
+    for line in lines:
+        stripped = line.strip()
+        if _heading_name(stripped) is not None:
+            continue
+        if any(marker in stripped for marker in markers):
+            return stripped
+    return None
+
+
+def _first_pending_gate_line(lines: list[str]) -> str | None:
+    for line in lines:
+        stripped = line.strip()
+        if _heading_name(stripped) is not None:
+            continue
+        normalized = stripped.lower()
+        if any(marker in normalized for marker in NEUTRAL_GATE_MARKERS):
+            continue
+        if any(marker in stripped for marker in PENDING_GATE_MARKERS):
+            return stripped
+    return None
+
+
 def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str]) -> list[dict[str, str]]:
     claims: list[dict[str, str]] = []
     actual_skill_status = str(report["skillSync"]["status"])
     actual_dirty = bool(report["gitStatusShort"] or report["diffFiles"])
+    actual_clean_synced = not actual_dirty and actual_skill_status == "match"
 
     for path, text in scan_texts.items():
+        current_lines = _current_state_lines(text)
+        current_text = "\n".join(current_lines)
         stale_active_lines = [
             line.strip()
-            for line in text.splitlines()
+            for line in current_lines
             if (
                 ("State: active local package implementation" in line or "active local package implementation for" in line)
                 and OLD_OPTIMIZATION_PACKAGE in line
@@ -124,7 +223,7 @@ def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str
                 )
             )
 
-        if "`skillSync.status: mismatch`" in text and actual_skill_status != "mismatch":
+        if "`skillSync.status: mismatch`" in current_text and actual_skill_status != "mismatch":
             claims.append(
                 _claim(
                     path,
@@ -135,8 +234,8 @@ def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str
 
         if (
             not actual_dirty
-            and "Latest `git status -s --untracked-files=all` reports:" in text
-            and "M docs/workbench.md" in text
+            and "Latest `git status -s --untracked-files=all` reports:" in current_text
+            and "M docs/workbench.md" in current_text
         ):
             claims.append(
                 _claim(
@@ -145,6 +244,34 @@ def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str
                     "live git status has no short-status entries",
                 )
             )
+        if actual_clean_synced:
+            active_line = _first_marker_line(current_lines, ACTIVE_CURRENT_STATE_MARKERS)
+            if active_line:
+                claims.append(
+                    _claim(
+                        path,
+                        "current-state claims active package while live git/skill truth is clean/synced",
+                        active_line,
+                    )
+                )
+            pending_gate_line = _first_pending_gate_line(current_lines)
+            if pending_gate_line:
+                claims.append(
+                    _claim(
+                        path,
+                        "current-state claims pending reviewer/verifier gate while live git/skill truth is clean/synced",
+                        pending_gate_line,
+                    )
+                )
+            dirty_line = _first_marker_line(current_lines, DIRTY_DIFF_MARKERS)
+            if dirty_line:
+                claims.append(
+                    _claim(
+                        path,
+                        "current-state claims dirty diff surface while live git/skill truth is clean/synced",
+                        dirty_line,
+                    )
+                )
     return claims
 
 
