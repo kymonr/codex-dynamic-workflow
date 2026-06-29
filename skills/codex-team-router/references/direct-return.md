@@ -176,3 +176,18 @@ Natural-language verdicts do not move state.
 Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, protocolBlock) means the same protocol delivery target as send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>); prefer the explicit `threadId=<returnThreadId>` form in role request templates.
 
 Legacy wording: first call `send_message_to_thread(sourceThreadId, protocolBlock)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback. New role request templates must prefer the explicit `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)` form.
+## Architect And QA Direct Return
+
+See `references/conditional-roles.md` for the complete conditional role contract.
+
+Direct-return marker map additions:
+
+- architect -> TEAM_ROUTER_ARCHITECT_REVIEW
+- qa -> TEAM_ROUTER_QA_REVIEW
+
+Pending request paths:
+
+- architect direct-return resolves `architectureReview.request` and accepts only the pending architect role/thread, including `sourceThreadId`, `sourceRoleThreadId`, marker-specific `role: Architect`, and `skillProfileUsed: architect-default`.
+- qa direct-return resolves `qaReview.request` and accepts only the pending QA role/thread, including `sourceThreadId`, `sourceRoleThreadId`, marker-specific `role: QA`, and `skillProfileUsed: qa-default`.
+
+Wrong task, wrong role, wrong role thread, stale request, malformed marker, or non-pending architect/QA return is rejected or quarantined without advancing the ledger.

@@ -100,3 +100,18 @@ Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, pr
 - This is evidence-only status UX. It does not create, read, poll, send, stage, commit, push, PR, merge, deploy, or sync.
 - `active_wait` means observe under the existing cadence; it is not permission for immediate continuous `read_thread` polling.
 - `protocol_returned` means the expected marker was present in supplied evidence; final acceptance still requires reviewer/verifier protocol gates as applicable.
+## Conditional Role Coverage
+
+See `references/conditional-roles.md` for architect and QA semantics.
+
+The fixture `tests/fixtures/team_router/architect_qa_visible_smoke_scenarios.json` snapshots conditional role visible flows and must cover exactly these scenario names:
+
+- `architect_only`
+- `qa_only`
+- `architect_reviewer_no_qa`
+- `architect_reviewer_qa`
+- `qa_needs_rework`
+- `architect_blocked`
+- `qa_blocked`
+
+Docs and runtime tests must keep marker mapping for `TEAM_ROUTER_ARCHITECT_REVIEW` and `TEAM_ROUTER_QA_REVIEW`, parser-required `sourceThreadId`, `sourceRoleThreadId`, `role`, and `skillProfileUsed`, direct-return request paths, watcher fallback, architect/QA result transitions, QA-gated verifier request, and QA-gated evidence-only fast path covered.

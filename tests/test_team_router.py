@@ -67,10 +67,17 @@ class FakeThreadAdapter:
     def create_thread(self, **kwargs):
         prompt = kwargs["prompt"]
         role = "role"
-        for candidate in ("manager", "executor", "verifier", "reviewer"):
-            if candidate in prompt:
-                role = candidate
+        explicit_roles = {"Architect": "architect", "QA": "qa"}
+        for line in prompt.splitlines():
+            match = re.match(r"^\s*role\s*:\s*(Architect|QA)\s*$", line)
+            if match:
+                role = explicit_roles[match.group(1)]
                 break
+        else:
+            for candidate in ("manager", "executor", "verifier", "reviewer"):
+                if candidate in prompt:
+                    role = candidate
+                    break
         self._thread_count += 1
         thread_id = "thread-%s" % role
         self.messages[thread_id] = []
@@ -242,6 +249,221 @@ risks: none
 """
         msg = team_router.parse_verdict(text, "ctr-1")
         self.assertEqual(msg.fields["result"], "needs_rework")
+
+    def test_architect_and_qa_are_fixed_conditional_roles(self):
+        snapshot = team_router.protocol_contract_snapshot()
+
+        self.assertEqual(snapshot["coreRoleNames"], ["executor", "manager", "verifier"])
+        self.assertIn("architect", snapshot["conditionalRoleNames"])
+        self.assertIn("qa", snapshot["conditionalRoleNames"])
+        self.assertNotIn("architect", team_router.CORE_ROLE_NAMES)
+        self.assertNotIn("qa", team_router.CORE_ROLE_NAMES)
+        self.assertIn("architect", team_router.ROLE_NAMES)
+        self.assertIn("qa", team_router.ROLE_NAMES)
+        self.assertEqual(snapshot["roleThreads"]["architect"]["englishAlias"], "Architect")
+        self.assertEqual(snapshot["roleThreads"]["qa"]["englishAlias"], "QA")
+        self.assertTrue(snapshot["roleThreads"]["architect"]["conditional"])
+        self.assertTrue(snapshot["roleThreads"]["qa"]["conditional"])
+        self.assertTrue(snapshot["conditionalRolePolicy"]["noCustomRoleRegistry"])
+        self.assertEqual(snapshot["conditionalRolePolicy"]["runtimeSkillLoading"], "not supported")
+
+    def test_architect_and_qa_markers_have_required_fields_and_enums(self):
+        markers = team_router.protocol_contract_snapshot()["markers"]
+        architect_required = set(markers["TEAM_ROUTER_ARCHITECT_REVIEW"]["requiredFields"])
+        qa_required = set(markers["TEAM_ROUTER_QA_REVIEW"]["requiredFields"])
+
+        self.assertTrue({
+            "result", "sourceThreadId", "sourceRoleThreadId", "role", "summary",
+            "findings", "requiredChanges", "evidenceChecked", "risks",
+            "skillProfileUsed", "architectureImpact", "compatibilityNotes",
+            "alternatives", "migrationRisks",
+        }.issubset(architect_required))
+        self.assertTrue({
+            "result", "sourceThreadId", "sourceRoleThreadId", "role", "summary",
+            "findings", "requiredChanges", "evidenceChecked", "risks",
+            "skillProfileUsed", "coverageGaps", "verificationPlan", "regressionRisks",
+        }.issubset(qa_required))
+        self.assertEqual(markers["TEAM_ROUTER_ARCHITECT_REVIEW"]["allowedValues"]["result"], ["blocked", "needs_rework", "pass"])
+        self.assertEqual(markers["TEAM_ROUTER_ARCHITECT_REVIEW"]["allowedValues"]["role"], ["Architect"])
+        self.assertEqual(markers["TEAM_ROUTER_ARCHITECT_REVIEW"]["allowedValues"]["skillProfileUsed"], ["architect-default"])
+        self.assertEqual(markers["TEAM_ROUTER_QA_REVIEW"]["allowedValues"]["result"], ["blocked", "needs_rework", "pass"])
+        self.assertEqual(markers["TEAM_ROUTER_QA_REVIEW"]["allowedValues"]["role"], ["QA"])
+        self.assertEqual(markers["TEAM_ROUTER_QA_REVIEW"]["allowedValues"]["skillProfileUsed"], ["qa-default"])
+
+    def test_architect_and_qa_marker_parser_accepts_required_fields(self):
+        architect = """TEAM_ROUTER_ARCHITECT_REVIEW taskId=ctr-1
+result: pass
+sourceThreadId: parent-thread
+sourceRoleThreadId: thread-architect
+role: Architect
+summary: ok
+findings: none
+requiredChanges: none
+evidenceChecked: tests
+risks: none
+skillProfileUsed: architect-default
+architectureImpact: shared state
+compatibilityNotes: ok
+alternatives: none
+migrationRisks: low
+"""
+        qa = """TEAM_ROUTER_QA_REVIEW taskId=ctr-1
+result: pass
+sourceThreadId: parent-thread
+sourceRoleThreadId: thread-qa
+role: QA
+summary: ok
+findings: none
+requiredChanges: none
+evidenceChecked: tests
+risks: none
+skillProfileUsed: qa-default
+coverageGaps: none
+verificationPlan: py -B -m unittest tests.test_team_router
+regressionRisks: low
+"""
+
+        self.assertEqual(
+            team_router.parse_message(architect, "TEAM_ROUTER_ARCHITECT_REVIEW", "ctr-1").fields["role"],
+            "Architect",
+        )
+        self.assertEqual(
+            team_router.parse_message(qa, "TEAM_ROUTER_QA_REVIEW", "ctr-1").fields["skillProfileUsed"],
+            "qa-default",
+        )
+
+    def test_architect_and_qa_markers_reject_missing_identity_fields(self):
+        cases = [
+            (
+                "TEAM_ROUTER_ARCHITECT_REVIEW",
+                "Architect",
+                "skillProfileUsed: architect-default\narchitectureImpact: shared state\ncompatibilityNotes: ok\nalternatives: none\nmigrationRisks: low",
+            ),
+            (
+                "TEAM_ROUTER_QA_REVIEW",
+                "QA",
+                "skillProfileUsed: qa-default\ncoverageGaps: none\nverificationPlan: py -B -m unittest tests.test_team_router\nregressionRisks: low",
+            ),
+        ]
+        for marker, role, extra in cases:
+            base = (
+                f"{marker} taskId=ctr-1\nresult: pass\nsourceThreadId: parent-thread\n"
+                f"sourceRoleThreadId: role-thread\nrole: {role}\nsummary: ok\nfindings: none\n"
+                f"requiredChanges: none\nevidenceChecked: tests\nrisks: none\n{extra}\n"
+            )
+            for field in ("sourceThreadId", "sourceRoleThreadId", "role", "skillProfileUsed"):
+                with self.subTest(marker=marker, missing=field):
+                    broken = "\n".join(
+                        line for line in base.splitlines()
+                        if not line.startswith(field + ":")
+                    )
+                    with self.assertRaises(team_router.ProtocolError):
+                        team_router.parse_message(broken, marker, "ctr-1")
+
+    def test_architect_and_qa_markers_reject_wrong_role_and_skill_profile_enums(self):
+        architect = """TEAM_ROUTER_ARCHITECT_REVIEW taskId=ctr-1
+result: pass
+sourceThreadId: parent-thread
+sourceRoleThreadId: thread-architect
+role: Architect
+summary: ok
+findings: none
+requiredChanges: none
+evidenceChecked: tests
+risks: none
+skillProfileUsed: architect-default
+architectureImpact: shared state
+compatibilityNotes: ok
+alternatives: none
+migrationRisks: low
+"""
+        qa = """TEAM_ROUTER_QA_REVIEW taskId=ctr-1
+result: pass
+sourceThreadId: parent-thread
+sourceRoleThreadId: thread-qa
+role: QA
+summary: ok
+findings: none
+requiredChanges: none
+evidenceChecked: tests
+risks: none
+skillProfileUsed: qa-default
+coverageGaps: none
+verificationPlan: py -B -m unittest tests.test_team_router
+regressionRisks: low
+"""
+        for marker, text in (
+            ("TEAM_ROUTER_ARCHITECT_REVIEW", architect.replace("role: Architect", "role: QA")),
+            ("TEAM_ROUTER_ARCHITECT_REVIEW", architect.replace("skillProfileUsed: architect-default", "skillProfileUsed: qa-default")),
+            ("TEAM_ROUTER_QA_REVIEW", qa.replace("role: QA", "role: Architect")),
+            ("TEAM_ROUTER_QA_REVIEW", qa.replace("skillProfileUsed: qa-default", "skillProfileUsed: architect-default")),
+        ):
+            with self.subTest(marker=marker):
+                with self.assertRaises(team_router.ProtocolError):
+                    team_router.parse_message(text, marker, "ctr-1")
+
+    def test_architect_and_qa_unreachable_states_are_recoverable_not_terminal(self):
+        snapshot = team_router.protocol_contract_snapshot()
+
+        self.assertEqual(team_router.manual_recovery_target("architect_review_unreachable"), "awaiting_architect_review")
+        self.assertEqual(team_router.manual_recovery_target("qa_review_unreachable"), "awaiting_qa_review")
+        self.assertNotIn("architect_review_blocked", snapshot["recoverableStatuses"])
+        self.assertNotIn("qa_review_blocked", snapshot["recoverableStatuses"])
+        self.assertNotIn("architect_review_blocked", snapshot["stateMachine"]["main"])
+        self.assertNotIn("qa_review_blocked", snapshot["stateMachine"]["main"])
+        self.assertIn("blocked", snapshot["terminalStatuses"])
+        self.assertIn("TEAM_ROUTER_ARCHITECT_REVIEW", snapshot["managerOrchestrationPolicy"]["completionFeedback"]["requiredMarkers"])
+        self.assertIn("TEAM_ROUTER_QA_REVIEW", snapshot["managerOrchestrationPolicy"]["completionFeedback"]["requiredMarkers"])
+
+    def test_architect_gate_classifier_uses_explicit_fields_and_baseline_terms(self):
+        self.assertTrue(team_router.classify_architect_gate({"plan": {"fields": {"requiresArchitect": True}}}))
+        self.assertTrue(team_router.classify_architect_gate({"architectureGateRequired": "required"}))
+        for ledger in (
+            {"objective": "change shared protocol contract"},
+            {"plan": {"fields": {"scope": "state-machine and direct-return behavior"}}},
+            {"plan": {"fields": {"riskBoundary": "migration compatibility uncertainty"}}},
+        ):
+            self.assertTrue(team_router.classify_architect_gate(ledger))
+        self.assertFalse(team_router.classify_architect_gate({"objective": "ask architect to look at typo"}))
+
+    def test_qa_gate_classifier_uses_explicit_fields_and_baseline_terms(self):
+        self.assertTrue(team_router.classify_qa_gate({"plan": {"fields": {"requiresQa": True}}}))
+        self.assertTrue(team_router.classify_qa_gate({"qaGateRequired": "yes"}))
+        for ledger in (
+            {"objective": "define test strategy and acceptance criteria"},
+            {"plan": {"fields": {"scope": "regression verification plan"}}},
+            {"plan": {"fields": {"riskBoundary": "coverage gap across multiple modes"}}},
+        ):
+            self.assertTrue(team_router.classify_qa_gate(ledger))
+        self.assertFalse(team_router.classify_qa_gate({"objective": "qa should glance at this later"}))
+
+    def test_route_explanation_reports_architect_and_qa_gates(self):
+        route = team_router.explain_team_router_route({
+            "plan": {
+                "fields": {
+                    "requiresArchitect": True,
+                    "requiresQa": True,
+                    "scope": "state-machine regression verification plan",
+                }
+            }
+        })
+
+        self.assertTrue(route["requiresArchitect"])
+        self.assertTrue(route["requiresQa"])
+        self.assertIn("architect", route["roles"])
+        self.assertIn("qa", route["roles"])
+        self.assertTrue(route["route"].startswith("architect -> executor"))
+        self.assertTrue(route["route"].endswith("qa -> verifier"))
+
+    def test_fake_thread_adapter_infers_architect_and_qa_from_explicit_role_field(self):
+        adapter = FakeThreadAdapter()
+        self.assertEqual(adapter.create_thread(prompt="中文说明\nrole: Architect\n")["threadId"], "thread-architect")
+        self.assertEqual(adapter.create_thread(prompt="中文说明\nrole: QA\n")["threadId"], "thread-qa")
+
+    def test_fake_thread_adapter_does_not_infer_architect_or_qa_from_free_text(self):
+        adapter = FakeThreadAdapter()
+        self.assertNotEqual(adapter.create_thread(prompt="please ask architect about this\n")["threadId"], "thread-architect")
+        self.assertNotEqual(adapter.create_thread(prompt="qa should glance at this later\n")["threadId"], "thread-qa")
 
 
     def test_direct_return_receipt_requires_explicit_role_and_source_role_thread_id(self):
@@ -1545,6 +1767,28 @@ risks: none
 
         self.assertFalse(decision["allowed"])
         self.assertEqual(decision["reason"], "reviewer result is missing")
+
+    def test_verifier_evidence_only_fast_path_respects_required_qa_gate(self):
+        callback_fields = {"status": "done", "evidence": "tests passed"}
+        reviewer_result = {"fields": {"result": "pass", "requiredChanges": "none"}}
+
+        missing_qa = team_router.verifier_evidence_only_fast_path(
+            callback_fields,
+            reviewer_result,
+            qa_required=True,
+            qa_result=None,
+        )
+        self.assertFalse(missing_qa["allowed"])
+        self.assertEqual(missing_qa["reason"], "QA result is missing or not pass")
+
+        passed_qa = team_router.verifier_evidence_only_fast_path(
+            callback_fields,
+            reviewer_result,
+            qa_required=True,
+            qa_result={"fields": {"result": "pass"}},
+        )
+        self.assertTrue(passed_qa["allowed"])
+        self.assertIn("evidence is present", passed_qa["reason"])
     def test_protocol_contract_snapshot_centralizes_roles_states_and_markers(self):
         snapshot = team_router.protocol_contract_snapshot()
 
@@ -5363,6 +5607,837 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIsNone(ledger["planRequest"])
         self.assertIn("plan", ledger)
         self.assertIsNone(ledger["plan"])
+    def test_task_ledger_normalizes_architecture_and_qa_review_fields(self):
+        path = team_router.task_path(self.root, self.project_id, self.task_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "taskId": self.task_id,
+            "projectId": self.project_id,
+            "status": "awaiting_architect_review",
+            "architectureReview": {"request": {"threadId": "thread-architect"}},
+            "qaReview": {"request": {"threadId": "thread-qa"}},
+        }), encoding="utf-8")
+
+        ledger = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+
+        self.assertEqual(ledger["architectureReview"]["request"]["threadId"], "thread-architect")
+        self.assertEqual(ledger["qaReview"]["request"]["threadId"], "thread-qa")
+
+    def test_architect_review_request_prompt_contains_direct_return_contract(self):
+        message = team_router.make_architect_review_request_message(
+            task_id=self.task_id,
+            objective="change state-machine protocol",
+            scope="Team Router state machine",
+            return_thread_id="parent-manager-thread",
+            role_thread_id="thread-architect",
+            plan_fields={"riskBoundary": "direct-return"},
+        )
+
+        for needle in (
+            "TEAM_ROUTER_ARCHITECT_REVIEW",
+            "sourceThreadId: parent-manager-thread",
+            "sourceRoleThreadId: thread-architect",
+            "role: Architect",
+            "skillProfileUsed: architect-default",
+            "architectureImpact:",
+            "compatibilityNotes:",
+            "alternatives:",
+            "migrationRisks:",
+            "architectReviewDelivery: direct-send",
+            "architectReviewFallback: self-thread-marker",
+            "send_message_to_thread(threadId=<returnThreadId>",
+            "manual orchestration fallback",
+        ):
+            self.assertIn(needle, message)
+
+    def test_qa_review_request_prompt_contains_direct_return_contract(self):
+        message = team_router.make_qa_review_request_message(
+            task_id=self.task_id,
+            executor_callback=(
+                "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\n"
+                "summary: ok\nevidence: tests\nrisks: none\nnext: qa" % self.task_id
+            ),
+            scope="Team Router verifier gating",
+            return_thread_id="parent-manager-thread",
+            role_thread_id="thread-qa",
+            plan_fields={"riskBoundary": "regression"},
+            reviewer_result={"fields": {"result": "pass", "summary": "ok"}},
+        )
+
+        for needle in (
+            "TEAM_ROUTER_QA_REVIEW",
+            "sourceThreadId: parent-manager-thread",
+            "sourceRoleThreadId: thread-qa",
+            "role: QA",
+            "skillProfileUsed: qa-default",
+            "coverageGaps:",
+            "verificationPlan:",
+            "regressionRisks:",
+            "qaReviewDelivery: direct-send",
+            "qaReviewFallback: self-thread-marker",
+            "send_message_to_thread(threadId=<returnThreadId>",
+            "manual orchestration fallback",
+        ):
+            self.assertIn(needle, message)
+
+    def test_send_architect_review_request_records_direct_return_metadata(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        ledger["objective"] = "change shared protocol contract"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "state-machine direct-return behavior",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"architect": {"threadId": "thread-architect", "title": "架构师-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+
+        updated = team_router.send_architect_review_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+            return_thread_id="parent-manager-thread",
+        )
+
+        request = updated["architectureReview"]["request"]
+        self.assertEqual(updated["status"], "awaiting_architect_review")
+        self.assertEqual(request["role"], "architect")
+        self.assertEqual(request["threadId"], "thread-architect")
+        self.assertEqual(request["roleThreadId"], "thread-architect")
+        self.assertEqual(request["sourceRoleThreadId"], "thread-architect")
+        self.assertEqual(request["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(request["orchestratorThreadId"], "parent-manager-thread")
+        self.assertEqual(request["expectedMarker"], "TEAM_ROUTER_ARCHITECT_REVIEW")
+        self.assertEqual(request["expectedCallback"], "TEAM_ROUTER_ARCHITECT_REVIEW taskId=%s" % self.task_id)
+        self.assertEqual(request["architectReviewDelivery"], "direct-send")
+        self.assertEqual(request["architectReviewFallback"], "self-thread-marker")
+        self.assertEqual(request["fallbackSearchAnchor"], request["searchAnchor"])
+        self.assertEqual(request["returnSearchAnchor"]["sentAt"], request["sentAt"])
+        self.assertEqual(updated["watcher"]["role"], "architect")
+        self.assertEqual(updated["watcher"]["expectedMarker"], "TEAM_ROUTER_ARCHITECT_REVIEW taskId=%s" % self.task_id)
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-architect")
+        self.assertIn("callbackMode: direct-return runtime", adapter.sent[-1]["kwargs"]["prompt"])
+
+    def test_send_qa_review_request_records_direct_return_metadata(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        ledger["objective"] = "high regression risk with test matrix needed"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "regression verification plan",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"qa": {"threadId": "thread-qa", "title": "QA-test"}},
+            "2026-06-22T20:04:30+08:00",
+        )
+
+        updated = team_router.send_qa_review_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+            return_thread_id="parent-manager-thread",
+        )
+
+        request = updated["qaReview"]["request"]
+        self.assertEqual(updated["status"], "awaiting_qa_review")
+        self.assertEqual(request["role"], "qa")
+        self.assertEqual(request["threadId"], "thread-qa")
+        self.assertEqual(request["sourceRoleThreadId"], "thread-qa")
+        self.assertEqual(request["returnThreadId"], "parent-manager-thread")
+        self.assertEqual(request["expectedMarker"], "TEAM_ROUTER_QA_REVIEW")
+        self.assertEqual(request["qaReviewDelivery"], "direct-send")
+        self.assertEqual(request["qaReviewFallback"], "self-thread-marker")
+        self.assertEqual(updated["watcher"]["role"], "qa")
+        self.assertIn("callbackMode: direct-return runtime", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertIn("以下是执行者 callback 原文：", adapter.sent[-1]["kwargs"]["prompt"])
+
+    def _awaiting_architect_review_ledger(self, *, return_thread_id="parent-manager-thread", max_rework=3):
+        ledger = self._planned_ledger(max_rework=max_rework)
+        ledger["objective"] = "change shared protocol contract"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "state-machine direct-return behavior",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        return team_router.record_architect_review_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            architect_thread_id="thread-architect",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-architect-request",
+            return_thread_id=return_thread_id,
+        )
+
+    def _awaiting_qa_review_ledger(self, *, return_thread_id="parent-manager-thread", max_rework=3):
+        ledger = self._verifying_ledger(max_rework=max_rework)
+        ledger["objective"] = "high regression risk with test matrix needed"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "regression verification plan",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        return team_router.record_qa_review_request_sent(
+            self.root,
+            self.project_id,
+            self.task_id,
+            qa_thread_id="thread-qa",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-qa-request",
+            return_thread_id=return_thread_id,
+        )
+
+    def _architect_review_block(self, result="pass", *, source_thread_id="parent-manager-thread", source_role_thread_id="thread-architect"):
+        return """TEAM_ROUTER_ARCHITECT_REVIEW taskId=%s
+result: %s
+sourceThreadId: %s
+sourceRoleThreadId: %s
+role: Architect
+summary: architecture checked
+findings: none
+requiredChanges: none
+evidenceChecked: spec and plan
+risks: none
+skillProfileUsed: architect-default
+architectureImpact: shared state machine
+compatibilityNotes: compatible
+alternatives: none
+migrationRisks: low
+""" % (self.task_id, result, source_thread_id, source_role_thread_id)
+
+    def _qa_review_block(self, result="pass", *, source_thread_id="parent-manager-thread", source_role_thread_id="thread-qa"):
+        return """TEAM_ROUTER_QA_REVIEW taskId=%s
+result: %s
+sourceThreadId: %s
+sourceRoleThreadId: %s
+role: QA
+summary: qa checked
+findings: none
+requiredChanges: none
+evidenceChecked: focused tests
+risks: none
+skillProfileUsed: qa-default
+coverageGaps: direct-return stale cases
+verificationPlan: py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration -v
+regressionRisks: watcher transitions
+""" % (self.task_id, result, source_thread_id, source_role_thread_id)
+
+    def _direct_return_message(self, role_thread_id, text, *, message_id="msg-direct-return"):
+        return {
+            "messageId": message_id,
+            "sentAt": "2026-06-22T20:06:00+08:00",
+            "sourceThreadId": role_thread_id,
+            "text": text,
+        }
+
+    def test_direct_return_record_and_capture_allowed_support_architect_and_qa(self):
+        architect = self._awaiting_architect_review_ledger()
+        self.assertEqual(
+            team_router._direct_return_record(architect, "architect")["threadId"],
+            "thread-architect",
+        )
+        self.assertTrue(team_router._direct_return_capture_allowed({"status": "awaiting_architect_review"}, "architect"))
+        self.assertTrue(team_router._direct_return_capture_allowed({"status": "architect_review_unreachable"}, "architect"))
+        self.assertFalse(team_router._direct_return_capture_allowed({"status": "awaiting_qa_review"}, "architect"))
+
+        self.tearDown(); self.setUp()
+        qa = self._awaiting_qa_review_ledger()
+        self.assertEqual(
+            team_router._direct_return_record(qa, "qa")["threadId"],
+            "thread-qa",
+        )
+        self.assertTrue(team_router._direct_return_capture_allowed({"status": "awaiting_qa_review"}, "qa"))
+        self.assertTrue(team_router._direct_return_capture_allowed({"status": "qa_review_unreachable"}, "qa"))
+        self.assertFalse(team_router._direct_return_capture_allowed({"status": "planned"}, "qa"))
+
+    def test_architect_pass_direct_return_records_result_and_returns_to_planned_without_dispatch(self):
+        self._awaiting_architect_review_ledger()
+        updated = team_router._capture_architect_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-architect", self._architect_review_block("pass"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "planned")
+        self.assertEqual(updated["architectureReview"]["result"]["fields"]["result"], "pass")
+        self.assertEqual(updated["dispatches"], [])
+        self.assertEqual(updated["architectureReview"]["result"]["receipt"]["channel"], "manager-inbox")
+
+    def test_architect_needs_rework_records_result_without_executor_rework_increment(self):
+        self._awaiting_architect_review_ledger(max_rework=2)
+        updated = team_router._capture_architect_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-architect", self._architect_review_block("needs_rework"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "architect_rework_pending")
+        self.assertEqual(updated["reworkCount"], 0)
+        self.assertEqual(updated["architectureReview"]["result"]["fields"]["architectureImpact"], "shared state machine")
+
+    def test_architect_blocked_records_result_and_blocks_task(self):
+        self._awaiting_architect_review_ledger()
+        updated = team_router._capture_architect_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-architect", self._architect_review_block("blocked"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "blocked")
+        self.assertEqual(updated["architectureReview"]["result"]["fields"]["result"], "blocked")
+
+    def test_qa_pass_direct_return_records_result_and_returns_to_verifying(self):
+        self._awaiting_qa_review_ledger()
+        updated = team_router._capture_qa_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-qa", self._qa_review_block("pass"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["qaReview"]["result"]["fields"]["result"], "pass")
+        self.assertEqual(updated["qaReview"]["result"]["receipt"]["channel"], "manager-inbox")
+
+    def test_architect_required_executor_dispatch_rejects_before_architect_pass_without_send_or_rewrite(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        ledger["objective"] = "change shared protocol contract"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "state-machine direct-return behavior",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        before = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_executor_dispatch_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:07:00+08:00",
+                return_thread_id="parent-manager-thread",
+            )
+
+        self.assertIn("architect gate", str(ctx.exception))
+        self.assertEqual(adapter.sent, [])
+        after = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertEqual(after, before)
+
+    def test_architect_pass_allows_required_executor_dispatch(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_architect_review_ledger()
+        team_router._capture_architect_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-architect", self._architect_review_block("pass"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        updated = team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:07:00+08:00",
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_callback")
+        self.assertEqual(updated["dispatches"][-1]["threadId"], "thread-executor")
+        self.assertEqual(len(adapter.sent), 1)
+
+    def test_non_architect_executor_dispatch_remains_unchanged(self):
+        adapter = FakeThreadAdapter()
+        self._planned_ledger()
+
+        updated = team_router.send_executor_dispatch_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:07:00+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_callback")
+        self.assertEqual(len(adapter.sent), 1)
+        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-executor")
+
+    def test_qa_required_verifier_request_rejects_before_qa_pass_without_send_or_rewrite(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        ledger["objective"] = "high regression risk with test strategy needed"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "regression verification plan",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        before = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_verifier_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:07:00+08:00",
+                return_thread_id="parent-manager-thread",
+            )
+
+        self.assertIn("QA gate", str(ctx.exception))
+        self.assertEqual(adapter.sent, [])
+        after = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertEqual(after, before)
+
+    def test_reviewer_pass_alone_does_not_bypass_required_qa_gate(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._verifying_ledger()
+        ledger["objective"] = "high regression risk with test strategy needed"
+        ledger["plan"]["fields"].update({
+            "scope": "src/team_router.py",
+            "riskBoundary": "regression verification plan",
+        })
+        ledger["review"] = {
+            "result": {
+                "fields": {
+                    "result": "pass",
+                    "summary": "reviewer passed",
+                    "findings": "none",
+                    "requiredChanges": "none",
+                    "evidenceChecked": "tests",
+                    "risks": "none",
+                }
+            }
+        }
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_verifier_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:07:00+08:00",
+                return_thread_id="parent-manager-thread",
+            )
+
+        self.assertIn("QA gate", str(ctx.exception))
+        self.assertEqual(adapter.sent, [])
+
+    def test_qa_pass_allows_required_verifier_request_and_includes_qa_context(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_qa_review_ledger()
+        team_router._capture_qa_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-qa", self._qa_review_block("pass"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        updated = team_router.send_verifier_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:07:00+08:00",
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertEqual(updated["status"], "verifying")
+        verifier_prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("QA review context:", verifier_prompt)
+        self.assertIn("result: pass", verifier_prompt)
+        self.assertIn("summary: qa checked", verifier_prompt)
+        self.assertIn("coverageGaps: direct-return stale cases", verifier_prompt)
+        self.assertIn("verificationPlan: py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration -v", verifier_prompt)
+        self.assertIn("regressionRisks: watcher transitions", verifier_prompt)
+        self.assertIn("evidenceChecked: focused tests", verifier_prompt)
+        self.assertIn("risks: none", verifier_prompt)
+    def test_qa_needs_rework_uses_existing_executor_rework_path_once(self):
+        self._awaiting_qa_review_ledger(max_rework=2)
+        updated = team_router._capture_qa_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-qa", self._qa_review_block("needs_rework"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "dispatched")
+        self.assertEqual(updated["reworkCount"], 1)
+        self.assertEqual(updated["qaReview"]["result"]["fields"]["coverageGaps"], "direct-return stale cases")
+
+    def test_qa_blocked_records_result_and_blocks_task(self):
+        self._awaiting_qa_review_ledger()
+        updated = team_router._capture_qa_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-qa", self._qa_review_block("blocked"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "blocked")
+        self.assertEqual(updated["qaReview"]["result"]["fields"]["result"], "blocked")
+
+    def test_wrong_role_thread_direct_return_is_quarantined_without_state_advance(self):
+        self._awaiting_architect_review_ledger()
+        updated = team_router._capture_architect_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                self._direct_return_message(
+                    "thread-architect",
+                    self._architect_review_block("pass", source_role_thread_id="thread-other"),
+                )
+            ],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+
+        self.assertIsNone(updated)
+        self.assertEqual(saved["status"], "awaiting_architect_review")
+        self.assertEqual(saved["malformedDirectReturns"][-1]["role"], "architect")
+
+    def test_stale_architect_direct_return_does_not_mutate_ledger(self):
+        ledger = self._awaiting_architect_review_ledger()
+        ledger["status"] = "planned"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+        updated = team_router._capture_architect_review_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [self._direct_return_message("thread-architect", self._architect_review_block("pass"))],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+
+        self.assertIsNone(updated)
+        self.assertEqual(saved["status"], "planned")
+        self.assertNotIn("result", saved["architectureReview"])
+
+    def _fallback_messages(self, request_message_id, text, *, source_thread_id):
+        return [
+            {"messageId": request_message_id, "sentAt": "2026-06-22T20:05:00+08:00", "text": "request"},
+            {"messageId": "msg-fallback", "sentAt": "2026-06-22T20:06:00+08:00", "sourceThreadId": source_thread_id, "text": text},
+        ]
+
+    def test_architect_fallback_rejects_wrong_source_role_thread_without_state_advance(self):
+        self._awaiting_architect_review_ledger(return_thread_id=None)
+        updated = team_router.capture_architect_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            self._fallback_messages(
+                "msg-architect-request",
+                self._architect_review_block("pass", source_role_thread_id="thread-other"),
+                source_thread_id="thread-architect",
+            ),
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_architect_review")
+        self.assertNotIn("result", updated["architectureReview"])
+        self.assertEqual(updated["malformedDirectReturns"][-1]["role"], "architect")
+        self.assertIn("sourceRoleThreadId", updated["malformedDirectReturns"][-1]["error"])
+
+    def test_qa_fallback_rejects_wrong_source_thread_target_without_state_advance(self):
+        self._awaiting_qa_review_ledger(return_thread_id=None)
+        updated = team_router.capture_qa_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            self._fallback_messages(
+                "msg-qa-request",
+                self._qa_review_block("pass"),
+                source_thread_id="thread-other",
+            ),
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_qa_review")
+        self.assertNotIn("result", updated["qaReview"])
+        self.assertEqual(updated["malformedDirectReturns"][-1]["role"], "qa")
+        self.assertIn("message sourceThreadId", updated["malformedDirectReturns"][-1]["error"])
+
+    def test_architect_fallback_rejects_wrong_source_thread_id_field_without_state_advance(self):
+        self._awaiting_architect_review_ledger(return_thread_id="parent-manager-thread")
+        updated = team_router.capture_architect_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            self._fallback_messages(
+                "msg-architect-request",
+                self._architect_review_block("pass", source_thread_id="wrong-parent-thread"),
+                source_thread_id="thread-architect",
+            ),
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "awaiting_architect_review")
+        self.assertNotIn("result", updated["architectureReview"])
+        self.assertEqual(updated["malformedDirectReturns"][-1]["role"], "architect")
+        self.assertIn("sourceThreadId", updated["malformedDirectReturns"][-1]["error"])
+
+    def test_stale_architect_fallback_does_not_mutate_ledger(self):
+        ledger = self._awaiting_architect_review_ledger(return_thread_id=None)
+        ledger["status"] = "planned"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+        updated = team_router.capture_architect_review_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            self._fallback_messages(
+                "msg-architect-request",
+                self._architect_review_block("pass"),
+                source_thread_id="thread-architect",
+            ),
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+
+        self.assertEqual(updated["status"], "planned")
+        self.assertNotIn("result", updated["architectureReview"])
+
+    def test_watch_next_wakeup_has_no_execution_side_effect_code(self):
+        source = (ROOT / "src" / "team_router.py").read_text(encoding="utf-8")
+        start = source.index("def _watch_next_wakeup")
+        end = source.index("def _watcher_read_allowed", start)
+        body = source[start:end]
+        for forbidden in (
+            "thread_adapter",
+            "turn_limit",
+            "state_root",
+            "project_id",
+            "task_id",
+            "observed_at",
+            "finish(",
+            "_capture_architect_review_from_manager_inbox",
+            "read_architect_review_update_with_adapter",
+        ):
+            self.assertNotIn(forbidden, body)
+    def test_architect_and_qa_fallback_capture_mark_unreachable_when_read_window_misses_anchor(self):
+        architect = self._awaiting_architect_review_ledger(return_thread_id=None)
+        updated_architect = team_router.capture_architect_review_from_read(
+            self.root,
+            self.project_id,
+            architect["taskId"],
+            [{"messageId": "msg-unrelated", "sentAt": "2026-06-22T20:06:00+08:00", "text": self._architect_review_block("pass")}],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+        self.assertEqual(updated_architect["status"], "architect_review_unreachable")
+
+        self.tearDown(); self.setUp()
+        qa = self._awaiting_qa_review_ledger(return_thread_id=None)
+        updated_qa = team_router.capture_qa_review_from_read(
+            self.root,
+            self.project_id,
+            qa["taskId"],
+            [{"messageId": "msg-unrelated", "sentAt": "2026-06-22T20:06:00+08:00", "text": self._qa_review_block("pass")}],
+            captured_at="2026-06-22T20:06:30+08:00",
+        )
+        self.assertEqual(updated_qa["status"], "qa_review_unreachable")
+
+    def test_watch_prefers_manager_inbox_direct_return_before_self_thread_fallback(self):
+        adapter = FakeThreadAdapter()
+        self._awaiting_architect_review_ledger()
+        adapter.messages["parent-manager-thread"] = [
+            self._direct_return_message("thread-architect", self._architect_review_block("pass"))
+        ]
+        adapter.messages["thread-architect"] = [
+            {"messageId": "msg-architect-request", "sentAt": "2026-06-22T20:05:00+08:00", "text": "request"},
+            {"messageId": "msg-fallback", "sentAt": "2026-06-22T20:06:00+08:00", "text": self._architect_review_block("needs_rework")},
+        ]
+
+        update = team_router.watch_team_task_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            observed_at="2026-06-22T20:06:30+08:00",
+            return_thread_id="parent-manager-thread",
+        )
+
+        self.assertEqual(update["ledger"]["status"], "planned")
+        self.assertEqual(update["ledger"]["architectureReview"]["result"]["fields"]["result"], "pass")
+
+    def test_architect_and_qa_review_requests_reject_when_gate_not_required_before_sending(self):
+        adapter = FakeThreadAdapter()
+        self._planned_ledger()
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_architect_review_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:05:00+08:00",
+                return_thread_id="parent-manager-thread",
+            )
+        self.assertIn("architect gate is not required", str(ctx.exception))
+        self.assertEqual(adapter.sent, [])
+
+        self.tearDown(); self.setUp()
+        adapter = FakeThreadAdapter()
+        self._verifying_ledger()
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.send_qa_review_request_with_adapter(
+                self.root,
+                self.project_id,
+                self.task_id,
+                thread_adapter=adapter,
+                permission="read-only",
+                sent_at="2026-06-22T20:05:00+08:00",
+                return_thread_id="parent-manager-thread",
+            )
+        self.assertIn("QA gate is not required", str(ctx.exception))
+        self.assertEqual(adapter.sent, [])
+
+    def test_architect_request_without_return_thread_is_manual_fallback_not_direct_return(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._planned_ledger()
+        ledger["objective"] = "change shared protocol contract"
+        ledger["plan"]["fields"]["riskBoundary"] = "state-machine direct-return behavior"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        team_router.update_registry_roles(
+            self.root,
+            self.project_id,
+            {"architect": {"threadId": "thread-architect", "title": "架构师-test"}},
+            "2026-06-22T20:02:30+08:00",
+        )
+
+        updated = team_router.send_architect_review_request_with_adapter(
+            self.root,
+            self.project_id,
+            self.task_id,
+            thread_adapter=adapter,
+            permission="read-only",
+            sent_at="2026-06-22T20:05:00+08:00",
+        )
+
+        request = updated["architectureReview"]["request"]
+        self.assertIsNone(request["returnThreadId"])
+        self.assertIsNone(request["orchestratorThreadId"])
+        self.assertEqual(request["architectReviewDelivery"], "fallback_only")
+        self.assertEqual(request["callbackMode"], "manual orchestration fallback")
+        self.assertEqual(request["deliveryStatus"], "fallback_only")
+        self.assertIn("returnThreadId unavailable", request["deliveryError"])
+        self.assertIn("callbackMode: manual orchestration fallback", adapter.sent[-1]["kwargs"]["prompt"])
+        self.assertNotIn("architectReviewDelivery: direct-send", adapter.sent[-1]["kwargs"]["prompt"])
+
+    def test_architect_review_request_rejects_wrong_nonterminal_states_without_rewind(self):
+        rejected_statuses = (
+            "awaiting_callback",
+            "reviewing",
+            "verifying",
+            "awaiting_qa_review",
+            "awaiting_architect_review",
+        )
+        for status in rejected_statuses:
+            with self.subTest(status=status):
+                self.tearDown(); self.setUp()
+                adapter = FakeThreadAdapter()
+                ledger = self._planned_ledger()
+                ledger["objective"] = "change shared protocol contract"
+                ledger["status"] = status
+                ledger["plan"]["fields"].update({
+                    "scope": "src/team_router.py",
+                    "riskBoundary": "state-machine direct-return behavior",
+                })
+                ledger["architectureReview"] = None
+                team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+                with self.assertRaises(team_router.StateStoreError) as ctx:
+                    team_router.send_architect_review_request_with_adapter(
+                        self.root,
+                        self.project_id,
+                        self.task_id,
+                        thread_adapter=adapter,
+                        permission="read-only",
+                        sent_at="2026-06-22T20:05:00+08:00",
+                        return_thread_id="parent-manager-thread",
+                    )
+
+                self.assertIn("architect review request is only allowed", str(ctx.exception))
+                self.assertIn("current: %s" % status, str(ctx.exception))
+                self.assertEqual(adapter.sent, [])
+                saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+                self.assertEqual(saved["status"], status)
+                self.assertIsNone(saved["architectureReview"])
+
+    def test_qa_review_request_rejects_stale_callback_from_wrong_current_states(self):
+        rejected_statuses = (
+            "planned",
+            "awaiting_callback",
+            "reviewing",
+            "architect_rework_pending",
+            "awaiting_architect_review",
+            "awaiting_qa_review",
+        )
+        for status in rejected_statuses:
+            with self.subTest(status=status):
+                self.tearDown(); self.setUp()
+                adapter = FakeThreadAdapter()
+                ledger = self._verifying_ledger()
+                self.assertIsNotNone(team_router._latest_executor_callback_observation(ledger))
+                ledger["objective"] = "high regression risk with test matrix needed"
+                ledger["status"] = status
+                ledger["plan"]["fields"].update({
+                    "scope": "src/team_router.py",
+                    "riskBoundary": "regression verification plan",
+                })
+                ledger["qaReview"] = None
+                team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+                with self.assertRaises(team_router.StateStoreError) as ctx:
+                    team_router.send_qa_review_request_with_adapter(
+                        self.root,
+                        self.project_id,
+                        self.task_id,
+                        thread_adapter=adapter,
+                        permission="read-only",
+                        sent_at="2026-06-22T20:05:00+08:00",
+                        return_thread_id="parent-manager-thread",
+                    )
+
+                self.assertIn("QA review request is only allowed", str(ctx.exception))
+                self.assertIn("current: %s" % status, str(ctx.exception))
+                self.assertEqual(adapter.sent, [])
+                saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+                self.assertEqual(saved["status"], status)
+                self.assertIsNone(saved["qaReview"])
     def test_recovery_read_request_uses_registry_thread_when_ledger_lacks_thread_id(self):
         ledger = self._ready_ledger()
         ledger["planRequest"] = {
@@ -8817,6 +9892,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         "agent-assist-policy.md",
         "direct-return.md",
         "reviewer-gate.md",
+        "conditional-roles.md",
         "role-closeout.md",
         "adapter-runtime.md",
         "manual-orchestration.md",
@@ -9784,6 +10860,116 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertIn("does not continue through `orchestrate_team_task_with_adapter()`", manual_continuation)
         self.assertIn("not an end-to-end adapter-runner entrypoint", manual_continuation)
 
+    def test_conditional_roles_reference_documents_architect_qa_contract(self):
+        reference = self._skill_references_dir() / "conditional-roles.md"
+        self.assertTrue(reference.exists())
+        text = reference.read_text(encoding="utf-8")
+
+        for heading in (
+            "## Architect",
+            "## QA",
+            "## Boundaries",
+            "## Markers",
+            "## Rework",
+            "## Direct Return",
+            "## Testing",
+        ):
+            self.assertIn(heading, text)
+        for needle in (
+            "CORE_ROLE_NAMES remains unchanged",
+            "no runtime skill loading",
+            "no custom role registry",
+            "QA does not replace verifier",
+            "architect/QA do not replace reviewer",
+            "TEAM_ROUTER_ARCHITECT_REVIEW",
+            "TEAM_ROUTER_QA_REVIEW",
+            "sourceThreadId",
+            "sourceRoleThreadId",
+            "role",
+            "skillProfileUsed",
+            "architectureReview.request",
+            "qaReview.request",
+            "architect-default",
+            "qa-default",
+        ):
+            self.assertIn(needle, text)
+
+    def test_skill_entrypoint_mentions_conditional_roles_reference_under_size_cap(self):
+        skill_path = self._skill_path()
+        text = skill_path.read_text(encoding="utf-8-sig")
+
+        self.assertIn("architect", text)
+        self.assertIn("qa", text)
+        self.assertIn("references/conditional-roles.md", text)
+        self.assertLess(skill_path.stat().st_size, 8192)
+
+    def test_conditional_roles_cross_links_update_existing_references(self):
+        references = {
+            "direct-return.md": (
+                "architect -> TEAM_ROUTER_ARCHITECT_REVIEW",
+                "qa -> TEAM_ROUTER_QA_REVIEW",
+                "architectureReview.request",
+                "qaReview.request",
+                "sourceRoleThreadId",
+            ),
+            "reviewer-gate.md": (
+                "architect/QA do not replace reviewer",
+                "reviewer remains separate from architect/QA",
+                "QA does not replace verifier",
+            ),
+            "manager-polling-cadence.md": (
+                "architectureReview.request",
+                "qaReview.request",
+                "TEAM_ROUTER_ARCHITECT_REVIEW",
+                "TEAM_ROUTER_QA_REVIEW",
+                "architect_review_unreachable",
+                "qa_review_unreachable",
+            ),
+            "testing-and-quality-gates.md": (
+                "architect_only",
+                "qa_only",
+                "architect_reviewer_no_qa",
+                "architect_reviewer_qa",
+                "qa_needs_rework",
+                "architect_blocked",
+                "qa_blocked",
+            ),
+        }
+        for filename, needles in references.items():
+            with self.subTest(filename=filename):
+                text = (self._skill_references_dir() / filename).read_text(encoding="utf-8")
+                self.assertIn("references/conditional-roles.md", text)
+                for needle in needles:
+                    self.assertIn(needle, text)
+
+    def test_architect_qa_visible_smoke_fixture_covers_required_paths(self):
+        path = ROOT / "tests" / "fixtures" / "team_router" / "architect_qa_visible_smoke_scenarios.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        scenarios = {scenario["name"]: scenario for scenario in raw["scenarios"]}
+
+        self.assertEqual(raw["markers"]["architect"], "TEAM_ROUTER_ARCHITECT_REVIEW")
+        self.assertEqual(raw["markers"]["qa"], "TEAM_ROUTER_QA_REVIEW")
+        self.assertEqual(
+            set(scenarios),
+            {
+                "architect_only",
+                "qa_only",
+                "architect_reviewer_no_qa",
+                "architect_reviewer_qa",
+                "qa_needs_rework",
+                "architect_blocked",
+                "qa_blocked",
+            },
+        )
+        self.assertEqual(scenarios["architect_only"]["roleFlow"], ["architect", "executor", "verifier"])
+        self.assertEqual(scenarios["qa_only"]["roleFlow"], ["executor", "qa", "verifier"])
+        self.assertEqual(scenarios["architect_reviewer_no_qa"]["roleFlow"], ["architect", "executor", "reviewer", "verifier"])
+        self.assertEqual(scenarios["architect_reviewer_qa"]["roleFlow"], ["architect", "executor", "reviewer", "qa", "verifier"])
+        self.assertEqual(scenarios["qa_needs_rework"]["roleFlow"], ["executor", "qa", "executor", "qa", "verifier"])
+        self.assertEqual(scenarios["architect_blocked"]["expectedStatus"], "blocked")
+        self.assertEqual(scenarios["qa_blocked"]["expectedStatus"], "blocked")
+        self.assertIn("QA pass is verifier input, not final acceptance", raw["notes"])
+        self.assertIn("reviewer remains separate from architect and qa", raw["notes"])
     def test_three_role_visible_smoke_fixture_covers_required_paths(self):
         path = ROOT / "tests" / "fixtures" / "team_router" / "three_role_visible_smoke_scenarios.json"
         raw = json.loads(path.read_text(encoding="utf-8"))

@@ -7,7 +7,7 @@ description: Use for AGENTS-aware Codex desktop Team Router orchestration: visib
 
 Short entrypoint only. Keep this file under the Codex 8KB cap; deep protocol details live in `references/` and are part of the Team Router contract.
 
-Team Router controls Codex desktop role threads, registry/ledger state, direct return, and conditional reviewer gates.
+Team Router controls Codex desktop role threads, registry/ledger state, direct return, and conditional reviewer gates. Formal conditional roles `architect` and `qa` are documented in `references/conditional-roles.md`.
 
 ## Roles
 
@@ -74,6 +74,7 @@ Use `scripts/team_router_closeout_check.py` for read-only closeout status: git s
 - `references/direct-return.md`
 - `references/manager-polling-cadence.md`
 - `references/reviewer-gate.md`
+- `references/conditional-roles.md`
 - `references/role-closeout.md`
 - `references/adapter-runtime.md`
 - `references/manual-orchestration.md`

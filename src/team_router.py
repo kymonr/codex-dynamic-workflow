@@ -50,14 +50,16 @@ URL_LIKE_PATH_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 PATH_ACTION_CHARS_RE = re.compile("[<>|;&*?\\r\\n]")
 REGISTRY_VERSION = 1
 TASK_LEDGER_VERSION = 1
-ROLE_NAMES = frozenset({"manager", "executor", "reviewer", "verifier"})
+ROLE_NAMES = frozenset({"manager", "executor", "reviewer", "verifier", "architect", "qa"})
 CORE_ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
-CONDITIONAL_ROLE_NAMES = frozenset({"reviewer"})
+CONDITIONAL_ROLE_NAMES = frozenset({"reviewer", "architect", "qa"})
 ROLE_DISPLAY_NAMES = {
     "manager": "规划者",
     "executor": "执行者",
     "reviewer": "审查者",
     "verifier": "验证者",
+    "architect": "架构师",
+    "qa": "QA",
 }
 ROLE_HUMAN_LANGUAGE_RULE = (
     "语言规则：协议 marker、字段名和枚举值保持英文；给人看的目标、范围、总结、证据、风险、"
@@ -86,6 +88,8 @@ ROLE_ALIASES = {
     "executor": "Executor",
     "reviewer": "Reviewer",
     "verifier": "Verifier",
+    "architect": "Architect",
+    "qa": "QA",
 }
 THREAD_PERMISSIONS = frozenset({"read-only", "design-only", "local-package"})
 THREAD_TOOL_NAMES = (
@@ -110,6 +114,8 @@ RECOVERABLE_STATUSES = {
     "plan_unreachable": "planned",
     "callback_unreachable": "verifying",
     "review_unreachable": "reviewing",
+    "architect_review_unreachable": "awaiting_architect_review",
+    "qa_review_unreachable": "awaiting_qa_review",
 }
 STATE_MACHINE_SNAPSHOT = {
     "main": (
@@ -120,7 +126,10 @@ STATE_MACHINE_SNAPSHOT = {
         "planned",
         "dispatched",
         "awaiting_callback",
+        "awaiting_architect_review",
+        "architect_rework_pending",
         "reviewing",
+        "awaiting_qa_review",
         "verifying",
         "needs_feedback",
         "done",
@@ -130,6 +139,8 @@ STATE_MACHINE_SNAPSHOT = {
         "plan_unreachable": "planned",
         "callback_unreachable": "verifying",
         "review_unreachable": "reviewing",
+        "architect_review_unreachable": "awaiting_architect_review",
+        "qa_review_unreachable": "awaiting_qa_review",
     },
     "terminal": (
         "blocked",
@@ -182,6 +193,8 @@ MANAGER_ORCHESTRATION_POLICY = {
             "executor": "TEAM_ROUTER_CALLBACK",
             "reviewer": "TEAM_ROUTER_REVIEW",
             "verifier": "TEAM_ROUTER_VERDICT",
+            "architect": "TEAM_ROUTER_ARCHITECT_REVIEW",
+            "qa": "TEAM_ROUTER_QA_REVIEW",
         },
     },
     "callbackDeliveryModel": {
@@ -237,7 +250,14 @@ MANAGER_ORCHESTRATION_POLICY = {
         "mechanicalFixException": "narrow mechanical fixes such as CRLF/LF normalization use executor plus either reviewer or verifier; escalate to executor -> reviewer -> verifier only when semantic/process risk appears",
     },
     "completionFeedback": {
-        "requiredMarkers": ("TEAM_ROUTER_PLAN", "TEAM_ROUTER_CALLBACK", "TEAM_ROUTER_REVIEW", "TEAM_ROUTER_VERDICT"),
+        "requiredMarkers": (
+            "TEAM_ROUTER_PLAN",
+            "TEAM_ROUTER_CALLBACK",
+            "TEAM_ROUTER_REVIEW",
+            "TEAM_ROUTER_ARCHITECT_REVIEW",
+            "TEAM_ROUTER_QA_REVIEW",
+            "TEAM_ROUTER_VERDICT",
+        ),
         "contract": "role threads must return a structured Team Router marker block when finished; silent completion or unstructured done text is not accepted as success",
         "missingMarkerStatus": "needs_feedback",
         "runtimeBehavior": "capture paths keep waiting/repair state and do not advance to the next role until the expected marker parses successfully",
@@ -670,6 +690,36 @@ REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS = (
 
 REVIEWER_GATE_TRUE_VALUES = {"true", "yes", "1", "required", "high", "high-risk", "high risk", "critical"}
 
+ARCHITECT_GATE_TERMS = (
+    "architecture",
+    "architectural",
+    "cross-module",
+    "contract change",
+    "protocol",
+    "state-machine",
+    "direct-return",
+    "role protocol",
+    "permission boundary",
+    "migration",
+    "compatibility",
+    "dependency-boundary",
+    "high-risk refactor",
+    "durable maintainability",
+)
+
+QA_GATE_TERMS = (
+    "test strategy",
+    "acceptance criteria",
+    "regression",
+    "verification plan",
+    "coverage gap",
+    "multiple paths",
+    "multiple modes",
+    "evidence insufficient",
+    "smoke",
+    "test matrix",
+)
+
 GATE_CLASSES = ("FAST", "NORMAL", "STRICT", "PACKAGE")
 MIN_ROLE_POLL_INTERVAL_SECONDS = 300
 FIRST_ROLE_CHECK_DELAY_SECONDS = 30
@@ -736,6 +786,16 @@ _ALLOWED_BY_MARKER = {
     "TEAM_ROUTER_REVIEW": {
         "result": {"pass", "needs_rework", "blocked"},
     },
+    "TEAM_ROUTER_ARCHITECT_REVIEW": {
+        "result": {"pass", "needs_rework", "blocked"},
+        "role": {"Architect"},
+        "skillProfileUsed": {"architect-default"},
+    },
+    "TEAM_ROUTER_QA_REVIEW": {
+        "result": {"pass", "needs_rework", "blocked"},
+        "role": {"QA"},
+        "skillProfileUsed": {"qa-default"},
+    },
 }
 
 _REQUIRED_BY_MARKER = {
@@ -770,6 +830,37 @@ _REQUIRED_BY_MARKER = {
         "evidenceChecked",
         "risks",
     ),
+    "TEAM_ROUTER_ARCHITECT_REVIEW": (
+        "result",
+        "sourceThreadId",
+        "sourceRoleThreadId",
+        "role",
+        "summary",
+        "findings",
+        "requiredChanges",
+        "evidenceChecked",
+        "risks",
+        "skillProfileUsed",
+        "architectureImpact",
+        "compatibilityNotes",
+        "alternatives",
+        "migrationRisks",
+    ),
+    "TEAM_ROUTER_QA_REVIEW": (
+        "result",
+        "sourceThreadId",
+        "sourceRoleThreadId",
+        "role",
+        "summary",
+        "findings",
+        "requiredChanges",
+        "evidenceChecked",
+        "risks",
+        "skillProfileUsed",
+        "coverageGaps",
+        "verificationPlan",
+        "regressionRisks",
+    ),
 }
 
 
@@ -801,6 +892,33 @@ def _reviewer_gate_explicitly_required(ledger: Mapping[str, Any]) -> bool:
         if risk_class in REVIEWER_GATE_TRUE_VALUES:
             return True
     return False
+
+
+def _gate_explicitly_required(ledger: Mapping[str, Any], keys: tuple[str, ...]) -> bool:
+    fields = _reviewer_gate_plan_fields(ledger)
+    for source in (ledger, fields):
+        for key in keys:
+            value = source.get(key) if isinstance(source, Mapping) else None
+            if isinstance(value, bool):
+                if value:
+                    return True
+            elif str(value or "").strip().lower() in REVIEWER_GATE_TRUE_VALUES:
+                return True
+    return False
+
+
+def classify_architect_gate(ledger: Mapping[str, Any]) -> bool:
+    if _gate_explicitly_required(ledger, ("requiresArchitect", "architectureGateRequired")):
+        return True
+    text = _reviewer_gate_text(ledger)
+    return any(term in text for term in ARCHITECT_GATE_TERMS)
+
+
+def classify_qa_gate(ledger: Mapping[str, Any]) -> bool:
+    if _gate_explicitly_required(ledger, ("requiresQa", "qaGateRequired")):
+        return True
+    text = _reviewer_gate_text(ledger)
+    return any(term in text for term in QA_GATE_TERMS)
 
 
 def _ledger_has_local_package_permission(ledger: Mapping[str, Any]) -> bool:
@@ -863,6 +981,10 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
         reasons.append("explicit reviewer requirement")
     if reviewer_terms or ("team router" in text and team_router_qualifiers):
         reasons.append("reviewer-required term")
+    if classify_architect_gate(ledger):
+        reasons.append("architect gate")
+    if classify_qa_gate(ledger):
+        reasons.append("QA gate")
     if fast_terms and not reasons:
         reasons.append("fast docs term")
     gate = classify_team_router_gate(ledger)
@@ -871,7 +993,30 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "gateClass": gate,
         "requiresReviewer": gate_class_requires_reviewer(gate),
+        "requiresArchitect": classify_architect_gate(ledger),
+        "requiresQa": classify_qa_gate(ledger),
         "reasons": reasons,
+    }
+
+
+def explain_team_router_route(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    explanation = explain_team_router_gate(ledger)
+    roles = ["executor"]
+    if explanation["requiresArchitect"]:
+        roles.insert(0, "architect")
+    if explanation["requiresReviewer"]:
+        roles.append("reviewer")
+    if explanation["requiresQa"]:
+        roles.append("qa")
+    roles.append("verifier")
+    return {
+        "gateClass": explanation["gateClass"],
+        "requiresArchitect": explanation["requiresArchitect"],
+        "requiresReviewer": explanation["requiresReviewer"],
+        "requiresQa": explanation["requiresQa"],
+        "route": " -> ".join(roles),
+        "roles": roles,
+        "reasons": explanation["reasons"],
     }
 
 
@@ -1458,6 +1603,14 @@ def _normalize_task_ledger(data: Mapping[str, Any], state_root: str | Path,
     ledger["plan"] = None if plan is None else _as_mapping(plan, "ledger.plan", default_empty=False)
     review = ledger.get("review")
     ledger["review"] = None if review is None else _as_mapping(review, "ledger.review", default_empty=False)
+    architecture_review = ledger.get("architectureReview")
+    ledger["architectureReview"] = None if architecture_review is None else _as_mapping(
+        architecture_review,
+        "ledger.architectureReview",
+        default_empty=False,
+    )
+    qa_review = ledger.get("qaReview")
+    ledger["qaReview"] = None if qa_review is None else _as_mapping(qa_review, "ledger.qaReview", default_empty=False)
     verification = ledger.get("verification")
     ledger["verification"] = None if verification is None else _as_mapping(verification, "ledger.verification", default_empty=False)
     review_package = ledger.get("reviewPackage")
@@ -1486,6 +1639,8 @@ def new_task_ledger(state_root: str | Path,
         "dispatches": [],
         "observations": [],
         "review": None,
+        "architectureReview": None,
+        "qaReview": None,
         "verification": None,
         "closeout": None,
     }, state_root, project_id, task_id)
@@ -1916,6 +2071,13 @@ def protocol_contract_snapshot() -> dict[str, Any]:
         markers[marker] = marker_contract
     return {
         "parentSideRoles": PARENT_SIDE_ROLES,
+        "coreRoleNames": sorted(CORE_ROLE_NAMES),
+        "conditionalRoleNames": sorted(CONDITIONAL_ROLE_NAMES),
+        "conditionalRolePolicy": {
+            "fixedBuiltInRoles": sorted(CONDITIONAL_ROLE_NAMES),
+            "noCustomRoleRegistry": True,
+            "runtimeSkillLoading": "not supported",
+        },
         "roleThreads": {
             role: {
                 "displayName": ROLE_DISPLAY_NAMES[role],
@@ -2731,8 +2893,47 @@ def _reviewer_result_prompt_lines(reviewer_result: Mapping[str, Any] | str | Non
 
 
 
+def _review_result_fields(review_result: Mapping[str, Any] | str | None) -> Mapping[str, Any] | None:
+    if not isinstance(review_result, Mapping):
+        return None
+    fields = review_result.get("fields") if isinstance(review_result.get("fields"), Mapping) else review_result
+    return fields if isinstance(fields, Mapping) else None
+
+
+def _ledger_review_result(ledger: Mapping[str, Any], review_key: str) -> Mapping[str, Any] | None:
+    review = ledger.get(review_key) if isinstance(ledger.get(review_key), Mapping) else None
+    if not isinstance(review, Mapping):
+        return None
+    result = review.get("result") if isinstance(review.get("result"), Mapping) else None
+    return result if isinstance(result, Mapping) else None
+
+
+def _ledger_review_result_passed(ledger: Mapping[str, Any], review_key: str) -> bool:
+    fields = _review_result_fields(_ledger_review_result(ledger, review_key))
+    return bool(fields is not None and _normalized_role_activity_status(fields.get("result")) == "pass")
+
+
+def _qa_result_prompt_lines(qa_result: Mapping[str, Any] | str | None) -> list[str]:
+    fields = _review_result_fields(qa_result)
+    if fields is None or _normalized_role_activity_status(fields.get("result")) != "pass":
+        return []
+    lines = ["QA review context:"]
+    for key in ("result", "summary", "coverageGaps", "verificationPlan", "regressionRisks", "evidenceChecked", "risks"):
+        value = _prompt_str(fields.get(key))
+        if value is not None:
+            lines.append("%s: %s" % (key, value))
+    return lines
+
+
 def verifier_evidence_only_fast_path(callback_fields: Mapping[str, Any],
-                                     reviewer_result: Mapping[str, Any] | str | None) -> dict[str, Any]:
+                                     reviewer_result: Mapping[str, Any] | str | None,
+                                     *,
+                                     qa_required: bool = False,
+                                     qa_result: Mapping[str, Any] | str | None = None) -> dict[str, Any]:
+    if qa_required:
+        qa_fields = _review_result_fields(qa_result)
+        if qa_fields is None or _normalized_role_activity_status(qa_fields.get("result")) != "pass":
+            return {"allowed": False, "reason": "QA result is missing or not pass"}
     evidence = _prompt_str(callback_fields.get("evidence"))
     if evidence is None:
         return {
@@ -3067,6 +3268,22 @@ def _direct_return_record(ledger: Mapping[str, Any],
         if not request.get("returnThreadId") or request.get("reviewDelivery") != "direct-send":
             return None
         return request
+    if role == "architect":
+        review = ledger.get("architectureReview") if isinstance(ledger.get("architectureReview"), Mapping) else None
+        request = review.get("request") if isinstance(review, Mapping) else None
+        if not isinstance(request, Mapping):
+            return None
+        if not request.get("returnThreadId") or request.get("architectReviewDelivery") != "direct-send":
+            return None
+        return request
+    if role == "qa":
+        review = ledger.get("qaReview") if isinstance(ledger.get("qaReview"), Mapping) else None
+        request = review.get("request") if isinstance(review, Mapping) else None
+        if not isinstance(request, Mapping):
+            return None
+        if not request.get("returnThreadId") or request.get("qaReviewDelivery") != "direct-send":
+            return None
+        return request
     if role == "verifier":
         verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
         request = verification.get("request") if isinstance(verification, Mapping) else None
@@ -3085,6 +3302,10 @@ def _direct_return_capture_allowed(ledger: Mapping[str, Any], role: str) -> bool
         return status in {"awaiting_callback", "callback_unreachable"} or needs_feedback_role == "executor"
     if role == "reviewer":
         return status in {"reviewing", "review_unreachable"} or needs_feedback_role == "reviewer"
+    if role == "architect":
+        return status in {"awaiting_architect_review", "architect_review_unreachable"} or needs_feedback_role == "architect"
+    if role == "qa":
+        return status in {"awaiting_qa_review", "qa_review_unreachable"} or needs_feedback_role == "qa"
     if role == "verifier":
         return status in {"verifying", "callback_unreachable"} or needs_feedback_role == "verifier"
     raise StateStoreError("invalid direct-return role: %s" % role)
@@ -3214,6 +3435,41 @@ def _validate_direct_return_receipt(msg: ProtocolMessage,
     }
 
 
+def _validate_self_thread_fallback_receipt(msg: ProtocolMessage,
+                                           fallback_message: Mapping[str, Any] | None,
+                                           *,
+                                           task_id: str,
+                                           expected_role: str,
+                                           expected_role_thread_id: str,
+                                           expected_return_thread_id: str | None = None) -> dict[str, Any] | None:
+    malformed = _validate_direct_return_receipt(
+        msg,
+        fallback_message,
+        task_id=task_id,
+        expected_role=expected_role,
+        expected_role_thread_id=expected_role_thread_id,
+        expected_return_thread_id=expected_return_thread_id,
+    )
+    message = fallback_message if isinstance(fallback_message, Mapping) else {}
+    message_source_thread_id = str(message.get("sourceThreadId") or "").strip()
+    if message_source_thread_id and message_source_thread_id != expected_role_thread_id:
+        error = "message sourceThreadId must be %r, got %r" % (expected_role_thread_id, message_source_thread_id)
+        if malformed is not None:
+            malformed = dict(malformed)
+            existing = str(malformed.get("error") or "")
+            malformed["error"] = "%s; %s" % (existing, error) if existing else error
+            return malformed
+        return {
+            "messageId": message.get("messageId"),
+            "sentAt": message.get("sentAt"),
+            "sourceThreadId": message.get("sourceThreadId"),
+            "protocolSourceThreadId": str(msg.fields.get("sourceThreadId") or "").strip(),
+            "protocolRole": str(msg.fields.get("role") or "").strip(),
+            "protocolSourceRoleThreadId": str(msg.fields.get("sourceRoleThreadId") or "").strip(),
+            "error": error,
+        }
+    return malformed
+
 def _receipt_metadata(record: Mapping[str, Any],
                       *,
                       source: str,
@@ -3284,7 +3540,7 @@ def _project_roles_from_registry(registry: Mapping[str, Any], project_id: str) -
 
 
 def _self_thread_search_anchor(source: Mapping[str, Any], role: str) -> Mapping[str, Any] | None:
-    if role in {"executor", "reviewer", "verifier"}:
+    if role in {"executor", "reviewer", "verifier", "architect", "qa"}:
         fallback_anchor = source.get("fallbackSearchAnchor")
         if isinstance(fallback_anchor, Mapping):
             return fallback_anchor
@@ -3338,6 +3594,14 @@ def recovery_read_request(ledger: Mapping[str, Any],
     elif role == "reviewer":
         review = ledger.get("review") if isinstance(ledger.get("review"), Mapping) else None
         request = review.get("request") if isinstance(review, Mapping) else None
+        source = request if isinstance(request, Mapping) else None
+    elif role == "architect":
+        architecture_review = ledger.get("architectureReview") if isinstance(ledger.get("architectureReview"), Mapping) else None
+        request = architecture_review.get("request") if isinstance(architecture_review, Mapping) else None
+        source = request if isinstance(request, Mapping) else None
+    elif role == "qa":
+        qa_review = ledger.get("qaReview") if isinstance(ledger.get("qaReview"), Mapping) else None
+        request = qa_review.get("request") if isinstance(qa_review, Mapping) else None
         source = request if isinstance(request, Mapping) else None
     else:
         verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
@@ -3469,6 +3733,277 @@ def capture_executor_callback_from_read(state_root: str | Path,
 
 
 
+def _role_review_direct_return_lines(
+    *,
+    marker: str,
+    return_thread_id: str | None,
+    role_thread_id: str | None,
+    protocol_role: str,
+    delivery_key: str,
+    fallback_key: str,
+) -> list[str]:
+    lines: list[str] = []
+    if return_thread_id is None:
+        lines.extend((
+            "callbackMode: manual orchestration fallback",
+            "%s: fallback_only" % delivery_key,
+            "%s: self-thread-marker" % fallback_key,
+            "manual orchestration fallback: direct-return runtime is unavailable because returnThreadId was not provided; child-thread polling is degraded recovery only.",
+        ))
+        return lines
+    required_return_thread_id = _required_str(return_thread_id, "returnThreadId")
+    lines.extend((
+        "callbackMode: direct-return runtime",
+        "sourceThreadId: %s" % required_return_thread_id,
+        "returnThreadId: %s" % required_return_thread_id,
+        "orchestratorThreadId: %s" % required_return_thread_id,
+    ))
+    if role_thread_id is not None:
+        required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
+        lines.extend((
+            "sourceRoleThreadId: %s" % required_role_thread_id,
+            "role: %s" % protocol_role,
+            "roleThreadId: %s" % required_role_thread_id,
+        ))
+    lines.extend((
+        "%s: direct-send" % delivery_key,
+        "%s: self-thread-marker" % fallback_key,
+        "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 %s block>) 发送最终 %s block。" % (marker, marker),
+        "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+        "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
+        "manual orchestration fallback: 只有 direct-send 不可用或失败时才允许 bounded read_thread 捕获 self-thread marker；child-thread polling 不是默认成功回调。",
+        "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
+    ))
+    return lines
+
+
+def make_architect_review_request_message(task_id: str,
+                                          objective: str,
+                                          scope: str,
+                                          return_thread_id: str | None = None,
+                                          *,
+                                          role_thread_id: str | None = None,
+                                          plan_fields: Mapping[str, Any] | None = None,
+                                          permission: str = "read-only") -> str:
+    _validate_task_id(task_id)
+    _validate_permission(permission)
+    _required_str(objective, "objective")
+    _required_str(scope, "scope")
+    lines = [
+        "TEAM_ROUTER_ARCHITECT_REVIEW_REQUEST taskId=%s" % task_id,
+        "reviewMarker: TEAM_ROUTER_ARCHITECT_REVIEW taskId=%s" % task_id,
+        "callbackMarker: TEAM_ROUTER_ARCHITECT_REVIEW taskId=%s" % task_id,
+        "permission: %s" % permission,
+        "scope: %s" % scope,
+        "objective: %s" % objective,
+        "architectMode: read-only/advisory",
+        "responsibility: 在执行前识别架构边界、协议兼容性、替代方案和迁移风险；不能修改文件、commit、push、PR、deploy，也不替代 reviewer/verifier。",
+    ]
+    if plan_fields:
+        lines.extend(_role_handoff_prompt_lines(plan_fields, None))
+    lines.extend(_role_review_direct_return_lines(
+        marker="TEAM_ROUTER_ARCHITECT_REVIEW",
+        return_thread_id=return_thread_id,
+        role_thread_id=role_thread_id,
+        protocol_role="Architect",
+        delivery_key="architectReviewDelivery",
+        fallback_key="architectReviewFallback",
+    ))
+    lines.extend((
+        "",
+        ROLE_HUMAN_LANGUAGE_RULE,
+        "",
+        "请在本线程按以下格式回复，并将同一完整 block 直接回传 returnThreadId：",
+        "TEAM_ROUTER_ARCHITECT_REVIEW taskId=%s" % task_id,
+        "result: pass | needs_rework | blocked",
+        "sourceThreadId: %s" % (_required_str(return_thread_id, "returnThreadId") if return_thread_id is not None else "<manual-fallback-returnThreadId-unavailable>"),
+        "sourceRoleThreadId: %s" % (_required_str(role_thread_id, "roleThreadId") if role_thread_id is not None else "<roleThreadId>"),
+        "role: Architect",
+        "summary: <中文架构审查摘要>",
+        "findings: <架构发现或 none>",
+        "requiredChanges: <none 或执行前必须修改的设计/范围/提示>",
+        "evidenceChecked: <已核验证据>",
+        "risks: <none 或风险>",
+        "skillProfileUsed: architect-default",
+        "architectureImpact: <架构影响>",
+        "compatibilityNotes: <兼容性说明>",
+        "alternatives: <替代方案或 none>",
+        "migrationRisks: <迁移风险或 none>",
+        "directReturnAttempt: sent | unavailable | failed",
+        "directReturnTarget: <适用时填写 returnThreadId>",
+        "directReturnError: <仅 failed 时填写短错误>",
+    ))
+    return "\n".join(lines)
+
+
+def make_qa_review_request_message(task_id: str,
+                                   executor_callback: str,
+                                   scope: str,
+                                   return_thread_id: str | None = None,
+                                   *,
+                                   role_thread_id: str | None = None,
+                                   plan_fields: Mapping[str, Any] | None = None,
+                                   reviewer_result: Mapping[str, Any] | str | None = None,
+                                   permission: str = "read-only") -> str:
+    _validate_task_id(task_id)
+    _validate_permission(permission)
+    _required_str(executor_callback, "executorCallback")
+    _required_str(scope, "scope")
+    lines = [
+        "TEAM_ROUTER_QA_REVIEW_REQUEST taskId=%s" % task_id,
+        "reviewMarker: TEAM_ROUTER_QA_REVIEW taskId=%s" % task_id,
+        "callbackMarker: TEAM_ROUTER_QA_REVIEW taskId=%s" % task_id,
+        "permission: %s" % permission,
+        "scope: %s" % scope,
+        "qaMode: read-only/advisory",
+        "responsibility: 独立检查测试策略、回归面、验收标准和证据缺口；不能修改文件、commit、push、PR、deploy，也不替代 verifier。",
+    ]
+    if plan_fields:
+        lines.extend(_role_handoff_prompt_lines(plan_fields, None))
+    lines.extend(_role_review_direct_return_lines(
+        marker="TEAM_ROUTER_QA_REVIEW",
+        return_thread_id=return_thread_id,
+        role_thread_id=role_thread_id,
+        protocol_role="QA",
+        delivery_key="qaReviewDelivery",
+        fallback_key="qaReviewFallback",
+    ))
+    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result)
+    if reviewer_lines:
+        lines.extend(("", "审查者结果上下文："))
+        lines.extend(reviewer_lines)
+    lines.extend((
+        "",
+        "以下是执行者 callback 原文：",
+        executor_callback,
+        "",
+        ROLE_HUMAN_LANGUAGE_RULE,
+        "",
+        "请在本线程按以下格式回复，并将同一完整 block 直接回传 returnThreadId：",
+        "TEAM_ROUTER_QA_REVIEW taskId=%s" % task_id,
+        "result: pass | needs_rework | blocked",
+        "sourceThreadId: %s" % (_required_str(return_thread_id, "returnThreadId") if return_thread_id is not None else "<manual-fallback-returnThreadId-unavailable>"),
+        "sourceRoleThreadId: %s" % (_required_str(role_thread_id, "roleThreadId") if role_thread_id is not None else "<roleThreadId>"),
+        "role: QA",
+        "summary: <中文 QA 审查摘要>",
+        "findings: <QA 发现或 none>",
+        "requiredChanges: <none 或执行者必须补充的验证/修复>",
+        "evidenceChecked: <已核验证据>",
+        "risks: <none 或风险>",
+        "skillProfileUsed: qa-default",
+        "coverageGaps: <覆盖缺口或 none>",
+        "verificationPlan: <建议验证计划>",
+        "regressionRisks: <回归风险或 none>",
+        "directReturnAttempt: sent | unavailable | failed",
+        "directReturnTarget: <适用时填写 returnThreadId>",
+        "directReturnError: <仅 failed 时填写短错误>",
+    ))
+    return "\n".join(lines)
+
+
+def _role_review_request_record(
+    *,
+    role: str,
+    thread_id: str,
+    marker: str,
+    task_id: str,
+    sent_at: str,
+    message_id: str | None,
+    return_thread_id: str | None,
+    delivery_key: str,
+    fallback_key: str,
+) -> dict[str, Any]:
+    thread_id = _required_str(thread_id, "%sThreadId" % role)
+    sent_at = _required_str(sent_at, "sentAt")
+    search_anchor = _search_anchor(message_id, sent_at)
+    request: dict[str, Any] = {
+        "role": role,
+        "threadId": thread_id,
+        "roleThreadId": thread_id,
+        "sourceRoleThreadId": thread_id,
+        "messageId": message_id,
+        "sentAt": sent_at,
+        "expectedMarker": marker,
+        "expectedCallback": "%s taskId=%s" % (marker, task_id),
+        "searchAnchor": search_anchor,
+        "fallbackSearchAnchor": dict(search_anchor),
+        "returnSearchAnchor": {"messageId": None, "sentAt": sent_at},
+        fallback_key: "self-thread-marker",
+    }
+    if return_thread_id is not None:
+        request["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
+        request["orchestratorThreadId"] = request["returnThreadId"]
+        request[delivery_key] = "direct-send"
+        request["callbackMode"] = "direct-return runtime"
+        request["deliveryStatus"] = "direct_return_requested"
+    else:
+        request["returnThreadId"] = None
+        request["orchestratorThreadId"] = None
+        request[delivery_key] = "fallback_only"
+        request["callbackMode"] = "manual orchestration fallback"
+        request["deliveryStatus"] = "fallback_only"
+        request["deliveryError"] = "returnThreadId unavailable; direct-return runtime not established"
+    return request
+
+
+def record_architect_review_request_sent(state_root: str | Path,
+                                          project_id: str,
+                                          task_id: str,
+                                          *,
+                                          architect_thread_id: str,
+                                          sent_at: str,
+                                          message_id: str | None = None,
+                                          return_thread_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "record architect review request for")
+    architecture_review = dict(ledger.get("architectureReview") or {})
+    architecture_review["request"] = _role_review_request_record(
+        role="architect",
+        thread_id=architect_thread_id,
+        marker="TEAM_ROUTER_ARCHITECT_REVIEW",
+        task_id=task_id,
+        sent_at=sent_at,
+        message_id=message_id,
+        return_thread_id=return_thread_id,
+        delivery_key="architectReviewDelivery",
+        fallback_key="architectReviewFallback",
+    )
+    ledger["architectureReview"] = architecture_review
+    ledger["status"] = "awaiting_architect_review"
+    ledger["roleThreadStatus"] = "running"
+    ledger["readDiscipline"] = next_role_read_policy(ledger, observed_at=sent_at)
+    ledger = _refresh_watcher_ledger(ledger)
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def record_qa_review_request_sent(state_root: str | Path,
+                                  project_id: str,
+                                  task_id: str,
+                                  *,
+                                  qa_thread_id: str,
+                                  sent_at: str,
+                                  message_id: str | None = None,
+                                  return_thread_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "record QA review request for")
+    qa_review = dict(ledger.get("qaReview") or {})
+    qa_review["request"] = _role_review_request_record(
+        role="qa",
+        thread_id=qa_thread_id,
+        marker="TEAM_ROUTER_QA_REVIEW",
+        task_id=task_id,
+        sent_at=sent_at,
+        message_id=message_id,
+        return_thread_id=return_thread_id,
+        delivery_key="qaReviewDelivery",
+        fallback_key="qaReviewFallback",
+    )
+    ledger["qaReview"] = qa_review
+    ledger["status"] = "awaiting_qa_review"
+    ledger["roleThreadStatus"] = "running"
+    ledger["readDiscipline"] = next_role_read_policy(ledger, observed_at=sent_at)
+    ledger = _refresh_watcher_ledger(ledger)
+    return save_task_ledger(state_root, project_id, task_id, ledger)
 def make_reviewer_request_message(task_id: str,
                                   callback_block: str,
                                   permission: str,
@@ -3698,6 +4233,225 @@ def capture_reviewer_review_from_read(state_root: str | Path,
     )
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
+def _role_review_blocked_closeout(msg: ProtocolMessage, *, captured_at: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "blocked",
+        "capturedAt": captured_at,
+        "summary": msg.fields.get("summary", ""),
+        "requiredChanges": msg.fields.get("requiredChanges", ""),
+        "evidenceChecked": msg.fields.get("evidenceChecked", ""),
+        "risks": msg.fields.get("risks", ""),
+        "nextAction": msg.fields.get("requiredChanges", ""),
+        "remainingTodos": msg.fields.get("requiredChanges", ""),
+        "compoundingDecision": "skipped",
+        "reason": reason,
+    }
+
+
+def _apply_role_review_result_message(ledger: dict[str, Any],
+                                      review: dict[str, Any],
+                                      request: Mapping[str, Any],
+                                      msg: ProtocolMessage,
+                                      *,
+                                      captured_at: str,
+                                      ledger_key: str,
+                                      role: str,
+                                      observation_type: str,
+                                      receipt_source: str,
+                                      receipt_channel: str) -> dict[str, Any]:
+    thread_id = request.get("threadId") if isinstance(request, Mapping) else ""
+    receipt = _receipt_metadata(request, source=receipt_source, channel=receipt_channel)
+    if thread_id and not _has_observation_content(ledger, observation_type, role, str(thread_id), msg.raw):
+        observation = make_observation(
+            observation_type,
+            role,
+            str(thread_id),
+            captured_at,
+            msg.raw,
+            msg.fields,
+        )
+        observation["receipt"] = dict(receipt)
+        ledger["observations"].append(observation)
+    review["result"] = {
+        "threadId": thread_id,
+        "capturedAt": captured_at,
+        "raw": msg.raw,
+        "fields": dict(msg.fields),
+        "receipt": dict(receipt),
+    }
+    ledger[ledger_key] = review
+    result = msg.fields["result"]
+    if role == "architect":
+        if result == "pass":
+            ledger["status"] = "planned"
+            ledger["closeout"] = None
+        elif result == "needs_rework":
+            ledger["status"] = "architect_rework_pending"
+            ledger["closeout"] = None
+        else:
+            ledger["status"] = "blocked"
+            ledger["closeout"] = _role_review_blocked_closeout(
+                msg,
+                captured_at=captured_at,
+                reason="architect review blocked the task before executor dispatch",
+            )
+    elif role == "qa":
+        if result == "pass":
+            ledger["status"] = "verifying"
+            ledger["closeout"] = None
+        elif result == "needs_rework":
+            rework_count = _as_int(ledger.get("reworkCount"), 0, "ledger.reworkCount")
+            max_rework = _as_int(ledger.get("maxRework"), 3, "ledger.maxRework")
+            status, next_count = next_rework_dispatch(rework_count, max_rework)
+            ledger["status"] = status
+            ledger["reworkCount"] = next_count
+            if status == "blocked":
+                ledger["closeout"] = _role_review_blocked_closeout(
+                    msg,
+                    captured_at=captured_at,
+                    reason="maximum rework attempts reached after QA requested executor rework",
+                )
+            else:
+                ledger["closeout"] = None
+        else:
+            ledger["status"] = "blocked"
+            ledger["closeout"] = _role_review_blocked_closeout(
+                msg,
+                captured_at=captured_at,
+                reason="QA review blocked the task before verifier acceptance",
+            )
+    else:
+        raise StateStoreError("invalid role review result role: %s" % role)
+    ledger = _clear_waiting_read_state(ledger)
+    ledger = _refresh_watcher_ledger(ledger)
+    return ledger
+
+
+def _capture_role_review_from_read(state_root: str | Path,
+                                   project_id: str,
+                                   task_id: str,
+                                   messages: list[Mapping[str, Any]],
+                                   *,
+                                   captured_at: str,
+                                   ledger_key: str,
+                                   role: str,
+                                   marker: str,
+                                   waiting_status: str,
+                                   unreachable_status: str,
+                                   observation_type: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "capture %s review for" % role)
+    if not _direct_return_capture_allowed(ledger, role):
+        return ledger
+    review = dict(ledger.get(ledger_key) or {})
+    request = review.get("request") if isinstance(review.get("request"), Mapping) else None
+    if request is None:
+        raise StateStoreError("no %s request recorded for task: %s" % (role, task_id))
+    expected_marker = str(request.get("expectedMarker") or "").strip()
+    expected_callback = str(request.get("expectedCallback") or "").strip()
+    if expected_marker and expected_marker != marker:
+        raise StateStoreError("%s request expectedMarker must be %s for task: %s" % (role, marker, task_id))
+    if expected_callback and not expected_callback.startswith(marker):
+        raise StateStoreError("%s request expectedCallback must start with %s for task: %s" % (role, marker, task_id))
+    if str(request.get("role") or "") != role:
+        raise StateStoreError("%s request role mismatch for task: %s" % (role, task_id))
+    anchor = _self_thread_search_anchor(request, role)
+    if not read_window_covers_anchor(messages, anchor):
+        ledger["status"] = unreachable_status
+        ledger = _refresh_watcher_ledger(ledger)
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    messages_after_anchor = _messages_after_anchor(messages, anchor)
+    text = _messages_text(messages_after_anchor)
+    try:
+        msg = parse_message(text, marker, task_id)
+    except ProtocolError as exc:
+        if str(exc).startswith("missing "):
+            observed_status = _missing_protocol_observed_status(text)
+            ledger["status"] = "needs_feedback" if observed_status == "needs_feedback" else waiting_status
+            ledger = _record_waiting_role_read(
+                ledger,
+                observed_at=captured_at,
+                observed_status=observed_status,
+                expected_callback=request.get("expectedCallback") if isinstance(request, Mapping) else None,
+            )
+        else:
+            ledger["status"] = "malformed_callback"
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    fallback_message = messages_after_anchor[-1] if messages_after_anchor and isinstance(messages_after_anchor[-1], Mapping) else None
+    malformed = _validate_self_thread_fallback_receipt(
+        msg,
+        fallback_message,
+        task_id=task_id,
+        expected_role=role,
+        expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "%sRequest.roleThreadId" % role),
+        expected_return_thread_id=_optional_nonempty_str(request.get("returnThreadId")),
+    )
+    if malformed is not None:
+        ledger = _record_malformed_direct_return(
+            ledger,
+            task_id=task_id,
+            role=role,
+            record=request,
+            captured_at=captured_at,
+            malformed=malformed,
+        )
+        return save_task_ledger(state_root, project_id, task_id, ledger)
+    ledger = _apply_role_review_result_message(
+        ledger,
+        review,
+        request,
+        msg,
+        captured_at=captured_at,
+        ledger_key=ledger_key,
+        role=role,
+        observation_type=observation_type,
+        receipt_source="self-thread-fallback/read_thread",
+        receipt_channel="read_thread",
+    )
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def capture_architect_review_from_read(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       messages: list[Mapping[str, Any]],
+                                       *,
+                                       captured_at: str) -> dict[str, Any]:
+    return _capture_role_review_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+        ledger_key="architectureReview",
+        role="architect",
+        marker="TEAM_ROUTER_ARCHITECT_REVIEW",
+        waiting_status="awaiting_architect_review",
+        unreachable_status="architect_review_unreachable",
+        observation_type="architect_review_raw",
+    )
+
+
+def capture_qa_review_from_read(state_root: str | Path,
+                                project_id: str,
+                                task_id: str,
+                                messages: list[Mapping[str, Any]],
+                                *,
+                                captured_at: str) -> dict[str, Any]:
+    return _capture_role_review_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+        ledger_key="qaReview",
+        role="qa",
+        marker="TEAM_ROUTER_QA_REVIEW",
+        waiting_status="awaiting_qa_review",
+        unreachable_status="qa_review_unreachable",
+        observation_type="qa_review_raw",
+    )
+
 def make_verifier_request_message(task_id: str,
                                   callback_block: str,
                                   permission: str,
@@ -3707,7 +4461,9 @@ def make_verifier_request_message(task_id: str,
                                   role_thread_id: str | None = None,
                                   plan_fields: Mapping[str, Any] | None = None,
                                   review_package: Mapping[str, Any] | None = None,
-                                  reviewer_result: Mapping[str, Any] | str | None = None) -> str:
+                                  reviewer_result: Mapping[str, Any] | str | None = None,
+                                  qa_required: bool = False,
+                                  qa_result: Mapping[str, Any] | str | None = None) -> str:
     _validate_task_id(task_id)
     _validate_permission(permission)
     _required_str(callback_block, "callbackBlock")
@@ -3760,7 +4516,18 @@ def make_verifier_request_message(task_id: str,
             "",
         ))
         lines.extend(reviewer_lines)
-    evidence_only = verifier_evidence_only_fast_path(callback_fields, reviewer_result)
+    qa_lines = _qa_result_prompt_lines(qa_result)
+    if qa_lines:
+        lines.extend((
+            "",
+            *qa_lines,
+        ))
+    evidence_only = verifier_evidence_only_fast_path(
+        callback_fields,
+        reviewer_result,
+        qa_required=qa_required,
+        qa_result=qa_result,
+    )
     if evidence_only["allowed"]:
         lines.extend((
             "",
@@ -4049,6 +4816,8 @@ def send_executor_dispatch_with_adapter(state_root: str | Path,
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "send executor dispatch for")
     return_thread_id = _explicit_return_thread_id(return_thread_id)
+    if classify_architect_gate(ledger) and not _ledger_review_result_passed(ledger, "architectureReview"):
+        raise StateStoreError("architect gate requires architectureReview.result pass before executor dispatch: %s" % task_id)
     plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
     plan_fields = plan.get("fields") if isinstance(plan, Mapping) else None
     if not isinstance(plan_fields, Mapping):
@@ -4206,6 +4975,125 @@ def send_reviewer_request_with_adapter(state_root: str | Path,
     )
 
 
+def send_architect_review_request_with_adapter(state_root: str | Path,
+                                               project_id: str,
+                                               task_id: str,
+                                               *,
+                                               thread_adapter: Any,
+                                               permission: str,
+                                               sent_at: str,
+                                               return_thread_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "send architect review request for")
+    status = str(ledger.get("status") or "")
+    if status not in {"planned", "architect_rework_pending"}:
+        raise StateStoreError(
+            "architect review request is only allowed from planned or architect_rework_pending status: %s (current: %s)"
+            % (task_id, status)
+        )
+    return_thread_id = _explicit_return_thread_id(return_thread_id)
+    if not classify_architect_gate(ledger):
+        raise StateStoreError("architect gate is not required for task: %s" % task_id)
+    plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
+    plan_fields = plan.get("fields") if isinstance(plan, Mapping) else {}
+    scope = str(plan_fields.get("scope") or "unknown")
+    architect_thread_id = _ensure_role_with_adapter(
+        state_root,
+        project_id,
+        "architect",
+        ledger,
+        thread_adapter=thread_adapter,
+        observed_at=sent_at,
+    )
+    prompt = make_architect_review_request_message(
+        task_id,
+        str(ledger.get("objective") or ""),
+        scope,
+        return_thread_id=return_thread_id,
+        role_thread_id=architect_thread_id,
+        plan_fields=plan_fields,
+        permission=permission,
+    )
+    result = _adapter_call(
+        thread_adapter,
+        "send_message_to_thread",
+        threadId=architect_thread_id,
+        prompt=prompt,
+    )
+    anchor = thread_send_anchor(result, fallback_sent_at=sent_at)
+    return record_architect_review_request_sent(
+        state_root,
+        project_id,
+        task_id,
+        architect_thread_id=architect_thread_id,
+        sent_at=anchor["sentAt"],
+        message_id=anchor["messageId"],
+        return_thread_id=return_thread_id,
+    )
+
+
+def send_qa_review_request_with_adapter(state_root: str | Path,
+                                        project_id: str,
+                                        task_id: str,
+                                        *,
+                                        thread_adapter: Any,
+                                        permission: str,
+                                        sent_at: str,
+                                        return_thread_id: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    _raise_if_terminal(ledger, "send QA review request for")
+    status = str(ledger.get("status") or "")
+    if status != "verifying":
+        raise StateStoreError(
+            "QA review request is only allowed from verifying status: %s (current: %s)"
+            % (task_id, status)
+        )
+    return_thread_id = _explicit_return_thread_id(return_thread_id)
+    if not classify_qa_gate(ledger):
+        raise StateStoreError("QA gate is not required for task: %s" % task_id)
+    callback_observation = _latest_executor_callback_observation(ledger)
+    if callback_observation is None:
+        raise StateStoreError("missing executor callback observation for QA review request: %s" % task_id)
+    callback_content = _required_str(callback_observation.get("content"), "executorCallback.content")
+    plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
+    plan_fields = plan.get("fields") if isinstance(plan, Mapping) else {}
+    scope = str(plan_fields.get("scope") or "unknown")
+    qa_thread_id = _ensure_role_with_adapter(
+        state_root,
+        project_id,
+        "qa",
+        ledger,
+        thread_adapter=thread_adapter,
+        observed_at=sent_at,
+    )
+    review = ledger.get("review") if isinstance(ledger.get("review"), Mapping) else {}
+    reviewer_result = review.get("result") if isinstance(review.get("result"), Mapping) else None
+    prompt = make_qa_review_request_message(
+        task_id,
+        callback_content,
+        scope,
+        return_thread_id=return_thread_id,
+        role_thread_id=qa_thread_id,
+        plan_fields=plan_fields,
+        reviewer_result=reviewer_result,
+        permission=permission,
+    )
+    result = _adapter_call(
+        thread_adapter,
+        "send_message_to_thread",
+        threadId=qa_thread_id,
+        prompt=prompt,
+    )
+    anchor = thread_send_anchor(result, fallback_sent_at=sent_at)
+    return record_qa_review_request_sent(
+        state_root,
+        project_id,
+        task_id,
+        qa_thread_id=qa_thread_id,
+        sent_at=anchor["sentAt"],
+        message_id=anchor["messageId"],
+        return_thread_id=return_thread_id,
+    )
 def read_reviewer_review_with_adapter(state_root: str | Path,
                                       project_id: str,
                                       task_id: str,
@@ -4251,6 +5139,97 @@ def read_reviewer_review_update_with_adapter(state_root: str | Path,
         "userOutput": format_task_update_for_user(ledger, registry),
     }
 
+def read_architect_review_with_adapter(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       *,
+                                       thread_adapter: Any,
+                                       captured_at: str,
+                                       turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    registry = load_registry(state_root, project_id)
+    request = recovery_read_request(ledger, registry, "architect")
+    messages = _read_thread_messages_with_adapter(
+        thread_adapter,
+        request["threadId"],
+        turn_limit=turn_limit,
+    )
+    return capture_architect_review_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+    )
+
+
+def read_architect_review_update_with_adapter(state_root: str | Path,
+                                              project_id: str,
+                                              task_id: str,
+                                              *,
+                                              thread_adapter: Any,
+                                              captured_at: str,
+                                              turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = read_architect_review_with_adapter(
+        state_root,
+        project_id,
+        task_id,
+        thread_adapter=thread_adapter,
+        captured_at=captured_at,
+        turn_limit=turn_limit,
+    )
+    registry = load_registry(state_root, project_id)
+    return {
+        "ledger": ledger,
+        "userOutput": format_task_update_for_user(ledger, registry),
+    }
+
+
+def read_qa_review_with_adapter(state_root: str | Path,
+                                project_id: str,
+                                task_id: str,
+                                *,
+                                thread_adapter: Any,
+                                captured_at: str,
+                                turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    registry = load_registry(state_root, project_id)
+    request = recovery_read_request(ledger, registry, "qa")
+    messages = _read_thread_messages_with_adapter(
+        thread_adapter,
+        request["threadId"],
+        turn_limit=turn_limit,
+    )
+    return capture_qa_review_from_read(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+    )
+
+
+def read_qa_review_update_with_adapter(state_root: str | Path,
+                                       project_id: str,
+                                       task_id: str,
+                                       *,
+                                       thread_adapter: Any,
+                                       captured_at: str,
+                                       turn_limit: int | None = None) -> dict[str, Any]:
+    ledger = read_qa_review_with_adapter(
+        state_root,
+        project_id,
+        task_id,
+        thread_adapter=thread_adapter,
+        captured_at=captured_at,
+        turn_limit=turn_limit,
+    )
+    registry = load_registry(state_root, project_id)
+    return {
+        "ledger": ledger,
+        "userOutput": format_task_update_for_user(ledger, registry),
+    }
+
 def send_verifier_request_with_adapter(state_root: str | Path,
                                        project_id: str,
                                        task_id: str,
@@ -4262,6 +5241,10 @@ def send_verifier_request_with_adapter(state_root: str | Path,
     ledger = load_task_ledger(state_root, project_id, task_id)
     _raise_if_terminal(ledger, "send verifier request for")
     return_thread_id = _explicit_return_thread_id(return_thread_id)
+    qa_required = classify_qa_gate(ledger)
+    qa_result = _ledger_review_result(ledger, "qaReview")
+    if qa_required and not _ledger_review_result_passed(ledger, "qaReview"):
+        raise StateStoreError("QA gate requires qaReview.result pass before verifier request: %s" % task_id)
     gate_class = classify_team_router_gate(ledger)
     if gate_class_requires_reviewer(gate_class) and ledger.get("status") != "verifying":
         raise StateStoreError("not ready for verifier; reviewer gate is required for %s task: %s" % (gate_class, task_id))
@@ -4292,6 +5275,8 @@ def send_verifier_request_with_adapter(state_root: str | Path,
         plan_fields=plan_fields,
         review_package=ledger.get("reviewPackage") if isinstance(ledger.get("reviewPackage"), Mapping) else None,
         reviewer_result=reviewer_result,
+        qa_required=qa_required,
+        qa_result=qa_result,
     )
     result = _adapter_call(
         thread_adapter,
@@ -4475,6 +5460,104 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
     )
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
+def _capture_role_review_from_manager_inbox(state_root: str | Path,
+                                            project_id: str,
+                                            task_id: str,
+                                            messages: list[Mapping[str, Any]],
+                                            *,
+                                            captured_at: str,
+                                            role: str,
+                                            marker: str,
+                                            ledger_key: str,
+                                            observation_type: str) -> dict[str, Any] | None:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if not _direct_return_capture_allowed(ledger, role):
+        return None
+    request = _direct_return_record(ledger, role)
+    if request is None:
+        return None
+    msg, malformed, manager_message = _direct_return_protocol_message(
+        messages,
+        marker=marker,
+        task_id=task_id,
+        source_thread_id=_required_str(request.get("threadId"), "%sRequest.threadId" % role),
+        anchor=_as_mapping(request.get("returnSearchAnchor"), "%sRequest.returnSearchAnchor" % role, default_empty=False),
+    )
+    if malformed is None and msg is not None:
+        malformed = _validate_direct_return_receipt(
+            msg,
+            manager_message,
+            task_id=task_id,
+            expected_role=role,
+            expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "%sRequest.roleThreadId" % role),
+            expected_return_thread_id=_required_str(request.get("returnThreadId"), "%sRequest.returnThreadId" % role),
+        )
+    if malformed is not None:
+        ledger = _record_malformed_direct_return(
+            ledger,
+            task_id=task_id,
+            role=role,
+            record=request,
+            captured_at=captured_at,
+            malformed=malformed,
+        )
+        save_task_ledger(state_root, project_id, task_id, ledger)
+        return None
+    if msg is None:
+        return None
+    review = dict(ledger.get(ledger_key) or {})
+    ledger = _apply_role_review_result_message(
+        ledger,
+        review,
+        request,
+        msg,
+        captured_at=captured_at,
+        ledger_key=ledger_key,
+        role=role,
+        observation_type=observation_type,
+        receipt_source="manager-inbox/direct-send",
+        receipt_channel="manager-inbox",
+    )
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _capture_architect_review_from_manager_inbox(state_root: str | Path,
+                                                 project_id: str,
+                                                 task_id: str,
+                                                 messages: list[Mapping[str, Any]],
+                                                 *,
+                                                 captured_at: str) -> dict[str, Any] | None:
+    return _capture_role_review_from_manager_inbox(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+        role="architect",
+        marker="TEAM_ROUTER_ARCHITECT_REVIEW",
+        ledger_key="architectureReview",
+        observation_type="architect_review_raw",
+    )
+
+
+def _capture_qa_review_from_manager_inbox(state_root: str | Path,
+                                          project_id: str,
+                                          task_id: str,
+                                          messages: list[Mapping[str, Any]],
+                                          *,
+                                          captured_at: str) -> dict[str, Any] | None:
+    return _capture_role_review_from_manager_inbox(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+        role="qa",
+        marker="TEAM_ROUTER_QA_REVIEW",
+        ledger_key="qaReview",
+        observation_type="qa_review_raw",
+    )
+
 def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
                                                  project_id: str,
                                                  task_id: str,
@@ -4534,6 +5617,19 @@ def _ledger_has_reviewer_request(ledger: Mapping[str, Any]) -> bool:
     request = review.get("request") if isinstance(review, Mapping) else None
     return isinstance(request, Mapping)
 
+
+def _ledger_has_architect_request(ledger: Mapping[str, Any]) -> bool:
+    review = ledger.get("architectureReview") if isinstance(ledger.get("architectureReview"), Mapping) else None
+    request = review.get("request") if isinstance(review, Mapping) else None
+    return isinstance(request, Mapping)
+
+
+def _ledger_has_qa_request(ledger: Mapping[str, Any]) -> bool:
+    review = ledger.get("qaReview") if isinstance(ledger.get("qaReview"), Mapping) else None
+    request = review.get("request") if isinstance(review, Mapping) else None
+    return isinstance(request, Mapping)
+
+
 def _ledger_has_verifier_request(ledger: Mapping[str, Any]) -> bool:
     verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
     request = verification.get("request") if isinstance(verification, Mapping) else None
@@ -4549,12 +5645,20 @@ def _needs_feedback_role(ledger: Mapping[str, Any]) -> str | None:
         return "executor"
     if "TEAM_ROUTER_REVIEW" in expected:
         return "reviewer"
+    if "TEAM_ROUTER_ARCHITECT_REVIEW" in expected:
+        return "architect"
+    if "TEAM_ROUTER_QA_REVIEW" in expected:
+        return "qa"
     if "TEAM_ROUTER_VERDICT" in expected:
         return "verifier"
     if isinstance(ledger.get("verification"), Mapping) and isinstance(ledger["verification"].get("request"), Mapping):
         return "verifier"
+    if _ledger_has_qa_request(ledger):
+        return "qa"
     if _latest_reviewer_request(ledger):
         return "reviewer"
+    if _ledger_has_architect_request(ledger):
+        return "architect"
     if isinstance(ledger.get("dispatches"), list) and ledger.get("dispatches"):
         return "executor"
     if isinstance(ledger.get("planRequest"), Mapping):
@@ -4761,6 +5865,18 @@ def _watch_next_wakeup(ledger: Mapping[str, Any]) -> dict[str, Any] | None:
             "reason": "awaiting TEAM_ROUTER_CALLBACK" if status != "needs_feedback" else "needs structured TEAM_ROUTER_CALLBACK feedback",
             "searchAnchor": _self_thread_search_anchor(latest, "executor"),
         }
+    if status in {"awaiting_architect_review", "architect_review_unreachable"} or needs_feedback_role == "architect":
+        architecture_review = ledger.get("architectureReview") if isinstance(ledger.get("architectureReview"), Mapping) else {}
+        request = architecture_review.get("request") if isinstance(architecture_review.get("request"), Mapping) else {}
+        if request:
+            return {
+                "role": "architect",
+                "threadId": request.get("threadId"),
+                "expectedMarker": request.get("expectedCallback"),
+                "reason": "awaiting TEAM_ROUTER_ARCHITECT_REVIEW" if status != "needs_feedback" else "needs structured TEAM_ROUTER_ARCHITECT_REVIEW feedback",
+                "searchAnchor": _self_thread_search_anchor(request, "architect"),
+            }
+        return None
     if status in {"reviewing", "review_unreachable"} or needs_feedback_role == "reviewer":
         request = _latest_reviewer_request(ledger)
         if request:
@@ -4770,6 +5886,18 @@ def _watch_next_wakeup(ledger: Mapping[str, Any]) -> dict[str, Any] | None:
                 "expectedMarker": request.get("expectedCallback"),
                 "reason": "awaiting TEAM_ROUTER_REVIEW" if status != "needs_feedback" else "needs structured TEAM_ROUTER_REVIEW feedback",
                 "searchAnchor": _self_thread_search_anchor(request, "reviewer"),
+            }
+        return None
+    if status in {"awaiting_qa_review", "qa_review_unreachable"} or needs_feedback_role == "qa":
+        qa_review = ledger.get("qaReview") if isinstance(ledger.get("qaReview"), Mapping) else {}
+        request = qa_review.get("request") if isinstance(qa_review.get("request"), Mapping) else {}
+        if request:
+            return {
+                "role": "qa",
+                "threadId": request.get("threadId"),
+                "expectedMarker": request.get("expectedCallback"),
+                "reason": "awaiting TEAM_ROUTER_QA_REVIEW" if status != "needs_feedback" else "needs structured TEAM_ROUTER_QA_REVIEW feedback",
+                "searchAnchor": _self_thread_search_anchor(request, "qa"),
             }
         return None
     if status in {"verifying", "callback_unreachable"} or needs_feedback_role == "verifier":
@@ -4972,6 +6100,41 @@ def watch_team_task_with_adapter(state_root: str | Path,
             )
             return finish(_watch_task_update("watch_sent_verifier_request", state_root, project_id, ledger, observed_at=observed_at))
         return finish(_watch_task_update("watch_read_executor_callback", state_root, project_id, ledger, observed_at=observed_at))
+    if status in {"awaiting_architect_review", "architect_review_unreachable"} or needs_feedback_role == "architect":
+        request = _direct_return_record(ledger, "architect")
+        if request is not None:
+            manager_messages = _manager_direct_return_messages_with_adapter(
+                thread_adapter,
+                request,
+                turn_limit=turn_limit,
+            )
+            direct_ledger = _capture_architect_review_from_manager_inbox(
+                state_root,
+                project_id,
+                task_id,
+                manager_messages,
+                captured_at=observed_at,
+            )
+            if direct_ledger is not None:
+                return finish(_watch_task_update("watch_read_architect_review", state_root, project_id, direct_ledger, observed_at=observed_at))
+        if _ledger_has_architect_request(ledger):
+            update = read_architect_review_update_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                captured_at=observed_at,
+                turn_limit=turn_limit,
+            )
+            ledger = update["ledger"]
+            update["action"] = "watch_read_architect_review"
+            update["status"] = ledger.get("status")
+            update["nextWakeup"] = _watch_next_wakeup(ledger)
+            update["automationBoundary"] = (
+                "host watcher must call watch_team_task_with_adapter again with one short observation-only first check after dispatch/read registration, then low-frequency event-driven read_thread polling no more often than every 5 minutes for the same role/thread; user-visible updates only on status changes, timeout, blocked states, or completion"
+            )
+            return finish(update)
+        return finish(_watch_task_update("watch_no_architect_request", state_root, project_id, ledger, observed_at=observed_at))
     if status in {"reviewing", "review_unreachable"} or needs_feedback_role == "reviewer":
         request = _direct_return_record(ledger, "reviewer")
         if request is not None:
@@ -5038,6 +6201,41 @@ def watch_team_task_with_adapter(state_root: str | Path,
             return_thread_id=_inherited_reviewer_return_thread_id(ledger, return_thread_id),
         )
         return finish(_watch_task_update("watch_sent_reviewer_request", state_root, project_id, ledger, observed_at=observed_at))
+    if status in {"awaiting_qa_review", "qa_review_unreachable"} or needs_feedback_role == "qa":
+        request = _direct_return_record(ledger, "qa")
+        if request is not None:
+            manager_messages = _manager_direct_return_messages_with_adapter(
+                thread_adapter,
+                request,
+                turn_limit=turn_limit,
+            )
+            direct_ledger = _capture_qa_review_from_manager_inbox(
+                state_root,
+                project_id,
+                task_id,
+                manager_messages,
+                captured_at=observed_at,
+            )
+            if direct_ledger is not None:
+                return finish(_watch_task_update("watch_read_qa_review", state_root, project_id, direct_ledger, observed_at=observed_at))
+        if _ledger_has_qa_request(ledger):
+            update = read_qa_review_update_with_adapter(
+                state_root,
+                project_id,
+                task_id,
+                thread_adapter=thread_adapter,
+                captured_at=observed_at,
+                turn_limit=turn_limit,
+            )
+            ledger = update["ledger"]
+            update["action"] = "watch_read_qa_review"
+            update["status"] = ledger.get("status")
+            update["nextWakeup"] = _watch_next_wakeup(ledger)
+            update["automationBoundary"] = (
+                "host watcher must call watch_team_task_with_adapter again with one short observation-only first check after dispatch/read registration, then low-frequency event-driven read_thread polling no more often than every 5 minutes for the same role/thread; user-visible updates only on status changes, timeout, blocked states, or completion"
+            )
+            return finish(update)
+        return finish(_watch_task_update("watch_no_qa_request", state_root, project_id, ledger, observed_at=observed_at))
     if (
         status == "verifying"
         or (status == "callback_unreachable" and _ledger_has_verifier_request(ledger))
@@ -5568,9 +6766,9 @@ def make_observation(obs_type: str,
                      captured_at: str,
                      content: str,
                      parsed_fields: Mapping[str, Any]) -> dict[str, Any]:
-    if obs_type not in {"callback_raw", "review_raw", "verdict_raw", "plan_raw", "read_result", "system_event"}:
+    if obs_type not in {"callback_raw", "review_raw", "architect_review_raw", "qa_review_raw", "verdict_raw", "plan_raw", "read_result", "system_event"}:
         raise ValueError("invalid observation type: %s" % obs_type)
-    if role not in {"manager", "executor", "reviewer", "verifier", "system"}:
+    if role not in {"manager", "executor", "reviewer", "architect", "qa", "verifier", "system"}:
         raise ValueError("invalid observation role: %s" % role)
     for name, value in {
         "threadId": thread_id,

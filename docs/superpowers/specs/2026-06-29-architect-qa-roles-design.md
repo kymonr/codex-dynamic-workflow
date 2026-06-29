@@ -4,7 +4,7 @@
 
 Approved direction for spec drafting after brainstorming, Claude consult, visible Team Router reviewer pass, and a parallel Codex/Claude read-only review.
 
-This revision incorporates the confirmed review gaps: recovery states, architect rework semantics, direct-return field names, marker validation, role display names, classifier requirements, QA verifier gating, and test-fixture migration.
+This revision incorporates the confirmed review gaps: recovery states, architect rework semantics, direct-return field names, marker validation, role display names, classifier requirements, classifier baseline terms, state semantics, code extension points, QA verifier gating, and test-fixture migration.
 
 This document is a design spec only. It does not authorize implementation, commit beyond this spec, push, PR, merge, deploy, global skill sync, runtime skill loading, or production/data/API access.
 
@@ -111,6 +111,49 @@ Default behavior stays conservative. A task mentioning `architect` or `qa` as fr
 
 Reviewer routing remains separate. `classify_architect_gate()` and `classify_qa_gate()` must not imply `reviewer` unless existing reviewer gate rules also apply.
 
+## Classifier Baseline
+
+The implementation must add named classifier constants or an equivalent testable table. The exact names may follow local style, but the implementation plan should assume:
+
+```text
+ARCHITECT_GATE_TERMS
+QA_GATE_TERMS
+```
+
+`ARCHITECT_GATE_TERMS` must cover at least these positive signals:
+
+- `architecture`
+- `architectural`
+- `cross-module`
+- `contract change`
+- `protocol`
+- `state-machine`
+- `direct-return`
+- `role protocol`
+- `permission boundary`
+- `migration`
+- `compatibility`
+- `dependency-boundary`
+- `high-risk refactor`
+- `durable maintainability`
+
+`QA_GATE_TERMS` must cover at least these positive signals:
+
+- `test strategy`
+- `acceptance criteria`
+- `regression`
+- `verification plan`
+- `coverage gap`
+- `multiple paths`
+- `multiple modes`
+- `evidence insufficient`
+- `smoke`
+- `test matrix`
+
+Do not include bare role names such as `architect`, `architecture reviewer`, or `qa` as standalone trigger terms. A bare role mention can explain intent in `explain_team_router_route()`, but it must not be enough to dispatch the role without a positive scope/risk/validation signal or an explicit boolean field.
+
+Classifier tests must lock both the explicit boolean path and representative term-derived paths. Adding extra conservative terms is allowed, but removing the baseline examples requires updating the spec and tests together.
+
 ## Flow
 
 Existing low-risk flow stays unchanged:
@@ -204,6 +247,8 @@ regressionRisks:
 
 The marker contract must be implemented through `_REQUIRED_BY_MARKER` and `_ALLOWED_BY_MARKER` or equivalent parser tables. Tests must reject missing `skillProfileUsed`, wrong marker-specific `skillProfileUsed`, missing `sourceThreadId`, missing `sourceRoleThreadId`, and wrong marker-specific `role`.
 
+For `TEAM_ROUTER_ARCHITECT_REVIEW` and `TEAM_ROUTER_QA_REVIEW`, `sourceThreadId`, `sourceRoleThreadId`, `role`, and `skillProfileUsed` are required parser fields. This is intentionally stricter than the existing `TEAM_ROUTER_CALLBACK` and `TEAM_ROUTER_REVIEW` parser tables, where some direct-return identity checks are enforced later by manager inbox validation. Do not backfill the older markers in this change unless a separate migration explicitly asks for it.
+
 Manual fallback metadata such as `deliveryStatus: fallback_only` and `deliveryError` remains optional only when direct-send is unavailable or failed.
 
 The role prompt must require Chinese human-readable content for summaries, findings, risks, and required changes, while preserving protocol keys, paths, commands, filenames, enum values, and marker names literally.
@@ -221,11 +266,13 @@ The role prompt must require Chinese human-readable content for summaries, findi
 - Set a distinct manager-level state such as `architect_rework_pending`; do not use the existing executor `needs_rework -> dispatched` path.
 - Do not increment the executor `reworkCount`, because no executor implementation has run yet.
 - The manager may ask architect for re-review after the design or executor prompt changes.
+- First version does not add `architectReworkCount`, `maxArchitectRework`, or an exhaustion limit for architect re-reviews. Re-review requires an explicit revised design/spec/executorPrompt; it is not an automatic loop.
 
 `architect result: blocked`
 
-- Stop the current flow as blocked.
-- Do not continue to executor, reviewer, QA, or verifier until missing context or boundary issues are resolved.
+- Stop the current flow using the existing terminal `blocked` status.
+- Do not continue to executor, reviewer, QA, or verifier in the same task.
+- Resuming after missing context or boundary issues are resolved requires a new task or an explicit user restart path; first version does not add `architect_review_blocked` as a recoverable state.
 
 `qa result: pass`
 
@@ -240,8 +287,9 @@ The role prompt must require Chinese human-readable content for summaries, findi
 
 `qa result: blocked`
 
-- Stop the current flow as blocked.
-- Do not continue to verifier until missing evidence, environment issues, or acceptance criteria gaps are resolved.
+- Stop the current flow using the existing terminal `blocked` status.
+- Do not continue to verifier in the same task.
+- Resuming after missing evidence, environment issues, or acceptance criteria gaps are resolved requires a new task or an explicit user restart path; first version does not add `qa_review_blocked` as a recoverable state.
 
 First version does not include `riskAcceptedOverride`. Allowing verifier to proceed despite QA `needs_rework` would weaken the gate and should be a separate design.
 
@@ -256,8 +304,8 @@ qaReview
 
 Each field stores:
 
-- request metadata: role, threadId, expectedMarker, sentAt, searchAnchor, returnThreadId, sourceRoleThreadId
-- result metadata: result, capturedAt, receipt, protocol raw block
+- request metadata under `architectureReview.request` / `qaReview.request`: role, threadId, expectedMarker or existing `expectedCallback`, sentAt, searchAnchor, returnThreadId, sourceRoleThreadId
+- result metadata at the role review top level: result, capturedAt, receipt, protocol raw block
 - review content: summary, findings, requiredChanges, evidenceChecked, risks
 - role-specific content
 - `skillProfileUsed`
@@ -267,6 +315,8 @@ Each field stores:
 `qaReview` stores `coverageGaps`, `verificationPlan`, and `regressionRisks`.
 
 These fields are authoritative Team Router ledger data, not external-material authority. They inform downstream prompts and verification, but do not carry user authorization or permission changes.
+
+`architectureReview.request` and `qaReview.request` are the canonical watcher lookup paths. Watcher fallback must not infer request metadata from free-form review content or from the latest unrelated dispatch.
 
 Ledger normalization must explicitly normalize both fields as mappings or `None`, following the existing `review` and `verification` pattern:
 
@@ -310,6 +360,21 @@ Do not add long-lived `architect_reviewed` or `qa_reviewed` unless implementatio
 
 Existing `needs_feedback`, `blocked`, and malformed marker behavior should be reused rather than duplicated. Existing executor `needs_rework` behavior is reused only for QA-triggered executor rework, not for architect pre-executor design rework.
 
+## State Semantics
+
+`blocked` from `TEAM_ROUTER_ARCHITECT_REVIEW` and `TEAM_ROUTER_QA_REVIEW` maps to the existing terminal `blocked` status in `TERMINAL_STATUSES`. First version does not add `architect_review_blocked` or `qa_review_blocked` to `STATE_MACHINE_SNAPSHOT`, `RECOVERABLE_STATUSES`, or watcher recovery logic.
+
+Only unreachable states are recoverable in this design:
+
+```text
+architect_review_unreachable -> awaiting_architect_review
+qa_review_unreachable -> awaiting_qa_review
+```
+
+`architect_rework_pending` is non-terminal and manager-facing. It blocks executor dispatch until the manager updates the design/spec/executorPrompt and either requests another architect review or explicitly starts a new task boundary. It must not call `next_rework_dispatch()`, must not use executor `reworkCount`, and must not be treated as executor `needs_rework`.
+
+QA `needs_rework` is different: it returns to executor rework and uses the existing global `reworkCount` / `maxRework` semantics because executor implementation already happened.
+
 ## Direct Return
 
 Direct-return handling must be expanded as a single coherent contract:
@@ -339,6 +404,59 @@ qaReviewFallback: self-thread-marker
 The direct-send body and self-thread fallback body must contain the same `TEAM_ROUTER_ARCHITECT_REVIEW` or `TEAM_ROUTER_QA_REVIEW` protocol block. The direct-return block must include `sourceThreadId`, `sourceRoleThreadId`, and marker-specific `role` so manager inbox validation can consume only the pending expected role.
 
 If direct-send is unavailable, the manager records fallback-only delivery metadata and uses watcher/heartbeat capture. Fallback-only capture is degraded delivery, not proof that direct-send worked.
+
+### Default Callback Contract
+
+Team Router's default role completion contract is direct-return-first. A role thread is complete for runtime purposes only when the manager receives a valid direct-send protocol block at the pending `returnThreadId`, or when the manager explicitly records degraded fallback capture.
+
+Runtime dispatch must distinguish two modes:
+
+- `direct-return runtime`: adapter-created role dispatch has a parent/orchestrator `returnThreadId`, a role `roleThreadId`, and a callable `send_message_to_thread` path. The role prompt requires direct-send to `returnThreadId` with the complete `TEAM_ROUTER_*` block, then the role outputs the same block in its own thread as the self-thread marker fallback.
+- `manual orchestration fallback`: a visible Codex role thread is created with `create_thread` and the manager later reads it with `read_thread`. This is allowed only as degraded/manual fallback. It must not be reported as successful proactive callback delivery.
+
+If a dispatch path cannot provide `returnThreadId`, `roleThreadId`, or callable direct-send, the runtime must mark the request as `tool_error`, `manual orchestration only`, or `fallback_only` according to the existing side-effect taxonomy. It must not silently downgrade Team Router's default callback semantics to parent polling.
+
+Tests must lock this distinction: child-thread protocol output alone is a self-thread marker, not receipt; valid manager-inbox direct-send is the normal receipt; bounded `read_thread` capture is fallback recovery.
+
+### Task 4 Capture Semantics
+
+Task 4 completes the receive side for architect and QA role results. It must accept valid manager-inbox direct returns before any role self-thread fallback read, and it must treat fallback reads as degraded recovery only.
+
+Architect and QA capture must validate `taskId`, `sourceThreadId`, marker-specific `role`, `sourceRoleThreadId`, pending request role/thread, expected marker, and return target before mutating the ledger. Wrong-task, wrong-role, wrong-thread, stale, malformed, or non-pending returns are rejected or quarantined and must not advance state.
+
+Task 4 state transitions are limited to role result receipt:
+
+```text
+architect pass -> planned
+architect needs_rework -> architect_rework_pending
+architect blocked -> blocked
+qa pass -> verifying
+qa needs_rework -> existing executor rework path
+qa blocked -> blocked
+```
+
+Architect `pass` restores executor-dispatch eligibility but must not dispatch an executor by itself. Architect `needs_rework` preserves the role result and must not increment executor `reworkCount`. QA `needs_rework` uses the existing executor rework path and increments the existing global rework counter exactly once. Task 4 must not implement Task 5 gating that blocks executor/verifier requests based on whether architect/QA is required or passed.
+
+Watcher fallback must mark missed self-thread read windows as `architect_review_unreachable` or `qa_review_unreachable` using the pending request anchor. These states are recoverable back to the corresponding awaiting state and are not successful proactive callback receipt.
+
+## Code Extension Points
+
+Implementation must explicitly update these runtime surfaces. This list is part of the design contract, not an optional implementation note:
+
+- role constants: `ROLE_NAMES`, `CORE_ROLE_NAMES`, `CONDITIONAL_ROLE_NAMES`, `ROLE_DISPLAY_NAMES`, `ROLE_ALIASES`
+- classifier constants or tables: `ARCHITECT_GATE_TERMS`, `QA_GATE_TERMS`, plus tests for explicit fields and baseline terms
+- protocol parser tables: `_REQUIRED_BY_MARKER`, `_ALLOWED_BY_MARKER`, `CONDITIONAL_REQUIRED_BY_MARKER` if needed
+- state constants: `STATE_MACHINE_SNAPSHOT`, `RECOVERABLE_STATUSES`, and `TERMINAL_STATUSES` only to confirm `blocked` remains terminal
+- policy snapshot fields: `completionFeedback.requiredMarkers`, `MANAGER_ORCHESTRATION_POLICY.roleDirectReturn.markers`, `protocol_contract_snapshot()`
+- direct-return request lookup helpers so `architect` resolves `architectureReview.request` and `qa` resolves `qaReview.request`
+- `_direct_return_capture_allowed(ledger, role)` so `architect` is accepted only while status is `awaiting_architect_review` or `architect_review_unreachable`, or while `needs_feedback` targets `architect`; `qa` is accepted only while status is `awaiting_qa_review` or `qa_review_unreachable`, or while `needs_feedback` targets `qa`
+- `_watch_next_wakeup(ledger)` so architect states read `architectureReview.request` and expect `TEAM_ROUTER_ARCHITECT_REVIEW`, and QA states read `qaReview.request` and expect `TEAM_ROUTER_QA_REVIEW`
+- role request builders/prompts so dispatch includes explicit `role: Architect` / `role: QA`, `sourceRoleThreadId`, `returnThreadId`, and the marker-specific `skillProfileUsed`
+- default direct-return prompt/runtime contract so role prompts require `send_message_to_thread(threadId=<returnThreadId>, prompt=<complete TEAM_ROUTER_* block>)` before relying on self-thread fallback
+- direct-send and self-thread fallback capture so wrong role, wrong role thread, stale request, or old marker cannot advance the ledger
+- verifier gating and evidence-only fast path so QA-gated flows cannot proceed without `qaReview.result: pass`
+
+The implementation plan should update tests around these extension points before or alongside runtime changes. Missing `_direct_return_capture_allowed()` or `_watch_next_wakeup()` support is a blocking design failure because the marker can parse while the state machine still cannot receive it.
 
 ## Skill Profiles
 
@@ -372,6 +490,20 @@ QA findings are verifier input. If `classify_qa_gate()` says QA is required:
 - verifier prompt must include QA result, `coverageGaps`, `verificationPlan`, and `regressionRisks` after QA pass
 
 Reviewer pass alone is no longer sufficient for evidence-only fast path in QA-gated flows.
+
+### Task 5 Flow Gating Semantics
+
+Task 5 completes the send-side gating and verifier integration only. It must use the Task 4 receive-side results already stored under `architectureReview.result` and `qaReview.result`; it must not reimplement capture, docs/fixtures, role creation policy, or Task 6 documentation work.
+
+Executor dispatch is blocked only when `classify_architect_gate(ledger)` is true and the current `architectureReview.result.fields.result` is not `pass`. Missing architect result, `needs_rework`, `blocked`, malformed/stale architect result, or a non-pending architect flow must raise before adapter send or ledger rewrite. When architect is not required, existing executor dispatch behavior stays unchanged.
+
+Verifier request is blocked only when `classify_qa_gate(ledger)` is true and the current `qaReview.result.fields.result` is not `pass`. Missing QA result, `needs_rework`, `blocked`, malformed/stale QA result, or a non-passing QA result must raise before adapter send or ledger rewrite. Reviewer pass alone is insufficient for verifier request eligibility in QA-gated flows.
+
+The evidence-only verifier fast path must receive QA gate context. If QA is required and QA has not passed, it must return a not-allowed result with a clear QA reason and must not offer evidence-only acceptance wording. If QA is not required, current reviewer/evidence behavior must be preserved. If QA is required and passed, existing evidence checks still apply.
+
+After QA pass, the verifier prompt must include the QA result context needed for final acceptance: QA `result`, `summary`, `coverageGaps`, `verificationPlan`, `regressionRisks`, `evidenceChecked`, and `risks` when present. This context is verifier input only; QA does not replace the verifier and does not mark the task done.
+
+Task 5 must add tests proving architect-required executor dispatch rejects before architect pass and succeeds after architect pass; QA-required verifier request and evidence-only fast path reject before QA pass and succeed after QA pass; the verifier prompt includes QA context after QA pass; and non-QA / non-architect flows remain unchanged.
 
 ## Documentation
 
@@ -422,13 +554,17 @@ Required coverage:
 - QA `needs_rework` increments the existing global `reworkCount`; rework exhaustion blocks the task through the existing `maxRework` semantics.
 - QA-required flows cannot send verifier or offer evidence-only fast path while `qaReview` is missing, blocked, or `needs_rework`.
 - QA-required flows that pass QA include QA result, `coverageGaps`, `verificationPlan`, and `regressionRisks` in the verifier prompt.
+- `_direct_return_capture_allowed()` accepts architect/QA only in their pending, unreachable, or targeted `needs_feedback` states and rejects old, wrong, or non-pending role returns.
+- `_watch_next_wakeup()` returns architect and QA wakeups from `architectureReview.request` and `qaReview.request`, including expected marker and search anchor.
 - wrong-role or stale direct-return blocks are rejected or quarantined.
 - watcher fallback can capture architect/QA self-thread markers.
+- architect/QA `blocked` maps to the existing terminal `blocked` status; no recoverable blocked states are added in first version.
+- architect re-review has no v1 counter or exhaustion limit; it requires an explicit revised design/spec/executorPrompt and does not touch executor `reworkCount`.
 - docs tests keep `SKILL.md` under the size cap and confirm the new reference is listed.
 - docs tests update `direct-return.md`, `manager-polling-cadence.md`, `testing-and-quality-gates.md`, and the visible role boundary text.
-- tests update fake adapters and fixtures that infer roles from prompt text so `architect` and `qa` do not collapse to generic `role`.
-- route classifier tests cover explicit and text-derived architect/QA triggers, non-triggering ordinary tasks, and reviewer-gate independence.
-- fixtures cover representative flows: architect-only, QA-only, combined architect + reviewer + QA, QA needs_rework, blocked role.
+- tests update fake adapters and fixtures so `architect` and `qa` are inferred from the explicit dispatch `role:` field, not from free-text keyword scanning, and do not collapse to generic `role`.
+- route classifier tests cover explicit fields, baseline term-derived architect/QA triggers, non-triggering ordinary tasks, and reviewer-gate independence.
+- fixtures cover representative flows: architect-only, QA-only, architect + reviewer with no QA, combined architect + reviewer + QA, QA needs_rework, architect blocked, QA blocked.
 
 ## Open Risks
 
@@ -442,9 +578,13 @@ The spec is ready for implementation planning when:
 
 - Architect and QA are formal conditional roles, not auxiliary free-text advice.
 - Machine-readable route classifiers decide architect and QA gates.
+- Classifier baseline terms are named and testable.
 - QA `needs_rework` has a hard rework path back to executor and uses the existing global rework counter.
 - Architect `needs_rework` has a hard path back to manager/design/executorPrompt revision and does not use executor rework dispatch.
+- Architect and QA `blocked` results intentionally map to the existing terminal `blocked` status.
+- Runtime extension points include `_direct_return_capture_allowed()` and `_watch_next_wakeup()` with exact role states and request paths.
 - Direct-return validation consumes only the pending expected role.
+- Direct-return runtime is the default completion path; `create_thread` plus `read_thread` polling is degraded/manual fallback, not proactive callback delivery.
 - `skillProfileUsed` is a fixed marker-specific enum field.
 - `CORE_ROLE_NAMES` and ordinary low-friction flows stay unchanged.
 - QA-gated verifier requests and evidence-only fast path require QA pass.

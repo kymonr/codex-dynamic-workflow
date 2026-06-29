@@ -41,3 +41,13 @@ When a manager or dispatcher delegates work to a router, executor, reviewer, or 
 - A good user update does not require high-frequency polling.
 
 Manager watcher heartbeat contract: ordinary manager watcher/read_thread polling for the same role thread is at most once every 5 minutes (300 seconds). The app or host heartbeat must use the watcher ledger fields role/thread id, expected marker, lastReadAt, firstCheckAt, nextAllowedReadAt, waiting reason, and next manager action to call watch_team_task_with_adapter() at wake time; the helper itself also suppresses repeated scheduled reads before the allowed time unless the read reason is user-triggered status/stop/immediate, timeout, or blocker handling. Run one short observation-only first check at firstCheckAt so very fast role completions can be received immediately; after that single short check, set the next proactive read to at least 300 seconds after that read and return to the normal 5 minutes heartbeat cadence. User-triggered status/stop/immediate requests may bypass the 300 second wait, but active/running role threads still require observation-only waiting and no convergence instruction. Role writing a marker is not receipt by the manager; completion feedback is received only when direct-send reaches the manager inbox or the watcher/heartbeat reads the role thread and captures TEAM_ROUTER_PLAN, TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, or TEAM_ROUTER_VERDICT. If a role appears completed or idle without the expected marker, the manager records needs_feedback/missing protocol and asks the same role thread for structured feedback instead of treating the task as successful. When the flow finishes, report the result once in plain language for the user, stop_and_delete_heartbeat for accepted closeout, explicitly say stage/commit/push/PR/publish/release were not done, and keep the manager boundary: the manager/dispatcher does not directly edit files unless the user explicitly authorizes that specific file change; commit/PR/publish/release require a separate prompt and authorization.
+## Architect And QA Watcher Paths
+
+See `references/conditional-roles.md` for the conditional role contract.
+
+Watcher fallback uses the pending request anchors already recorded by runtime:
+
+- `architectureReview.request` expects `TEAM_ROUTER_ARCHITECT_REVIEW`; read-window misses move to `architect_review_unreachable` and are recoverable back to `awaiting_architect_review`.
+- `qaReview.request` expects `TEAM_ROUTER_QA_REVIEW`; read-window misses move to `qa_review_unreachable` and are recoverable back to `awaiting_qa_review`.
+
+Manager inbox direct-send remains preferred. Watcher capture is bounded fallback recovery, not normal proactive return.

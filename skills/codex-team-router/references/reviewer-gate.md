@@ -46,3 +46,8 @@ risks: <none or risks>
 ```
 
 Natural-language reviews do not move state. Reviewer is a conditional reviewer, not final acceptance; verifier remains final acceptance.
+## Architect And QA Boundary
+
+See `references/conditional-roles.md` for architect and QA policy.
+
+The reviewer remains separate from architect/QA. architect/QA do not replace reviewer, and QA does not replace verifier. Architect checks architecture risk before executor dispatch; QA checks validation risk before verifier request. Reviewer still owns read-only/adversarial policy, process, permission, role protocol, and shared/high-risk review when the reviewer gate applies.
