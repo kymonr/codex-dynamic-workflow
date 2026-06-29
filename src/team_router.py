@@ -1793,10 +1793,28 @@ def create_role_threads_with_adapter(thread_adapter: Any,
                                      target: Mapping[str, Any],
                                      observed_at: str,
                                      task_title: str | None = None,
-                                     role_names: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
+                                     role_names: Iterable[str] | None = None,
+                                     discovery_checked: bool = False) -> dict[str, dict[str, Any]]:
     roles: dict[str, dict[str, Any]] = {}
     resolved_task_title = task_title or _task_title_from_objective(objective)
-    for role in _sorted_role_selection(role_names):
+    selected_roles = _sorted_role_selection(role_names)
+    if not discovery_checked:
+        discovered = discover_role_threads_with_adapter(
+            thread_adapter,
+            project_id=project_id,
+            observed_at=observed_at,
+            task_title=resolved_task_title,
+            role_names=selected_roles,
+        )
+        if discovered:
+            details = ", ".join(
+                "%s=%s" % (role, record["threadId"])
+                for role, record in sorted(discovered.items())
+            )
+            raise StateStoreError(
+                "role discovery must happen before create_thread; reusable role thread(s) found: %s" % details
+            )
+    for role in selected_roles:
         prompt = make_role_thread_prompt(project_id, role, objective)
         result = _adapter_call(
             thread_adapter,
@@ -1835,6 +1853,27 @@ def _role_replacement_reason(existing_record: Mapping[str, Any] | None, role: st
     if reason is None:
         return thread_id, None
     return thread_id, reason
+
+
+def _role_replacement_metadata(project_roles: Mapping[str, Any], role: str) -> dict[str, str]:
+    existing = project_roles.get(role)
+    if not isinstance(existing, Mapping):
+        return {}
+    replaced_thread_id, replacement_reason = _role_replacement_reason(existing, role)
+    if replacement_reason is None:
+        return {}
+    metadata = {"replacementReason": replacement_reason}
+    if replaced_thread_id is not None:
+        metadata["replacesThreadId"] = replaced_thread_id
+    return metadata
+
+
+def _record_with_replacement_metadata(record: Mapping[str, Any],
+                                      project_roles: Mapping[str, Any],
+                                      role: str) -> dict[str, Any]:
+    updated = dict(record)
+    updated.update(_role_replacement_metadata(project_roles, role))
+    return updated
 
 
 def _ensure_role_with_adapter(state_root: str | Path,
@@ -1881,6 +1920,7 @@ def _ensure_role_with_adapter(state_root: str | Path,
             observed_at=observed_at,
             task_title=task_title,
             role_names=[role],
+            discovery_checked=True,
         )
         record = created.get(role)
         if not isinstance(record, Mapping):
@@ -1912,6 +1952,8 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
         project_id,
         observed_at=observed_at,
     )
+    registry = load_registry(state_root, project_id)
+    project_roles = _project_roles_from_registry(registry, project_id)
     missing_roles = sorted(CORE_ROLE_NAMES.difference(roles.keys()))
     if missing_roles:
         discovered = discover_role_threads_with_adapter(
@@ -1923,13 +1965,14 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
         )
         for role in missing_roles:
             if role in discovered:
-                roles[role] = _normalize_adapter_role_title(
+                record = _normalize_adapter_role_title(
                     thread_adapter,
                     project_id,
                     role,
                     discovered[role],
                     task_title,
                 )
+                roles[role] = _record_with_replacement_metadata(record, project_roles, role)
         missing_roles = sorted(CORE_ROLE_NAMES.difference(roles.keys()))
     if missing_roles:
         resolved_target = _resolve_target_argument(thread_adapter, project_id, target)
@@ -1941,15 +1984,17 @@ def resolve_role_threads_with_adapter(state_root: str | Path,
             observed_at=observed_at,
             task_title=task_title,
             role_names=missing_roles,
+            discovery_checked=True,
         )
         for role, record in created_roles.items():
-            roles[role] = _normalize_adapter_role_title(
+            normalized = _normalize_adapter_role_title(
                 thread_adapter,
                 project_id,
                 role,
                 record,
                 task_title,
             )
+            roles[role] = _record_with_replacement_metadata(normalized, project_roles, role)
     return roles
 
 
@@ -2274,13 +2319,14 @@ def make_executor_dispatch_message(task_id: str,
         "status: done | blocked",
         "final: true",
         "summary: <中文 3-5 行，不复述背景>",
-        "evidence: <路径、命令摘要或线程观察；长日志写 executorReportPath>",
+        "evidence: <短命令摘要或线程观察；长日志/完整证据写 executorReportPath 或 reviewPackagePath>",
         "risks: <none 或风险>",
         "next: <none 或下一步>",
         "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
     ))
     if path_handoff_enabled:
         lines.append("executorReportPath: <报告路径或 inline>")
+        lines.append("reviewPackagePath: <review package 路径或 inline>")
     if return_thread_id is not None:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",

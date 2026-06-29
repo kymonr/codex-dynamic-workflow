@@ -851,6 +851,8 @@ regressionRisks: low
                 self.assertIn("不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
                 self.assertIn("保留 executor/reviewer/verifier gate；省 token 只改变交接形状", message)
         self.assertIn("executorReportPath: <报告路径或 inline>", messages[0])
+        self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[0])
+        self.assertIn("长日志/完整证据写 executorReportPath 或 reviewPackagePath", messages[0])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
 
@@ -6988,6 +6990,39 @@ regressionRisks: watcher transitions
             ],
         )
 
+    def test_create_role_threads_with_adapter_blocks_create_when_discovery_finds_reusable_role(self):
+        class DiscoveryBeforeCreateAdapter(FakeThreadAdapter):
+            def list_threads(self, **kwargs):
+                return {
+                    "threads": [
+                        {
+                            "threadId": "live-executor",
+                            "title": "TeamRouter executor - project-123",
+                        },
+                    ],
+                }
+
+            def create_thread(self, **kwargs):
+                raise AssertionError("create_thread should not run before reusable role discovery")
+
+        adapter = DiscoveryBeforeCreateAdapter()
+
+        with self.assertRaisesRegex(
+            team_router.StateStoreError,
+            "role discovery must happen before create_thread",
+        ) as caught:
+            team_router.create_role_threads_with_adapter(
+                adapter,
+                project_id=self.project_id,
+                objective="inspect docs",
+                target={"type": "projectless"},
+                observed_at="2026-06-22T20:00:00+08:00",
+                role_names=["executor"],
+            )
+
+        self.assertIn("executor=live-executor", str(caught.exception))
+        self.assertEqual(adapter.created, [])
+
     def test_reviewer_role_is_first_class_but_not_default_created(self):
         default_adapter = FakeThreadAdapter()
         default_roles = team_router.create_role_threads_with_adapter(
@@ -7241,7 +7276,16 @@ regressionRisks: watcher transitions
         self.assertEqual(adapter.sent, [])
 
     def test_start_team_task_with_adapter_replaces_broken_registry_role_without_duplicate_active_roles(self):
-        adapter = FakeThreadAdapter()
+        class ReplacementAdapter(FakeThreadAdapter):
+            def create_thread(self, **kwargs):
+                result = super().create_thread(**kwargs)
+                if result["threadId"] == "thread-executor":
+                    result = dict(result, threadId="thread-executor-replacement")
+                    self.created[-1]["result"] = result
+                    self.messages[result["threadId"]] = []
+                return result
+
+        adapter = ReplacementAdapter()
         existing_roles = {
             "manager": self.roles["manager"],
             "executor": dict(self.roles["executor"], status="broken"),
@@ -7272,8 +7316,11 @@ regressionRisks: watcher transitions
         registry = team_router.load_registry(self.root, self.project_id)
         project_roles = registry["projects"][self.project_id]["roles"]
         self.assertEqual(project_roles["manager"]["threadId"], "thread-manager")
-        self.assertEqual(project_roles["executor"]["threadId"], "thread-executor")
+        self.assertEqual(project_roles["executor"]["threadId"], "thread-executor-replacement")
+        self.assertEqual(project_roles["executor"]["replacesThreadId"], "thread-executor")
+        self.assertIn("broken", project_roles["executor"]["replacementReason"])
         self.assertEqual(project_roles["verifier"]["threadId"], "thread-verifier")
+
     def test_start_team_task_with_adapter_reuses_existing_registry_roles(self):
         adapter = FakeThreadAdapter()
         existing_roles = {
