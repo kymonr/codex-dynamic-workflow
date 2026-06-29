@@ -10312,10 +10312,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Python standard library only",
             "must not import `team_router` or `team_router_policy`",
             "`team_router_policy.py`",
+            "`team_router_runtime.py`",
             "`team_router_protocol.ProtocolError` only",
             "`protocol_contract_snapshot()`",
             "Deferred Future Modules",
-            "remaining safe extraction order is: direct return -> state/ledger -> adapter runtime -> status/closeout",
+            "remaining safe extraction order is: direct return -> host readiness/watcher runtime -> status/closeout",
             "First tests to move",
             "Acceptance gate",
         ):
