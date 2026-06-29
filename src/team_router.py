@@ -16,26 +16,51 @@ import re
 import uuid
 from typing import Any, Iterable, Mapping
 
-
-class ProtocolError(ValueError):
-    """Raised when a TEAM_ROUTER_* marker block is missing or invalid."""
+from team_router_policy import (
+    ARCHITECT_GATE_TERMS,
+    FAST_GATE_TERMS,
+    GATE_CLASSES,
+    PACKAGE_GATE_TERMS,
+    QA_GATE_TERMS,
+    REVIEWER_GATE_REQUIRED_TERMS,
+    REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS,
+    REVIEWER_GATE_TRUE_VALUES,
+    _gate_explicitly_required,
+    _ledger_has_local_package_permission,
+    _reviewer_gate_explicitly_required,
+    _reviewer_gate_plan_fields,
+    _reviewer_gate_text,
+    classify_architect_gate,
+    classify_qa_gate,
+    classify_team_router_gate,
+    explain_team_router_gate,
+    explain_team_router_route,
+    gate_class_requires_reviewer,
+    reviewer_gate_required_for_ledger,
+)
+from team_router_protocol import (
+    CONDITIONAL_REQUIRED_BY_MARKER,
+    FIELD_RE,
+    MARKER_RE,
+    TASK_ID_RE,
+    ProtocolError,
+    ProtocolMessage,
+    _ALLOWED_BY_MARKER,
+    _REQUIRED_BY_MARKER,
+    _iter_marker_blocks,
+    _validate_task_id,
+    parse_callback,
+    parse_message,
+    parse_plan,
+    parse_review,
+    parse_verdict,
+)
 
 
 class StateStoreError(ValueError):
     """Raised when registry or task ledger JSON cannot be read safely."""
 
 
-@dataclass(frozen=True)
-class ProtocolMessage:
-    marker: str
-    task_id: str
-    fields: dict[str, str]
-    raw: str
-
-
-MARKER_RE = re.compile(r"^(TEAM_ROUTER_[A-Z_]+)\s+taskId=([^\s]+)\s*$")
-FIELD_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*):\s*(.*)$")
-TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 CODEX_DELEGATION_RE = re.compile(
     r"<codex_delegation>\s*"
     r"<source_thread_id>(?P<source>.*?)</source_thread_id>\s*"
@@ -653,80 +678,6 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
     "commitCloseoutRisk": "commit closeout must explicitly stage new reference files because git diff --name-only omits untracked files",
 }
 
-REVIEWER_GATE_REQUIRED_TERMS = (
-    "router/manager/orchestration policy",
-    "orchestration policy",
-    "permission boundary",
-    "safety boundary",
-    "permission or safety boundary",
-    "process rule",
-    "process rules",
-    "flow rule",
-    "flow rules",
-    "role protocol",
-    "shared/high-risk logic",
-    "shared logic",
-    "high-risk logic",
-    "runtime gate",
-    "reviewer gate",
-    "team router self change",
-    "team router self changes",
-    "reviewer review",
-    "reviewer 审核",
-    "审查者",
-    "direct-return",
-    "direct return",
-)
-
-REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS = (
-    "reviewer",
-    "runtime",
-    "role protocol",
-    "manager",
-    "orchestration",
-    "policy",
-    "permission",
-    "safety",
-    "process",
-    "shared",
-    "high-risk",
-    "high risk",
-    "gate",
-)
-
-REVIEWER_GATE_TRUE_VALUES = {"true", "yes", "1", "required", "high", "high-risk", "high risk", "critical"}
-
-ARCHITECT_GATE_TERMS = (
-    "architecture",
-    "architectural",
-    "cross-module",
-    "contract change",
-    "protocol",
-    "state-machine",
-    "direct-return",
-    "role protocol",
-    "permission boundary",
-    "migration",
-    "compatibility",
-    "dependency-boundary",
-    "high-risk refactor",
-    "durable maintainability",
-)
-
-QA_GATE_TERMS = (
-    "test strategy",
-    "acceptance criteria",
-    "regression",
-    "verification plan",
-    "coverage gap",
-    "multiple paths",
-    "multiple modes",
-    "evidence insufficient",
-    "smoke",
-    "test matrix",
-)
-
-GATE_CLASSES = ("FAST", "NORMAL", "STRICT", "PACKAGE")
 MIN_ROLE_POLL_INTERVAL_SECONDS = 300
 FIRST_ROLE_CHECK_DELAY_SECONDS = 30
 GATE_READ_INTERVAL_SECONDS = {
@@ -754,283 +705,6 @@ EXPLICIT_ROLE_READ_BYPASS_TERMS = (
     "user requested stop",
     "user-requested-stop",
 )
-CONDITIONAL_REQUIRED_BY_MARKER = {
-    "TEAM_ROUTER_VERDICT": {
-        "result": "required unless status: accepted is present; status: accepted implies result: pass",
-    },
-}
-FAST_GATE_TERMS = (
-    "bom",
-    "encoding",
-    "docs-only",
-    "typo",
-    "wording",
-    "readme",
-)
-PACKAGE_GATE_TERMS = (
-    "package gate",
-    "bundle related",
-    "bundle same task family",
-    "compounded",
-    "same task family",
-    "discipline hardening",
-)
-
-_ALLOWED_BY_MARKER = {
-    "TEAM_ROUTER_PLAN": {
-        "status": {"planned", "blocked"},
-        "acknowledgedPermission": {"read-only", "design-only", "local-package", "escalation-required"},
-    },
-    "TEAM_ROUTER_CALLBACK": {
-        "status": {"done", "blocked"},
-        "final": {"true"},
-    },
-    "TEAM_ROUTER_VERDICT": {
-        "result": {"pass", "needs_rework", "blocked"},
-        "status": {"accepted"},
-    },
-    "TEAM_ROUTER_REVIEW": {
-        "result": {"pass", "needs_rework", "blocked"},
-    },
-    "TEAM_ROUTER_ARCHITECT_REVIEW": {
-        "result": {"pass", "needs_rework", "blocked"},
-        "role": {"Architect"},
-        "skillProfileUsed": {"architect-default"},
-    },
-    "TEAM_ROUTER_QA_REVIEW": {
-        "result": {"pass", "needs_rework", "blocked"},
-        "role": {"QA"},
-        "skillProfileUsed": {"qa-default"},
-    },
-}
-
-_REQUIRED_BY_MARKER = {
-    "TEAM_ROUTER_PLAN": (
-        "status",
-        "acknowledgedPermission",
-        "scope",
-        "stopWhen",
-        "riskBoundary",
-        "executorPrompt",
-        "notes",
-    ),
-    "TEAM_ROUTER_CALLBACK": (
-        "status",
-        "final",
-        "summary",
-        "evidence",
-        "risks",
-        "next",
-    ),
-    "TEAM_ROUTER_VERDICT": (
-        "summary",
-        "requiredChanges",
-        "evidenceChecked",
-        "risks",
-    ),
-    "TEAM_ROUTER_REVIEW": (
-        "result",
-        "summary",
-        "findings",
-        "requiredChanges",
-        "evidenceChecked",
-        "risks",
-    ),
-    "TEAM_ROUTER_ARCHITECT_REVIEW": (
-        "result",
-        "sourceThreadId",
-        "sourceRoleThreadId",
-        "role",
-        "summary",
-        "findings",
-        "requiredChanges",
-        "evidenceChecked",
-        "risks",
-        "skillProfileUsed",
-        "architectureImpact",
-        "compatibilityNotes",
-        "alternatives",
-        "migrationRisks",
-    ),
-    "TEAM_ROUTER_QA_REVIEW": (
-        "result",
-        "sourceThreadId",
-        "sourceRoleThreadId",
-        "role",
-        "summary",
-        "findings",
-        "requiredChanges",
-        "evidenceChecked",
-        "risks",
-        "skillProfileUsed",
-        "coverageGaps",
-        "verificationPlan",
-        "regressionRisks",
-    ),
-}
-
-
-def _reviewer_gate_plan_fields(ledger: Mapping[str, Any]) -> Mapping[str, Any]:
-    plan = ledger.get("plan") if isinstance(ledger.get("plan"), Mapping) else None
-    fields = plan.get("fields") if isinstance(plan, Mapping) else None
-    return fields if isinstance(fields, Mapping) else {}
-
-
-def _reviewer_gate_text(ledger: Mapping[str, Any]) -> str:
-    parts = [str(ledger.get("objective") or "")]
-    fields = _reviewer_gate_plan_fields(ledger)
-    for key in ("scope", "riskBoundary", "executorPrompt", "notes"):
-        parts.append(str(fields.get(key) or ""))
-    return "\n".join(parts).lower()
-
-
-def _reviewer_gate_explicitly_required(ledger: Mapping[str, Any]) -> bool:
-    fields = _reviewer_gate_plan_fields(ledger)
-    for source in (ledger, fields):
-        for key in ("reviewerGateRequired", "requiresReviewer"):
-            value = source.get(key) if isinstance(source, Mapping) else None
-            if isinstance(value, bool):
-                if value:
-                    return True
-            elif str(value or "").strip().lower() in REVIEWER_GATE_TRUE_VALUES:
-                return True
-        risk_class = str(source.get("riskClass") or "").strip().lower() if isinstance(source, Mapping) else ""
-        if risk_class in REVIEWER_GATE_TRUE_VALUES:
-            return True
-    return False
-
-
-def _gate_explicitly_required(ledger: Mapping[str, Any], keys: tuple[str, ...]) -> bool:
-    fields = _reviewer_gate_plan_fields(ledger)
-    for source in (ledger, fields):
-        for key in keys:
-            value = source.get(key) if isinstance(source, Mapping) else None
-            if isinstance(value, bool):
-                if value:
-                    return True
-            elif str(value or "").strip().lower() in REVIEWER_GATE_TRUE_VALUES:
-                return True
-    return False
-
-
-def classify_architect_gate(ledger: Mapping[str, Any]) -> bool:
-    if _gate_explicitly_required(ledger, ("requiresArchitect", "architectureGateRequired")):
-        return True
-    text = _reviewer_gate_text(ledger)
-    return any(term in text for term in ARCHITECT_GATE_TERMS)
-
-
-def classify_qa_gate(ledger: Mapping[str, Any]) -> bool:
-    if _gate_explicitly_required(ledger, ("requiresQa", "qaGateRequired")):
-        return True
-    text = _reviewer_gate_text(ledger)
-    return any(term in text for term in QA_GATE_TERMS)
-
-
-def _ledger_has_local_package_permission(ledger: Mapping[str, Any]) -> bool:
-    plan = ledger.get("plan") if isinstance(ledger, Mapping) else None
-    plan_fields = plan.get("fields") if isinstance(plan, Mapping) else None
-    sources: list[Any] = []
-    if isinstance(ledger, Mapping):
-        sources.append(ledger.get("permission"))
-    if isinstance(plan_fields, Mapping):
-        sources.extend((
-            plan_fields.get("acknowledgedPermission"),
-            plan_fields.get("permission"),
-        ))
-    dispatches = ledger.get("dispatches") if isinstance(ledger, Mapping) else None
-    if isinstance(dispatches, list):
-        for dispatch in dispatches:
-            if isinstance(dispatch, Mapping):
-                sources.append(dispatch.get("permission"))
-    return any(str(value or "").strip().lower() == "local-package" for value in sources)
-
-
-def reviewer_gate_required_for_ledger(ledger: Mapping[str, Any]) -> bool:
-    if _ledger_has_local_package_permission(ledger):
-        return True
-    if _reviewer_gate_explicitly_required(ledger):
-        return True
-    text = _reviewer_gate_text(ledger)
-    if any(term in text for term in REVIEWER_GATE_REQUIRED_TERMS):
-        return True
-    return "team router" in text and any(term in text for term in REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS)
-
-
-def classify_team_router_gate(ledger: Mapping[str, Any]) -> str:
-    text = _reviewer_gate_text(ledger)
-    if any(term in text for term in PACKAGE_GATE_TERMS):
-        return "PACKAGE"
-    if _ledger_has_local_package_permission(ledger):
-        return "STRICT"
-    if reviewer_gate_required_for_ledger(ledger):
-        return "STRICT"
-    if any(term in text for term in FAST_GATE_TERMS):
-        return "FAST"
-    return "NORMAL"
-
-
-def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
-    text = _reviewer_gate_text(ledger)
-    reasons: list[str] = []
-    package_terms = [term for term in PACKAGE_GATE_TERMS if term in text]
-    fast_terms = [term for term in FAST_GATE_TERMS if term in text]
-    reviewer_terms = [term for term in REVIEWER_GATE_REQUIRED_TERMS if term in text]
-    team_router_qualifiers = [
-        term for term in REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS if term in text
-    ]
-    if package_terms:
-        reasons.append("package term")
-    if _ledger_has_local_package_permission(ledger):
-        reasons.append("local-package permission requires reviewer gate")
-    if _reviewer_gate_explicitly_required(ledger):
-        reasons.append("explicit reviewer requirement")
-    if reviewer_terms or ("team router" in text and team_router_qualifiers):
-        reasons.append("reviewer-required term")
-    if classify_architect_gate(ledger):
-        reasons.append("architect gate")
-    if classify_qa_gate(ledger):
-        reasons.append("QA gate")
-    if fast_terms and not reasons:
-        reasons.append("fast docs term")
-    gate = classify_team_router_gate(ledger)
-    if gate == "NORMAL" and not reasons:
-        reasons.append("normal fallback")
-    return {
-        "gateClass": gate,
-        "requiresReviewer": gate_class_requires_reviewer(gate),
-        "requiresArchitect": classify_architect_gate(ledger),
-        "requiresQa": classify_qa_gate(ledger),
-        "reasons": reasons,
-    }
-
-
-def explain_team_router_route(ledger: Mapping[str, Any]) -> dict[str, Any]:
-    explanation = explain_team_router_gate(ledger)
-    roles = ["executor"]
-    if explanation["requiresArchitect"]:
-        roles.insert(0, "architect")
-    if explanation["requiresReviewer"]:
-        roles.append("reviewer")
-    if explanation["requiresQa"]:
-        roles.append("qa")
-    roles.append("verifier")
-    return {
-        "gateClass": explanation["gateClass"],
-        "requiresArchitect": explanation["requiresArchitect"],
-        "requiresReviewer": explanation["requiresReviewer"],
-        "requiresQa": explanation["requiresQa"],
-        "route": " -> ".join(roles),
-        "roles": roles,
-        "reasons": explanation["reasons"],
-    }
-
-
-def gate_class_requires_reviewer(gate_class: str) -> bool:
-    gate = _required_str(gate_class, "gateClass").upper()
-    if gate not in GATE_CLASSES:
-        raise ProtocolError("invalid gateClass: %r" % (gate_class,))
-    return gate in {"STRICT", "PACKAGE"}
 
 
 def _path_field_supplied(fields: Mapping[str, Any], name: str) -> bool:
@@ -1296,153 +970,12 @@ def command_startup_retry_decision(exit_code: int, stdout: str | None, stderr: s
         "action": "environment_blocked",
         "reason": "parent-thread 探针仍失败；环境仍被阻断",
     }
-def _validate_task_id(task_id: str) -> None:
-    if not isinstance(task_id, str) or not TASK_ID_RE.match(task_id):
-        raise ProtocolError("invalid taskId: %r" % (task_id,))
-
-
 def _resolve_persistent_state_root(root: str | Path) -> Path:
     resolved = Path(root).resolve()
     parts = {part.lower() for part in resolved.parts}
     if parts.intersection(_FORBIDDEN_STATE_ROOT_PARTS):
         raise StateStoreError("stateRoot must not be under .codex-tmp: %s" % resolved)
     return resolved
-
-
-def _iter_marker_blocks(text: str) -> list[ProtocolMessage]:
-    if not isinstance(text, str):
-        raise ProtocolError("message text must be a string")
-    lines = text.splitlines()
-    out: list[ProtocolMessage] = []
-    current_marker: str | None = None
-    current_task_id: str | None = None
-    current_fields: dict[str, str] = {}
-    current_field: str | None = None
-    raw_lines: list[str] = []
-
-    def flush() -> None:
-        nonlocal current_marker, current_task_id, current_fields, current_field, raw_lines
-        if current_marker is None or current_task_id is None:
-            return
-        out.append(ProtocolMessage(
-            marker=current_marker,
-            task_id=current_task_id,
-            fields=dict(current_fields),
-            raw="\n".join(raw_lines).strip(),
-        ))
-        current_marker = None
-        current_task_id = None
-        current_fields = {}
-        current_field = None
-        raw_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-        marker_match = MARKER_RE.match(stripped)
-        if marker_match:
-            flush()
-            current_marker = marker_match.group(1)
-            current_task_id = marker_match.group(2)
-            _validate_task_id(current_task_id)
-            raw_lines = [line]
-            current_fields = {}
-            current_field = None
-            continue
-        if stripped.startswith("TEAM_ROUTER_"):
-            raise ProtocolError("malformed marker line: %s" % stripped)
-        if current_marker is None:
-            continue
-        raw_lines.append(line)
-        field_match = FIELD_RE.match(line)
-        if field_match:
-            current_field = field_match.group(1)
-            current_fields[current_field] = field_match.group(2).strip()
-            continue
-        if current_field is not None and stripped:
-            current_fields[current_field] = (
-                current_fields[current_field] + "\n" + stripped
-            ).strip()
-    flush()
-    return out
-
-
-def parse_message(text: str, marker: str, task_id: str) -> ProtocolMessage:
-    """Return the last valid marker block for marker/task_id.
-
-    Marker lines must be exactly `TEAM_ROUTER_* taskId=<id>`. Ordinary fields use
-    `key: value`. This intentionally rejects `taskId: <id>` marker lines.
-    """
-    _validate_task_id(task_id)
-    candidates = [m for m in _iter_marker_blocks(text)
-                  if m.marker == marker and m.task_id == task_id]
-    if not candidates:
-        raise ProtocolError("missing %s taskId=%s" % (marker, task_id))
-    msg = candidates[-1]
-    required = _REQUIRED_BY_MARKER.get(marker, ())
-    missing = [field for field in required if field not in msg.fields]
-    if missing:
-        raise ProtocolError("%s missing fields: %s" % (marker, ", ".join(missing)))
-    blank = [field for field in required if not msg.fields[field]]
-    if blank:
-        raise ProtocolError("%s blank fields: %s" % (marker, ", ".join(blank)))
-    for field, allowed in _ALLOWED_BY_MARKER.get(marker, {}).items():
-        value = msg.fields.get(field)
-        if value not in allowed:
-            raise ProtocolError(
-                "%s.%s must be one of %s, got %r"
-                % (marker, field, sorted(allowed), value)
-            )
-    return msg
-
-
-def parse_plan(text: str, task_id: str) -> ProtocolMessage:
-    return parse_message(text, "TEAM_ROUTER_PLAN", task_id)
-
-
-def parse_callback(text: str, task_id: str) -> ProtocolMessage:
-    return parse_message(text, "TEAM_ROUTER_CALLBACK", task_id)
-
-
-def parse_verdict(text: str, task_id: str) -> ProtocolMessage:
-    _validate_task_id(task_id)
-    candidates = [
-        m for m in _iter_marker_blocks(text)
-        if m.marker == "TEAM_ROUTER_VERDICT" and m.task_id == task_id
-    ]
-    if not candidates:
-        raise ProtocolError("missing TEAM_ROUTER_VERDICT taskId=%s" % task_id)
-    msg = candidates[-1]
-    required = _REQUIRED_BY_MARKER["TEAM_ROUTER_VERDICT"]
-    missing = [field for field in required if field not in msg.fields]
-    if missing:
-        raise ProtocolError("TEAM_ROUTER_VERDICT missing fields: %s" % ", ".join(missing))
-    blank = [field for field in required if not msg.fields[field]]
-    if blank:
-        raise ProtocolError("TEAM_ROUTER_VERDICT blank fields: %s" % ", ".join(blank))
-    status = msg.fields.get("status")
-    if status not in (None, "accepted"):
-        raise ProtocolError(
-            "TEAM_ROUTER_VERDICT.status must be one of %s, got %r"
-            % (["accepted"], status)
-        )
-    result = msg.fields.get("result")
-    if result not in (None, "pass", "needs_rework", "blocked"):
-        raise ProtocolError(
-            "TEAM_ROUTER_VERDICT.result must be one of %s, got %r"
-            % (["blocked", "needs_rework", "pass"], result)
-        )
-    if "result" not in msg.fields:
-        if status == "accepted":
-            msg.fields["result"] = "pass"
-        else:
-            raise ProtocolError("TEAM_ROUTER_VERDICT missing fields: result")
-    elif status == "accepted" and msg.fields["result"] != "pass":
-        raise ProtocolError("TEAM_ROUTER_VERDICT.status accepted requires result pass")
-    return msg
-
-
-def parse_review(text: str, task_id: str) -> ProtocolMessage:
-    return parse_message(text, "TEAM_ROUTER_REVIEW", task_id)
 
 
 def manual_recovery_target(status: str) -> str:

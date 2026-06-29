@@ -53,6 +53,8 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 import team_router
+import team_router_policy
+import team_router_protocol
 
 
 class FakeThreadAdapter:
@@ -134,6 +136,14 @@ class FakeHeartbeatScheduler:
         return {"scheduled": True}
 
 class TestTeamRouterProtocol(unittest.TestCase):
+    def test_facade_reexports_extracted_protocol_and_policy_symbols(self):
+        self.assertIs(team_router.ProtocolError, team_router_protocol.ProtocolError)
+        self.assertIs(team_router.ProtocolMessage, team_router_protocol.ProtocolMessage)
+        self.assertIs(team_router.parse_callback, team_router_protocol.parse_callback)
+        self.assertIs(team_router.parse_verdict, team_router_protocol.parse_verdict)
+        self.assertIs(team_router.classify_team_router_gate, team_router_policy.classify_team_router_gate)
+        self.assertIs(team_router.gate_class_requires_reviewer, team_router_policy.gate_class_requires_reviewer)
+
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
 status: done
@@ -2063,6 +2073,8 @@ risks: none
                 "executor": "TEAM_ROUTER_CALLBACK",
                 "reviewer": "TEAM_ROUTER_REVIEW",
                 "verifier": "TEAM_ROUTER_VERDICT",
+                "architect": "TEAM_ROUTER_ARCHITECT_REVIEW",
+                "qa": "TEAM_ROUTER_QA_REVIEW",
             },
         )
         delivery_model = policy["callbackDeliveryModel"]
@@ -10225,21 +10237,29 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertNotIn(stale, package)
 
-    def test_module_map_documents_future_split_without_runtime_extraction(self):
+    def test_module_map_documents_phase1_protocol_policy_split(self):
         text = (ROOT / "docs" / "team-router" / "module-map.md").read_text(encoding="utf-8")
 
         for needle in (
-            "no runtime extraction in this package",
-            "public imports continue through `src/team_router.py`",
+            "conservative phase 1 split",
+            "Public imports continue through `src/team_router.py`",
             "protocol parsing",
-            "policy snapshot",
+            "gate policy",
+            "facade and contract snapshot",
             "registry/ledger state",
             "adapter runtime",
             "direct return",
             "watcher/heartbeat",
             "closeout/status",
             "docs/skill contract tests",
-            "policy constants -> protocol parsing -> direct return -> state/ledger -> adapter runtime",
+            "`team_router_protocol.py`",
+            "Python standard library only",
+            "must not import `team_router` or `team_router_policy`",
+            "`team_router_policy.py`",
+            "`team_router_protocol.ProtocolError` only",
+            "`protocol_contract_snapshot()`",
+            "Deferred Future Modules",
+            "remaining safe extraction order is: direct return -> state/ledger -> adapter runtime -> status/closeout",
             "First tests to move",
             "Acceptance gate",
         ):
