@@ -43,7 +43,7 @@
 - Full Team Router suite: `py -B -m unittest tests.test_team_router` -> `Ran 279 tests` and `OK`.
 - Final compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-compact-templates'; py -B -m py_compile src\team_router.py tests\test_team_router.py scripts\team_router_closeout_check.py scripts\team_router_truth_check.py scripts\team_router_doctor.py` -> exit 0.
 - Whitespace check: `git diff --check` -> exit 0; Git printed CRLF/LF normalization warnings for existing text files.
-- Truth check: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`, `skill.entrypointBytes: 7171`, `skill.underTarget: true`, `skillSync.status: mismatch` because global sync is not authorized in this package.
+- Truth check at package closeout: `py -B scripts\team_router_truth_check.py --json` reported `staleClaims: []`, `skill.entrypointBytes: 7171`, `skill.underTarget: true`, and repo/global skill drift because global sync was not authorized in that package.
 - Closeout check: `py -B scripts\team_router_closeout_check.py --json` -> read-only report, `skill.entrypointBytes: 7171`, `skill.underTarget: true`, unauthorized commit/push/globalSync gates false in the report.
 
 ## Excluded Changes / 未纳入改动
