@@ -186,6 +186,36 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(team_router._status_format_task_update_for_user, status.format_task_update_for_user)
 
 
+    def test_status_tools_module_extracts_read_only_script_helpers(self):
+        self.assertIsNotNone(importlib.util.find_spec("team_router_status_tools"))
+        status_tools = __import__("team_router_status_tools")
+
+        truth_spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        truth_module = importlib.util.module_from_spec(truth_spec)
+        truth_spec.loader.exec_module(truth_module)
+        closeout_spec = importlib.util.spec_from_file_location(
+            "team_router_closeout_check_under_test",
+            ROOT / "scripts" / "team_router_closeout_check.py",
+        )
+        closeout_module = importlib.util.module_from_spec(closeout_spec)
+        closeout_spec.loader.exec_module(closeout_module)
+        doctor_spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        doctor_module = importlib.util.module_from_spec(doctor_spec)
+        doctor_spec.loader.exec_module(doctor_module)
+
+        self.assertIs(truth_module.build_truth_report, status_tools.build_truth_report)
+        self.assertIs(truth_module.find_stale_state_claims, status_tools.find_stale_state_claims)
+        self.assertIs(closeout_module.build_report, status_tools.build_closeout_report)
+        self.assertIs(doctor_module._truth_status, status_tools.truth_status)
+        self.assertIs(doctor_module._next_action, status_tools.next_action)
+        self.assertEqual(truth_module.DEFAULT_REPO_ROOT, status_tools.DEFAULT_REPO_ROOT)
+        self.assertEqual(closeout_module.DEFAULT_GLOBAL_SKILL, status_tools.DEFAULT_GLOBAL_SKILL)
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
 status: done
@@ -10423,11 +10453,12 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
+        review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "closeout recorded for `ctr-20260630-status-closeout-extraction`",
-            "status/closeout extraction starts from committed watcher runtime `dcff722`",
-            "extract closeout/handoff text helpers into `src/team_router_status.py`",
+            "repo-local package `ctr-20260630-status-tools-extraction` is locally committed",
+            "status tools extraction starts from committed status/closeout package `d66b77d`",
+            "extract read-only truth_check/doctor/closeout shared helpers into `src/team_router_status_tools.py`",
             "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
@@ -10436,8 +10467,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "local commit was explicitly authorized and completed",
-            "none for repo-local status/closeout extraction",
+            "none inside repo-local status-tools extraction",
+            "real live host integration remains an external host package gate",
             "Real live host integration remains an external host package gate",
             "no push, no PR, no merge, no deploy, no publish/release",
             "Repo/global skill comparison remains `status: match`",
@@ -10451,9 +10482,14 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
+            "repo-local status-tools extraction is locally committed",
+            "no repo-local role-thread gate remains",
+            "post-commit truth/closeout checks only",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
+        self.assertNotIn("\t", text)
+        self.assertNotIn("\b", text)
         self.assertIn("ctr-20260628-team-router-optimization-1-6", historical_section)
         for stale_current in (
             "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
@@ -10474,8 +10510,23 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "verifier role-thread gate is pending",
             "send to verifier, then stop",
             "explicit commit authorization for this status/closeout package",
+            "closeout recorded for `ctr-20260630-status-closeout-extraction`",
+            "local commit was explicitly authorized and completed",
+            "none for repo-local status/closeout extraction",
+            "send this status-tools package to reviewer, then verifier",
+            "send this status-tools package to verifier after reviewer re-review pass",
+            "send this status-tools package to verifier only",
+            "is not yet granted",
+            "Commit remains unauthorized until the user explicitly authorizes it",
         ):
             self.assertNotIn(stale_current, current_task_section + current_diff_section)
+        self.assertNotIn("send this status-tools package to reviewer, then verifier", review_gate_section)
+        self.assertNotIn("status-tools extraction requires reviewer, then verifier", review_gate_section)
+        self.assertNotIn("send this status-tools package to verifier only", review_gate_section)
+        self.assertNotIn("is not yet granted", review_gate_section)
+        self.assertNotIn("Commit remains unauthorized until the user explicitly authorizes it", review_gate_section)
+        self.assertNotIn("verifier is the only remaining role gate before closeout", review_gate_section)
+
         for stale_current_claim in (
             "[ahead 1]",
             "ahead of `origin/master` by 1",
@@ -10526,6 +10577,29 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, package)
 
+    def test_status_tools_package_records_extraction_boundary(self):
+        package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260630-status-tools-extraction.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("\t", package)
+        self.assertNotIn("\b", package)
+
+        for needle in (
+            "ctr-20260630-status-tools-extraction",
+            "src/team_router_status_tools.py",
+            "build_truth_report",
+            "build_closeout_report",
+            "truth_status",
+            "next_action",
+            "scripts/team_router_truth_check.py",
+            "scripts/team_router_closeout_check.py",
+            "scripts/team_router_doctor.py",
+            "read-only status tools",
+            "does not import `team_router`",
+            "does not call thread tools",
+            "real live host integration remains an external host package gate",
+            "Commit: authorized for local closeout",
+        ):
+            self.assertIn(needle, package)
 
     def test_role_thread_readiness_package_tracks_reviewer_pass_before_verifier(self):
         package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260628-role-thread-readiness-status.md").read_text(encoding="utf-8")
@@ -10562,6 +10636,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "direct return",
             "watcher/heartbeat",
             "closeout/status",
+            "read-only status tools",
             "docs/skill contract tests",
             "`team_router_protocol.py`",
             "Python standard library only",
@@ -10572,9 +10647,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`team_router_host_runtime.py`",
             "`team_router_watcher_runtime.py`",
             "`team_router_status.py`",
+            "`team_router_status_tools.py`",
             "closeout and handoff text helpers",
             "watcher_builder",
-            "truth_check/doctor scripts remain read-only evidence tools",
+            "truth_check/doctor/closeout scripts are thin read-only evidence wrappers",
+            "build_truth_report",
+            "build_closeout_report",
+            "truth_status",
+            "next_action",
+            "does not import `team_router`",
             "`team_router_protocol.ProtocolError` only",
             "`team_router_protocol`, `team_router_state.StateStoreError`",
             "`protocol_contract_snapshot()`",
@@ -10582,8 +10663,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Phase 2b2 extracted pure direct-return contract helpers",
             "Phase 2b4 extracted watcher timing/read discipline/heartbeat payload helpers",
             "Phase 2b5 extracted closeout/handoff text helpers",
+            "Phase 2b6 extracted read-only status tool helpers",
             "capture/watch/state-save orchestration",
-            "remaining safe extraction order is: status read-only tools",
+            "remaining safe extraction order is: registry/ledger state",
             "First tests to move",
             "Acceptance gate",
         ):

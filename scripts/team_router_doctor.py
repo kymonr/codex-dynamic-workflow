@@ -15,6 +15,7 @@ SRC_DIR = SCRIPT_DIR.parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+import team_router_status_tools
 import team_router_truth_check
 
 try:
@@ -39,28 +40,8 @@ REQUIRED_THREAD_TOOLS = tuple(
 )
 
 
-def _truth_status(truth: dict[str, object]) -> str:
-    dirty = bool(truth["gitStatusShort"] or truth["diffFiles"])
-    stale = bool(truth["staleClaims"])
-    if dirty and stale:
-        return "dirty_or_stale"
-    if dirty:
-        return "dirty"
-    if stale:
-        return "stale"
-    if truth["skillSync"]["status"] == "match":
-        return "clean_synced"
-    return "needs_attention"
-
-
-def _next_action(truth_status: str, truth: dict[str, object]) -> str:
-    if truth_status in {"dirty_or_stale", "stale"}:
-        return "refresh workbench/package current-state text from truth_check/doctor before claiming current truth"
-    if truth_status == "dirty":
-        return "review the local diff, run the required reviewer pass, then run the required verifier pass before closeout"
-    if truth["skillSync"]["status"] != "match":
-        return "decide whether global skill sync is explicitly authorized; do not sync by default"
-    return "no action required unless the manager opens a new package"
+_truth_status = team_router_status_tools.truth_status
+_next_action = team_router_status_tools.next_action
 
 
 ACTIVE_TURN_STATUSES = {"active", "inProgress", "running", "working"}

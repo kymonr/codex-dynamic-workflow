@@ -1,6 +1,6 @@
 # Team Router Module Map
 
-This records the conservative phase 1 split plus the phase 2b1 runtime extraction, phase 2b2 direct-return contract extraction, phase 2b3 host runtime extraction, phase 2b4 watcher runtime extraction, and phase 2b5 status/closeout text extraction now implemented. Public imports continue through `src/team_router.py`; direct imports from the extracted modules are internal implementation detail unless a later explicit package widens that contract.
+This records the conservative phase 1 split plus the phase 2b1 runtime extraction, phase 2b2 direct-return contract extraction, phase 2b3 host runtime extraction, phase 2b4 watcher runtime extraction, phase 2b5 status/closeout text extraction, and phase 2b6 read-only status tool extraction now implemented. Public imports continue through `src/team_router.py`; direct imports from the extracted modules are internal implementation detail unless a later explicit package widens that contract.
 
 ## Current Domains
 
@@ -12,10 +12,11 @@ This records the conservative phase 1 split plus the phase 2b1 runtime extractio
 - host runtime: `src/team_router_host_runtime.py` owns host readiness, callable heartbeat scheduler validation, live orchestration context creation, and host-context conflict checks. `src/team_router.py` still owns parent entry path selection and public compatibility imports; real host integration remains a separate external host package gate.
 - direct return: `src/team_router_direct_return.py` owns pure direct-return contract helpers: direct-send record selection, status/role capture eligibility, manager-inbox message parsing after the facade read window is normalized, receipt validation, receipt metadata, and malformed protocol metadata. `src/team_router.py` still owns capture/watch/state-save orchestration, malformed direct-return ledger mutation, and the public compatibility wrappers that apply read anchors.
 - watcher/heartbeat: `src/team_router_watcher_runtime.py` owns first-check timing, 300 second read discipline, convergence read decisions, watcher ledger rendering, and heartbeat schedule payload construction. `src/team_router.py` still owns `_watch_next_wakeup()` role selection, ledger mutation, role-thread reads, and `watch_team_task_with_adapter()` continuation behavior.
-- closeout/status: `src/team_router_status.py` owns closeout and handoff text helpers, role-thread lines, read anchor lines, compounding defaults, and task-update formatting. `src/team_router.py` passes `watcher_builder` wrappers so handoff text can still include facade-derived watcher metadata. truth_check/doctor scripts remain read-only evidence tools.
+- closeout/status: `src/team_router_status.py` owns closeout and handoff text helpers, role-thread lines, read anchor lines, compounding defaults, and task-update formatting. `src/team_router.py` passes `watcher_builder` wrappers so handoff text can still include facade-derived watcher metadata.
+- read-only status tools: `src/team_router_status_tools.py` owns truth_check/doctor/closeout script internals that are pure read-only status helpers: `build_truth_report`, `build_closeout_report`, `find_stale_state_claims`, `truth_status`, and `next_action`. truth_check/doctor/closeout scripts are thin read-only evidence wrappers. `scripts/team_router_truth_check.py`, `scripts/team_router_doctor.py`, and `scripts/team_router_closeout_check.py` and cannot stage, commit, push, PR, merge, deploy, publish, or sync.
 - docs/skill contract tests: keep `SKILL.md`, `references/`, workbench, packages, and fixtures aligned with runtime policy.
 
-## Implemented Phase 1 Dependencies
+## Implemented Phase Dependencies
 
 | Module | Responsibility | Dependencies | Import rule |
 | --- | --- | --- | --- |
@@ -26,6 +27,7 @@ This records the conservative phase 1 split plus the phase 2b1 runtime extractio
 | `team_router_host_runtime.py` | host readiness, heartbeat scheduler callable validation, live orchestration context, and host-context conflict checks | `team_router_runtime`, `team_router_state`, standard library | must not import `team_router` |
 | `team_router_watcher_runtime.py` | watcher timing, read discipline, convergence decisions, watcher ledger rendering, and heartbeat schedule payload construction | `team_router_policy`, `team_router_protocol`, `team_router_state`, standard library | must not import `team_router` |
 | `team_router_status.py` | closeout and handoff text helpers, role/anchor rendering, compounding defaults, and task-update formatting | `team_router_state`, standard library | must not import `team_router` |
+| `team_router_status_tools.py` | read-only truth/closeout report builders, stale-current-state checks, and doctor truth/next-action helpers | standard library only | does not import `team_router` and does not call thread tools |
 | `team_router.py` | public facade, state/capture/watch/state-save orchestration, `protocol_contract_snapshot()` | `team_router_protocol`, `team_router_policy`, `team_router_runtime`, `team_router_direct_return`, `team_router_host_runtime`, `team_router_watcher_runtime`, `team_router_status`, standard library | re-exports moved names for compatibility |
 
 ## Deferred Future Modules
@@ -33,22 +35,21 @@ This records the conservative phase 1 split plus the phase 2b1 runtime extractio
 | Future module | Responsibility | First tests to move | Acceptance gate |
 | --- | --- | --- | --- |
 | `team_router_state.py` | registry/ledger persistence and state transitions | callback/review/verdict capture and recovery tests | on-disk state fixtures remain backward compatible |
-| `team_router_status_tools.py` | truth_check/doctor/closeout script internals and status read-only tools | truth check, doctor output, closeout check, workbench stale-claim tests | read-only tools cannot stage, commit, push, PR, merge, deploy, or sync |
 
 ## Extraction Order
 
-Phase 1 completed the safe opening split: protocol parsing first, then pure gate policy, with `src/team_router.py` as facade. Phase 2b1 extracted low-level adapter call/read normalization into `src/team_router_runtime.py` without changing the public import surface. Phase 2b2 extracted pure direct-return contract helpers into `src/team_router_direct_return.py` while keeping capture/watch/state-save orchestration in the facade. Phase 2b4 extracted watcher timing/read discipline/heartbeat payload helpers into `src/team_router_watcher_runtime.py` while keeping `_watch_next_wakeup()`, ledger mutation, and role-thread orchestration in the facade. Phase 2b5 extracted closeout/handoff text helpers into `src/team_router_status.py` while keeping watcher derivation in the facade through `watcher_builder`. The remaining safe extraction order is: status read-only tools.
+Phase 1 completed the safe opening split: protocol parsing first, then pure gate policy, with `src/team_router.py` as facade. Phase 2b1 extracted low-level adapter call/read normalization into `src/team_router_runtime.py` without changing the public import surface. Phase 2b2 extracted pure direct-return contract helpers into `src/team_router_direct_return.py` while keeping capture/watch/state-save orchestration in the facade. Phase 2b4 extracted watcher timing/read discipline/heartbeat payload helpers into `src/team_router_watcher_runtime.py` while keeping `_watch_next_wakeup()`, ledger mutation, and role-thread orchestration in the facade. Phase 2b5 extracted closeout/handoff text helpers into `src/team_router_status.py` while keeping watcher derivation in the facade through `watcher_builder`. Phase 2b6 extracted read-only status tool helpers into `src/team_router_status_tools.py` while keeping truth_check/doctor/closeout scripts as thin CLI wrappers. The remaining safe extraction order is: registry/ledger state.
 
-Closeout/status script internals should be extracted after the user-output helper split is stable, because the scripts consume git truth, skill sync facts, workbench/package current-state text, and host/readiness evidence. Docs/skill contract tests should stay in the main suite throughout extraction and keep imports routed through `src/team_router.py` until a future compatibility gate explicitly changes that contract.
+Status tool internals were extracted only after the user-output helper split was stable, because the scripts consume git truth, skill sync facts, workbench/package current-state text, and host/readiness evidence. Doctor-specific host readiness and role-thread snapshot classification remain in `scripts/team_router_doctor.py`; moving them needs a separate explicit package. Docs/skill contract tests should stay in the main suite throughout extraction and keep public runtime imports routed through `src/team_router.py` until a future compatibility gate explicitly changes that contract.
 
 ## Non-Goals
 
-- No registry/ledger runtime extraction in phase 1.
+- No registry/ledger runtime extraction in phase 1 or phase 2b6.
 - No adapter runtime extraction in phase 1; phase 2b1 now covers only low-level adapter call/read normalization.
 - No direct-return capture/watch/state-save extraction in phase 2b2.
 - No watcher/heartbeat extraction in phase 1; phase 2b4 now covers watcher timing/read discipline/heartbeat payload helpers only.
-- No truth_check/doctor/closeout script extraction in phase 2b5.
-- No skill-doc changes in phase 2b5.
+- No doctor-specific host readiness or role-thread snapshot extraction in phase 2b6.
+- No skill-doc changes in phase 2b6.
 - No new live dispatch behavior.
 - No new host adapter implementation or production scheduler/daemon.
 - No new package dependency.
