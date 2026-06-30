@@ -132,6 +132,7 @@ from team_router_state import (
     _has_observation_content,
     _inherited_reviewer_return_thread_id,
     _inherited_verifier_return_thread_id,
+    _latest_executor_callback_observation,
     _latest_executor_dispatch,
     _latest_reviewer_request,
     _atomic_write_json,
@@ -3431,18 +3432,6 @@ def read_executor_callback_with_adapter(state_root: str | Path,
         captured_at=captured_at,
     )
 
-
-
-def _latest_executor_callback_observation(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    observations = ledger.get("observations") if isinstance(ledger.get("observations"), list) else []
-    for observation in reversed(observations):
-        if (
-            isinstance(observation, Mapping)
-            and observation.get("role") == "executor"
-            and observation.get("type") == "callback_raw"
-        ):
-            return observation
-    return None
 
 
 def _ensure_reviewer_role_with_adapter(state_root: str | Path,

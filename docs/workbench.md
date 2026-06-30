@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package. Latest completed package `ctr-20260630-ledger-transition-state-extraction` passed reviewer v3 and verifier; local commit, push, and global skill sync are authorized for closeout in this turn. Fresh command output overrides this note.
-- Latest completed package objective: define the next conservative ledger transition extraction cut, starting from the current split where `src/team_router_state.py` owns JSON primitives, role binding persistence, search anchors, review request records, and latest-request accessors while `src/team_router.py` still owns higher-level ledger mutation and orchestration transitions.
+- State: active repo-local package `ctr-20260701-latest-executor-callback-state-extraction`; local implementation, verification, reviewer v2, and verifier passed; closeout authorization remains pending.
+- Current package objective: continue the conservative registry/ledger state extraction by moving only `_latest_executor_callback_observation()` into `src/team_router_state.py`.
+- Starting evidence before opening this package: `git status -sb --untracked-files=all` reported `## master...origin/master`; previous package `ctr-20260630-ledger-transition-state-extraction` was committed and pushed before this new package opened.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: closeout commit, push, and global skill sync are authorized; no PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or new implementation is authorized. Implementation moved only `_has_observation_content()` into `src/team_router_state.py`; no parser/gate/direct-return/watcher/host/prompt behavior changed.
-- Current next gate: none after closeout; open a new repo-local package only on explicit dispatch.
-
+- Current boundary: only the pure in-memory executor callback observation lookup may move from `src/team_router.py` to `src/team_router_state.py`; no parser/gate/direct-return/watcher/host/prompt behavior, live adapter, production scheduler/daemon, PR, merge, deploy, publish/release, commit, push, or global skill sync is authorized for this package yet.
+- Current next gate: closeout authorization; commit/push/global skill sync require separate authorization after verifier pass, and no closeout side effect is authorized yet.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,20 +27,29 @@ This file intentionally does not list a live diff surface. The current package f
 
 Latest package verification:
 
-- Package opening: update this workbench, create `docs/team-router/packages/ctr-20260630-ledger-transition-state-extraction.md`, and align the workbench contract test with the new current package.
-- Starting evidence before opening this package: `9b7ac98` was pushed to `origin/master`; `git status -sb --untracked-files=all` reported `## master...origin/master`.
-- Implementation: moved `_has_observation_content()` from `src/team_router.py` to `src/team_router_state.py`; facade compatibility remains through import/re-export.
-- Verification passed so far: `py -B -m py_compile src\team_router.py src\team_router_state.py tests\test_team_router.py`; focused state/workbench/module-map tests -> Ran 4 OK; full `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 350 OK; truth check reported no stale claims; doctor reported dirty truth; closeout skill-sync evidence must be refreshed in each role worktree; reviewer v3 returned pass with `requiredChanges: none`; verifier returned pass with `requiredChanges: none`; `git diff --check` exit 0 with CRLF/LF warnings only.
-- Closeout authorization: local commit, push, and global skill sync are authorized for this package; PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, and new implementation remain out of scope.
+- Package opening: update this workbench, create `docs/team-router/packages/ctr-20260701-latest-executor-callback-state-extraction.md`, and keep module-map/current-state tests aligned with the new active package.
+- Starting evidence before opening this package: `git status -sb --untracked-files=all` reported `## master...origin/master`.
+- Implementation: moved `_latest_executor_callback_observation()` from `src/team_router.py` to `src/team_router_state.py`; facade compatibility remains through import/re-export.
+- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m py_compile src\team_router.py src\team_router_state.py tests\test_team_router.py` -> exit 0. Direct `py_compile` without isolated cache hit `[WinError 5]` writing old `src\__pycache__`, so verification uses the existing Windows temp-cache workaround.
+- Focused tests: facade re-export, latest executor callback observation behavior, workbench current-state contract, and module-map contract -> Ran 4 tests OK.
+- Full suite: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 351 tests OK.
+- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; authorization reports commit/push/globalSync false; current truth is dirty only because this package diff is present.
+- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; nextAction is reviewer pass then verifier pass before closeout; unauthorized includes commit, push, PR, merge, deploy, global skill sync.
+- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_closeout_check.py --json` -> exit 0; commit/push/globalSync false; skill-sync output is evidence-only and must be freshly checked by each reviewer/verifier worktree.
+- `git diff --check` -> exit 0 with CRLF/LF warnings only.
+- Reviewer v2 status: pass; `TEAM_ROUTER_REVIEW` thread `019f1959-2aea-71a1-986d-56ee156f9804` reported `requiredChanges: none`.
+- Verifier status: pass; `TEAM_ROUTER_VERDICT` thread `019f195c-f32d-7582-95d6-ad532339053a` reported `requiredChanges: none`.
+- Closeout status: pending explicit authorization; no commit, push, PR, merge, deploy, publish/release, or global skill sync is authorized for this new package yet.
+
 Previous package verification:
 
+- Previous `ctr-20260630-ledger-transition-state-extraction` passed reviewer v3 and verifier, then was explicitly authorized and committed as `35a3a7f`; it was pushed to `origin/master`, and authorized global skill sync reported `match`. It moved `_has_observation_content()` into `src/team_router_state.py` and is historical baseline only.
 - Previous `ctr-20260630-registry-ledger-state-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `9b7ac98`; it was pushed to `origin/master`. It moved `_search_anchor()`, `_role_review_request_record()`, and pure latest-request accessors into `src/team_router_state.py` and is historical baseline only.
 - Previous `ctr-20260630-role-thread-prompt-path-contract` passed reviewer and verifier, then was explicitly authorized and committed as `0596316`; it was pushed to `origin/master`, and its authorized global skill sync reported `match`. Its role-thread prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-dispatch-prompt-path-handoff` passed reviewer and verifier, then was explicitly authorized and committed as `ffcebd7`; its executor dispatch prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-status-tools-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `4dd5a95`; its read-only status tool extraction is historical baseline only.
 - Previous `ctr-20260630-status-closeout-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `d66b77d`; its closeout/status helper extraction is now historical baseline only.
 - Previous `ctr-20260630-watcher-status-extraction` was explicitly authorized and committed as `dcff722`; its watcher runtime extraction is historical baseline only.
-
 ## Historical Records
 Older entries are history only. They must not be treated as current git truth / current next gate unless rechecked in the current worktree.
 
@@ -81,5 +90,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none; reviewer v3 and verifier passed `ctr-20260630-ledger-transition-state-extraction`.
-- No PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or new implementation is authorized for closeout.
+- Current gate: closeout authorization for `ctr-20260701-latest-executor-callback-state-extraction`; reviewer v2 and verifier passed.
+- No commit, push, PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or global skill sync is authorized for this new package yet.

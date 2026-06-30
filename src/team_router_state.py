@@ -373,6 +373,18 @@ def _has_observation_content(ledger: Mapping[str, Any],
     return False
 
 
+def _latest_executor_callback_observation(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    observations = ledger.get("observations") if isinstance(ledger.get("observations"), list) else []
+    for observation in reversed(observations):
+        if (
+            isinstance(observation, Mapping)
+            and observation.get("role") == "executor"
+            and observation.get("type") == "callback_raw"
+        ):
+            return observation
+    return None
+
+
 def _latest_executor_dispatch(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
     dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
     return dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else None

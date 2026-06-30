@@ -155,6 +155,7 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(team_router._search_anchor, team_router_state._search_anchor)
         self.assertIs(team_router._role_review_request_record, team_router_state._role_review_request_record)
         self.assertIs(team_router._latest_executor_dispatch, team_router_state._latest_executor_dispatch)
+        self.assertIs(team_router._latest_executor_callback_observation, team_router_state._latest_executor_callback_observation)
         self.assertIs(team_router._has_observation_content, team_router_state._has_observation_content)
         self.assertIs(team_router._inherited_verifier_return_thread_id, team_router_state._inherited_verifier_return_thread_id)
 
@@ -253,6 +254,39 @@ class TestTeamRouterProtocol(unittest.TestCase):
                 "executor",
                 "other-thread",
                 "TEAM_ROUTER_CALLBACK taskId=ctr-1",
+            )
+        )
+
+    def test_state_latest_executor_callback_observation_returns_latest_callback(self):
+        first = {
+            "type": "callback_raw",
+            "role": "executor",
+            "threadId": "executor-thread",
+            "content": "first callback",
+        }
+        latest = {
+            "type": "callback_raw",
+            "role": "executor",
+            "threadId": "executor-thread",
+            "content": "latest callback",
+        }
+        ledger = {
+            "observations": [
+                first,
+                {"type": "callback_raw", "role": "reviewer"},
+                "ignored",
+                {"type": "review_raw", "role": "executor"},
+                latest,
+            ]
+        }
+
+        self.assertIs(
+            team_router_state._latest_executor_callback_observation(ledger),
+            latest,
+        )
+        self.assertIsNone(
+            team_router_state._latest_executor_callback_observation(
+                {"observations": [{"type": "review_raw", "role": "executor"}]}
             )
         )
 
@@ -10607,12 +10641,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "no active repo-local package",
-            "`9b7ac98` was pushed to `origin/master`",
-            "Latest completed package objective: define the next conservative ledger transition extraction cut",
-            "_role_review_request_record()",
-            "`src/team_router_state.py` owns JSON primitives, role binding persistence, search anchors",
-            "no live host adapter implementation",
+            "active repo-local package `ctr-20260701-latest-executor-callback-state-extraction`",
+            "Current package objective: continue the conservative registry/ledger state extraction",
+            "_latest_executor_callback_observation()",
+            "pure in-memory executor callback observation lookup",
+            "`src/team_router_state.py`",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -10620,9 +10653,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "none after closeout",
-            "global skill sync are authorized",
-            "no PR, merge, deploy, publish/release",
+            "reviewer and verifier",
+            "commit/push/global skill sync require separate authorization",
+            "no parser/gate/direct-return/watcher/host/prompt behavior",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -10633,13 +10666,26 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
-            "Implementation: moved `_has_observation_content()`",
-            "_search_anchor()"
+            "Implementation: moved `_latest_executor_callback_observation()`",
+            "Previous `ctr-20260630-ledger-transition-state-extraction`",
+            "_has_observation_content()",
+            "_search_anchor()",
+            "no live host adapter implementation",
         ):
             self.assertIn(needle, text)
+        for stale in (
+            "no active repo-local package",
+            "none after closeout",
+            "closeout commit, push, and global skill sync are authorized",
+        ):
+            self.assertNotIn(stale, current_task_section)
         self.assertNotIn("`r`n", text)
         self.assertNotIn("\t", text)
         self.assertNotIn("\b", text)
+        self.assertNotIn("`M docs/workbench.md`", current_diff_section)
+        self.assertNotIn("Current gate: none", review_gate_section)
+        self.assertIn("Historical Records", text)
+        self.assertIn("Older entries are history only", historical_section)
         self.assertIn("ctr-20260628-team-router-optimization-1-6", historical_section)
         for stale_current in (
             "active local package implementation for `ctr-20260628-team-router-optimization-1-6`",
@@ -10831,6 +10877,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "closeout/status",
             "read-only status tools",
             "dispatch prompt path-handoff compaction",
+            "latest executor callback observation helper cut",
             "Role prompt transport still lives here",
             "overlong `executorPrompt` text",
             "does not change parser/gate/direct-return semantics",
@@ -10863,6 +10910,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Phase 2b6 extracted read-only status tool helpers",
             "capture/watch/state-save orchestration",
             "remaining safe extraction order is: additional registry/ledger state transitions",
+            "_latest_executor_callback_observation()",
             "First tests to move",
             "Acceptance gate",
         ):
