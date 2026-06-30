@@ -170,6 +170,22 @@ class TestTeamRouterProtocol(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIs(getattr(team_router, name), getattr(team_router_host_runtime, name))
 
+    def test_facade_delegates_to_extracted_status_symbols(self):
+        self.assertIsNotNone(importlib.util.find_spec("team_router_status"))
+        status = __import__("team_router_status")
+
+        self.assertEqual(
+            team_router.DEFAULT_CLOSEOUT_COMPOUNDING_REASON,
+            status.DEFAULT_CLOSEOUT_COMPOUNDING_REASON,
+        )
+        self.assertIs(team_router._role_thread_lines, status.role_thread_lines)
+        self.assertIs(team_router._anchor_lines, status.anchor_lines)
+        self.assertIs(team_router._closeout_compounding_fields, status.closeout_compounding_fields)
+        self.assertIs(team_router.format_closeout_for_user, status.format_closeout_for_user)
+        self.assertIs(team_router._status_format_handoff_for_user, status.format_handoff_for_user)
+        self.assertIs(team_router._status_format_task_update_for_user, status.format_task_update_for_user)
+
+
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
 status: done
@@ -10221,6 +10237,9 @@ regressionRisks: watcher transitions
         self.assertIn("Team Router Handoff", handoff)
         self.assertIn("read_thread anchors", handoff)
         self.assertIn("executor.dispatch[1]", handoff)
+        self.assertIn("manager watcher:", handoff)
+        self.assertIn("nextManagerAction: watch_team_task_with_adapter", handoff)
+        self.assertIn("actionOnWake: read_thread", handoff)
 
         done = team_router.capture_executor_callback_from_read(
             self.root,
@@ -10398,14 +10417,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
 
         self.assertIn("## Current Task", text)
+        self.assertRegex(text, r"(?m)^## Current Diff Surface$")
+        self.assertRegex(text, r"(?m)^## Review And Verification Gate$")
+        self.assertNotRegex(text, r"(?m)[^\n]## (Current Diff Surface|Review And Verification Gate)$")
         current_task_section = text.split("## Current Task", 1)[1].split("## Current Diff Surface", 1)[0]
         current_diff_section = text.split("## Current Diff Surface", 1)[1].split("## Verification Record", 1)[0]
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "accepted local-package `ctr-20260630-watcher-status-extraction`",
-            "host adapter/scheduler gate is committed in `0345f53`",
-            "continue the repo-local module extraction after host runtime",
+            "closeout recorded for `ctr-20260630-status-closeout-extraction`",
+            "status/closeout extraction starts from committed watcher runtime `dcff722`",
+            "extract closeout/handoff text helpers into `src/team_router_status.py`",
             "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
@@ -10414,7 +10436,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "explicit commit authorization for this watcher/status package",
+            "local commit was explicitly authorized and completed",
+            "none for repo-local status/closeout extraction",
             "Real live host integration remains an external host package gate",
             "no push, no PR, no merge, no deploy, no publish/release",
             "Repo/global skill comparison remains `status: match`",
@@ -10428,17 +10451,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
-            "multi_agent/subagent outputs are auxiliary evidence only",
-            "deliveryStatus: fallback_only",
-            "receiptSource: self-thread-fallback/read_thread",
-            "not normal proactive return",
-            "direct-send was not observed",
-            "Closeout correction reviewer direct-send observed",
-            "Closeout correction reviewer deliveryStatus: direct_send",
-            "Closeout correction reviewer deliveryError: none",
-            "Closeout correction verifier direct-send observed",
-            "Closeout correction verifier deliveryStatus: direct_send",
-            "Closeout correction verifier deliveryError: none",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
@@ -10456,6 +10468,12 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
             "wait for a new explicit dispatch or user authorization",
             "No current diff surface is expected in idle state",
+            "accepted local-package `ctr-20260630-watcher-status-extraction`",
+            "explicit commit authorization for this watcher/status package",
+            "send this status/closeout package to verifier after reviewer pass",
+            "verifier role-thread gate is pending",
+            "send to verifier, then stop",
+            "explicit commit authorization for this status/closeout package",
         ):
             self.assertNotIn(stale_current, current_task_section + current_diff_section)
         for stale_current_claim in (
@@ -10488,6 +10506,26 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Codex verifier role thread `019f1819-8446-7381-bb6e-e366ee3d9f60`",
         ):
             self.assertIn(needle, package)
+
+    def test_status_closeout_package_records_extraction_boundary(self):
+        package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260630-status-closeout-extraction.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "ctr-20260630-status-closeout-extraction",
+            "src/team_router_status.py",
+            "format_closeout_for_user",
+            "format_handoff_for_user",
+            "format_task_update_for_user",
+            "watcher_builder",
+            "does not import `team_router`",
+            "truth_check/doctor/closeout scripts remain read-only evidence tools",
+            "real live host integration remains an external host package gate",
+            "Commit: authorized by the user and completed as a local commit",
+            "TEAM_ROUTER_VERDICT result: pass",
+            "No further repo-local status/closeout action remains",
+        ):
+            self.assertIn(needle, package)
+
 
     def test_role_thread_readiness_package_tracks_reviewer_pass_before_verifier(self):
         package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260628-role-thread-readiness-status.md").read_text(encoding="utf-8")
@@ -10533,14 +10571,19 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`team_router_direct_return.py`",
             "`team_router_host_runtime.py`",
             "`team_router_watcher_runtime.py`",
+            "`team_router_status.py`",
+            "closeout and handoff text helpers",
+            "watcher_builder",
+            "truth_check/doctor scripts remain read-only evidence tools",
             "`team_router_protocol.ProtocolError` only",
             "`team_router_protocol`, `team_router_state.StateStoreError`",
             "`protocol_contract_snapshot()`",
             "Deferred Future Modules",
             "Phase 2b2 extracted pure direct-return contract helpers",
             "Phase 2b4 extracted watcher timing/read discipline/heartbeat payload helpers",
+            "Phase 2b5 extracted closeout/handoff text helpers",
             "capture/watch/state-save orchestration",
-            "remaining safe extraction order is: status/closeout",
+            "remaining safe extraction order is: status read-only tools",
             "First tests to move",
             "Acceptance gate",
         ):
