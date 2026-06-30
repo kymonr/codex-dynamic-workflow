@@ -872,6 +872,93 @@ regressionRisks: low
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
 
+    def test_path_handoff_omits_long_callback_raw_from_downstream_prompts(self):
+        task_id = "ctr-20260630-compact-downstream"
+        long_payload = "LONG_CALLBACK_PAYLOAD_" + ("x" * 2400)
+        long_review_payload = "LONG_REVIEW_PAYLOAD_" + ("y" * 2400)
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "downstream role prompts do not copy long callback/review raw text",
+            "riskBoundary": "do not change parser or gate semantics",
+            "executorPrompt": "Fix downstream prompt compact handoff.",
+            "taskBriefPath": "docs/team-router/packages/ctr-compact-downstream.md",
+            "executorReportPath": "docs/team-router/packages/ctr-compact-downstream.md",
+            "reviewPackagePath": "docs/team-router/packages/ctr-compact-downstream.md",
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: compact downstream prompt fix done\n"
+            "evidence: %s\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % (task_id, long_payload)
+        reviewer_result = {
+            "raw": (
+                "TEAM_ROUTER_REVIEW taskId=%s\n"
+                "result: pass\n"
+                "summary: %s\n"
+                "findings: none\n"
+                "requiredChanges: none\n"
+                "evidenceChecked: docs/team-router/packages/ctr-compact-downstream.md\n"
+                "risks: none"
+            ) % (task_id, long_review_payload),
+            "fields": {
+                "result": "pass",
+                "summary": "reviewer passed",
+                "findings": "none",
+                "requiredChanges": "none",
+                "evidenceChecked": "docs/team-router/packages/ctr-compact-downstream.md",
+                "risks": "none",
+            },
+        }
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": plan_fields["taskBriefPath"],
+                "executorReportPath": plan_fields["executorReportPath"],
+                "reviewPackagePath": plan_fields["reviewPackagePath"],
+            },
+        }
+
+        downstream_messages = (
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                review_package=review_package,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                review_package=review_package,
+                reviewer_result=reviewer_result,
+            ),
+            team_router.make_qa_review_request_message(
+                task_id,
+                callback_block,
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                reviewer_result=reviewer_result,
+            ),
+        )
+
+        for message in downstream_messages:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", message)
+                self.assertIn("executorReportPath: docs/team-router/packages/ctr-compact-downstream.md", message)
+                self.assertIn("reviewPackagePath: docs/team-router/packages/ctr-compact-downstream.md", message)
+                self.assertIn("执行者 callback 摘要", message)
+                self.assertNotIn(long_payload, message)
+                self.assertNotIn(long_review_payload, message)
+                self.assertNotIn("以下是执行者 callback 原文：\nTEAM_ROUTER_CALLBACK", message)
+
     def test_role_request_templates_preserve_design_gates_but_compact_result_noise(self):
         task_id = "ctr-20260629-token-economy"
         plan_fields = {
@@ -1123,6 +1210,46 @@ class TestTeamRouterState(unittest.TestCase):
         claims = module.find_stale_state_claims(report, {"docs/team-router/packages/old.md": text})
 
         self.assertEqual(claims, [])
+
+    def test_truth_check_detects_workbench_current_package_behind_latest_package(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {
+            "gitStatusShort": [],
+            "diffFiles": [],
+            "skillSync": {"status": "match"},
+        }
+        workbench = "\n".join((
+            "# Team Router Workbench",
+            "## Current Task",
+            "- State: closeout recorded for `ctr-20260629-workbench-current-truth-doctor-ux`; review and verification gates accepted.",
+            "- Current next gate: after this local closeout commit, open `module extraction phase 1: policy/protocol split` only on explicit dispatch.",
+            "## Current Diff Surface",
+            "Current truth is command-derived.",
+        ))
+        module_map = "\n".join((
+            "# Team Router Module Map",
+            "Phase 1 completed the safe opening split: protocol parsing first, then pure gate policy.",
+            "The remaining safe extraction order is: watcher runtime -> status/closeout.",
+        ))
+        latest_package = "# Team Router Handoff Package: ctr-20260630-role-reuse-path-handoff-governance\n"
+
+        claims = module.find_stale_state_claims(
+            report,
+            {
+                str(ROOT / "docs" / "workbench.md"): workbench,
+                str(ROOT / "docs" / "team-router" / "module-map.md"): module_map,
+                str(ROOT / "docs" / "team-router" / "packages" / "ctr-20260630-role-reuse-path-handoff-governance.md"): latest_package,
+            },
+        )
+
+        claim_reasons = "\n".join(claim["reason"] for claim in claims)
+        self.assertIn("workbench current task is behind latest package record", claim_reasons)
+        self.assertIn("workbench next gate points at completed module extraction phase", claim_reasons)
 
     def test_router_doctor_dirty_next_action_requires_reviewer_then_verifier(self):
         spec = importlib.util.spec_from_file_location(
@@ -10235,10 +10362,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "closeout recorded for `ctr-20260629-workbench-current-truth-doctor-ux`",
-            "review and verification gates accepted",
-            "stale workbench/package current-state claims",
-            "refresh current-state text from fresh truth tools",
+            "closeout recorded for `ctr-20260630-current-truth-prompt-compact`",
+            "downstream reviewer/QA/verifier prompts use path handoff summaries",
+            "workbench/current-truth stale detection",
+            "latest package/module-map evidence",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -10246,9 +10373,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "module extraction phase 1: policy/protocol split",
+            "host adapter/scheduler integration requires an explicit host package",
+            "watcher/status module extraction remains a separate next module package",
             "no push, no PR, no merge, no deploy, no publish/release",
-            "Global skill sync for `codex-team-router` is complete and reports `status: match`",
+            "Repo/global skill comparison remains `status: match`",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -10272,6 +10400,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`skillSync.status: mismatch`",
             "active local package implementation for `ctr-20260629-workbench-current-truth-doctor-ux`",
             "active while this local package is awaiting reviewer/verifier gates",
+            "module extraction phase 1: policy/protocol split",
             "repo clean before `ctr-20260628-team-router-optimization-local-package` dispatch",
             "wait for a new explicit dispatch or user authorization",
             "No current diff surface is expected in idle state",

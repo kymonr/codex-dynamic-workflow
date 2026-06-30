@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: closeout recorded for `ctr-20260629-workbench-current-truth-doctor-ux`; review and verification gates accepted.
-- Last package objective: make stale workbench/package current-state claims visible when live git/skill truth is clean/synced, and make `scripts/team_router_doctor.py --json` tell managers to refresh current-state text from fresh truth tools before claiming current truth.
+- State: closeout recorded for `ctr-20260630-current-truth-prompt-compact`; local TDD evidence is recorded below.
+- Last package objective: make downstream reviewer/QA/verifier prompts use path handoff summaries instead of copying long callback/review bodies, and make workbench/current-truth stale detection catch current-state lag behind latest package/module-map evidence.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: no live orchestration, no module extraction, no push, no PR, no merge, no deploy, no publish/release. Global skill sync for `codex-team-router` is complete and reports `status: match`.
-- Current next gate: after this local closeout commit, open `module extraction phase 1: policy/protocol split` only on explicit dispatch.
+- Current boundary: no live orchestration, no host adapter/scheduler implementation, no watcher/status extraction, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. Repo/global skill comparison remains `status: match` because this package did not edit the skill files.
+- Current next gate: host adapter/scheduler integration requires an explicit host package with callable Python adapter/scheduler evidence; watcher/status module extraction remains a separate next module package after that boundary.
 
 ## Current Diff Surface
 
@@ -28,15 +28,15 @@ This file intentionally does not list a live diff surface. The closeout package 
 
 Active package verification:
 
-- Focused stale-current-state tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-ux'; py -B -m unittest tests.test_team_router.TestTeamRouterState.test_truth_check_detects_stale_current_state_when_clean_synced tests.test_team_router.TestTeamRouterState.test_truth_check_does_not_flag_clean_synced_neutral_current_sections tests.test_team_router.TestTeamRouterState.test_truth_check_does_not_flag_historical_package_records_as_current tests.test_team_router.TestTeamRouterState.test_truth_check_reports_stale_claims_and_is_read_only tests.test_team_router.TestTeamRouterState.test_router_doctor_stale_next_action_names_truth_check_and_doctor tests.test_team_router.TestTeamRouterState.test_router_doctor_reports_plain_status_without_dispatch -v` -> Ran 6 tests OK.
-- Rework synthetic clean/synced probe: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-ux'; py -B -c "... find_stale_state_claims(... ## Current Diff Surface ... Current next gate: none; no action required ...)"` -> `[]`.
-- Focused docs contract tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-ux'; py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface tests.test_team_router.TestTeamRouterSkillDoc.test_quality_gates_name_truth_and_doctor_read_only_tools -v` -> Ran 2 tests OK.
-- Full docs suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-ux'; py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc -v` -> Ran 46 tests OK.
-- Compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-ux'; py -B -m py_compile scripts\team_router_truth_check.py scripts\team_router_doctor.py tests\test_team_router.py` -> OK.
-- Full relevant state suite attempt: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-ux'; py -B -m unittest tests.test_team_router.TestTeamRouterState -v` -> Ran 47 tests; 46 OK, 1 unrelated existing failure in `test_protocol_contract_snapshot_includes_manager_orchestration_policy` because current runtime snapshot includes architect/QA direct-return markers while this assertion expects only executor/reviewer/verifier markers.
-- Closeout check after global sync: `py -B scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; no global skill reference differences; package files still present in local diff before commit.
-- Truth check after global sync: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; package files still present in local diff before commit; `skillSync.status: match`.
-- Doctor check after global sync: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty` before commit; `orchestrationStatus: manual_only`; top-level `nextAction` present.
+- RED focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_path_handoff_omits_long_callback_raw_from_downstream_prompts tests.test_team_router.TestTeamRouterState.test_truth_check_detects_workbench_current_package_behind_latest_package -v` -> failed before implementation because downstream prompts copied raw callback/review payloads and `find_stale_state_claims(...)` returned no workbench/package-lag claim.
+- GREEN focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_path_handoff_omits_long_callback_raw_from_downstream_prompts tests.test_team_router.TestTeamRouterState.test_truth_check_detects_workbench_current_package_behind_latest_package -v` -> Ran 2 tests OK.
+- Compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-current-truth-prompt-compact'; py -B -m py_compile src\team_router.py scripts\team_router_truth_check.py tests\test_team_router.py` -> OK.
+- Initial truth check while package is dirty: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; dirty files are this package's runtime/test/docs edits.
+- Initial doctor check while package is dirty: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `hostReadiness.summary: no host readiness snapshot supplied; manual orchestration only`.
+- Full suite: `py -B -m unittest discover -s tests -p test_team_router.py -v` -> Ran 337 tests OK.
+- Truth check: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; dirty files are this package's runtime/test/docs edits before commit.
+- Doctor check: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction` says reviewer then verifier before closeout.
+- Closeout check: `py -B scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; entrypoint `underTarget: true`.
 - Whitespace check: `git diff --check` -> exit 0; Git printed CRLF/LF normalization warnings only.
 
 ## Historical Records
@@ -73,12 +73,13 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- The stale-current-state detector is intentionally section-scoped. It should catch manager-facing current-state drift but avoid broad historical archive scans.
+- The stale-current-state detector remains section-scoped. It should catch manager-facing current-state drift, workbench package-date lag, and completed phase references without treating historical package archives as live truth.
+- Prompt compaction only activates when path fields exist. Inline-only fallback keeps raw callback/review context so manual flows do not lose evidence.
 - `scripts/team_router_doctor.py` remains evidence-only; `nextAction` is guidance, not protocol acceptance.
-- One broader `TestTeamRouterState` assertion unrelated to this package currently fails on architect/QA marker drift; this package records it as a validation blocker rather than changing runtime contract.
+- Host adapter/scheduler integration is not implemented in this package because current doctor evidence reports no supplied callable host readiness snapshot and `orchestrationStatus: manual_only`.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: reviewer and verifier passed for this package; global skill sync is complete.
-- Next gated step: local closeout commit for this package. Push, PR, merge, deploy, publish/release, and module extraction remain separate explicit gates.
+- Current gate: local package implementation passed focused tests, full suite, truth/doctor/closeout, whitespace checks, and local closeout commit; no current in-scope action remains for this package.
+- Next gated step: host adapter/scheduler integration requires an explicit host package with callable adapter/scheduler evidence. Watcher/status module extraction remains separate. Push, PR, merge, deploy, publish/release, and global skill sync remain out of scope.

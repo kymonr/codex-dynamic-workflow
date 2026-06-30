@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -14,10 +15,13 @@ SKILL_RELATIVE = Path("skills") / "codex-team-router"
 ENTRYPOINT_RELATIVE = SKILL_RELATIVE / "SKILL.md"
 DEFAULT_SCAN_FILES = (
     Path("docs") / "workbench.md",
+    Path("docs") / "team-router" / "module-map.md",
 )
 HARD_CAP_BYTES = 8192
 TARGET_BYTES = 7200
 OLD_OPTIMIZATION_PACKAGE = "ctr-20260628-team-router-optimization-1-6"
+PACKAGE_ID_RE = re.compile(r"ctr-\d{8}[a-z0-9-]*")
+PACKAGE_DATE_RE = re.compile(r"ctr-(\d{8})")
 CURRENT_STATE_HEADINGS = {
     "current task",
     "current state",
@@ -197,11 +201,62 @@ def _first_pending_gate_line(lines: list[str]) -> str | None:
     return None
 
 
+def _normalized_scan_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _is_workbench_path(path: str) -> bool:
+    return _normalized_scan_path(path).endswith("docs/workbench.md")
+
+
+def _is_package_path(path: str) -> bool:
+    normalized = _normalized_scan_path(path)
+    return "/docs/team-router/packages/" in normalized or normalized.startswith("docs/team-router/packages/")
+
+
+def _is_module_map_path(path: str) -> bool:
+    return _normalized_scan_path(path).endswith("docs/team-router/module-map.md")
+
+
+def _package_ids(value: str) -> set[str]:
+    return set(PACKAGE_ID_RE.findall(value))
+
+
+def _package_date(package_id: str) -> str | None:
+    match = PACKAGE_DATE_RE.search(package_id)
+    return match.group(1) if match else None
+
+
+def _latest_package_date(scan_texts: dict[str, str]) -> str | None:
+    dates: list[str] = []
+    for path, text in scan_texts.items():
+        if not _is_package_path(path):
+            continue
+        ids = _package_ids(path) | _package_ids(text[:240])
+        for package_id in ids:
+            date = _package_date(package_id)
+            if date is not None:
+                dates.append(date)
+    return max(dates) if dates else None
+
+
+def _module_map_marks_phase1_complete(scan_texts: dict[str, str]) -> bool:
+    for path, text in scan_texts.items():
+        if not _is_module_map_path(path):
+            continue
+        normalized = text.lower()
+        if "phase 1 completed" in normalized and "remaining safe extraction order" in normalized:
+            return True
+    return False
+
+
 def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str]) -> list[dict[str, str]]:
     claims: list[dict[str, str]] = []
     actual_skill_status = str(report["skillSync"]["status"])
     actual_dirty = bool(report["gitStatusShort"] or report["diffFiles"])
     actual_clean_synced = not actual_dirty and actual_skill_status == "match"
+    latest_package_date = _latest_package_date(scan_texts)
+    phase1_completed = _module_map_marks_phase1_complete(scan_texts)
 
     for path, text in scan_texts.items():
         current_lines = _current_state_lines(text)
@@ -270,6 +325,28 @@ def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str
                         path,
                         "current-state claims dirty diff surface while live git/skill truth is clean/synced",
                         dirty_line,
+                    )
+                )
+            if _is_workbench_path(path) and latest_package_date is not None:
+                current_dates = [
+                    date
+                    for date in (_package_date(package_id) for package_id in _package_ids(current_text))
+                    if date is not None
+                ]
+                if current_dates and max(current_dates) < latest_package_date:
+                    claims.append(
+                        _claim(
+                            path,
+                            "workbench current task is behind latest package record",
+                            "latest package date: %s; current package date: %s" % (latest_package_date, max(current_dates)),
+                        )
+                    )
+            if _is_workbench_path(path) and phase1_completed and "module extraction phase 1" in current_text.lower():
+                claims.append(
+                    _claim(
+                        path,
+                        "workbench next gate points at completed module extraction phase",
+                        "module-map marks phase 1 complete; current workbench still names module extraction phase 1",
                     )
                 )
     return claims

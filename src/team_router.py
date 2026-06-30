@@ -1786,32 +1786,75 @@ def _role_handoff_prompt_lines(plan_fields: Mapping[str, Any] | None,
     return lines
 
 
-def _reviewer_result_prompt_lines(reviewer_result: Mapping[str, Any] | str | None) -> list[str]:
+def _role_handoff_has_package_paths(handoff_lines: list[str]) -> bool:
+    return any(line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:")) for line in handoff_lines)
+
+
+def _role_handoff_has_package_metadata(handoff_lines: list[str]) -> bool:
+    return any(line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true")) for line in handoff_lines)
+
+
+def _compact_prompt_value(value: Any, *, path_hint: str, limit: int = 240) -> str | None:
+    text = _prompt_str(value)
+    if text is None:
+        return None
+    if "\n" in text:
+        text = " / ".join(part.strip() for part in text.splitlines() if part.strip())
+    if len(text) > limit:
+        return "<omitted; see %s>" % path_hint
+    return text
+
+
+def _callback_context_prompt_lines(callback_block: str, task_id: str, *, compact: bool) -> list[str]:
+    if not compact:
+        return ["", "以下是执行者 callback 原文：", callback_block]
+    lines = ["", "执行者 callback 摘要（长原文/完整证据见 executorReportPath 或 reviewPackagePath）："]
+    try:
+        fields = parse_callback(callback_block, task_id).fields
+    except ProtocolError as exc:
+        lines.extend((
+            "callbackParseStatus: omitted raw callback; parse failed: %s" % exc.__class__.__name__,
+            "callbackRawLocation: executorReportPath 或 reviewPackagePath",
+        ))
+        return lines
+    for key in ("status", "final", "summary", "evidence", "risks", "next", "deltaSince"):
+        value = _compact_prompt_value(fields.get(key), path_hint="executorReportPath/reviewPackagePath")
+        if value is not None:
+            lines.append("%s: %s" % (key, value))
+    if len(lines) == 2:
+        lines.append("callbackFields: omitted; see executorReportPath/reviewPackagePath")
+    return lines
+
+
+def _reviewer_result_prompt_lines(reviewer_result: Mapping[str, Any] | str | None, *, compact: bool = False) -> list[str]:
     if reviewer_result is None:
         return []
-    raw: str | None
     if isinstance(reviewer_result, Mapping):
         raw = _prompt_str(reviewer_result.get("raw"))
         fields = reviewer_result.get("fields") if isinstance(reviewer_result.get("fields"), Mapping) else {}
     else:
         raw = _prompt_str(reviewer_result)
         fields = {}
-    lines = [
-        "审查者结果上下文：",
-        "验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。",
-    ]
+    lines = ["审查者结果上下文：", "验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。"]
+    if compact:
+        if fields:
+            lines.append("审查者结果摘要（长原文/完整证据见 reviewPackagePath）：")
+            for key in ("result", "summary", "findings", "requiredChanges", "evidenceChecked", "risks"):
+                value = _compact_prompt_value(fields.get(key), path_hint="reviewPackagePath")
+                if value is not None:
+                    lines.append("%s: %s" % (key, value))
+            return lines
+        if raw is not None:
+            lines.extend(("审查者 review 原文已省略；请从 reviewPackagePath 核验证据。", "reviewRaw: <omitted; see reviewPackagePath>"))
+            return lines
     if raw is not None:
-        lines.extend((
-            "以下是审查者 review 原文：",
-            raw,
-        ))
+        lines.extend(("以下是审查者 review 原文：", raw))
         return lines
     for key in ("result", "summary", "findings", "requiredChanges", "evidenceChecked", "risks"):
         value = _prompt_str(fields.get(key))
         if value is not None:
             lines.append("%s: %s" % (key, value))
     return lines
-
 
 
 def _review_result_fields(review_result: Mapping[str, Any] | str | None) -> Mapping[str, Any] | None:
@@ -2571,7 +2614,10 @@ def make_qa_review_request_message(task_id: str,
         "qaMode: read-only/advisory",
         "responsibility: 独立检查测试策略、回归面、验收标准和证据缺口；不能修改文件、commit、push、PR、deploy，也不替代 verifier。",
     ]
-    lines.extend(_role_handoff_prompt_lines(plan_fields, None))
+    handoff_lines = _role_handoff_prompt_lines(plan_fields, None)
+    path_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    if handoff_lines:
+        lines.extend(handoff_lines)
     lines.extend(_role_review_direct_return_lines(
         marker="TEAM_ROUTER_QA_REVIEW",
         return_thread_id=return_thread_id,
@@ -2580,14 +2626,11 @@ def make_qa_review_request_message(task_id: str,
         delivery_key="qaReviewDelivery",
         fallback_key="qaReviewFallback",
     ))
-    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result)
+    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=path_handoff_enabled)
     if reviewer_lines:
-        lines.extend(("", "审查者结果上下文："))
-        lines.extend(reviewer_lines)
+        lines.extend(("", *reviewer_lines))
+    lines.extend(_callback_context_prompt_lines(executor_callback, task_id, compact=path_handoff_enabled))
     lines.extend((
-        "",
-        "以下是执行者 callback 原文：",
-        executor_callback,
         "",
         ROLE_HUMAN_LANGUAGE_RULE,
         "",
@@ -2739,10 +2782,8 @@ def make_reviewer_request_message(task_id: str,
         "responsibility: 识别设计风险、规则缺口、遗漏和新的坏模式；不是最终验收",
     ]
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
-    path_handoff_enabled = any(
-        line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true"))
-        for line in handoff_lines
-    )
+    path_handoff_enabled = _role_handoff_has_package_metadata(handoff_lines)
+    compact_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
@@ -2767,10 +2808,8 @@ def make_reviewer_request_message(task_id: str,
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
         ))
+    lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
     lines.extend((
-        "",
-        "以下是执行者 callback 原文：",
-        callback_block,
         "",
         ROLE_HUMAN_LANGUAGE_RULE,
         "",
@@ -3188,10 +3227,8 @@ def make_verifier_request_message(task_id: str,
     ]
     callback_fields = parse_callback(callback_block, task_id).fields
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
-    path_handoff_enabled = any(
-        line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true"))
-        for line in handoff_lines
-    )
+    path_handoff_enabled = _role_handoff_has_package_metadata(handoff_lines)
+    compact_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
@@ -3216,7 +3253,7 @@ def make_verifier_request_message(task_id: str,
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
         ))
-    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result)
+    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=compact_handoff_enabled)
     lines.extend((
         "",
         "验证者检查项：",
@@ -3247,10 +3284,8 @@ def make_verifier_request_message(task_id: str,
             "如果执行者 evidence 加 reviewer result 已足够覆盖授权范围，可以不重新运行命令，也不扩大检查范围。",
             "仍需列出剩余风险，并明确说明 stage/commit/push/PR/release 未执行。",
         ))
+    lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
     lines.extend((
-        "",
-        "以下是执行者 callback 原文：",
-        callback_block,
         "",
         ROLE_HUMAN_LANGUAGE_RULE,
         "",
