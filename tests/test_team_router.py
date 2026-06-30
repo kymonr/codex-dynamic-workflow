@@ -153,6 +153,22 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(team_router.save_task_ledger, team_router_state.save_task_ledger)
         self.assertIs(team_router.STATE_MACHINE_SNAPSHOT, team_router_state.STATE_MACHINE_SNAPSHOT)
 
+    def test_facade_reexports_host_runtime_symbols(self):
+        import team_router_host_runtime
+
+        names = (
+            "THREAD_TOOL_NAMES",
+            "LiveOrchestrationHostContext",
+            "probe_thread_adapter_capabilities",
+            "_heartbeat_scheduler_call",
+            "assess_live_orchestration_readiness",
+            "make_live_orchestration_host_context",
+            "_raise_if_host_context_conflict",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                self.assertIs(getattr(team_router, name), getattr(team_router_host_runtime, name))
+
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
 status: done
@@ -10314,13 +10330,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`team_router_policy.py`",
             "`team_router_runtime.py`",
             "`team_router_direct_return.py`",
+            "`team_router_host_runtime.py`",
+            "`team_router_watcher_runtime.py`",
             "`team_router_protocol.ProtocolError` only",
             "`team_router_protocol`, `team_router_state.StateStoreError`",
             "`protocol_contract_snapshot()`",
             "Deferred Future Modules",
             "Phase 2b2 extracted pure direct-return contract helpers",
             "capture/watch/state-save orchestration",
-            "remaining safe extraction order is: host readiness/watcher runtime -> status/closeout",
+            "remaining safe extraction order is: watcher runtime -> status/closeout",
             "First tests to move",
             "Acceptance gate",
         ):
