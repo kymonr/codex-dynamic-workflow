@@ -71,11 +71,10 @@ class FakeThreadAdapter:
     def create_thread(self, **kwargs):
         prompt = kwargs["prompt"]
         role = "role"
-        explicit_roles = {"Architect": "architect", "QA": "qa"}
         for line in prompt.splitlines():
-            match = re.match(r"^\s*role\s*:\s*(Architect|QA)\s*$", line)
+            match = re.match(r"^\s*role\s*:\s*(manager|executor|reviewer|verifier|architect|qa)\s*$", line, re.IGNORECASE)
             if match:
-                role = explicit_roles[match.group(1)]
+                role = match.group(1).lower()
                 break
         else:
             for candidate in ("manager", "executor", "verifier", "reviewer"):
@@ -919,6 +918,47 @@ regressionRisks: low
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
 
+
+    def test_manager_reviewer_verifier_prompts_codify_path_handoff_contract(self):
+        task_id = "ctr-20260630-role-thread-prompt-path-contract"
+        role_prompts = (
+            team_router.make_role_thread_prompt(
+                task_id,
+                "manager",
+                "规划并调度一个 path handoff package。",
+            ),
+            team_router.make_role_thread_prompt(
+                task_id,
+                "reviewer",
+                "审查 path handoff package。",
+            ),
+            team_router.make_role_thread_prompt(
+                task_id,
+                "verifier",
+                "验收 path handoff package。",
+            ),
+        )
+        manager_request = team_router.make_plan_request_message(
+            task_id,
+            "让 Manager 规划一个 PACKAGE 级别任务，并使用稳定路径交接。",
+            "local-package",
+        )
+
+        for prompt in role_prompts:
+            with self.subTest(role=prompt.splitlines()[2]):
+                self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", prompt)
+                self.assertIn("taskBriefPath", prompt)
+                self.assertIn("executorReportPath", prompt)
+                self.assertIn("reviewPackagePath", prompt)
+                self.assertIn("路径只作为交接证据", prompt)
+                self.assertIn("permission", prompt)
+                self.assertIn("riskBoundary", prompt)
+
+        self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", manager_request)
+        self.assertIn("PACKAGE 默认使用 reviewPackagePath", manager_request)
+        self.assertIn("taskBriefPath: <任务 brief 的 workspace 路径>", manager_request)
+        self.assertIn("executorReportPath: <执行者报告的 workspace 路径>", manager_request)
+        self.assertIn("reviewPackagePath: <review package 的 workspace 路径> | inline", manager_request)
     def test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists(self):
         task_id = "ctr-20260630-dispatch-prompt-path-handoff"
         long_executor_prompt = "LONG_EXECUTOR_PROMPT_" + ("x" * 2400)
@@ -7252,10 +7292,16 @@ regressionRisks: watcher transitions
             def create_thread(self, **kwargs):
                 prompt = kwargs["prompt"]
                 role = "role"
-                for candidate in ("manager", "executor", "verifier", "reviewer"):
-                    if candidate in prompt:
-                        role = candidate
+                for line in prompt.splitlines():
+                    match = re.match(r"^\s*role\s*:\s*(manager|executor|reviewer|verifier|architect|qa)\s*$", line, re.IGNORECASE)
+                    if match:
+                        role = match.group(1).lower()
                         break
+                else:
+                    for candidate in ("manager", "executor", "verifier", "reviewer"):
+                        if candidate in prompt:
+                            role = candidate
+                            break
                 thread_id = "thread-%s" % role
                 self.messages[thread_id] = []
                 return {"thread": {"id": thread_id, "title": "Nested %s title" % role}}
@@ -10520,9 +10566,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "repo-local package `ctr-20260630-dispatch-prompt-path-handoff` is locally committed",
-            "starts from committed status-tools package `4dd5a95`",
-            "Completed package objective: executor dispatch prompts use stable `taskBriefPath` / `reviewPackagePath` handoff",
+            "repo-local package `ctr-20260630-role-thread-prompt-path-contract` is in progress",
+            "starts from committed dispatch-prompt path-handoff package `ffcebd7`",
+            "Active package objective: codify role-thread prompt path handoff across Manager, Reviewer, and Verifier prompt surfaces",
+            "roleCommunicationMode: concise-protocol-plus-paths",
+            "taskBriefPath` / `executorReportPath` / `reviewPackagePath` fields",
             "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
@@ -10531,10 +10579,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "none inside repo-local dispatch-prompt path-handoff package",
-            "Real live host integration remains an external host package gate",
+            "send `ctr-20260630-role-thread-prompt-path-contract` to reviewer gate, then verifier gate",
+            "global skill sync remains a separate gate",
             "no push, no PR, no merge, no deploy, no publish/release",
-            "Repo/global skill comparison remains `status: match`",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -10545,10 +10592,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
-            "repo-local dispatch-prompt path-handoff package is locally committed",
-            "no repo-local role-thread gate remains",
-            "Next external gated step after local commit",
-            "executorPrompt: <omitted; see taskBriefPath/reviewPackagePath>"
+            "test_manager_reviewer_verifier_prompts_codify_path_handoff_contract",
+            "ROLE_THREAD_PATH_HANDOFF_PROMPT_LINES"
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
@@ -10591,6 +10636,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "active local package implementation for `ctr-20260630-dispatch-prompt-path-handoff`",
             "request explicit commit authorization for `ctr-20260630-dispatch-prompt-path-handoff`",
             "Next gated step: request explicit local commit authorization",
+            "repo-local dispatch-prompt path-handoff package is locally committed",
+            "no repo-local role-thread gate remains",
+            "Next external gated step after local commit",
         ):
             self.assertNotIn(stale_current, current_task_section + current_diff_section)
         self.assertNotIn("send this status-tools package to reviewer, then verifier", review_gate_section)

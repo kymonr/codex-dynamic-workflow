@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: repo-local package `ctr-20260630-dispatch-prompt-path-handoff` is locally committed; starts from committed status-tools package `4dd5a95`.
-- Completed package objective: executor dispatch prompts use stable `taskBriefPath` / `reviewPackagePath` handoff instead of copying long `executorPrompt` text across role conversations.
+- State: repo-local package `ctr-20260630-role-thread-prompt-path-contract` is in progress; starts from committed dispatch-prompt path-handoff package `ffcebd7`.
+- Active package objective: codify role-thread prompt path handoff across Manager, Reviewer, and Verifier prompt surfaces so bootstrap and plan/request prompts state `roleCommunicationMode: concise-protocol-plus-paths`, path evidence boundaries, and the `taskBriefPath` / `executorReportPath` / `reviewPackagePath` fields.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: no live host adapter implementation, no production scheduler/daemon, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. Repo/global skill comparison remains `status: match` unless this package explicitly edits skill files.
-- Current next gate: none inside repo-local dispatch-prompt path-handoff package; Real live host integration remains an external host package gate.
+- Current boundary: no live host adapter implementation, no production scheduler/daemon, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. This package edits the repo-local Team Router skill entrypoint/reference docs only; global skill sync remains a separate gate.
+- Current next gate: send `ctr-20260630-role-thread-prompt-path-contract` to reviewer gate, then verifier gate before any local closeout commit.
 
 ## Current Diff Surface
 
@@ -26,16 +26,22 @@ This file intentionally does not list a live diff surface. The dispatch-prompt p
 
 ## Verification Record
 
-Completed package verification:
+Active package verification so far:
 
-- Implementation: `src/team_router.py` now omits overlong executor dispatch objective text only when readable `taskBriefPath` or `reviewPackagePath` handoff metadata is present, replacing it with `executorPrompt: <omitted; see taskBriefPath/reviewPackagePath>` while preserving short inline prompts, no-path fallback, `inlineFallback: true`, and executorReportPath-only handoff behavior.
-- Test coverage: `tests/test_team_router.py` adds `test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists`, proving dispatch prompts include stable package paths and do not include the long `executorPrompt` payload; reviewer-required `test_executor_dispatch_keeps_long_prompt_inline_without_task_or_review_path` proves inlineFallback-only, no-path, and executorReportPath-only cases remain inline.
-- RED test: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists -v` -> failed before implementation because the full long prompt was copied under `目标：`.
-- GREEN focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists -v` -> Ran 1 test OK; related prompt template tests -> Ran 3 tests OK. Reviewer rework RED caught inlineFallback-only and executorReportPath-only omission; rework GREEN `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_executor_dispatch_keeps_long_prompt_inline_without_task_or_review_path tests.test_team_router.TestTeamRouterProtocol.test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists -v` -> Ran 2 tests OK.
+- Implementation: `src/team_router.py` adds `ROLE_THREAD_PATH_HANDOFF_PROMPT_LINES` and includes it in role-thread bootstrap prompts plus `make_plan_request_message()`.
+- Test coverage: `tests/test_team_router.py` adds `test_manager_reviewer_verifier_prompts_codify_path_handoff_contract`, covering Manager/Reviewer/Verifier bootstrap prompts and Manager plan request path handoff wording.
+- RED test: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_manager_reviewer_verifier_prompts_codify_path_handoff_contract -v` -> failed before implementation because role bootstrap prompts and Manager plan request lacked `roleCommunicationMode: concise-protocol-plus-paths`.
+- GREEN focused test: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_manager_reviewer_verifier_prompts_codify_path_handoff_contract -v` -> Ran 1 test OK.
+- Related prompt/doc checks -> Ran 7 tests OK.
+- Full suite: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 348 tests OK.
+- Truth check -> `staleClaims: []`, `skill.entrypointBytes: 7145`, `skill.underTarget: true`, `skillSync.status: mismatch` because this package changes repo-local skill/reference docs and global sync is not authorized.
+- Doctor check -> `truthStatus: dirty`, `orchestrationStatus: manual_only`, next action is reviewer then verifier before closeout.
+- Closeout check -> `skill.entrypointBytes: 7145`, `underTarget: true`, `skillSync.status: mismatch`.
+- Whitespace check: `git diff --check` -> exit 0 with CRLF/LF replacement warnings only.
 - Boundary: no parser, gate, direct-return, watcher, host adapter, production scheduler/daemon, push, PR, merge, deploy, publish/release, or global skill sync change in this package.
-- Full suite: `py -B -m unittest discover -s tests -p test_team_router.py` -> Ran 347 tests OK after reviewer-required rework. Truth check -> `staleClaims: []`, `skillSync.status: match`; doctor -> `truthStatus: dirty`, `orchestrationStatus: manual_only`, `hostReadiness.status: not_supplied`; closeout_check -> `skillSync.status: match`, `underTarget: true`; `git diff --check` -> exit 0 with CRLF/LF warnings only. Reviewer re-review returned `pass` by direct-send with `requiredChanges: none`; verifier returned `pass` by direct-send with `requiredChanges: none`.
 Previous package verification:
 
+- Previous `ctr-20260630-dispatch-prompt-path-handoff` passed reviewer and verifier, then was explicitly authorized and committed as `ffcebd7`; its executor dispatch prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-status-tools-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `4dd5a95`; its read-only status tool extraction is historical baseline only.
 - Previous `ctr-20260630-status-closeout-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `d66b77d`; its closeout/status helper extraction is now historical baseline only.
 - Previous `ctr-20260630-watcher-status-extraction` was explicitly authorized and committed as `dcff722`; its watcher runtime extraction is historical baseline only.
@@ -74,11 +80,11 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- Dispatch prompt path handoff is prompt transport only; it must not change parser, gate, direct-return, watcher, host readiness, or role-thread snapshot semantics.
+- Role-thread prompt path handoff is prompt contract text only; it must not change parser, gate, direct-return, watcher, host readiness, or role-thread snapshot semantics.
 - Real host integration is still external: no live host adapter implementation, no production scheduler/daemon, and no callable host readiness snapshot is supplied by this repo package.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: repo-local dispatch-prompt path-handoff package is locally committed; no repo-local role-thread gate remains.
-- Next external gated step after local commit: real live host integration remains blocked until an external host supplies callable adapter/scheduler evidence.
+- Current gate: local verification is complete for `ctr-20260630-role-thread-prompt-path-contract`; send this package to reviewer gate, then verifier gate.
+- No commit, push, PR, merge, deploy, publish/release, or global skill sync has been authorized for this active package.

@@ -59,7 +59,7 @@ After completion, default is no role-thread clear and no extra `ROLE_CLOSEOUT`; 
 
 Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. Terse approvals authorize at most `DISPATCH_ONLY`; workspace writes require explicit `local-package` executor delegation; local closeout needs verifier pass plus explicit commit request; push/PR/merge/deploy/global sync require separate authorization.
 
-Prefer stable file/path handoff. `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` are explicit protocol fields: FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless explicit inline fallback is marked. Review packages supplement protocol blocks. Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.
+stable file/path handoff: `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` are explicit protocol fields: FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless explicit inline fallback is marked. Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.
 
 Role Communication Economy: preserve gates; use protocol block plus stable path references and delta-only follow-up. Put long context in `taskBriefPath`, `executorReportPath`, or `reviewPackagePath`.
 
