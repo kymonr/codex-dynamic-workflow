@@ -1,0 +1,258 @@
+# -*- coding: utf-8 -*-
+"""Pure direct-return contract helpers for Team Router."""
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from team_router_protocol import (
+    ProtocolError,
+    ProtocolMessage,
+    _iter_marker_blocks,
+    parse_callback,
+    parse_message,
+    parse_plan,
+    parse_review,
+    parse_verdict,
+)
+from team_router_state import StateStoreError
+
+
+def _message_text(message: Mapping[str, Any]) -> str:
+    for key in ("text", "content", "summary"):
+        value = message.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _direct_return_record(ledger: Mapping[str, Any],
+                          role: str) -> Mapping[str, Any] | None:
+    if role == "executor":
+        dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+        record = dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else None
+        if not isinstance(record, Mapping):
+            return None
+        if not record.get("returnThreadId") or record.get("callbackDelivery") != "direct-send":
+            return None
+        return record
+    if role == "reviewer":
+        review = ledger.get("review") if isinstance(ledger.get("review"), Mapping) else None
+        request = review.get("request") if isinstance(review, Mapping) else None
+        if not isinstance(request, Mapping):
+            return None
+        if not request.get("returnThreadId") or request.get("reviewDelivery") != "direct-send":
+            return None
+        return request
+    if role == "architect":
+        review = ledger.get("architectureReview") if isinstance(ledger.get("architectureReview"), Mapping) else None
+        request = review.get("request") if isinstance(review, Mapping) else None
+        if not isinstance(request, Mapping):
+            return None
+        if not request.get("returnThreadId") or request.get("architectReviewDelivery") != "direct-send":
+            return None
+        return request
+    if role == "qa":
+        review = ledger.get("qaReview") if isinstance(ledger.get("qaReview"), Mapping) else None
+        request = review.get("request") if isinstance(review, Mapping) else None
+        if not isinstance(request, Mapping):
+            return None
+        if not request.get("returnThreadId") or request.get("qaReviewDelivery") != "direct-send":
+            return None
+        return request
+    if role == "verifier":
+        verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+        request = verification.get("request") if isinstance(verification, Mapping) else None
+        if not isinstance(request, Mapping):
+            return None
+        if not request.get("returnThreadId") or request.get("verdictDelivery") != "direct-send":
+            return None
+        return request
+    raise StateStoreError("invalid direct-return role: %s" % role)
+
+
+def _direct_return_capture_allowed_for_status(status: str,
+                                             role: str,
+                                             *,
+                                             needs_feedback_role: str | None = None) -> bool:
+    if role == "executor":
+        return status in {"awaiting_callback", "callback_unreachable"} or needs_feedback_role == "executor"
+    if role == "reviewer":
+        return status in {"reviewing", "review_unreachable"} or needs_feedback_role == "reviewer"
+    if role == "architect":
+        return status in {"awaiting_architect_review", "architect_review_unreachable"} or needs_feedback_role == "architect"
+    if role == "qa":
+        return status in {"awaiting_qa_review", "qa_review_unreachable"} or needs_feedback_role == "qa"
+    if role == "verifier":
+        return status in {"verifying", "callback_unreachable"} or needs_feedback_role == "verifier"
+    raise StateStoreError("invalid direct-return role: %s" % role)
+
+
+def _direct_return_candidate_messages(messages: list[Mapping[str, Any]],
+                                      source_thread_id: str) -> list[Mapping[str, Any]]:
+    out: list[Mapping[str, Any]] = []
+    for message in messages:
+        if message.get("sourceThreadId") != source_thread_id:
+            continue
+        out.append(message)
+    return out
+
+
+def _direct_return_protocol_message(messages: list[Mapping[str, Any]],
+                                    *,
+                                    marker: str,
+                                    task_id: str,
+                                    source_thread_id: str) -> tuple[ProtocolMessage | None, dict[str, Any] | None, Mapping[str, Any] | None]:
+    candidates = _direct_return_candidate_messages(messages, source_thread_id)
+    last_message = candidates[-1] if candidates and isinstance(candidates[-1], Mapping) else None
+    for message in reversed(candidates):
+        text = _message_text(message)
+        if not text:
+            continue
+        try:
+            marker_blocks = [block for block in _iter_marker_blocks(text) if block.marker == marker]
+        except ProtocolError as exc:
+            malformed = {
+                "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+                "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+                "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+                "error": str(exc),
+            }
+            return None, malformed, message
+        if not marker_blocks:
+            continue
+        marker_block = marker_blocks[-1]
+        if marker_block.task_id != task_id:
+            malformed = {
+                "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+                "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+                "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+                "error": "%s.taskId must be %r, got %r" % (marker, task_id, marker_block.task_id),
+            }
+            return None, malformed, message
+        try:
+            if marker == "TEAM_ROUTER_VERDICT":
+                parsed = parse_verdict(marker_block.raw, task_id)
+            elif marker == "TEAM_ROUTER_REVIEW":
+                parsed = parse_review(marker_block.raw, task_id)
+            elif marker == "TEAM_ROUTER_CALLBACK":
+                parsed = parse_callback(marker_block.raw, task_id)
+            elif marker == "TEAM_ROUTER_PLAN":
+                parsed = parse_plan(marker_block.raw, task_id)
+            else:
+                parsed = parse_message(marker_block.raw, marker, task_id)
+            return parsed, None, message
+        except ProtocolError as exc:
+            if str(exc).startswith("missing "):
+                return None, None, message
+            malformed = {
+                "messageId": message.get("messageId") if isinstance(message, Mapping) else None,
+                "sentAt": message.get("sentAt") if isinstance(message, Mapping) else None,
+                "sourceThreadId": message.get("sourceThreadId") if isinstance(message, Mapping) else None,
+                "error": str(exc),
+            }
+            return None, malformed, message
+    return None, None, last_message
+
+
+def _normalize_direct_return_role(role: Any, *, expected_role: str) -> str:
+    value = str(role or expected_role).strip().lower()
+    return value or expected_role
+
+
+def _validate_direct_return_receipt(msg: ProtocolMessage,
+                                    manager_message: Mapping[str, Any] | None,
+                                    *,
+                                    task_id: str,
+                                    expected_role: str,
+                                    expected_role_thread_id: str,
+                                    expected_return_thread_id: str | None = None) -> dict[str, Any] | None:
+    message = manager_message if isinstance(manager_message, Mapping) else {}
+    role_value = str(msg.fields.get("role") or "").strip()
+    source_role_thread_id = str(msg.fields.get("sourceRoleThreadId") or "").strip()
+    protocol_source_thread_id = str(msg.fields.get("sourceThreadId") or "").strip()
+    expected_return = str(expected_return_thread_id or "").strip()
+    errors: list[str] = []
+    if msg.task_id != task_id:
+        errors.append("%s.taskId must be %r, got %r" % (msg.marker, task_id, msg.task_id))
+    if expected_return:
+        if not protocol_source_thread_id:
+            errors.append("%s.sourceThreadId is required" % msg.marker)
+        elif protocol_source_thread_id != expected_return:
+            errors.append(
+                "%s.sourceThreadId must be %r, got %r"
+                % (msg.marker, expected_return, protocol_source_thread_id)
+            )
+    if not role_value:
+        errors.append("%s.role is required" % msg.marker)
+    elif _normalize_direct_return_role(role_value, expected_role=expected_role) != expected_role:
+        errors.append(
+            "%s.role must be %r, got %r"
+            % (msg.marker, expected_role, role_value)
+        )
+    if not source_role_thread_id:
+        errors.append("%s.sourceRoleThreadId is required" % msg.marker)
+    elif source_role_thread_id != expected_role_thread_id:
+        errors.append(
+            "%s.sourceRoleThreadId must be %r, got %r"
+            % (msg.marker, expected_role_thread_id, source_role_thread_id)
+        )
+    if not errors:
+        return None
+    return {
+        "messageId": message.get("messageId"),
+        "sentAt": message.get("sentAt"),
+        "sourceThreadId": message.get("sourceThreadId"),
+        "protocolSourceThreadId": protocol_source_thread_id,
+        "protocolRole": role_value,
+        "protocolSourceRoleThreadId": source_role_thread_id,
+        "error": "; ".join(errors),
+    }
+
+
+def _validate_self_thread_fallback_receipt(msg: ProtocolMessage,
+                                           fallback_message: Mapping[str, Any] | None,
+                                           *,
+                                           task_id: str,
+                                           expected_role: str,
+                                           expected_role_thread_id: str,
+                                           expected_return_thread_id: str | None = None) -> dict[str, Any] | None:
+    malformed = _validate_direct_return_receipt(
+        msg,
+        fallback_message,
+        task_id=task_id,
+        expected_role=expected_role,
+        expected_role_thread_id=expected_role_thread_id,
+        expected_return_thread_id=expected_return_thread_id,
+    )
+    message = fallback_message if isinstance(fallback_message, Mapping) else {}
+    message_source_thread_id = str(message.get("sourceThreadId") or "").strip()
+    if message_source_thread_id and message_source_thread_id != expected_role_thread_id:
+        error = "message sourceThreadId must be %r, got %r" % (expected_role_thread_id, message_source_thread_id)
+        if malformed is not None:
+            malformed = dict(malformed)
+            existing = str(malformed.get("error") or "")
+            malformed["error"] = "%s; %s" % (existing, error) if existing else error
+            return malformed
+        return {
+            "messageId": message.get("messageId"),
+            "sentAt": message.get("sentAt"),
+            "sourceThreadId": message.get("sourceThreadId"),
+            "protocolSourceThreadId": str(msg.fields.get("sourceThreadId") or "").strip(),
+            "protocolRole": str(msg.fields.get("role") or "").strip(),
+            "protocolSourceRoleThreadId": str(msg.fields.get("sourceRoleThreadId") or "").strip(),
+            "error": error,
+        }
+    return malformed
+
+
+def _receipt_metadata(record: Mapping[str, Any],
+                      *,
+                      source: str,
+                      channel: str) -> dict[str, Any]:
+    return {
+        "source": source,
+        "channel": channel,
+        "roleThreadId": record.get("threadId"),
+        "returnThreadId": record.get("returnThreadId"),
+        "orchestratorThreadId": record.get("orchestratorThreadId") or record.get("returnThreadId"),
+    }
