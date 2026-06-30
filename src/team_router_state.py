@@ -354,6 +354,24 @@ def _required_str(value: Any, field: str) -> str:
 def _search_anchor(message_id: str | None, sent_at: str) -> dict[str, Any]:
     return {"messageId": message_id, "sentAt": _required_str(sent_at, "sentAt")}
 
+def _has_observation_content(ledger: Mapping[str, Any],
+                             obs_type: str,
+                             role: str,
+                             thread_id: str,
+                             content: str) -> bool:
+    observations = ledger.get("observations") if isinstance(ledger.get("observations"), list) else []
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        if (
+            observation.get("type") == obs_type
+            and observation.get("role") == role
+            and observation.get("threadId") == thread_id
+            and observation.get("content") == content
+        ):
+            return True
+    return False
+
 
 def _latest_executor_dispatch(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
     dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []

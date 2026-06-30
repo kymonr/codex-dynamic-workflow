@@ -155,6 +155,7 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(team_router._search_anchor, team_router_state._search_anchor)
         self.assertIs(team_router._role_review_request_record, team_router_state._role_review_request_record)
         self.assertIs(team_router._latest_executor_dispatch, team_router_state._latest_executor_dispatch)
+        self.assertIs(team_router._has_observation_content, team_router_state._has_observation_content)
         self.assertIs(team_router._inherited_verifier_return_thread_id, team_router_state._inherited_verifier_return_thread_id)
 
     def test_facade_reexports_host_runtime_symbols(self):
@@ -222,6 +223,39 @@ class TestTeamRouterProtocol(unittest.TestCase):
     def test_test_case_names_are_unique(self):
         names = [name for name, value in TestTeamRouterProtocol.__dict__.items() if name.startswith("test_")]
         self.assertEqual(len(names), len(set(names)))
+
+    def test_state_observation_content_checks_existing_ledger_observations(self):
+        ledger = {
+            "observations": [
+                {
+                    "type": "callback_raw",
+                    "role": "executor",
+                    "threadId": "executor-thread",
+                    "content": "TEAM_ROUTER_CALLBACK taskId=ctr-1",
+                },
+                "ignored",
+            ]
+        }
+
+        self.assertTrue(
+            team_router_state._has_observation_content(
+                ledger,
+                "callback_raw",
+                "executor",
+                "executor-thread",
+                "TEAM_ROUTER_CALLBACK taskId=ctr-1",
+            )
+        )
+        self.assertFalse(
+            team_router_state._has_observation_content(
+                ledger,
+                "callback_raw",
+                "executor",
+                "other-thread",
+                "TEAM_ROUTER_CALLBACK taskId=ctr-1",
+            )
+        )
+
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
 status: done
@@ -10573,11 +10607,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "repo-local package `ctr-20260630-registry-ledger-state-extraction` is open",
-            "`0596316` was pushed to `origin/master`",
-            "Active package objective: define and execute the next conservative registry/ledger state extraction step",
+            "no active repo-local package",
+            "`9b7ac98` was pushed to `origin/master`",
+            "Latest completed package objective: define the next conservative ledger transition extraction cut",
             "_role_review_request_record()",
-            "`src/team_router_state.py` owns JSON primitives and role binding persistence",
+            "`src/team_router_state.py` owns JSON primitives, role binding persistence, search anchors",
             "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
@@ -10586,9 +10620,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "finish verification for `ctr-20260630-registry-ledger-state-extraction`, then run reviewer and verifier gates",
-            "no global skill sync in this package unless separately authorized",
-            "no push, no PR, no merge, no deploy, no publish/release",
+            "none after closeout",
+            "global skill sync are authorized",
+            "no PR, merge, deploy, publish/release",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -10599,7 +10633,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
-            "test_facade_reexports_extracted_state_symbols",
+            "Implementation: moved `_has_observation_content()`",
             "_search_anchor()"
         ):
             self.assertIn(needle, text)

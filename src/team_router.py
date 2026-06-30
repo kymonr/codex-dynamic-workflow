@@ -129,6 +129,7 @@ from team_router_state import (
     _as_int,
     _as_list,
     _as_mapping,
+    _has_observation_content,
     _inherited_reviewer_return_thread_id,
     _inherited_verifier_return_thread_id,
     _latest_executor_dispatch,
@@ -2091,24 +2092,6 @@ def _messages_after_anchor(messages: list[Mapping[str, Any]],
 def _messages_text(messages: list[Mapping[str, Any]]) -> str:
     return "\n\n".join(_message_text(message) for message in messages if _message_text(message))
 
-
-def _has_observation_content(ledger: Mapping[str, Any],
-                             obs_type: str,
-                             role: str,
-                             thread_id: str,
-                             content: str) -> bool:
-    observations = ledger.get("observations") if isinstance(ledger.get("observations"), list) else []
-    for observation in observations:
-        if not isinstance(observation, Mapping):
-            continue
-        if (
-            observation.get("type") == obs_type
-            and observation.get("role") == role
-            and observation.get("threadId") == thread_id
-            and observation.get("content") == content
-        ):
-            return True
-    return False
 
 
 def _direct_return_capture_allowed(ledger: Mapping[str, Any], role: str) -> bool:

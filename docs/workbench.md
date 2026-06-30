@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: repo-local package `ctr-20260630-registry-ledger-state-extraction` is open. It starts after `0596316` was pushed to `origin/master` and the authorized global skill sync reported `match`; fresh command output overrides this note.
-- Active package objective: define and execute the next conservative registry/ledger state extraction step, starting from the current split where `src/team_router_state.py` owns JSON primitives and role binding persistence while `src/team_router.py` still owns higher-level ledger mutation and orchestration transitions.
+- State: no active repo-local package. Latest completed package `ctr-20260630-ledger-transition-state-extraction` passed reviewer v3 and verifier; local commit, push, and global skill sync are authorized for closeout in this turn. Fresh command output overrides this note.
+- Latest completed package objective: define the next conservative ledger transition extraction cut, starting from the current split where `src/team_router_state.py` owns JSON primitives, role binding persistence, search anchors, review request records, and latest-request accessors while `src/team_router.py` still owns higher-level ledger mutation and orchestration transitions.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: no live host adapter implementation, no production scheduler/daemon, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package unless separately authorized. Implementation moved only pure registry/ledger state helpers into `src/team_router_state.py`; remaining work before closeout is verification, reviewer gate, verifier gate, then local commit if authorized by this package flow.
-- Current next gate: finish verification for `ctr-20260630-registry-ledger-state-extraction`, then run reviewer and verifier gates before local closeout commit.
+- Current boundary: closeout commit, push, and global skill sync are authorized; no PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or new implementation is authorized. Implementation moved only `_has_observation_content()` into `src/team_router_state.py`; no parser/gate/direct-return/watcher/host/prompt behavior changed.
+- Current next gate: none after closeout; open a new repo-local package only on explicit dispatch.
 
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
@@ -25,20 +25,16 @@ This file intentionally does not list a live diff surface. The current package f
 
 ## Verification Record
 
-Active package verification so far:
+Latest package verification:
 
-- Package opening: update this workbench and create `docs/team-router/packages/ctr-20260630-registry-ledger-state-extraction.md`.
-- Starting evidence before opening this package: `0596316` was pushed to `origin/master`; authorized global skill sync reported `skillSync.status: match`; truth check reported `staleClaims: []`; doctor reported `truthStatus: clean_synced`.
-- Implementation: moved `_search_anchor()`, `_role_review_request_record()`, `_latest_executor_dispatch()`, `_latest_reviewer_request()`, `_return_thread_id_from_record()`, `_inherited_reviewer_return_thread_id()`, and `_inherited_verifier_return_thread_id()` from `src/team_router.py` to `src/team_router_state.py`; facade compatibility remains through imports.
-- Focused verification passed: `py -B -m py_compile src\team_router.py src\team_router_state.py tests\test_team_router.py`, `test_facade_reexports_extracted_state_symbols`, dispatch search-anchor/fallback tests, and architect/QA direct-return request metadata tests.
-- Reviewer v2 found duplicate unittest method name; fixed by restoring unique `test_manager_reviewer_verifier_prompts_codify_path_handoff_contract` and adding `test_test_case_names_are_unique` guard.
-- Focused recheck after fix: `test_facade_reexports_extracted_state_symbols`, `test_manager_reviewer_verifier_prompts_codify_path_handoff_contract`, and `test_test_case_names_are_unique` -> Ran 3 tests OK.
-- Full suite after fix: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 349 tests OK.
-- Reviewer gate: v2 thread `019f190d-4ff5-79f0-bda6-00c7ea1d0e49` first returned `needs_rework` for duplicate unittest method name; after the fix it returned `pass` with `requiredChanges: none`.
-- Verifier gate: thread `019f1914-ec15-7fa2-9357-10946ccf52cf` first returned `needs_rework` for literal `\\n-` doc artifacts; after the docs fix it returned `pass` with `requiredChanges: none`.\n- Remaining planned checks: final truth/doctor/closeout refresh and local commit.
-- Boundary: no parser, gate, direct-return, watcher, host adapter, production scheduler/daemon, push, PR, merge, deploy, publish/release, or global skill sync change in this package unless separately authorized.
+- Package opening: update this workbench, create `docs/team-router/packages/ctr-20260630-ledger-transition-state-extraction.md`, and align the workbench contract test with the new current package.
+- Starting evidence before opening this package: `9b7ac98` was pushed to `origin/master`; `git status -sb --untracked-files=all` reported `## master...origin/master`.
+- Implementation: moved `_has_observation_content()` from `src/team_router.py` to `src/team_router_state.py`; facade compatibility remains through import/re-export.
+- Verification passed so far: `py -B -m py_compile src\team_router.py src\team_router_state.py tests\test_team_router.py`; focused state/workbench/module-map tests -> Ran 4 OK; full `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 350 OK; truth check reported no stale claims; doctor reported dirty truth; closeout skill-sync evidence must be refreshed in each role worktree; reviewer v3 returned pass with `requiredChanges: none`; verifier returned pass with `requiredChanges: none`; `git diff --check` exit 0 with CRLF/LF warnings only.
+- Closeout authorization: local commit, push, and global skill sync are authorized for this package; PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, and new implementation remain out of scope.
 Previous package verification:
 
+- Previous `ctr-20260630-registry-ledger-state-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `9b7ac98`; it was pushed to `origin/master`. It moved `_search_anchor()`, `_role_review_request_record()`, and pure latest-request accessors into `src/team_router_state.py` and is historical baseline only.
 - Previous `ctr-20260630-role-thread-prompt-path-contract` passed reviewer and verifier, then was explicitly authorized and committed as `0596316`; it was pushed to `origin/master`, and its authorized global skill sync reported `match`. Its role-thread prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-dispatch-prompt-path-handoff` passed reviewer and verifier, then was explicitly authorized and committed as `ffcebd7`; its executor dispatch prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-status-tools-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `4dd5a95`; its read-only status tool extraction is historical baseline only.
@@ -85,5 +81,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: reviewer and verifier passed for `ctr-20260630-registry-ledger-state-extraction`; local closeout commit is next.
-- No commit, push, PR, merge, deploy, publish/release, or global skill sync has been authorized for this active package.
+- Current gate: none; reviewer v3 and verifier passed `ctr-20260630-ledger-transition-state-extraction`.
+- No PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or new implementation is authorized for closeout.
