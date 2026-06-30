@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active repo-local package `ctr-20260701-latest-executor-callback-state-extraction`; local implementation, verification, reviewer v2, and verifier passed; closeout authorization remains pending.
-- Current package objective: continue the conservative registry/ledger state extraction by moving only `_latest_executor_callback_observation()` into `src/team_router_state.py`.
-- Starting evidence before opening this package: `git status -sb --untracked-files=all` reported `## master...origin/master`; previous package `ctr-20260630-ledger-transition-state-extraction` was committed and pushed before this new package opened.
+- State: no active repo-local package. Latest completed package `ctr-20260701-latest-executor-callback-state-extraction` passed reviewer v2 and verifier, was committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync reported `match`.
+- Latest completed package objective: continue the conservative registry/ledger state extraction by moving only `_latest_executor_callback_observation()` into `src/team_router_state.py`.
+- Starting evidence before opening that package: `git status -sb --untracked-files=all` reported `## master...origin/master`; previous package `ctr-20260630-ledger-transition-state-extraction` was committed and pushed before this package opened.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: only the pure in-memory executor callback observation lookup may move from `src/team_router.py` to `src/team_router_state.py`; no parser/gate/direct-return/watcher/host/prompt behavior, live adapter, production scheduler/daemon, PR, merge, deploy, publish/release, commit, push, or global skill sync is authorized for this package yet.
-- Current next gate: closeout authorization; commit/push/global skill sync require separate authorization after verifier pass, and no closeout side effect is authorized yet.
+- Completed package boundary: only the pure in-memory executor callback observation lookup moved from `src/team_router.py` to `src/team_router_state.py`; no parser/gate/direct-return/watcher/host/prompt behavior, live adapter, production scheduler/daemon, PR, merge, deploy, or publish/release was included.
+- Current next gate: none after closeout; open a new repo-local package only on explicit dispatch.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -39,7 +39,7 @@ Latest package verification:
 - `git diff --check` -> exit 0 with CRLF/LF warnings only.
 - Reviewer v2 status: pass; `TEAM_ROUTER_REVIEW` thread `019f1959-2aea-71a1-986d-56ee156f9804` reported `requiredChanges: none`.
 - Verifier status: pass; `TEAM_ROUTER_VERDICT` thread `019f195c-f32d-7582-95d6-ad532339053a` reported `requiredChanges: none`.
-- Closeout status: pending explicit authorization; no commit, push, PR, merge, deploy, publish/release, or global skill sync is authorized for this new package yet.
+- Closeout status: committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync check reported `status: match`; no PR, merge, deploy, or publish/release was included.
 
 Previous package verification:
 
@@ -90,5 +90,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: closeout authorization for `ctr-20260701-latest-executor-callback-state-extraction`; reviewer v2 and verifier passed.
-- No commit, push, PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or global skill sync is authorized for this new package yet.
+- Current gate: none after closeout for `ctr-20260701-latest-executor-callback-state-extraction`; open a new repo-local package only on explicit dispatch.
+- No PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or new implementation is authorized after closeout.

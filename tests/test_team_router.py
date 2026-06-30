@@ -10641,8 +10641,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "active repo-local package `ctr-20260701-latest-executor-callback-state-extraction`",
-            "Current package objective: continue the conservative registry/ledger state extraction",
+            "no active repo-local package",
+            "Latest completed package `ctr-20260701-latest-executor-callback-state-extraction`",
+            "committed as `8189ce1`",
+            "repo/global skill sync reported `match`",
+            "Latest completed package objective: continue the conservative registry/ledger state extraction",
             "_latest_executor_callback_observation()",
             "pure in-memory executor callback observation lookup",
             "`src/team_router_state.py`",
@@ -10653,8 +10656,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "reviewer and verifier",
-            "commit/push/global skill sync require separate authorization",
+            "none after closeout",
+            "open a new repo-local package only on explicit dispatch",
             "no parser/gate/direct-return/watcher/host/prompt behavior",
             "Current Diff Surface",
             "Current truth is command-derived",
@@ -10674,16 +10677,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         for stale in (
-            "no active repo-local package",
-            "none after closeout",
-            "closeout commit, push, and global skill sync are authorized",
+            "State: active repo-local package",
+            "closeout authorization remains pending",
+            "no closeout side effect is authorized yet",
+            "Current gate: closeout authorization",
         ):
             self.assertNotIn(stale, current_task_section)
         self.assertNotIn("`r`n", text)
         self.assertNotIn("\t", text)
         self.assertNotIn("\b", text)
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
-        self.assertNotIn("Current gate: none", review_gate_section)
+        self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn("Historical Records", text)
         self.assertIn("Older entries are history only", historical_section)
         self.assertIn("ctr-20260628-team-router-optimization-1-6", historical_section)

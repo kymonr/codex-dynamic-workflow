@@ -4,7 +4,7 @@
 
 - taskId: `ctr-20260701-latest-executor-callback-state-extraction`
 - openedAt: 2026-07-01
-- status: local implementation, verification, reviewer v2, and verifier passed; closeout authorization pending
+- status: completed; committed as `8189ce1`, pushed to `origin/master`, repo/global skill sync status `match`
 - objective: continue the conservative registry/ledger state extraction with one additional pure in-memory ledger helper.
 - startTruth: package starts from a clean synced worktree: `git status -sb --untracked-files=all` reported `## master...origin/master`.
 
@@ -19,7 +19,7 @@
 
 - No parser marker schema, gate policy, direct-return receipt validation, watcher cadence, host runtime, prompt text, thread adapter behavior, live adapter, production scheduler/daemon, or status transition behavior changes.
 - No capture/read handler, save/load, file I/O, malformed direct-return, role-thread orchestration, or prompt construction extraction.
-- No commit, push, PR, merge, deploy, publish/release, or global skill sync is authorized for this new package yet.
+- Closeout commit, push, and global skill sync check were authorized and completed; no PR, merge, deploy, or publish/release was included.
 
 ## Candidate Cut
 
@@ -47,4 +47,4 @@
 
 - Reviewer: pass. Reviewer v2 thread `019f1959-2aea-71a1-986d-56ee156f9804` returned `TEAM_ROUTER_REVIEW result: pass`, `requiredChanges: none`.
 - Verifier: pass. Verifier thread `019f195c-f32d-7582-95d6-ad532339053a` returned `TEAM_ROUTER_VERDICT result: pass`, `requiredChanges: none`.
-- Next allowed step: explicit closeout authorization for commit/push/global skill sync; no closeout side effect is authorized yet.
+- Closeout: committed as `8189ce1`, pushed to `origin/master`, and `py -B scripts\team_router_skill_sync_check.py --check` reported `status: match`; no global skill file write was needed.
