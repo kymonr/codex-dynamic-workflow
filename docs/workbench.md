@@ -4,12 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active local-package `ctr-20260630-host-adapter-scheduler`; reviewer/verifier accepted and local commit is authorized.
-- Last package objective: explicitly check the host adapter/scheduler gate before watcher/status extraction, without fabricating callable host support from model-side Codex app tool descriptors.
+- State: accepted local-package `ctr-20260630-watcher-status-extraction`; host adapter/scheduler gate is committed in `0345f53`, watcher runtime extraction was accepted by Codex reviewer/verifier role threads, original closeout delivery is recorded as fallback-only/read_thread, and the delivery-record correction was rechecked by direct-send reviewer/verifier callbacks.
+- Last package objective: continue the repo-local module extraction after host runtime, starting with watcher/status boundaries without changing real host integration behavior.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: no live orchestration, no fake host adapter/scheduler implementation, no watcher/status extraction, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. Repo/global skill comparison remains `status: match` because this package did not edit the skill files.
-- Current next gate: repository-side host readiness and scheduler guards are already covered; real live host integration still requires an external host package that supplies callable Python adapter/scheduler evidence. The next repo-local module package can continue with watcher/status extraction.
-
+- Current boundary: no live host adapter implementation, no production scheduler/daemon, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. Repo/global skill comparison remains `status: match` unless this package explicitly edits skill files.
+- Current next gate: explicit commit authorization for this watcher/status package. After that local commit, the next repo-local gate is status/closeout module extraction; Real live host integration remains an external host package gate.
 ## Current Diff Surface
 
 Current truth is command-derived. Regenerate the current surface with:
@@ -28,23 +27,39 @@ This file intentionally does not list a live diff surface. The closeout package 
 
 Active package verification:
 
-- Host package intake: `git status -sb --untracked-files=all` ran before docs update; branch/ahead state is intentionally not copied here because fresh git status is the source of truth.
-- Current truth check before docs update: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; `gitStatusShort: []`.
-- Doctor check before docs update: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: clean_synced`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction: no action required unless the manager opens a new package`.
-- Focused host context tests: `py -B -m unittest tests.test_team_router -k "host_context" -v` -> Ran 4 tests OK.
-- Focused host adapter/scheduler tests: `py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_thread_adapter_capability_probe_reports_missing_tools tests.test_team_router.TestTeamRouterManagerIntegration.test_thread_adapter_capability_probe_rejects_model_tool_descriptors tests.test_team_router.TestTeamRouterManagerIntegration.test_parent_entry_guard_blocks_adapter_runner_without_callable_tools tests.test_team_router.TestTeamRouterManagerIntegration.test_parent_entry_guard_accepts_full_callable_adapter_path tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_requires_parent_current_thread_rename_before_role_dispatch tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_blocks_when_parent_thread_id_is_unavailable tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_blocks_when_heartbeat_scheduler_is_not_callable -v` -> Ran 7 tests OK.
-- Corrected verification note: an earlier focused command used the wrong unittest class path (`TestTeamRouterProtocol`) and failed with `AttributeError`; the corrected `TestTeamRouterManagerIntegration` command above passed.
-
-- Docs gate after test expectation update: `py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface tests.test_team_router.TestTeamRouterSkillDoc.test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch tests.test_team_router.TestTeamRouterSkillDoc.test_quality_gates_document_host_readiness_snapshots -v` -> Ran 3 tests OK.
-- Full suite: `py -B -m unittest discover -s tests -p test_team_router.py -v` -> Ran 337 tests OK.
-- Truth check after docs/test update: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; dirty files are `docs/workbench.md`, `tests/test_team_router.py`, and this package record.
-- Doctor check after docs/test update: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction` says reviewer then verifier before closeout.
-- Closeout check: `py -B scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; entrypoint `underTarget: true`.
+- Implementation: added `src/team_router_watcher_runtime.py` for watcher timing/read-discipline/convergence/watcher-ledger/heartbeat schedule payload helpers; `src/team_router.py` keeps `_watch_next_wakeup()`, ledger mutation, role-thread reads, `watch_team_task_with_adapter()`, and compatibility imports.
+- Docs/tests: updated `docs/team-router/module-map.md`, current workbench expectations, and focused watcher runtime behavior coverage.
+- Compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m py_compile src\team_router.py src\team_router_watcher_runtime.py tests\test_team_router.py` -> OK.
+- Focused watcher/module tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m unittest tests.test_team_router -k watcher_runtime -k role_read -k watch_next_wakeup -k heartbeat -k module_map -v` -> Ran 15 tests OK.
+- Workbench current-task contract test: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v` -> Ran 1 test OK.
+- Full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m unittest discover -s tests -p test_team_router.py -v` -> Ran 338 tests OK.
+- Truth check: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; dirty surface is `docs/team-router/module-map.md`, `docs/workbench.md`, `src/team_router.py`, `tests/test_team_router.py`, plus untracked package doc and `src/team_router_watcher_runtime.py`.
+- Doctor check: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction` says reviewer then verifier before closeout.
+- Closeout check: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; entrypoint `underTarget: true`.
 - Whitespace check: `git diff --check` -> exit 0; Git printed CRLF/LF normalization warnings only.
-
-- Reviewer role thread `019f17f2-2fea-7b02-b1a0-f96dec82c453` returned `TEAM_ROUTER_REVIEW result: pass`, `requiredChanges: none`.
-- Verifier role thread `019f17f5-f216-7802-bb8a-e74f63c2c800` returned `TEAM_ROUTER_VERDICT result: pass`, `requiredChanges: none`.
-
+- Auxiliary reviewer evidence: multi_agent/subagent outputs are auxiliary evidence only; `019f180b-768e-7353-b11d-3640a618e542` returned `needs_rework` and helped identify that the actual `heartbeat_scheduler_call(heartbeat_scheduler)(**payload)` side-effect needed to stay in `src/team_router.py`.
+- Rework implementation: `src/team_router_watcher_runtime.py` now exposes `build_watcher_heartbeat_payload(...)`; `src/team_router.py` performs `_heartbeat_scheduler_call(heartbeat_scheduler)(**payload)` and attaches `scheduled/result`.
+- Rework regression test: `tests.test_team_router.TestTeamRouterState.test_watcher_runtime_does_not_call_heartbeat_scheduler` asserts runtime has no `heartbeat_scheduler_call` / `(**payload)` and facade owns the scheduler call.
+- Rework compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m py_compile src\team_router.py src\team_router_watcher_runtime.py tests\test_team_router.py` -> OK.
+- Rework focused watcher/module tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m unittest tests.test_team_router -k watcher_runtime -k role_read -k watch_next_wakeup -k heartbeat -k module_map -v` -> Ran 16 tests OK.
+- Rework full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction'; py -B -m unittest discover -s tests -p test_team_router.py -v` -> Ran 339 tests OK.
+- Auxiliary reviewer evidence: multi_agent/subagent `019f1810-6ff8-7503-8a1b-c706e0382e07` returned `pass`; this was advisory only, not a formal Team Router reviewer gate.
+- Auxiliary verifier evidence: multi_agent/subagent `019f1811-9098-7433-ad07-147ee30647b1` returned `needs_rework`; this was advisory only and identified that `test_workbench_tracks_current_task_without_stale_diff_surface` expected old next-gate text after workbench moved to reviewer re-review wording.
+- Verifier rework: updated the workbench contract test to expect `send the reworked watcher runtime extraction package to reviewer re-review`.
+- Auxiliary reviewer evidence: multi_agent/subagent `019f1815-1904-7f13-b35f-739fc0c530dd` returned `pass`; this was advisory only, not a formal Team Router reviewer gate.
+- Codex reviewer final re-check result: role thread `019f1809-6453-7d90-bf2f-3de7ae3bd1de` returned `needs_rework`; required aligning the Current Task next gate, package status, workbench contract test, and this verification list formatting.
+- Reviewer-required gate-text cleanup: updated `docs/workbench.md`, `tests/test_team_router.py`, and the watcher/status package status so the current gate no longer claims verifier-only closeout while reviewer re-review is still pending.
+- Reviewer gate-text re-review result: Codex reviewer role thread `019f1809-6453-7d90-bf2f-3de7ae3bd1de` returned `pass`; `requiredChanges: none`.
+- Verifier final result: Codex verifier role thread `019f1819-8446-7381-bb6e-e366ee3d9f60` returned `pass`; `remainingRisks: none`; `next: closeout`.
+- Role delivery correction: direct-send was not observed for the Codex reviewer/verifier closeout path; manager collected the self-thread-marker by `read_thread`, so `deliveryStatus: fallback_only`, `receiptSource: self-thread-fallback/read_thread`, and `receiptChannel: read_thread`. This was degraded delivery and not normal proactive return.
+- Closeout correction reviewer direct-send observed: Codex reviewer role thread `019f1809-6453-7d90-bf2f-3de7ae3bd1de` returned `TEAM_ROUTER_REVIEW result: pass` for the delivery-record correction; Closeout correction reviewer deliveryStatus: direct_send; Closeout correction reviewer deliveryError: none.
+- Closeout correction verifier direct-send observed: Codex verifier role thread `019f1819-8446-7381-bb6e-e366ee3d9f60` returned `TEAM_ROUTER_VERDICT result: pass` for the delivery-record correction; Closeout correction verifier deliveryStatus: direct_send; Closeout correction verifier deliveryError: none.
+- Closeout correction focused docs tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction-docs'; py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_module_map_documents_phase1_protocol_policy_split tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface tests.test_team_router.TestTeamRouterSkillDoc.test_watcher_status_package_records_fallback_only_role_delivery -v` -> Ran 3 tests OK.
+- Closeout correction watcher boundary tests: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction-boundary'; py -B -m unittest tests.test_team_router.TestTeamRouterState.test_watcher_runtime_does_not_call_heartbeat_scheduler tests.test_team_router.TestTeamRouterState.test_watcher_runtime_builds_facade_watcher_ledger -v` -> Ran 2 tests OK.
+- Closeout correction compile: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction-compile'; py -B -m py_compile src\team_router.py src\team_router_watcher_runtime.py tests\test_team_router.py` -> OK.
+- Closeout correction full suite: `$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-watcher-extraction-full'; py -B -m unittest discover -s tests -p test_team_router.py -v` -> Ran 340 tests OK.
+- Closeout correction truth/doctor/closeout: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`, `skillSync.status: match`; `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`, `orchestrationStatus: manual_only`, `hostReadiness.status: not_supplied`, generic dirty-state `nextAction` still says reviewer then verifier before closeout; `py -B scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`, entrypoint `underTarget: true`.
+- Closeout correction whitespace/status: `git diff --check` -> exit 0 with CRLF/LF warnings only; `git status -sb --untracked-files=all` -> `## master...origin/master [ahead 2]` plus this package diff/untracked files.
 Previous package verification:
 
 - RED focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_path_handoff_omits_long_callback_raw_from_downstream_prompts tests.test_team_router.TestTeamRouterState.test_truth_check_detects_workbench_current_package_behind_latest_package -v` -> failed before implementation because downstream prompts copied raw callback/review payloads and `find_stale_state_claims(...)` returned no workbench/package-lag claim.
@@ -92,13 +107,11 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- The stale-current-state detector remains section-scoped. It should catch manager-facing current-state drift, workbench package-date lag, and completed phase references without treating historical package archives as live truth.
-- Prompt compaction only activates when path fields exist. Inline-only fallback keeps raw callback/review context so manual flows do not lose evidence.
-- `scripts/team_router_doctor.py` remains evidence-only; `nextAction` is guidance, not protocol acceptance.
-- Real host adapter/scheduler integration is not implemented inside this repo. Current doctor evidence reports no supplied callable host readiness snapshot and `orchestrationStatus: manual_only`; model-side app tool descriptors remain non-callable for Python helpers until a host wrapper supplies real callables.
+- Watcher runtime extraction intentionally keeps `_watch_next_wakeup()`, ledger mutation, role-thread reads, and `watch_team_task_with_adapter()` in the facade. Moving those remains out of this package.
+- `team_router_status.py` / closeout-status extraction is still pending and should be the next repo-local module gate only after reviewer/verifier accept this package.
+- Real host integration is still external: no live host adapter implementation, no production scheduler/daemon, and no callable host readiness snapshot is supplied by this repo package.
 - Git may print CRLF/LF replacement warnings for existing text files.
-
 ## Review And Verification Gate
 
-- Current gate: explicit host adapter/scheduler package confirms repository-side guards are already in place and focused tests pass; current package docs are being refreshed.
-- Next gated step: continue watcher/status module extraction as the next repo-local package, while real live host integration remains blocked until an external host supplies callable adapter/scheduler evidence. Push, PR, merge, deploy, publish/release, and global skill sync remain out of scope.
+- Current gate: watcher runtime extraction package accepted by reviewer and verifier; local closeout is recorded, but commit is not authorized yet.
+- Next gated step: explicit commit authorization for this watcher/status package. After that commit, open the repo-local status/closeout module extraction gate; real live host integration remains blocked until an external host supplies callable adapter/scheduler evidence.

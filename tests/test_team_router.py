@@ -56,6 +56,7 @@ import team_router
 import team_router_state
 import team_router_policy
 import team_router_protocol
+import team_router_watcher_runtime
 
 
 class FakeThreadAdapter:
@@ -1826,6 +1827,46 @@ risks: none
         self.assertTrue(policy["directReturnExpected"])
         self.assertTrue(policy["completionFeedbackRequired"])
         self.assertIn("observe-only", policy["convergenceMode"])
+
+    def test_watcher_runtime_builds_facade_watcher_ledger(self):
+        ledger = {
+            "taskId": "ctr-20260624-120000-fast",
+            "objective": "restore README BOM",
+            "status": "awaiting_callback",
+            "dispatches": [
+                {
+                    "threadId": "thread-executor",
+                    "expectedCallback": "TEAM_ROUTER_CALLBACK taskId=ctr-20260624-120000-fast",
+                    "searchAnchor": {
+                        "messageId": "msg-dispatch",
+                        "sentAt": "2026-06-24T12:00:00+08:00",
+                    },
+                },
+            ],
+            "readDiscipline": {
+                "gateClass": "FAST",
+                "lastReadAt": "2026-06-24T12:00:00+08:00",
+                "nextAllowedReadAt": "2026-06-24T12:05:00+08:00",
+                "minimumIntervalSeconds": 300,
+                "directReturnExpected": True,
+            },
+        }
+
+        wakeup = team_router._watch_next_wakeup(ledger)
+        runtime_watcher = team_router_watcher_runtime.build_watcher_ledger(wakeup, ledger)
+
+        self.assertEqual(runtime_watcher, team_router._watcher_ledger(ledger))
+        self.assertEqual(runtime_watcher["role"], "executor")
+        self.assertEqual(runtime_watcher["firstCheckAt"], "2026-06-24T12:00:30+08:00")
+        self.assertEqual(runtime_watcher["nextAllowedReadAt"], "2026-06-24T12:05:00+08:00")
+
+    def test_watcher_runtime_does_not_call_heartbeat_scheduler(self):
+        runtime_source = (ROOT / "src" / "team_router_watcher_runtime.py").read_text(encoding="utf-8")
+        facade_source = (ROOT / "src" / "team_router.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("heartbeat_scheduler_call", runtime_source)
+        self.assertNotIn("(**payload)", runtime_source)
+        self.assertIn("_heartbeat_scheduler_call(heartbeat_scheduler)(**payload)", facade_source)
 
     def test_missing_protocol_status_does_not_treat_active_done_phrasing_as_feedback_missing(self):
         self.assertEqual(
@@ -10362,10 +10403,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "active local-package `ctr-20260630-host-adapter-scheduler`",
-            "host adapter/scheduler gate before watcher/status extraction",
-            "without fabricating callable host support",
-            "model-side Codex app tool descriptors",
+            "accepted local-package `ctr-20260630-watcher-status-extraction`",
+            "host adapter/scheduler gate is committed in `0345f53`",
+            "continue the repo-local module extraction after host runtime",
+            "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -10373,8 +10414,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "repository-side host readiness and scheduler guards are already covered",
-            "next repo-local module package can continue with watcher/status extraction",
+            "explicit commit authorization for this watcher/status package",
+            "Real live host integration remains an external host package gate",
             "no push, no PR, no merge, no deploy, no publish/release",
             "Repo/global skill comparison remains `status: match`",
             "Current Diff Surface",
@@ -10387,6 +10428,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
+            "multi_agent/subagent outputs are auxiliary evidence only",
+            "deliveryStatus: fallback_only",
+            "receiptSource: self-thread-fallback/read_thread",
+            "not normal proactive return",
+            "direct-send was not observed",
+            "Closeout correction reviewer direct-send observed",
+            "Closeout correction reviewer deliveryStatus: direct_send",
+            "Closeout correction reviewer deliveryError: none",
+            "Closeout correction verifier direct-send observed",
+            "Closeout correction verifier deliveryStatus: direct_send",
+            "Closeout correction verifier deliveryError: none",
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
@@ -10416,6 +10468,26 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "reviewer re-review is next",
         ):
             self.assertNotIn(stale_current_claim, text)
+
+    def test_watcher_status_package_records_fallback_only_role_delivery(self):
+        package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260630-watcher-status-extraction.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "multi_agent/subagent outputs are auxiliary evidence only",
+            "deliveryStatus: fallback_only",
+            "receiptSource: self-thread-fallback/read_thread",
+            "not normal proactive return",
+            "direct-send was not observed",
+            "Closeout correction reviewer direct-send observed",
+            "Closeout correction reviewer deliveryStatus: direct_send",
+            "Closeout correction reviewer deliveryError: none",
+            "Closeout correction verifier direct-send observed",
+            "Closeout correction verifier deliveryStatus: direct_send",
+            "Closeout correction verifier deliveryError: none",
+            "Codex reviewer role thread `019f1809-6453-7d90-bf2f-3de7ae3bd1de`",
+            "Codex verifier role thread `019f1819-8446-7381-bb6e-e366ee3d9f60`",
+        ):
+            self.assertIn(needle, package)
 
     def test_role_thread_readiness_package_tracks_reviewer_pass_before_verifier(self):
         package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260628-role-thread-readiness-status.md").read_text(encoding="utf-8")
@@ -10466,8 +10538,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`protocol_contract_snapshot()`",
             "Deferred Future Modules",
             "Phase 2b2 extracted pure direct-return contract helpers",
+            "Phase 2b4 extracted watcher timing/read discipline/heartbeat payload helpers",
             "capture/watch/state-save orchestration",
-            "remaining safe extraction order is: watcher runtime -> status/closeout",
+            "remaining safe extraction order is: status/closeout",
             "First tests to move",
             "Acceptance gate",
         ):
