@@ -4,14 +4,13 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: repo-local package `ctr-20260630-role-thread-prompt-path-contract` is in progress; starts from committed dispatch-prompt path-handoff package `ffcebd7`.
-- Active package objective: codify role-thread prompt path handoff across Manager, Reviewer, and Verifier prompt surfaces so bootstrap and plan/request prompts state `roleCommunicationMode: concise-protocol-plus-paths`, path evidence boundaries, and the `taskBriefPath` / `executorReportPath` / `reviewPackagePath` fields.
+- State: repo-local package `ctr-20260630-registry-ledger-state-extraction` is open. It starts after `0596316` was pushed to `origin/master` and the authorized global skill sync reported `match`; fresh command output overrides this note.
+- Active package objective: define and execute the next conservative registry/ledger state extraction step, starting from the current split where `src/team_router_state.py` owns JSON primitives and role binding persistence while `src/team_router.py` still owns higher-level ledger mutation and orchestration transitions.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: no live host adapter implementation, no production scheduler/daemon, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. This package edits the repo-local Team Router skill entrypoint/reference docs only; global skill sync remains a separate gate.
-- Current next gate: send `ctr-20260630-role-thread-prompt-path-contract` to reviewer gate, then verifier gate before any local closeout commit.
+- Current boundary: no live host adapter implementation, no production scheduler/daemon, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package unless separately authorized. Implementation moved only pure registry/ledger state helpers into `src/team_router_state.py`; remaining work before closeout is verification, reviewer gate, verifier gate, then local commit if authorized by this package flow.
+- Current next gate: finish verification for `ctr-20260630-registry-ledger-state-extraction`, then run reviewer and verifier gates before local closeout commit.
 
 ## Current Diff Surface
-
 Current truth is command-derived. Regenerate the current surface with:
 
 - `git status -sb --untracked-files=all`
@@ -20,7 +19,7 @@ Current truth is command-derived. Regenerate the current surface with:
 - `py -B scripts\team_router_truth_check.py --json`
 - `py -B scripts\team_router_doctor.py --json`
 
-This file intentionally does not list a live diff surface. The dispatch-prompt path-handoff package files are recorded in the review package, and the exact current surface must be taken from fresh commands before any new claim.
+This file intentionally does not list a live diff surface. The current package files and exact surface must be taken from fresh commands before any new claim.
 
 `scripts/team_router_truth_check.py` is the stale-current-state gate for workbench/package text. It should focus on Current Task / Current Diff Surface style sections so historical package archives are not treated as live truth. `scripts/team_router_doctor.py` is the plain manager-facing status summary and must remain read-only/evidence-only.
 
@@ -28,26 +27,25 @@ This file intentionally does not list a live diff surface. The dispatch-prompt p
 
 Active package verification so far:
 
-- Implementation: `src/team_router.py` adds `ROLE_THREAD_PATH_HANDOFF_PROMPT_LINES` and includes it in role-thread bootstrap prompts plus `make_plan_request_message()`.
-- Test coverage: `tests/test_team_router.py` adds `test_manager_reviewer_verifier_prompts_codify_path_handoff_contract`, covering Manager/Reviewer/Verifier bootstrap prompts and Manager plan request path handoff wording.
-- RED test: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_manager_reviewer_verifier_prompts_codify_path_handoff_contract -v` -> failed before implementation because role bootstrap prompts and Manager plan request lacked `roleCommunicationMode: concise-protocol-plus-paths`.
-- GREEN focused test: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_manager_reviewer_verifier_prompts_codify_path_handoff_contract -v` -> Ran 1 test OK.
-- Related prompt/doc checks -> Ran 7 tests OK.
-- Full suite: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 348 tests OK.
-- Truth check -> `staleClaims: []`, `skill.entrypointBytes: 7145`, `skill.underTarget: true`, `skillSync.status: mismatch` because this package changes repo-local skill/reference docs and global sync is not authorized.
-- Doctor check -> `truthStatus: dirty`, `orchestrationStatus: manual_only`, next action is reviewer then verifier before closeout.
-- Closeout check -> `skill.entrypointBytes: 7145`, `underTarget: true`, `skillSync.status: mismatch`.
-- Whitespace check: `git diff --check` -> exit 0 with CRLF/LF replacement warnings only.
-- Boundary: no parser, gate, direct-return, watcher, host adapter, production scheduler/daemon, push, PR, merge, deploy, publish/release, or global skill sync change in this package.
+- Package opening: update this workbench and create `docs/team-router/packages/ctr-20260630-registry-ledger-state-extraction.md`.
+- Starting evidence before opening this package: `0596316` was pushed to `origin/master`; authorized global skill sync reported `skillSync.status: match`; truth check reported `staleClaims: []`; doctor reported `truthStatus: clean_synced`.
+- Implementation: moved `_search_anchor()`, `_role_review_request_record()`, `_latest_executor_dispatch()`, `_latest_reviewer_request()`, `_return_thread_id_from_record()`, `_inherited_reviewer_return_thread_id()`, and `_inherited_verifier_return_thread_id()` from `src/team_router.py` to `src/team_router_state.py`; facade compatibility remains through imports.
+- Focused verification passed: `py -B -m py_compile src\team_router.py src\team_router_state.py tests\test_team_router.py`, `test_facade_reexports_extracted_state_symbols`, dispatch search-anchor/fallback tests, and architect/QA direct-return request metadata tests.
+- Reviewer v2 found duplicate unittest method name; fixed by restoring unique `test_manager_reviewer_verifier_prompts_codify_path_handoff_contract` and adding `test_test_case_names_are_unique` guard.
+- Focused recheck after fix: `test_facade_reexports_extracted_state_symbols`, `test_manager_reviewer_verifier_prompts_codify_path_handoff_contract`, and `test_test_case_names_are_unique` -> Ran 3 tests OK.
+- Full suite after fix: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 349 tests OK.
+- Reviewer gate: v2 thread `019f190d-4ff5-79f0-bda6-00c7ea1d0e49` first returned `needs_rework` for duplicate unittest method name; after the fix it returned `pass` with `requiredChanges: none`.
+- Verifier gate: thread `019f1914-ec15-7fa2-9357-10946ccf52cf` first returned `needs_rework` for literal `\\n-` doc artifacts; after the docs fix it returned `pass` with `requiredChanges: none`.\n- Remaining planned checks: final truth/doctor/closeout refresh and local commit.
+- Boundary: no parser, gate, direct-return, watcher, host adapter, production scheduler/daemon, push, PR, merge, deploy, publish/release, or global skill sync change in this package unless separately authorized.
 Previous package verification:
 
+- Previous `ctr-20260630-role-thread-prompt-path-contract` passed reviewer and verifier, then was explicitly authorized and committed as `0596316`; it was pushed to `origin/master`, and its authorized global skill sync reported `match`. Its role-thread prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-dispatch-prompt-path-handoff` passed reviewer and verifier, then was explicitly authorized and committed as `ffcebd7`; its executor dispatch prompt path handoff is historical baseline only.
 - Previous `ctr-20260630-status-tools-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `4dd5a95`; its read-only status tool extraction is historical baseline only.
 - Previous `ctr-20260630-status-closeout-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `d66b77d`; its closeout/status helper extraction is now historical baseline only.
 - Previous `ctr-20260630-watcher-status-extraction` was explicitly authorized and committed as `dcff722`; its watcher runtime extraction is historical baseline only.
 
 ## Historical Records
-
 Older entries are history only. They must not be treated as current git truth / current next gate unless rechecked in the current worktree.
 
 - Previous `ctr-20260628-role-thread-readiness-status` completed read-only role-thread status UX in `scripts/team_router_doctor.py`; it added `--role-status-json` and `roleThreadStatus` from supplied snapshots only.
@@ -80,11 +78,12 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- Role-thread prompt path handoff is prompt contract text only; it must not change parser, gate, direct-return, watcher, host readiness, or role-thread snapshot semantics.
+- Registry/ledger extraction can accidentally change on-disk state compatibility, task status transitions, role binding semantics, or direct-return recovery behavior if helpers are moved with hidden orchestration side effects.
+- Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
 - Real host integration is still external: no live host adapter implementation, no production scheduler/daemon, and no callable host readiness snapshot is supplied by this repo package.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: local verification is complete for `ctr-20260630-role-thread-prompt-path-contract`; send this package to reviewer gate, then verifier gate.
+- Current gate: reviewer and verifier passed for `ctr-20260630-registry-ledger-state-extraction`; local closeout commit is next.
 - No commit, push, PR, merge, deploy, publish/release, or global skill sync has been authorized for this active package.

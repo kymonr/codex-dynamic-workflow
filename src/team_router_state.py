@@ -350,6 +350,86 @@ def _required_str(value: Any, field: str) -> str:
         raise StateStoreError("%s must be a non-empty string" % field)
     return value
 
+
+def _search_anchor(message_id: str | None, sent_at: str) -> dict[str, Any]:
+    return {"messageId": message_id, "sentAt": _required_str(sent_at, "sentAt")}
+
+
+def _latest_executor_dispatch(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    return dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else None
+
+
+def _latest_reviewer_request(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    review = ledger.get("review") if isinstance(ledger.get("review"), Mapping) else None
+    request = review.get("request") if isinstance(review, Mapping) else None
+    return request if isinstance(request, Mapping) else None
+
+
+def _return_thread_id_from_record(record: Mapping[str, Any] | None,
+                                  fallback: str | None) -> str | None:
+    if isinstance(record, Mapping):
+        value = record.get("returnThreadId")
+        return value if isinstance(value, str) and value else fallback
+    return fallback
+
+
+def _inherited_reviewer_return_thread_id(ledger: Mapping[str, Any],
+                                         fallback: str | None) -> str | None:
+    return _return_thread_id_from_record(_latest_executor_dispatch(ledger), fallback)
+
+
+def _inherited_verifier_return_thread_id(ledger: Mapping[str, Any],
+                                         fallback: str | None) -> str | None:
+    reviewer_return = _return_thread_id_from_record(_latest_reviewer_request(ledger), None)
+    if reviewer_return is not None:
+        return reviewer_return
+    return _return_thread_id_from_record(_latest_executor_dispatch(ledger), fallback)
+
+
+def _role_review_request_record(
+    *,
+    role: str,
+    thread_id: str,
+    marker: str,
+    task_id: str,
+    sent_at: str,
+    message_id: str | None,
+    return_thread_id: str | None,
+    delivery_key: str,
+    fallback_key: str,
+) -> dict[str, Any]:
+    thread_id = _required_str(thread_id, "%sThreadId" % role)
+    sent_at = _required_str(sent_at, "sentAt")
+    search_anchor = _search_anchor(message_id, sent_at)
+    request: dict[str, Any] = {
+        "role": role,
+        "threadId": thread_id,
+        "roleThreadId": thread_id,
+        "sourceRoleThreadId": thread_id,
+        "messageId": message_id,
+        "sentAt": sent_at,
+        "expectedMarker": marker,
+        "expectedCallback": "%s taskId=%s" % (marker, task_id),
+        "searchAnchor": search_anchor,
+        "fallbackSearchAnchor": dict(search_anchor),
+        "returnSearchAnchor": {"messageId": None, "sentAt": sent_at},
+        fallback_key: "self-thread-marker",
+    }
+    if return_thread_id is not None:
+        request["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
+        request["orchestratorThreadId"] = request["returnThreadId"]
+        request[delivery_key] = "direct-send"
+        request["callbackMode"] = "direct-return runtime"
+        request["deliveryStatus"] = "direct_return_requested"
+    else:
+        request["returnThreadId"] = None
+        request["orchestratorThreadId"] = None
+        request[delivery_key] = "fallback_only"
+        request["callbackMode"] = "manual orchestration fallback"
+        request["deliveryStatus"] = "fallback_only"
+        request["deliveryError"] = "returnThreadId unavailable; direct-return runtime not established"
+    return request
 def _normalize_role_record(role: str, data: Mapping[str, Any],
                            observed_at: str) -> dict[str, Any]:
     _validate_role(role)

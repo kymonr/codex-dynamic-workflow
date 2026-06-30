@@ -152,6 +152,10 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(team_router.load_registry, team_router_state.load_registry)
         self.assertIs(team_router.save_task_ledger, team_router_state.save_task_ledger)
         self.assertIs(team_router.STATE_MACHINE_SNAPSHOT, team_router_state.STATE_MACHINE_SNAPSHOT)
+        self.assertIs(team_router._search_anchor, team_router_state._search_anchor)
+        self.assertIs(team_router._role_review_request_record, team_router_state._role_review_request_record)
+        self.assertIs(team_router._latest_executor_dispatch, team_router_state._latest_executor_dispatch)
+        self.assertIs(team_router._inherited_verifier_return_thread_id, team_router_state._inherited_verifier_return_thread_id)
 
     def test_facade_reexports_host_runtime_symbols(self):
         import team_router_host_runtime
@@ -215,6 +219,9 @@ class TestTeamRouterProtocol(unittest.TestCase):
         self.assertIs(doctor_module._next_action, status_tools.next_action)
         self.assertEqual(truth_module.DEFAULT_REPO_ROOT, status_tools.DEFAULT_REPO_ROOT)
         self.assertEqual(closeout_module.DEFAULT_GLOBAL_SKILL, status_tools.DEFAULT_GLOBAL_SKILL)
+    def test_test_case_names_are_unique(self):
+        names = [name for name, value in TestTeamRouterProtocol.__dict__.items() if name.startswith("test_")]
+        self.assertEqual(len(names), len(set(names)))
     def test_callback_parser_rejects_colon_marker(self):
         text = """TEAM_ROUTER_CALLBACK taskId: ctr-1
 status: done
@@ -10566,11 +10573,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "repo-local package `ctr-20260630-role-thread-prompt-path-contract` is in progress",
-            "starts from committed dispatch-prompt path-handoff package `ffcebd7`",
-            "Active package objective: codify role-thread prompt path handoff across Manager, Reviewer, and Verifier prompt surfaces",
-            "roleCommunicationMode: concise-protocol-plus-paths",
-            "taskBriefPath` / `executorReportPath` / `reviewPackagePath` fields",
+            "repo-local package `ctr-20260630-registry-ledger-state-extraction` is open",
+            "`0596316` was pushed to `origin/master`",
+            "Active package objective: define and execute the next conservative registry/ledger state extraction step",
+            "_role_review_request_record()",
+            "`src/team_router_state.py` owns JSON primitives and role binding persistence",
             "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
@@ -10579,8 +10586,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "send `ctr-20260630-role-thread-prompt-path-contract` to reviewer gate, then verifier gate",
-            "global skill sync remains a separate gate",
+            "finish verification for `ctr-20260630-registry-ledger-state-extraction`, then run reviewer and verifier gates",
+            "no global skill sync in this package unless separately authorized",
             "no push, no PR, no merge, no deploy, no publish/release",
             "Current Diff Surface",
             "Current truth is command-derived",
@@ -10592,8 +10599,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
-            "test_manager_reviewer_verifier_prompts_codify_path_handoff_contract",
-            "ROLE_THREAD_PATH_HANDOFF_PROMPT_LINES"
+            "test_facade_reexports_extracted_state_symbols",
+            "_search_anchor()"
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
@@ -10821,7 +10828,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Phase 2b5 extracted closeout/handoff text helpers",
             "Phase 2b6 extracted read-only status tool helpers",
             "capture/watch/state-save orchestration",
-            "remaining safe extraction order is: registry/ledger state",
+            "remaining safe extraction order is: additional registry/ledger state transitions",
             "First tests to move",
             "Acceptance gate",
         ):

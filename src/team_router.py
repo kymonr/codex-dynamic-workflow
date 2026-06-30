@@ -129,6 +129,10 @@ from team_router_state import (
     _as_int,
     _as_list,
     _as_mapping,
+    _inherited_reviewer_return_thread_id,
+    _inherited_verifier_return_thread_id,
+    _latest_executor_dispatch,
+    _latest_reviewer_request,
     _atomic_write_json,
     _normalize_registry,
     _normalize_role_record,
@@ -137,6 +141,9 @@ from team_router_state import (
     _raise_if_terminal,
     _read_json_object,
     _required_str,
+    _return_thread_id_from_record,
+    _role_review_request_record,
+    _search_anchor,
     _resolve_persistent_state_root,
     _validate_permission,
     _validate_role,
@@ -841,8 +848,6 @@ def command_startup_retry_decision(exit_code: int, stdout: str | None, stderr: s
         "action": "environment_blocked",
         "reason": "parent-thread 探针仍失败；环境仍被阻断",
     }
-def _search_anchor(message_id: str | None, sent_at: str) -> dict[str, Any]:
-    return {"messageId": message_id, "sentAt": sent_at}
 
 
 
@@ -2196,38 +2201,6 @@ def _self_thread_search_anchor(source: Mapping[str, Any], role: str) -> Mapping[
     return search_anchor if isinstance(search_anchor, Mapping) else None
 
 
-def _latest_executor_dispatch(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
-    latest = dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else None
-    return latest
-
-
-def _latest_reviewer_request(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    review = ledger.get("review") if isinstance(ledger.get("review"), Mapping) else None
-    request = review.get("request") if isinstance(review, Mapping) else None
-    return request if isinstance(request, Mapping) else None
-
-
-def _return_thread_id_from_record(record: Mapping[str, Any] | None,
-                                  fallback: str | None) -> str | None:
-    if isinstance(record, Mapping):
-        return _optional_nonempty_str(record.get("returnThreadId")) or fallback
-    return fallback
-
-
-def _inherited_reviewer_return_thread_id(ledger: Mapping[str, Any],
-                                         fallback: str | None) -> str | None:
-    return _return_thread_id_from_record(_latest_executor_dispatch(ledger), fallback)
-
-
-def _inherited_verifier_return_thread_id(ledger: Mapping[str, Any],
-                                         fallback: str | None) -> str | None:
-    reviewer_return = _return_thread_id_from_record(_latest_reviewer_request(ledger), None)
-    if reviewer_return is not None:
-        return reviewer_return
-    return _return_thread_id_from_record(_latest_executor_dispatch(ledger), fallback)
-
-
 def recovery_read_request(ledger: Mapping[str, Any],
                           registry: Mapping[str, Any],
                           role: str) -> dict[str, Any]:
@@ -2545,51 +2518,6 @@ def make_qa_review_request_message(task_id: str,
         "directReturnError: <仅 failed 时填写短错误>",
     ))
     return "\n".join(lines)
-
-
-def _role_review_request_record(
-    *,
-    role: str,
-    thread_id: str,
-    marker: str,
-    task_id: str,
-    sent_at: str,
-    message_id: str | None,
-    return_thread_id: str | None,
-    delivery_key: str,
-    fallback_key: str,
-) -> dict[str, Any]:
-    thread_id = _required_str(thread_id, "%sThreadId" % role)
-    sent_at = _required_str(sent_at, "sentAt")
-    search_anchor = _search_anchor(message_id, sent_at)
-    request: dict[str, Any] = {
-        "role": role,
-        "threadId": thread_id,
-        "roleThreadId": thread_id,
-        "sourceRoleThreadId": thread_id,
-        "messageId": message_id,
-        "sentAt": sent_at,
-        "expectedMarker": marker,
-        "expectedCallback": "%s taskId=%s" % (marker, task_id),
-        "searchAnchor": search_anchor,
-        "fallbackSearchAnchor": dict(search_anchor),
-        "returnSearchAnchor": {"messageId": None, "sentAt": sent_at},
-        fallback_key: "self-thread-marker",
-    }
-    if return_thread_id is not None:
-        request["returnThreadId"] = _required_str(return_thread_id, "returnThreadId")
-        request["orchestratorThreadId"] = request["returnThreadId"]
-        request[delivery_key] = "direct-send"
-        request["callbackMode"] = "direct-return runtime"
-        request["deliveryStatus"] = "direct_return_requested"
-    else:
-        request["returnThreadId"] = None
-        request["orchestratorThreadId"] = None
-        request[delivery_key] = "fallback_only"
-        request["callbackMode"] = "manual orchestration fallback"
-        request["deliveryStatus"] = "fallback_only"
-        request["deliveryError"] = "returnThreadId unavailable; direct-return runtime not established"
-    return request
 
 
 def record_architect_review_request_sent(state_root: str | Path,
