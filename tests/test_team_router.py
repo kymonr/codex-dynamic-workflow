@@ -919,6 +919,70 @@ regressionRisks: low
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
 
+    def test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists(self):
+        task_id = "ctr-20260630-dispatch-prompt-path-handoff"
+        long_executor_prompt = "LONG_EXECUTOR_PROMPT_" + ("x" * 2400)
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "dispatch prompt references package paths instead of copying long instructions",
+            "riskBoundary": "do not change parser, gate, or direct-return semantics",
+            "executorPrompt": long_executor_prompt,
+            "taskBriefPath": "docs/team-router/packages/ctr-20260630-dispatch-prompt-path-handoff.md",
+            "executorReportPath": "docs/team-router/packages/ctr-20260630-dispatch-prompt-path-handoff.md",
+            "reviewPackagePath": "docs/team-router/packages/ctr-20260630-dispatch-prompt-path-handoff.md",
+        }
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": plan_fields["taskBriefPath"],
+                "executorReportPath": plan_fields["executorReportPath"],
+                "reviewPackagePath": plan_fields["reviewPackagePath"],
+            },
+        }
+
+        message = team_router.make_executor_dispatch_message(
+            task_id,
+            plan_fields,
+            "local-package",
+            {"messageId": "msg-dispatch", "sentAt": "2026-06-30T10:00:00+08:00"},
+            review_package=review_package,
+        )
+
+        self.assertIn("taskBriefPath: docs/team-router/packages/ctr-20260630-dispatch-prompt-path-handoff.md", message)
+        self.assertIn("reviewPackagePath: docs/team-router/packages/ctr-20260630-dispatch-prompt-path-handoff.md", message)
+        self.assertIn("executorPrompt: <omitted; see taskBriefPath/reviewPackagePath>", message)
+        self.assertNotIn(long_executor_prompt, message)
+
+    def test_executor_dispatch_keeps_long_prompt_inline_without_task_or_review_path(self):
+        task_id = "ctr-20260630-dispatch-prompt-inline-fallback"
+        long_executor_prompt = "LONG_INLINE_EXECUTOR_PROMPT_" + ("y" * 2400)
+        base_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "inline fallback keeps complete prompt text",
+            "riskBoundary": "do not change parser, gate, or direct-return semantics",
+            "executorPrompt": long_executor_prompt,
+        }
+
+        scenarios = (
+            (dict(base_fields, inlineFallback="true"), {"inlineFallback": True}),
+            (dict(base_fields, executorReportPath="docs/team-router/packages/executor-only.md"), {"paths": {"executorReportPath": "docs/team-router/packages/executor-only.md"}}),
+            (dict(base_fields), None),
+        )
+
+        for fields, review_package in scenarios:
+            with self.subTest(fields=sorted(fields)):
+                message = team_router.make_executor_dispatch_message(
+                    task_id,
+                    fields,
+                    "local-package",
+                    {"messageId": "msg-dispatch", "sentAt": "2026-06-30T10:05:00+08:00"},
+                    review_package=review_package,
+                )
+
+                self.assertIn(long_executor_prompt, message)
+                self.assertNotIn("executorPrompt: <omitted; see taskBriefPath/reviewPackagePath>", message)
+
+
     def test_path_handoff_omits_long_callback_raw_from_downstream_prompts(self):
         task_id = "ctr-20260630-compact-downstream"
         long_payload = "LONG_CALLBACK_PAYLOAD_" + ("x" * 2400)
@@ -10456,9 +10520,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "repo-local package `ctr-20260630-status-tools-extraction` is locally committed",
-            "status tools extraction starts from committed status/closeout package `d66b77d`",
-            "extract read-only truth_check/doctor/closeout shared helpers into `src/team_router_status_tools.py`",
+            "repo-local package `ctr-20260630-dispatch-prompt-path-handoff` is locally committed",
+            "starts from committed status-tools package `4dd5a95`",
+            "Completed package objective: executor dispatch prompts use stable `taskBriefPath` / `reviewPackagePath` handoff",
             "no live host adapter implementation",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
@@ -10467,8 +10531,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "none inside repo-local status-tools extraction",
-            "real live host integration remains an external host package gate",
+            "none inside repo-local dispatch-prompt path-handoff package",
             "Real live host integration remains an external host package gate",
             "no push, no PR, no merge, no deploy, no publish/release",
             "Repo/global skill comparison remains `status: match`",
@@ -10482,9 +10545,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Historical Records",
             "completed historical package",
             "not current git truth",
-            "repo-local status-tools extraction is locally committed",
+            "repo-local dispatch-prompt path-handoff package is locally committed",
             "no repo-local role-thread gate remains",
-            "post-commit truth/closeout checks only",
+            "Next external gated step after local commit",
+            "executorPrompt: <omitted; see taskBriefPath/reviewPackagePath>"
         ):
             self.assertIn(needle, text)
         self.assertNotIn("`r`n", text)
@@ -10514,13 +10578,23 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "local commit was explicitly authorized and completed",
             "none for repo-local status/closeout extraction",
             "send this status-tools package to reviewer, then verifier",
+            "repo-local package `ctr-20260630-status-tools-extraction` is locally committed",
             "send this status-tools package to verifier after reviewer re-review pass",
             "send this status-tools package to verifier only",
             "is not yet granted",
             "Commit remains unauthorized until the user explicitly authorizes it",
+            "send this dispatch-prompt path-handoff package to reviewer, then verifier",
+            "reviewer re-review is pending",
+            "Reviewer and verifier gates remain pending",
+            "send this dispatch-prompt path-handoff package to verifier final check only",
+            "verifier final check remains pending",
+            "active local package implementation for `ctr-20260630-dispatch-prompt-path-handoff`",
+            "request explicit commit authorization for `ctr-20260630-dispatch-prompt-path-handoff`",
+            "Next gated step: request explicit local commit authorization",
         ):
             self.assertNotIn(stale_current, current_task_section + current_diff_section)
         self.assertNotIn("send this status-tools package to reviewer, then verifier", review_gate_section)
+        self.assertNotIn("repo-local package `ctr-20260630-status-tools-extraction` is locally committed", review_gate_section)
         self.assertNotIn("status-tools extraction requires reviewer, then verifier", review_gate_section)
         self.assertNotIn("send this status-tools package to verifier only", review_gate_section)
         self.assertNotIn("is not yet granted", review_gate_section)
@@ -10535,6 +10609,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "implementation in progress in isolated worktree",
             "thread tools unavailable",
             "reviewer re-review is next",
+            "send this dispatch-prompt path-handoff package back to reviewer re-review",
         ):
             self.assertNotIn(stale_current_claim, text)
 
@@ -10601,6 +10676,35 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, package)
 
+    def test_dispatch_prompt_path_handoff_package_records_boundary(self):
+        package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260630-dispatch-prompt-path-handoff.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("\t", package)
+        self.assertNotIn("\b", package)
+
+        for needle in (
+            "ctr-20260630-dispatch-prompt-path-handoff",
+            "baseline: committed status-tools package `4dd5a95`",
+            "executorPrompt: <omitted; see taskBriefPath/reviewPackagePath>",
+            "stable path handoff",
+            "Short executor prompts, no-path inline fallback, `inlineFallback: true`, and executorReportPath-only handoff remain inline",
+            "does not generate package files automatically",
+            "parser/gate/direct-return semantics",
+            "Real live host integration: external host package gate",
+            "Commit: authorized by the user and completed as local closeout",
+            "reviewer re-review returned `pass` by direct-send with `requiredChanges: none`",
+            "Verifier: pass by direct-send; requiredChanges none",
+        ):
+            self.assertIn(needle, package)
+
+        self.assertNotIn("implements a live host adapter", package)
+        self.assertNotIn("production scheduler", package)
+        self.assertNotIn("re-review pending", package)
+        self.assertNotIn("Reviewer and verifier gates remain pending", package)
+        self.assertNotIn("Verifier: final check pending", package)
+        self.assertNotIn("Commit: not authorized", package)
+
+
     def test_role_thread_readiness_package_tracks_reviewer_pass_before_verifier(self):
         package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260628-role-thread-readiness-status.md").read_text(encoding="utf-8")
 
@@ -10637,6 +10741,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "watcher/heartbeat",
             "closeout/status",
             "read-only status tools",
+            "dispatch prompt path-handoff compaction",
+            "Role prompt transport still lives here",
+            "overlong `executorPrompt` text",
+            "does not change parser/gate/direct-return semantics",
             "docs/skill contract tests",
             "`team_router_protocol.py`",
             "Python standard library only",

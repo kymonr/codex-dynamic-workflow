@@ -1675,6 +1675,14 @@ def _compact_prompt_value(value: Any, *, path_hint: str, limit: int = 240) -> st
         return "<omitted; see %s>" % path_hint
     return text
 
+def _executor_objective_prompt_lines(executor_prompt: str, *, compact: bool) -> list[str]:
+    if not compact:
+        return ["目标：", executor_prompt]
+    compact_value = _compact_prompt_value(executor_prompt, path_hint="taskBriefPath/reviewPackagePath")
+    if compact_value == "<omitted; see taskBriefPath/reviewPackagePath>":
+        return ["目标：", "executorPrompt: %s" % compact_value]
+    return ["目标：", compact_value or executor_prompt]
+
 
 def _callback_context_prompt_lines(callback_block: str, task_id: str, *, compact: bool) -> list[str]:
     if not compact:
@@ -1875,6 +1883,11 @@ def make_executor_dispatch_message(task_id: str,
         line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true"))
         for line in handoff_lines
     )
+    objective_path_handoff_enabled = any(
+        line.startswith(("taskBriefPath:", "reviewPackagePath:"))
+        and not line.lower().endswith(": inline")
+        for line in handoff_lines
+    )
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
@@ -1903,8 +1916,7 @@ def make_executor_dispatch_message(task_id: str,
         "",
         *_executor_startup_failure_prompt_lines(),
         "",
-        "目标：",
-        executor_prompt,
+        *_executor_objective_prompt_lines(executor_prompt, compact=objective_path_handoff_enabled),
         "",
         ROLE_HUMAN_LANGUAGE_RULE,
         "",
