@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: closeout recorded for `ctr-20260630-current-truth-prompt-compact`; local TDD evidence is recorded below.
-- Last package objective: make downstream reviewer/QA/verifier prompts use path handoff summaries instead of copying long callback/review bodies, and make workbench/current-truth stale detection catch current-state lag behind latest package/module-map evidence.
+- State: active local-package `ctr-20260630-host-adapter-scheduler`; reviewer/verifier accepted and local commit is authorized.
+- Last package objective: explicitly check the host adapter/scheduler gate before watcher/status extraction, without fabricating callable host support from model-side Codex app tool descriptors.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current boundary: no live orchestration, no host adapter/scheduler implementation, no watcher/status extraction, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. Repo/global skill comparison remains `status: match` because this package did not edit the skill files.
-- Current next gate: host adapter/scheduler integration requires an explicit host package with callable Python adapter/scheduler evidence; watcher/status module extraction remains a separate next module package after that boundary.
+- Current boundary: no live orchestration, no fake host adapter/scheduler implementation, no watcher/status extraction, no push, no PR, no merge, no deploy, no publish/release, and no global skill sync in this package. Repo/global skill comparison remains `status: match` because this package did not edit the skill files.
+- Current next gate: repository-side host readiness and scheduler guards are already covered; real live host integration still requires an external host package that supplies callable Python adapter/scheduler evidence. The next repo-local module package can continue with watcher/status extraction.
 
 ## Current Diff Surface
 
@@ -27,6 +27,25 @@ This file intentionally does not list a live diff surface. The closeout package 
 ## Verification Record
 
 Active package verification:
+
+- Host package intake: `git status -sb --untracked-files=all` ran before docs update; branch/ahead state is intentionally not copied here because fresh git status is the source of truth.
+- Current truth check before docs update: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; `gitStatusShort: []`.
+- Doctor check before docs update: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: clean_synced`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction: no action required unless the manager opens a new package`.
+- Focused host context tests: `py -B -m unittest tests.test_team_router -k "host_context" -v` -> Ran 4 tests OK.
+- Focused host adapter/scheduler tests: `py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_thread_adapter_capability_probe_reports_missing_tools tests.test_team_router.TestTeamRouterManagerIntegration.test_thread_adapter_capability_probe_rejects_model_tool_descriptors tests.test_team_router.TestTeamRouterManagerIntegration.test_parent_entry_guard_blocks_adapter_runner_without_callable_tools tests.test_team_router.TestTeamRouterManagerIntegration.test_parent_entry_guard_accepts_full_callable_adapter_path tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_requires_parent_current_thread_rename_before_role_dispatch tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_blocks_when_parent_thread_id_is_unavailable tests.test_team_router.TestTeamRouterManagerIntegration.test_orchestrate_team_task_blocks_when_heartbeat_scheduler_is_not_callable -v` -> Ran 7 tests OK.
+- Corrected verification note: an earlier focused command used the wrong unittest class path (`TestTeamRouterProtocol`) and failed with `AttributeError`; the corrected `TestTeamRouterManagerIntegration` command above passed.
+
+- Docs gate after test expectation update: `py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface tests.test_team_router.TestTeamRouterSkillDoc.test_thread_tool_absence_is_tool_error_or_manual_only_not_role_dispatch tests.test_team_router.TestTeamRouterSkillDoc.test_quality_gates_document_host_readiness_snapshots -v` -> Ran 3 tests OK.
+- Full suite: `py -B -m unittest discover -s tests -p test_team_router.py -v` -> Ran 337 tests OK.
+- Truth check after docs/test update: `py -B scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `skillSync.status: match`; dirty files are `docs/workbench.md`, `tests/test_team_router.py`, and this package record.
+- Doctor check after docs/test update: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction` says reviewer then verifier before closeout.
+- Closeout check: `py -B scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; entrypoint `underTarget: true`.
+- Whitespace check: `git diff --check` -> exit 0; Git printed CRLF/LF normalization warnings only.
+
+- Reviewer role thread `019f17f2-2fea-7b02-b1a0-f96dec82c453` returned `TEAM_ROUTER_REVIEW result: pass`, `requiredChanges: none`.
+- Verifier role thread `019f17f5-f216-7802-bb8a-e74f63c2c800` returned `TEAM_ROUTER_VERDICT result: pass`, `requiredChanges: none`.
+
+Previous package verification:
 
 - RED focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_path_handoff_omits_long_callback_raw_from_downstream_prompts tests.test_team_router.TestTeamRouterState.test_truth_check_detects_workbench_current_package_behind_latest_package -v` -> failed before implementation because downstream prompts copied raw callback/review payloads and `find_stale_state_claims(...)` returned no workbench/package-lag claim.
 - GREEN focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_path_handoff_omits_long_callback_raw_from_downstream_prompts tests.test_team_router.TestTeamRouterState.test_truth_check_detects_workbench_current_package_behind_latest_package -v` -> Ran 2 tests OK.
@@ -76,10 +95,10 @@ Older entries are history only. They must not be treated as current git truth / 
 - The stale-current-state detector remains section-scoped. It should catch manager-facing current-state drift, workbench package-date lag, and completed phase references without treating historical package archives as live truth.
 - Prompt compaction only activates when path fields exist. Inline-only fallback keeps raw callback/review context so manual flows do not lose evidence.
 - `scripts/team_router_doctor.py` remains evidence-only; `nextAction` is guidance, not protocol acceptance.
-- Host adapter/scheduler integration is not implemented in this package because current doctor evidence reports no supplied callable host readiness snapshot and `orchestrationStatus: manual_only`.
+- Real host adapter/scheduler integration is not implemented inside this repo. Current doctor evidence reports no supplied callable host readiness snapshot and `orchestrationStatus: manual_only`; model-side app tool descriptors remain non-callable for Python helpers until a host wrapper supplies real callables.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: local package implementation passed focused tests, full suite, truth/doctor/closeout, whitespace checks, and local closeout commit; no current in-scope action remains for this package.
-- Next gated step: host adapter/scheduler integration requires an explicit host package with callable adapter/scheduler evidence. Watcher/status module extraction remains separate. Push, PR, merge, deploy, publish/release, and global skill sync remain out of scope.
+- Current gate: explicit host adapter/scheduler package confirms repository-side guards are already in place and focused tests pass; current package docs are being refreshed.
+- Next gated step: continue watcher/status module extraction as the next repo-local package, while real live host integration remains blocked until an external host supplies callable adapter/scheduler evidence. Push, PR, merge, deploy, publish/release, and global skill sync remain out of scope.

@@ -10362,10 +10362,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         historical_section = text.split("## Historical Records", 1)[1].split("## Integration Boundary", 1)[0]
 
         for needle in (
-            "closeout recorded for `ctr-20260630-current-truth-prompt-compact`",
-            "downstream reviewer/QA/verifier prompts use path handoff summaries",
-            "workbench/current-truth stale detection",
-            "latest package/module-map evidence",
+            "active local-package `ctr-20260630-host-adapter-scheduler`",
+            "host adapter/scheduler gate before watcher/status extraction",
+            "without fabricating callable host support",
+            "model-side Codex app tool descriptors",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -10373,8 +10373,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "host adapter/scheduler integration requires an explicit host package",
-            "watcher/status module extraction remains a separate next module package",
+            "repository-side host readiness and scheduler guards are already covered",
+            "next repo-local module package can continue with watcher/status extraction",
             "no push, no PR, no merge, no deploy, no publish/release",
             "Repo/global skill comparison remains `status: match`",
             "Current Diff Surface",
