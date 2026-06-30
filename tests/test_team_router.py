@@ -10756,11 +10756,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "active repo-local package `ctr-20260701-role-thread-handoff-compression`",
+            "no active repo-local package",
             "Latest completed package `ctr-20260701-latest-executor-callback-state-extraction`",
             "committed as `8189ce1`",
             "repo/global skill sync reported `match`",
-            "Current package objective: make reviewer and verifier request prompts path-first",
+            "Latest completed package objective: make reviewer and verifier request prompts path-first",
             "_latest_executor_callback_observation()",
             "pure in-memory executor callback observation lookup",
             "`src/team_router_state.py`",
@@ -10771,8 +10771,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "reviewer pass, then verifier pass",
-            "Commit, push, PR, merge, deploy, publish/release, and global skill sync are outside this package",
+            "none after local merge",
+            "push, PR, merge to remote, deploy, publish/release, and global skill sync are outside this package",
             "no parser/gate/direct-return/watcher/host/thread-adapter",
             "Current Diff Surface",
             "Current truth is command-derived",

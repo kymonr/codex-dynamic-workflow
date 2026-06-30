@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active repo-local package `ctr-20260701-role-thread-handoff-compression` on branch `codex/role-thread-handoff-compression`; local implementation, reviewer v2 gate, and verifier gate passed; local closeout is pending explicit authorization.
-- Current package objective: make reviewer and verifier request prompts path-first and package-oriented so role threads receive `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` pointers instead of inline callback/review evidence bodies.
-- Starting evidence before opening this package: Latest completed package `ctr-20260701-latest-executor-callback-state-extraction` was committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync reported `match`; this package then opened on branch `codex/role-thread-handoff-compression`.
+- State: no active repo-local package. Latest completed package `ctr-20260701-role-thread-handoff-compression` passed reviewer v2 and verifier, was committed as `27447ee`, and was merged locally to `master` as `4634d23`.
+- Latest completed package objective: make reviewer and verifier request prompts path-first and package-oriented so role threads receive `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` pointers instead of inline callback/review evidence bodies.
+- Starting evidence before opening that package: Latest completed package `ctr-20260701-latest-executor-callback-state-extraction` was committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync reported `match`; `ctr-20260701-role-thread-handoff-compression` then opened on branch `codex/role-thread-handoff-compression`.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Active package boundary: prompt-construction only in `src/team_router.py`, tests, and package/workbench/module-map docs; no parser/gate/direct-return/watcher/host/thread-adapter/live adapter/production scheduler behavior is included.
-- Current next gate: local closeout decision; gate sequence reviewer pass, then verifier pass is complete. Commit, push, PR, merge, deploy, publish/release, and global skill sync are outside this package unless explicitly authorized later.
+- Completed package boundary: prompt-construction only in `src/team_router.py`, tests, and package/workbench/module-map docs; no parser/gate/direct-return/watcher/host/thread-adapter/live adapter/production scheduler behavior was included.
+- Current next gate: none after local merge; push, PR, merge to remote, deploy, publish/release, and global skill sync are outside this package unless explicitly authorized later.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -25,7 +25,7 @@ This file intentionally does not list a live diff surface. The current package f
 
 ## Verification Record
 
-Active package verification so far:
+Latest package verification:
 
 - Package opening: created Superpowers plan `docs/superpowers/plans/2026-07-01-role-thread-handoff-compression.md` and branch `codex/role-thread-handoff-compression`.
 - Baseline suite before code edits: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 351 tests OK.
@@ -40,6 +40,7 @@ Active package verification so far:
 - `git diff --check` -> exit 0 with CRLF/LF warnings only.
 - Reviewer status: pass in v2 thread `019f1984-0ec5-7f41-84d4-64104e03ef36`; original reviewer thread `019f1980-44fb-7300-86d9-485025e89645` found documentation freshness rework, and v2 confirmed `requiredChanges: none`.
 - Verifier status: pass in thread `019f1988-013c-7f43-8bc3-13a1c6b77988`; `findings: none`, `requiredChanges: none`. Fresh verifier worktree `skillSync.status` was `mismatch` for `references/testing-and-quality-gates.md`; this is evidence-only, outside scoped diff, and does not authorize global sync.
+- Closeout status: committed as `27447ee` on `codex/role-thread-handoff-compression` and merged locally to `master` as `4634d23`; no push, PR, deploy, publish/release, or global skill sync was included.
 
 Previous package verification:
 
@@ -91,5 +92,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: reviewer v2 and verifier passed for `ctr-20260701-role-thread-handoff-compression`; await explicit closeout authorization before commit, push, or global skill sync.
-- No commit, push, PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or global skill sync is included in the current authorization.
+- Current gate: none after local merge for `ctr-20260701-role-thread-handoff-compression`; open a new repo-local package only on explicit dispatch.
+- No push, PR, remote merge, deploy, publish/release, live adapter, production scheduler/daemon, or global skill sync is included after local merge.
