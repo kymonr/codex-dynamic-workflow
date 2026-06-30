@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package. Latest completed package `ctr-20260701-latest-executor-callback-state-extraction` passed reviewer v2 and verifier, was committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync reported `match`.
-- Latest completed package objective: continue the conservative registry/ledger state extraction by moving only `_latest_executor_callback_observation()` into `src/team_router_state.py`.
-- Starting evidence before opening that package: `git status -sb --untracked-files=all` reported `## master...origin/master`; previous package `ctr-20260630-ledger-transition-state-extraction` was committed and pushed before this package opened.
+- State: active repo-local package `ctr-20260701-role-thread-handoff-compression` on branch `codex/role-thread-handoff-compression`; local implementation, reviewer v2 gate, and verifier gate passed; local closeout is pending explicit authorization.
+- Current package objective: make reviewer and verifier request prompts path-first and package-oriented so role threads receive `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` pointers instead of inline callback/review evidence bodies.
+- Starting evidence before opening this package: Latest completed package `ctr-20260701-latest-executor-callback-state-extraction` was committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync reported `match`; this package then opened on branch `codex/role-thread-handoff-compression`.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Completed package boundary: only the pure in-memory executor callback observation lookup moved from `src/team_router.py` to `src/team_router_state.py`; no parser/gate/direct-return/watcher/host/prompt behavior, live adapter, production scheduler/daemon, PR, merge, deploy, or publish/release was included.
-- Current next gate: none after closeout; open a new repo-local package only on explicit dispatch.
+- Active package boundary: prompt-construction only in `src/team_router.py`, tests, and package/workbench/module-map docs; no parser/gate/direct-return/watcher/host/thread-adapter/live adapter/production scheduler behavior is included.
+- Current next gate: local closeout decision; gate sequence reviewer pass, then verifier pass is complete. Commit, push, PR, merge, deploy, publish/release, and global skill sync are outside this package unless explicitly authorized later.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -25,24 +25,25 @@ This file intentionally does not list a live diff surface. The current package f
 
 ## Verification Record
 
-Latest package verification:
+Active package verification so far:
 
-- Package opening: update this workbench, create `docs/team-router/packages/ctr-20260701-latest-executor-callback-state-extraction.md`, and keep module-map/current-state tests aligned with the new active package.
-- Starting evidence before opening this package: `git status -sb --untracked-files=all` reported `## master...origin/master`.
-- Implementation: moved `_latest_executor_callback_observation()` from `src/team_router.py` to `src/team_router_state.py`; facade compatibility remains through import/re-export.
-- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m py_compile src\team_router.py src\team_router_state.py tests\test_team_router.py` -> exit 0. Direct `py_compile` without isolated cache hit `[WinError 5]` writing old `src\__pycache__`, so verification uses the existing Windows temp-cache workaround.
-- Focused tests: facade re-export, latest executor callback observation behavior, workbench current-state contract, and module-map contract -> Ran 4 tests OK.
-- Full suite: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 351 tests OK.
-- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; authorization reports commit/push/globalSync false; current truth is dirty only because this package diff is present.
-- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; nextAction is reviewer pass then verifier pass before closeout; unauthorized includes commit, push, PR, merge, deploy, global skill sync.
-- `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_closeout_check.py --json` -> exit 0; commit/push/globalSync false; skill-sync output is evidence-only and must be freshly checked by each reviewer/verifier worktree.
+- Package opening: created Superpowers plan `docs/superpowers/plans/2026-07-01-role-thread-handoff-compression.md` and branch `codex/role-thread-handoff-compression`.
+- Baseline suite before code edits: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 351 tests OK.
+- RED tests: focused reviewer/verifier path-first prompt tests failed before implementation because compact prompts still copied callback evidence or exceeded the package handoff length cap.
+- GREEN focused tests: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_uses_path_first_handoff_without_raw_callback tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_uses_path_first_handoff_without_raw_review_or_callback -v` -> Ran 2 tests OK.
+- Related prompt contract regression: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_request_templates_default_to_compact_path_based_outputs tests.test_team_router.TestTeamRouterProtocol.test_path_handoff_omits_long_callback_raw_from_downstream_prompts tests.test_team_router.TestTeamRouterProtocol.test_role_request_templates_preserve_design_gates_but_compact_result_noise tests.test_team_router.TestTeamRouterProtocol.test_manager_reviewer_verifier_prompts_codify_path_handoff_contract -v` -> Ran 4 tests OK.
+- Compile: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m py_compile src\team_router.py tests\test_team_router.py` -> exit 0.
+- Full suite: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 353 tests OK.
+- Truth check: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; authorization reports commit/push/globalSync false; dirty surface is this active package.
+- Doctor check: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `nextAction` says reviewer pass then verifier pass before closeout; unauthorized includes commit, push, PR, merge, deploy, global skill sync.
+- Closeout check: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B scripts\team_router_closeout_check.py --json` -> exit 0; commit/push/globalSync false. Skill-sync output is evidence-only: main worktree reported `status: match`, while reviewer worktree reported `status: mismatch` for `references/testing-and-quality-gates.md`; verifier must use fresh local output and this package does not authorize global sync.
 - `git diff --check` -> exit 0 with CRLF/LF warnings only.
-- Reviewer v2 status: pass; `TEAM_ROUTER_REVIEW` thread `019f1959-2aea-71a1-986d-56ee156f9804` reported `requiredChanges: none`.
-- Verifier status: pass; `TEAM_ROUTER_VERDICT` thread `019f195c-f32d-7582-95d6-ad532339053a` reported `requiredChanges: none`.
-- Closeout status: committed as `8189ce1`, pushed to `origin/master`, and repo/global skill sync check reported `status: match`; no PR, merge, deploy, or publish/release was included.
+- Reviewer status: pass in v2 thread `019f1984-0ec5-7f41-84d4-64104e03ef36`; original reviewer thread `019f1980-44fb-7300-86d9-485025e89645` found documentation freshness rework, and v2 confirmed `requiredChanges: none`.
+- Verifier status: pass in thread `019f1988-013c-7f43-8bc3-13a1c6b77988`; `findings: none`, `requiredChanges: none`. Fresh verifier worktree `skillSync.status` was `mismatch` for `references/testing-and-quality-gates.md`; this is evidence-only, outside scoped diff, and does not authorize global sync.
 
 Previous package verification:
 
+- Implementation: moved `_latest_executor_callback_observation()` into `src/team_router_state.py` in previous `ctr-20260701-latest-executor-callback-state-extraction`; it passed reviewer v2 and verifier, then was explicitly authorized and committed as `8189ce1`; it was pushed to `origin/master`, and repo/global skill sync reported `match`. It moved `_latest_executor_callback_observation()` into `src/team_router_state.py` as a pure in-memory executor callback observation lookup and is historical baseline only.
 - Previous `ctr-20260630-ledger-transition-state-extraction` passed reviewer v3 and verifier, then was explicitly authorized and committed as `35a3a7f`; it was pushed to `origin/master`, and authorized global skill sync reported `match`. It moved `_has_observation_content()` into `src/team_router_state.py` and is historical baseline only.
 - Previous `ctr-20260630-registry-ledger-state-extraction` passed reviewer and verifier, then was explicitly authorized and committed as `9b7ac98`; it was pushed to `origin/master`. It moved `_search_anchor()`, `_role_review_request_record()`, and pure latest-request accessors into `src/team_router_state.py` and is historical baseline only.
 - Previous `ctr-20260630-role-thread-prompt-path-contract` passed reviewer and verifier, then was explicitly authorized and committed as `0596316`; it was pushed to `origin/master`, and its authorized global skill sync reported `match`. Its role-thread prompt path handoff is historical baseline only.
@@ -69,7 +70,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
-- Stale-current-state detection and doctor nextAction in this package are evidence-only UX; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, or production scheduling.
+- Path-first prompt compression in this package is evidence handoff UX only; it does not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
 
@@ -83,12 +84,12 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
-- Registry/ledger extraction can accidentally change on-disk state compatibility, task status transitions, role binding semantics, or direct-return recovery behavior if helpers are moved with hidden orchestration side effects.
+- Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
 - Real host integration is still external: no live host adapter implementation, no production scheduler/daemon, and no callable host readiness snapshot is supplied by this repo package.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: none after closeout for `ctr-20260701-latest-executor-callback-state-extraction`; open a new repo-local package only on explicit dispatch.
-- No PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or new implementation is authorized after closeout.
+- Current gate: reviewer v2 and verifier passed for `ctr-20260701-role-thread-handoff-compression`; await explicit closeout authorization before commit, push, or global skill sync.
+- No commit, push, PR, merge, deploy, publish/release, live adapter, production scheduler/daemon, or global skill sync is included in the current authorization.
