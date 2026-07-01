@@ -119,6 +119,16 @@ def _heartbeat_scheduler_callable(snapshot: dict[str, object]) -> bool:
     return False
 
 
+def _runtime_probe_ready(snapshot: dict[str, object]) -> bool:
+    probe = _first_present(snapshot, ("runtimeProbe", "runtime_probe", "runtimeReadiness"))
+    if not isinstance(probe, dict):
+        return False
+    status = str(probe.get("status") or "").strip().lower()
+    missing = probe.get("missing")
+    if missing is None:
+        missing = []
+    return status == "ready" and isinstance(missing, list) and not missing
+
 def classify_host_readiness_snapshot(snapshot: dict[str, object] | None) -> dict[str, object]:
     if snapshot is None:
         capabilities = {tool: False for tool in REQUIRED_THREAD_TOOLS}
@@ -134,6 +144,7 @@ def classify_host_readiness_snapshot(snapshot: dict[str, object] | None) -> dict
         }
     tool_capabilities = _callable_tool_capabilities(snapshot)
     heartbeat_callable = _heartbeat_scheduler_callable(snapshot)
+    runtime_probe_ready = _runtime_probe_ready(snapshot)
     parent_thread_id = str(_first_present(snapshot, ("parentThreadId", "parent_thread_id")) or "").strip()
     adapter_callable = _as_bool(_first_present(snapshot, ("adapterCallable", "callableAdapter", "pythonCallableAdapter")))
     tool_surface_exposed = _thread_tool_surface_exposed(snapshot)
@@ -147,6 +158,8 @@ def classify_host_readiness_snapshot(snapshot: dict[str, object] | None) -> dict
         missing.append("parent_thread_id")
     if not heartbeat_callable:
         missing.append("callable heartbeat scheduler")
+    if not runtime_probe_ready:
+        missing.append("runtime readiness probe")
     status = "ready" if not missing else "blocked"
     orchestration_status = "adapter_smoke_ready" if status == "ready" else "host_contract_blocked"
     capabilities = dict(tool_capabilities)
@@ -162,6 +175,7 @@ def classify_host_readiness_snapshot(snapshot: dict[str, object] | None) -> dict
             "parentThreadIdPresent": bool(parent_thread_id),
             "adapterCallable": adapter_callable,
             "heartbeatSchedulerCallable": heartbeat_callable,
+            "runtimeProbeReady": runtime_probe_ready,
         },
         "summary": (
             "host readiness evidence supports adapter heartbeat smoke path"

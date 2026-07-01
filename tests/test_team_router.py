@@ -1866,6 +1866,7 @@ class TestTeamRouterState(unittest.TestCase):
                 "callableTools": list(module.REQUIRED_THREAD_TOOLS),
                 "parentThreadId": "019f0ebf-9047-71d2-86b9-efbf7bc4612d",
                 "heartbeatScheduler": {"scheduleCallable": True},
+                "runtimeProbe": {"status": "ready", "missing": []},
             }
         )
 
@@ -1874,6 +1875,38 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertEqual(ready["missing"], [])
         self.assertTrue(ready["capabilities"]["set_thread_title"])
         self.assertTrue(ready["capabilities"]["heartbeat_scheduler"])
+
+    def test_router_doctor_requires_runtime_probe_for_adapter_smoke_ready(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        base_snapshot = {
+            "adapterCallable": True,
+            "callableTools": list(module.REQUIRED_THREAD_TOOLS),
+            "parentThreadId": "parent-thread",
+            "heartbeatSchedulerCallable": True,
+        }
+
+        blocked = module.classify_host_readiness_snapshot(base_snapshot)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["orchestrationStatus"], "host_contract_blocked")
+        self.assertIn("runtime readiness probe", blocked["missing"])
+        self.assertFalse(blocked["evidence"]["runtimeProbeReady"])
+
+        ready_snapshot = dict(base_snapshot)
+        ready_snapshot["runtimeProbe"] = {"status": "ready", "missing": []}
+
+        ready = module.classify_host_readiness_snapshot(ready_snapshot)
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["orchestrationStatus"], "adapter_smoke_ready")
+        self.assertEqual(ready["missing"], [])
+        self.assertTrue(ready["evidence"]["runtimeProbeReady"])
 
     def test_router_doctor_includes_host_readiness_snapshot(self):
         with workspace_temp_dir() as tmp:
