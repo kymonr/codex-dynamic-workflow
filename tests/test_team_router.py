@@ -637,6 +637,32 @@ class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
         self.assertEqual(report["status"], "blocked")
         self.assertEqual(report["runtimeProbe"], {"status": "blocked", "missing": ["scheduler smoke"]})
 
+    def test_broker_feasibility_check_blocks_top_level_missing(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {"heartbeat_scheduler": True},
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": ["manual_only"],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["missing"], ["manual_only"])
+
     def test_scheduler_payload_materializes_with_broker_scheduler(self):
         import team_router_broker_adapter
 
@@ -671,6 +697,26 @@ class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
         self.assertIs(kwargs["heartbeat_scheduler"], scheduler)
         self.assertEqual(kwargs["observed_at"], "2026-07-01T10:05:00+08:00")
         self.assertEqual(kwargs["turn_limit"], 3)
+
+    def test_scheduler_payload_materializer_rejects_mixed_callback_fields(self):
+        adapter = FakeThreadAdapter()
+        payload = {
+            "callback": "watch_team_task_with_adapter",
+            "managerAction": "run_arbitrary_python",
+            "runAt": "2026-07-01T10:05:00+08:00",
+            "kwargs": {
+                "state_root": str(ROOT),
+                "project_id": "project-1",
+                "task_id": "task-1",
+                "permission": "read-only",
+                "read_reason": "scheduled watcher heartbeat",
+            },
+        }
+
+        with self.assertRaises(team_router.ProtocolError) as ctx:
+            team_router.materialize_watcher_call_kwargs(payload, thread_adapter=adapter)
+
+        self.assertIn("scheduler payload callback not allowed: run_arbitrary_python", str(ctx.exception))
 
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_facade_reexports_broker_adapter_symbols(self):

@@ -271,9 +271,12 @@ def materialize_watcher_call_kwargs(payload: Mapping[str, Any],
                                     observed_at: str | None = None,
                                     heartbeat_scheduler: Any = None,
                                     turn_limit: int | None = None) -> dict[str, Any]:
-    callback = payload.get("callback") or payload.get("managerAction")
-    if callback != "watch_team_task_with_adapter":
+    callbacks = [payload.get(name) for name in ("callback", "managerAction") if payload.get(name) is not None]
+    if not callbacks:
         raise ProtocolError("scheduler payload callback must be watch_team_task_with_adapter")
+    for callback in callbacks:
+        if callback != "watch_team_task_with_adapter":
+            raise ProtocolError("scheduler payload callback not allowed: %s; expected watch_team_task_with_adapter" % callback)
     raw_args = payload.get("kwargs") if isinstance(payload.get("kwargs"), Mapping) else payload.get("watchArgs")
     if not isinstance(raw_args, Mapping):
         raise ProtocolError("scheduler payload requires kwargs or watchArgs")

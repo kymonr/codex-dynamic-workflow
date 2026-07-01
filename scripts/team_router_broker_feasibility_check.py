@@ -58,7 +58,9 @@ def build_report(broker_url: str | None, session_token: str | None) -> tuple[int
         and isinstance(runtime_probe.get("missing"), list)
         and not runtime_probe.get("missing")
     )
-    status = "ready" if readiness.get("status") == "ready" and runtime_probe_ready else "blocked"
+    readiness_missing = readiness.get("missing")
+    readiness_missing_clear = isinstance(readiness_missing, list) and not readiness_missing
+    status = "ready" if readiness.get("status") == "ready" and readiness_missing_clear and runtime_probe_ready else "blocked"
     report = {
         "mode": "read-only",
         "status": status,
