@@ -2825,6 +2825,42 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertIn("managerPolling=read_suppressed", report["summary"])
             self.assertIn("no thread tools", polling["boundary"])
 
+    def test_router_doctor_fixture_reports_manager_polling_status(self):
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            fixture = ROOT / "tests" / "fixtures" / "team_router" / "manager_polling_status_snapshot.json"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_doctor.py"),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--role-status-json",
+                    str(fixture),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            polling = report["managerPollingStatus"]
+            self.assertEqual(polling["mode"], "read-only")
+            self.assertEqual(polling["status"], "read_suppressed")
+            self.assertFalse(polling["shouldRead"])
+            self.assertFalse(polling["shouldReport"])
+            self.assertEqual(polling["nextAllowedReadAt"], "2026-07-02T10:05:30+08:00")
+            self.assertIn("managerPolling=read_suppressed", report["summary"])
+
     def test_router_doctor_classifies_host_readiness_snapshot(self):
         spec = importlib.util.spec_from_file_location(
             "team_router_doctor_under_test",
@@ -11948,6 +11984,64 @@ regressionRisks: watcher transitions
         self.assertNotIn("compoundingDecision:", handoff)
         self.assertNotIn("reason: ", handoff)
 
+    def test_handoff_includes_manager_polling_status_summary(self):
+        ledger = self._awaiting_callback_ledger()
+        ledger["managerPollingStatus"] = {
+            "mode": "read-only",
+            "status": "read_suppressed",
+            "shouldRead": False,
+            "shouldReport": False,
+            "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+            "summary": "manager polling read suppressed until 2026-07-02T10:05:30+08:00",
+        }
+        registry = team_router.load_registry(self.root, self.project_id)
+
+        handoff = team_router.format_handoff_for_user(ledger, registry)
+
+        self.assertIn("managerPolling:", handoff)
+        self.assertIn("  status: read_suppressed", handoff)
+        self.assertIn("  shouldRead: False", handoff)
+        self.assertIn("  shouldReport: False", handoff)
+        self.assertIn("  nextAllowedReadAt: 2026-07-02T10:05:30+08:00", handoff)
+        self.assertIn("manager polling read suppressed", handoff)
+
+    def test_closeout_includes_manager_polling_status_summary(self):
+        ledger = self._verifying_ledger()
+        team_router.record_verifier_request_sent(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            verifier_thread_id="thread-verifier",
+            sent_at="2026-06-22T20:05:00+08:00",
+            message_id="msg-verify",
+        )
+        done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            ledger["taskId"],
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-06-22T20:05:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-06-22T20:06:00+08:00", "text": "TEAM_ROUTER_VERDICT taskId=ctr-20260622-160000-a7f3\nresult: pass\nsummary: ok\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"},
+            ],
+            captured_at="2026-06-22T20:07:00+08:00",
+        )
+        done["managerPollingStatus"] = {
+            "mode": "read-only",
+            "status": "unchanged_active_status_suppressed",
+            "shouldRead": True,
+            "shouldReport": False,
+            "summary": "manager polling observed unchanged active status",
+        }
+        registry = team_router.load_registry(self.root, self.project_id)
+
+        closeout = team_router.format_closeout_for_user(done, registry)
+
+        self.assertIn("managerPolling:", closeout)
+        self.assertIn("  status: unchanged_active_status_suppressed", closeout)
+        self.assertIn("  shouldRead: True", closeout)
+        self.assertIn("  shouldReport: False", closeout)
+        self.assertIn("manager polling observed unchanged active status", closeout)
+
     def test_format_task_update_for_user_uses_closeout_only_for_terminal_closeout(self):
         awaiting = self._awaiting_callback_ledger()
         registry = team_router.load_registry(self.root, self.project_id)
@@ -12147,10 +12241,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         for needle in (
             "no active repo-local package",
-            "`ctr-20260702-manager-polling-doctor-ux` has completed local review and acceptance",
-            "surface `manager_polling_status_update()` in `scripts/team_router_doctor.py`",
-            "caller-supplied evidence",
-            "did not yet expose its quiet polling decision",
+            "`ctr-20260702-manager-polling-status-consumption` has completed local review and acceptance",
+            "make manager polling status visible end-to-end",
+            "caller-supplied doctor evidence",
+            "manager-facing status summary consumption were still missing",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12159,6 +12253,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
             "none after local closeout",
+            "ctr-20260702-manager-polling-status-consumption",
             "Current next gate",
             "none after local closeout",
             "Current Diff Surface",
@@ -12252,6 +12347,18 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "send this dispatch-prompt path-handoff package back to reviewer re-review",
         ):
             self.assertNotIn(stale_current_claim, text)
+
+    def test_runbook_documents_manager_polling_snapshot_fixture(self):
+        text = (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "managerPolling",
+            "tests/fixtures/team_router/manager_polling_status_snapshot.json",
+            "--role-status-json",
+            "evidence-only",
+            "does not call live thread tools",
+        ):
+            self.assertIn(needle, text)
 
     def test_watcher_status_package_records_fallback_only_role_delivery(self):
         package = (ROOT / "docs" / "team-router" / "packages" / "ctr-20260630-watcher-status-extraction.md").read_text(encoding="utf-8")

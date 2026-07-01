@@ -4,9 +4,9 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package; `ctr-20260702-manager-polling-doctor-ux` has completed local review and acceptance and is locally closed out by explicit user authorization.
-- Completed package objective: surface `manager_polling_status_update()` in `scripts/team_router_doctor.py` so manager-facing status output can show read/report decisions from caller-supplied evidence.
-- Completed package starting evidence: `manager_polling_status_update()` was implemented and exported, but the plain doctor/status summary did not yet expose its quiet polling decision.
+- State: no active repo-local package; `ctr-20260702-manager-polling-status-consumption` has completed local review and acceptance and is locally closed out by explicit Complex Task authorization.
+- Completed package objective: make manager polling status visible end-to-end from caller-supplied doctor evidence into manager-facing handoff and closeout summaries.
+- Completed package starting evidence: doctor exposed `managerPollingStatus`, but reusable fixture/runbook evidence and manager-facing status summary consumption were still missing.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
 - Current package boundary: none after local closeout; latest package is complete unless fresh commands show otherwise.
 - Current next gate: none after local closeout. Any push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync requires a separate explicit authorization.
@@ -27,6 +27,18 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- `ctr-20260702-manager-polling-status-consumption`: RED fixture/runbook tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-complex-red1 py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_fixture_reports_manager_polling_status tests.test_team_router.TestTeamRouterSkillDoc.test_runbook_documents_manager_polling_snapshot_fixture -v` first failed because the fixture file was missing and the runbook did not yet document `managerPolling`.
+- `ctr-20260702-manager-polling-status-consumption`: GREEN fixture/runbook tests with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-complex-green1b` -> Ran 2 tests OK.
+- `ctr-20260702-manager-polling-status-consumption`: RED formatter tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-complex-red2b py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_handoff_includes_manager_polling_status_summary tests.test_team_router.TestTeamRouterManagerIntegration.test_closeout_includes_manager_polling_status_summary -v` first failed because handoff/closeout output did not include `managerPolling:`.
+- `ctr-20260702-manager-polling-status-consumption`: GREEN formatter tests with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-complex-green2` -> Ran 2 tests OK.
+- `ctr-20260702-manager-polling-status-consumption`: final focused suite `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-complex-focused py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_fixture_reports_manager_polling_status tests.test_team_router.TestTeamRouterSkillDoc.test_runbook_documents_manager_polling_snapshot_fixture tests.test_team_router.TestTeamRouterManagerIntegration.test_handoff_includes_manager_polling_status_summary tests.test_team_router.TestTeamRouterManagerIntegration.test_closeout_includes_manager_polling_status_summary tests.test_team_router.TestTeamRouterState.test_router_doctor_includes_manager_polling_status_decision_from_snapshot tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v` -> Ran 6 tests OK.
+- `ctr-20260702-manager-polling-status-consumption`: compile `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-complex-compile py -B -m py_compile src\team_router_status.py scripts\team_router_doctor.py tests\test_team_router.py` -> exit 0.
+- `ctr-20260702-manager-polling-status-consumption`: `git diff --check` -> exit 0; Git printed CRLF/LF replacement warnings for `docs/runbooks/codex-team-router-live-orchestration.md`, `docs/workbench.md`, and `tests/test_team_router.py` only.
+- `ctr-20260702-manager-polling-status-consumption`: `py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skillSync.status: match`; dirty local package surface includes `docs/runbooks/codex-team-router-live-orchestration.md`, `docs/workbench.md`, `src/team_router_status.py`, `tests/test_team_router.py`, the implementation plan, package doc, and fixture.
+- `ctr-20260702-manager-polling-status-consumption`: `py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `managerPollingStatus.status: not_supplied`; `summary` includes `managerPolling=not_supplied`.
+- `ctr-20260702-manager-polling-status-consumption`: `py -B scripts\team_router_closeout_check.py --json` -> exit 0; `skillSync.status: match`; dirty local package surface remains uncommitted before the authorized Complex Task local commit.
+- `ctr-20260702-manager-polling-status-consumption`: local review pass -> no blocking findings; confirmed the package only formats supplied manager polling status evidence and does not add live `read_thread`, broker, scheduler, dispatch, parser, or registry/ledger transition paths.
+- `ctr-20260702-manager-polling-status-consumption`: local acceptance -> focused suite OK, compile exit 0, `git diff --check` exit 0 with CRLF/LF warnings only, `truth_check` staleClaims empty, `doctor` exposes default `managerPollingStatus.status: not_supplied`, and `closeout_check` exits 0.
 - `ctr-20260702-manager-polling-doctor-ux`: RED focused test `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-polling-doctor-red py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_includes_manager_polling_status_decision_from_snapshot -v` first failed with `KeyError: 'managerPollingStatus'`.
 - `ctr-20260702-manager-polling-doctor-ux`: GREEN focused test after implementation: same test with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-polling-doctor-green` -> Ran 1 test OK.
 - `ctr-20260702-manager-polling-doctor-ux`: focused doctor/polling suite with role status, host readiness, broker arg guard, plain status, and manager polling helper tests -> Ran 10 tests OK.
@@ -102,7 +114,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
-- Current manager-polling doctor UX package may change doctor status output, tests, package/workbench records, and verification notes only; it must not modify parser marker schema, registry/ledger state transitions, direct-return receipt validation, production broker startup, live role dispatch, thread-tool calls, or host adapter implementation.
+- Current manager-polling status consumption package may change doctor evidence fixture/runbook text, manager-facing summary formatting, tests, package/workbench records, and verification notes only; it must not modify parser marker schema, registry/ledger state transitions, direct-return receipt validation, production broker startup, live role dispatch, thread-tool calls, or host adapter implementation.
 - Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
@@ -119,10 +131,10 @@ Older entries are history only. They must not be treated as current git truth / 
 
 - Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
-- Active role status can be misread as stuck if the manager narrates every unchanged poll or suggests duplicate role restart too early; the current package exposes the quiet polling helper through doctor output without live reads.
+- Active role status can be misread as stuck if the manager narrates every unchanged poll or suggests duplicate role restart too early; the current package exposes and formats quiet polling status from supplied evidence without live reads.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: none after local closeout for `ctr-20260702-manager-polling-doctor-ux`.
+- Current gate: none after local closeout for `ctr-20260702-manager-polling-status-consumption`.
 - No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.

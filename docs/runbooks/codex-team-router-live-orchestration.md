@@ -171,6 +171,14 @@ The fixture `tests/fixtures/team_router/three_role_visible_smoke_scenarios.json`
 - `verifier-needs-rework`: verifier returns `needs_rework`; parent stops until user approval before redispatch.
 - `verifier-blocked-closeout`: verifier returns `blocked`; parent emits `Team Router Closeout` with remaining work.
 
+The fixture `tests/fixtures/team_router/manager_polling_status_snapshot.json` is a caller-supplied evidence-only snapshot for the doctor status surface. It demonstrates the `managerPolling` input shape for:
+
+```powershell
+py -B scripts\team_router_doctor.py --role-status-json tests/fixtures/team_router/manager_polling_status_snapshot.json --json
+```
+
+This doctor check does not call live thread tools, does not start a broker, and does not dispatch roles. It only turns the supplied ledger, wakeup, observedAt, observedStatus, and readReason into `managerPollingStatus` so the manager can see whether the next action is `read_suppressed`, `unchanged_active_status_suppressed`, `status_change_report`, or `no_status_report`.
+
 ## Expected User Output
 
 For a passing verifier result, the parent thread must display the helper output, not a rewritten summary:

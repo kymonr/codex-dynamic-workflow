@@ -67,6 +67,23 @@ def closeout_compounding_fields(closeout: Mapping[str, Any]) -> tuple[str, str]:
     return decision, reason
 
 
+def manager_polling_status_lines(ledger: Mapping[str, Any]) -> list[str]:
+    polling = ledger.get("managerPollingStatus")
+    if not isinstance(polling, Mapping):
+        return []
+    lines = [
+        "managerPolling:",
+        "  status: %s" % polling.get("status", ""),
+        "  shouldRead: %s" % polling.get("shouldRead", ""),
+        "  shouldReport: %s" % polling.get("shouldReport", ""),
+    ]
+    if polling.get("nextAllowedReadAt"):
+        lines.append("  nextAllowedReadAt: %s" % polling.get("nextAllowedReadAt", ""))
+    if polling.get("summary"):
+        lines.append("  summary: %s" % polling.get("summary", ""))
+    return lines
+
+
 def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
     project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
     closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else {}
@@ -85,6 +102,7 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
         "nextAction: %s" % closeout.get("nextAction", ""),
         "remainingTodos: %s" % closeout.get("remainingTodos", closeout.get("nextAction", "")),
     ))
+    lines.extend(manager_polling_status_lines(ledger))
     if closeout.get("receiptSource") or closeout.get("receiptChannel"):
         lines.extend((
             "receiptSource: %s" % closeout.get("receiptSource", ""),
@@ -153,6 +171,7 @@ def format_handoff_for_user(ledger: Mapping[str, Any], registry: Mapping[str, An
         "nextAction: %s" % closeout.get("nextAction", ""),
         "remainingTodos: %s" % closeout.get("remainingTodos", closeout.get("nextAction", "")),
     ))
+    lines.extend(manager_polling_status_lines(ledger))
     return "\n".join(lines)
 
 

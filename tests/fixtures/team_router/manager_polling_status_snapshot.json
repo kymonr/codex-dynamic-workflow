@@ -1,0 +1,33 @@
+{
+  "roles": [],
+  "expectedMarkers": {
+    "reviewer": "TEAM_ROUTER_REVIEW"
+  },
+  "managerPolling": {
+    "ledger": {
+      "taskId": "ctr-polling-ux",
+      "status": "awaiting_callback",
+      "roleThreadStatus": "inProgress",
+      "readDiscipline": {
+        "gateClass": "STRICT",
+        "lastReadAt": "2026-07-02T10:00:30+08:00",
+        "lastReportedRoleStatus": "in_progress",
+        "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+        "minimumIntervalSeconds": 300,
+        "directReturnExpected": true
+      }
+    },
+    "wakeup": {
+      "role": "reviewer",
+      "threadId": "thread-reviewer",
+      "expectedMarker": "TEAM_ROUTER_REVIEW taskId=ctr-polling-ux",
+      "searchAnchor": {
+        "sentAt": "2026-07-02T10:00:00+08:00"
+      },
+      "reason": "awaiting reviewer"
+    },
+    "observedAt": "2026-07-02T10:04:00+08:00",
+    "observedStatus": "inProgress",
+    "readReason": "scheduled watcher heartbeat"
+  }
+}
