@@ -191,6 +191,22 @@ $report.managerPollingStatus.nextAllowedReadAt
 
 Expected stable reproducible fields are recorded in `tests/fixtures/team_router/manager_polling_status_expected_subset.json`. The stable fields include `managerPollingStatus.status`, `managerPollingStatus.shouldRead`, `managerPollingStatus.shouldReport`, `managerPollingStatus.nextAllowedReadAt`, `managerPollingStatus.observedStatus`, `managerPollingStatus.previousReportedStatus`, and the summary containing `managerPolling=read_suppressed`. Do not compare the full JSON report because `truthStatus`, git status, `scanFiles`, and skill-sync evidence are live worktree truth and can change between clean and dirty checkouts.
 
+The host adapter readiness check proves the Python-callable injection shape without calling live thread tools. A fixture that represents a ready callable host adapter can be checked with:
+
+```powershell
+py -B scripts\team_router_host_adapter_readiness_check.py --adapter-snapshot-json tests/fixtures/team_router/host_adapter_callable_ready_snapshot.json --json
+```
+
+The expected stable fields are `status: ready`, `orchestrationStatus: adapter_smoke_ready`, and `adapterInjection.threadToolCallsExecuted: 0`. This is still evidence-only: the synthetic callable adapter raises if any represented tool is executed.
+
+A model-side descriptor surface is intentionally blocked because tool descriptors are not Python callables:
+
+```powershell
+py -B scripts\team_router_host_adapter_readiness_check.py --adapter-snapshot-json tests/fixtures/team_router/host_adapter_model_descriptors_blocked_snapshot.json --json
+```
+
+The expected stable fields are `status: blocked`, `orchestrationStatus: host_contract_blocked`, and a missing callable adapter / heartbeat scheduler in `doctorHostReadiness.missing`.
+
 ## Expected User Output
 
 For a passing verifier result, the parent thread must display the helper output, not a rewritten summary:

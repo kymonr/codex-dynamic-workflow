@@ -2866,6 +2866,129 @@ class TestTeamRouterState(unittest.TestCase):
             for needle in expected["summaryContains"]:
                 self.assertIn(needle, report["summary"])
 
+    def test_host_adapter_readiness_check_accepts_callable_snapshot_without_tool_calls(self):
+        with workspace_temp_dir() as tmp:
+            snapshot = Path(tmp) / "host-adapter-ready.json"
+            callable_tools = {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+            }
+            snapshot.write_text(json.dumps({
+                "source": "unit-test-host-adapter",
+                "adapterCallable": True,
+                "codexAppThreadToolsExposed": True,
+                "callableTools": callable_tools,
+                "parentThreadId": "parent-thread",
+                "heartbeatSchedulerCallable": True,
+                "runtimeProbe": {"status": "ready", "missing": []},
+            }), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_host_adapter_readiness_check.py"),
+                    "--adapter-snapshot-json",
+                    str(snapshot),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "ready")
+            self.assertEqual(report["orchestrationStatus"], "adapter_smoke_ready")
+            self.assertTrue(report["adapterInjection"]["pythonCallableAdapter"])
+            self.assertEqual(report["adapterInjection"]["threadToolCallsExecuted"], 0)
+            self.assertTrue(all(report["readiness"]["capabilities"][tool] for tool in callable_tools))
+            host_snapshot = report["hostReadinessSnapshot"]
+            self.assertTrue(host_snapshot["adapterCallable"])
+            self.assertEqual(host_snapshot["parentThreadId"], "parent-thread")
+            self.assertTrue(host_snapshot["heartbeatSchedulerCallable"])
+
+    def test_host_adapter_readiness_check_blocks_model_side_descriptors(self):
+        with workspace_temp_dir() as tmp:
+            snapshot = Path(tmp) / "host-adapter-descriptors.json"
+            snapshot.write_text(json.dumps({
+                "source": "unit-test-model-side-descriptors",
+                "adapterCallable": False,
+                "codexAppThreadToolsExposed": True,
+                "callableTools": {
+                    "list_projects": False,
+                    "create_thread": False,
+                    "list_threads": False,
+                    "read_thread": False,
+                    "send_message_to_thread": False,
+                    "set_thread_title": False,
+                },
+                "toolDescriptors": {
+                    "read_thread": {"name": "read_thread"},
+                    "send_message_to_thread": {"name": "send_message_to_thread"},
+                },
+                "parentThreadId": "parent-thread",
+                "heartbeatSchedulerCallable": False,
+                "runtimeProbe": {"status": "ready", "missing": []},
+            }), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_host_adapter_readiness_check.py"),
+                    "--adapter-snapshot-json",
+                    str(snapshot),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "blocked")
+            self.assertEqual(report["orchestrationStatus"], "host_contract_blocked")
+            self.assertFalse(report["adapterInjection"]["pythonCallableAdapter"])
+            self.assertEqual(report["adapterInjection"]["threadToolCallsExecuted"], 0)
+            self.assertIn("callable adapter", report["doctorHostReadiness"]["missing"])
+            self.assertIn("callable heartbeat scheduler", report["doctorHostReadiness"]["missing"])
+            self.assertIn("model-side Codex app tool exposure is not a Python callable adapter", report["doctorHostReadiness"]["boundary"])
+
+    def test_host_adapter_readiness_fixture_reports_ready_without_tool_calls(self):
+        fixture = ROOT / "tests" / "fixtures" / "team_router" / "host_adapter_callable_ready_snapshot.json"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "scripts" / "team_router_host_adapter_readiness_check.py"),
+                "--adapter-snapshot-json",
+                str(fixture),
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["orchestrationStatus"], "adapter_smoke_ready")
+        self.assertEqual(report["adapterInjection"]["threadToolCallsExecuted"], 0)
+        self.assertEqual(report["adapterInjection"]["heartbeatSchedulesExecuted"], 0)
+        self.assertIn("no thread tools are called", report["boundary"])
+
     def test_router_doctor_classifies_host_readiness_snapshot(self):
         spec = importlib.util.spec_from_file_location(
             "team_router_doctor_under_test",
@@ -12246,11 +12369,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         for needle in (
             "no active repo-local package",
-            "`ctr-20260702-manager-polling-reproducible-example` has completed local review and acceptance",
-            "make the manager polling status UX reproducible from docs",
-            "stable doctor fields",
-            "full live worktree report",
-            "runbook did not yet provide stable reproducible fields",
+            "`ctr-20260702-host-adapter-readiness-check` has completed local review and acceptance",
+            "read-only host-adapter readiness check",
+            "in-process Python callables",
+            "`doctor` reported `orchestrationStatus: manual_only`",
+            "local snapshot-based injection-shape probe",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12259,7 +12382,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
             "none after local closeout",
-            "ctr-20260702-manager-polling-reproducible-example",
+            "ctr-20260702-host-adapter-readiness-check",
             "Current next gate",
             "none after local closeout",
             "Current Diff Surface",
@@ -12367,6 +12490,20 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "stable reproducible fields",
             "managerPollingStatus.status",
             "Do not compare the full JSON report",
+        ):
+            self.assertIn(needle, text)
+
+    def test_runbook_documents_host_adapter_readiness_check(self):
+        text = (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(encoding="utf-8")
+
+        for needle in (
+            "scripts\\team_router_host_adapter_readiness_check.py",
+            "tests/fixtures/team_router/host_adapter_callable_ready_snapshot.json",
+            "tests/fixtures/team_router/host_adapter_model_descriptors_blocked_snapshot.json",
+            "Python-callable injection shape",
+            "without calling live thread tools",
+            "adapterInjection.threadToolCallsExecuted: 0",
+            "tool descriptors are not Python callables",
         ):
             self.assertIn(needle, text)
 

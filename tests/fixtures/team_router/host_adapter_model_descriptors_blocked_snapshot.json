@@ -1,0 +1,27 @@
+{
+  "source": "fixture-host-adapter-model-descriptors-blocked",
+  "adapterCallable": false,
+  "codexAppThreadToolsExposed": true,
+  "callableTools": {
+    "list_projects": false,
+    "create_thread": false,
+    "list_threads": false,
+    "read_thread": false,
+    "send_message_to_thread": false,
+    "set_thread_title": false
+  },
+  "toolDescriptors": {
+    "read_thread": {
+      "name": "read_thread"
+    },
+    "send_message_to_thread": {
+      "name": "send_message_to_thread"
+    }
+  },
+  "parentThreadId": "parent-thread-fixture",
+  "heartbeatSchedulerCallable": false,
+  "runtimeProbe": {
+    "status": "ready",
+    "missing": []
+  }
+}

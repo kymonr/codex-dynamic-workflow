@@ -4,9 +4,9 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package; `ctr-20260702-manager-polling-reproducible-example` has completed local review and acceptance and is locally committed by explicit user authorization.
-- Completed package objective: make the manager polling status UX reproducible from docs by comparing stable doctor fields rather than a full live worktree report.
-- Completed package starting evidence: `managerPollingStatus` was visible and a snapshot fixture existed, but the runbook did not yet provide stable reproducible fields or explain why full doctor JSON should not be compared.
+- State: no active repo-local package; `ctr-20260702-host-adapter-readiness-check` has completed local review and acceptance and is locally committed by explicit user authorization.
+- Completed package objective: add a read-only host-adapter readiness check that proves whether caller-supplied Codex Desktop thread-tool evidence can be injected as in-process Python callables.
+- Completed package starting evidence: Team Router was clean/synced but `doctor` reported `orchestrationStatus: manual_only` and `hostReadiness.status: not_supplied`; existing broker readiness checks required an external broker, while this package added a local snapshot-based injection-shape probe.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
 - Current package boundary: none after local closeout; latest package is complete unless fresh commands show otherwise.
 - Current next gate: none after local closeout. Any push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync requires a separate explicit authorization.
@@ -27,6 +27,18 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- `ctr-20260702-host-adapter-readiness-check`: RED focused tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-red py -B -m unittest tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_accepts_callable_snapshot_without_tool_calls tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_blocks_model_side_descriptors -v` first failed because `scripts/team_router_host_adapter_readiness_check.py` did not exist.
+- `ctr-20260702-host-adapter-readiness-check`: GREEN focused tests after adding the read-only script with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-green1` -> Ran 2 tests OK.
+- `ctr-20260702-host-adapter-readiness-check`: RED fixture test `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-red2 py -B -m unittest tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_fixture_reports_ready_without_tool_calls -v` first failed because `tests/fixtures/team_router/host_adapter_callable_ready_snapshot.json` was missing.
+- `ctr-20260702-host-adapter-readiness-check`: focused suite with script ready path, descriptor-blocked path, fixture path, and runbook docs `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-focused py -B -m unittest tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_accepts_callable_snapshot_without_tool_calls tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_blocks_model_side_descriptors tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_fixture_reports_ready_without_tool_calls tests.test_team_router.TestTeamRouterSkillDoc.test_runbook_documents_host_adapter_readiness_check -v` -> Ran 4 tests OK.
+- `ctr-20260702-host-adapter-readiness-check`: final focused suite with workbench current-state guard `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-final-tests py -B -m unittest tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_accepts_callable_snapshot_without_tool_calls tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_blocks_model_side_descriptors tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_fixture_reports_ready_without_tool_calls tests.test_team_router.TestTeamRouterSkillDoc.test_runbook_documents_host_adapter_readiness_check tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v` -> Ran 5 tests OK.
+- `ctr-20260702-host-adapter-readiness-check`: compile `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-compile py -B -m py_compile scripts\team_router_host_adapter_readiness_check.py tests\test_team_router.py` -> exit 0.
+- `ctr-20260702-host-adapter-readiness-check`: `git diff --check` -> exit 0; Git printed CRLF/LF replacement warnings for `docs/runbooks/codex-team-router-live-orchestration.md`, `docs/workbench.md`, and `tests/test_team_router.py` only.
+- `ctr-20260702-host-adapter-readiness-check`: `py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skillSync.status: match`; dirty local package surface includes the runbook, workbench, tests, package doc, script, and two fixtures.
+- `ctr-20260702-host-adapter-readiness-check`: `py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; this package does not inject host readiness into doctor without caller-supplied evidence.
+- `ctr-20260702-host-adapter-readiness-check`: `py -B scripts\team_router_closeout_check.py --json` -> exit 0; `skillSync.status: match`; dirty local package surface remains uncommitted.
+- `ctr-20260702-host-adapter-readiness-check`: ready fixture command `py -B scripts\team_router_host_adapter_readiness_check.py --adapter-snapshot-json tests\fixtures\team_router\host_adapter_callable_ready_snapshot.json --json` -> exit 0; `status: ready`; `orchestrationStatus: adapter_smoke_ready`; `adapterInjection.threadToolCallsExecuted: 0`; `adapterInjection.heartbeatSchedulesExecuted: 0`.
+- `ctr-20260702-host-adapter-readiness-check`: descriptor-blocked fixture command `py -B scripts\team_router_host_adapter_readiness_check.py --adapter-snapshot-json tests\fixtures\team_router\host_adapter_model_descriptors_blocked_snapshot.json --json` -> exit 0; `status: blocked`; `orchestrationStatus: host_contract_blocked`; missing includes `callable adapter` and callable thread tools; tool/scheduler calls remained 0.
 - `ctr-20260702-manager-polling-reproducible-example`: RED focused tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-repro-red py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_fixture_reports_manager_polling_status tests.test_team_router.TestTeamRouterSkillDoc.test_runbook_documents_manager_polling_snapshot_fixture -v` first failed because the stable expected subset fixture and runbook reproduction wording were missing.
 - `ctr-20260702-manager-polling-reproducible-example`: GREEN focused tests with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-repro-green` -> Ran 2 tests OK.
 - `ctr-20260702-manager-polling-reproducible-example`: final focused suite `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-repro-focused py -B -m unittest tests.test_team_router.TestTeamRouterState.test_router_doctor_fixture_reports_manager_polling_status tests.test_team_router.TestTeamRouterSkillDoc.test_runbook_documents_manager_polling_snapshot_fixture tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v` -> Ran 3 tests OK.
@@ -122,7 +134,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
-- Current manager-polling reproducible example package is locally closed out; future packages may change stable doctor evidence fixtures, runbook reproduction text, tests, package/workbench records, and verification notes only unless separately authorized.
+- Current host-adapter readiness package is locally closed out; future packages may change host-readiness scripts, fixtures, runbook reproduction text, tests, package/workbench records, and verification notes only unless separately authorized.
 - Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
@@ -139,10 +151,10 @@ Older entries are history only. They must not be treated as current git truth / 
 
 - Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
-- Active role status can be misread as stuck if the manager narrates every unchanged poll or suggests duplicate role restart too early; the current package makes the supplied-evidence UX reproducible without live reads.
+- Host readiness can be overclaimed if model-side tool descriptors are treated as Python callables; the current package keeps descriptor-only evidence blocked and records `threadToolCallsExecuted: 0`.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: none after local closeout for `ctr-20260702-manager-polling-reproducible-example`; push requires separate explicit authorization.
+- Current gate: none after local closeout for `ctr-20260702-host-adapter-readiness-check`; push requires separate explicit authorization.
 - No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.

@@ -1,0 +1,19 @@
+{
+  "source": "fixture-host-adapter-callable-ready",
+  "adapterCallable": true,
+  "codexAppThreadToolsExposed": true,
+  "callableTools": {
+    "list_projects": true,
+    "create_thread": true,
+    "list_threads": true,
+    "read_thread": true,
+    "send_message_to_thread": true,
+    "set_thread_title": true
+  },
+  "parentThreadId": "parent-thread-fixture",
+  "heartbeatSchedulerCallable": true,
+  "runtimeProbe": {
+    "status": "ready",
+    "missing": []
+  }
+}
