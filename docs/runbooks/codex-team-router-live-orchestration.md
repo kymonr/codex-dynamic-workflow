@@ -179,6 +179,18 @@ py -B scripts\team_router_doctor.py --role-status-json tests/fixtures/team_route
 
 This doctor check does not call live thread tools, does not start a broker, and does not dispatch roles. It only turns the supplied ledger, wakeup, observedAt, observedStatus, and readReason into `managerPollingStatus` so the manager can see whether the next action is `read_suppressed`, `unchanged_active_status_suppressed`, `status_change_report`, or `no_status_report`.
 
+To reproduce the stable manager-polling UX fields, run:
+
+```powershell
+$report = py -B scripts\team_router_doctor.py --role-status-json tests/fixtures/team_router/manager_polling_status_snapshot.json --json | ConvertFrom-Json
+$report.managerPollingStatus.status
+$report.managerPollingStatus.shouldRead
+$report.managerPollingStatus.shouldReport
+$report.managerPollingStatus.nextAllowedReadAt
+```
+
+Expected stable reproducible fields are recorded in `tests/fixtures/team_router/manager_polling_status_expected_subset.json`. The stable fields include `managerPollingStatus.status`, `managerPollingStatus.shouldRead`, `managerPollingStatus.shouldReport`, `managerPollingStatus.nextAllowedReadAt`, `managerPollingStatus.observedStatus`, `managerPollingStatus.previousReportedStatus`, and the summary containing `managerPolling=read_suppressed`. Do not compare the full JSON report because `truthStatus`, git status, `scanFiles`, and skill-sync evidence are live worktree truth and can change between clean and dirty checkouts.
+
 ## Expected User Output
 
 For a passing verifier result, the parent thread must display the helper output, not a rewritten summary:

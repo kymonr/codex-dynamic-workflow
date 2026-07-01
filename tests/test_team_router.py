@@ -2831,6 +2831,7 @@ class TestTeamRouterState(unittest.TestCase):
             global_skill = tmp_path / "global" / "codex-team-router"
             shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
             fixture = ROOT / "tests" / "fixtures" / "team_router" / "manager_polling_status_snapshot.json"
+            expected = json.loads((ROOT / "tests" / "fixtures" / "team_router" / "manager_polling_status_expected_subset.json").read_text(encoding="utf-8"))
 
             result = subprocess.run(
                 [
@@ -2860,6 +2861,10 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertFalse(polling["shouldReport"])
             self.assertEqual(polling["nextAllowedReadAt"], "2026-07-02T10:05:30+08:00")
             self.assertIn("managerPolling=read_suppressed", report["summary"])
+            for key, value in expected["managerPollingStatus"].items():
+                self.assertEqual(polling[key], value)
+            for needle in expected["summaryContains"]:
+                self.assertIn(needle, report["summary"])
 
     def test_router_doctor_classifies_host_readiness_snapshot(self):
         spec = importlib.util.spec_from_file_location(
@@ -12241,10 +12246,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         for needle in (
             "no active repo-local package",
-            "`ctr-20260702-manager-polling-status-consumption` has completed local review and acceptance",
-            "make manager polling status visible end-to-end",
-            "caller-supplied doctor evidence",
-            "manager-facing status summary consumption were still missing",
+            "`ctr-20260702-manager-polling-reproducible-example` has completed local review and acceptance",
+            "make the manager polling status UX reproducible from docs",
+            "stable doctor fields",
+            "full live worktree report",
+            "runbook did not yet provide stable reproducible fields",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12253,7 +12259,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
             "none after local closeout",
-            "ctr-20260702-manager-polling-status-consumption",
+            "ctr-20260702-manager-polling-reproducible-example",
             "Current next gate",
             "none after local closeout",
             "Current Diff Surface",
@@ -12354,9 +12360,13 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         for needle in (
             "managerPolling",
             "tests/fixtures/team_router/manager_polling_status_snapshot.json",
+            "tests/fixtures/team_router/manager_polling_status_expected_subset.json",
             "--role-status-json",
             "evidence-only",
             "does not call live thread tools",
+            "stable reproducible fields",
+            "managerPollingStatus.status",
+            "Do not compare the full JSON report",
         ):
             self.assertIn(needle, text)
 

@@ -1,0 +1,17 @@
+{
+  "managerPollingStatus": {
+    "mode": "read-only",
+    "status": "read_suppressed",
+    "shouldRead": false,
+    "shouldReport": false,
+    "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+    "observedStatus": "in_progress",
+    "previousReportedStatus": "in_progress",
+    "reportReason": "wait until nextAllowedReadAt without repeated status narration",
+    "boundary": "evidence-only; no thread tools are called by doctor"
+  },
+  "summaryContains": [
+    "currentMode=read-only",
+    "managerPolling=read_suppressed"
+  ]
+}
