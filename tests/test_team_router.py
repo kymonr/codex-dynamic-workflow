@@ -1034,6 +1034,99 @@ regressionRisks: low
         self.assertIn("taskBriefPath: <任务 brief 的 workspace 路径>", manager_request)
         self.assertIn("executorReportPath: <执行者报告的 workspace 路径>", manager_request)
         self.assertIn("reviewPackagePath: <review package 的 workspace 路径> | inline", manager_request)
+
+    def test_role_thread_package_bootstrap_is_pointer_only(self):
+        task_id = "ctr-20260701-role-thread-bootstrap-package-only"
+        message = team_router.make_role_thread_package_bootstrap_message(
+            task_id,
+            "verifier",
+            "read-only",
+            "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+            source_thread_id="019f18c7-86d8-7de2-9c43-c072a255ba20",
+            reviewer_thread_id="019f1984-0ec5-7f41-84d4-64104e03ef36",
+            reviewer_result="pass",
+        )
+
+        self.assertTrue(message.startswith("TEAM_ROUTER_VERIFY\n\n<codex_delegation>"))
+        self.assertIn("<source_thread_id>019f18c7-86d8-7de2-9c43-c072a255ba20</source_thread_id>", message)
+        self.assertIn("<input>role: verifier", message)
+        self.assertIn("permission: read-only", message)
+        self.assertIn("package: ctr-20260701-role-thread-bootstrap-package-only", message)
+        self.assertIn(
+            "reviewPackagePath: docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+            message,
+        )
+        self.assertIn("reviewerThreadId: 019f1984-0ec5-7f41-84d4-64104e03ef36", message)
+        self.assertIn("reviewerResult: pass", message)
+        self.assertIn("请只读取 package path", message)
+        self.assertIn("不要复制 raw callback/review/verifier evidence", message)
+        self.assertIn("按 package 中的 role contract 返回标准 TEAM_ROUTER_* marker", message)
+        self.assertLess(len(message), 750)
+        for raw_evidence in (
+            "TEAM_ROUTER_REVIEW",
+            "TEAM_ROUTER_VERDICT",
+            "Reviewer v2 marker",
+            "Scope:",
+            "Please check",
+            "Return only",
+            "evidenceChecked:",
+            "findings:",
+            "requiredChanges:",
+            "主工作区 verifier 前 fresh evidence",
+        ):
+            self.assertNotIn(raw_evidence, message)
+
+        reviewer_message = team_router.make_role_thread_package_bootstrap_message(
+            task_id,
+            "reviewer",
+            "read-only",
+            "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+        )
+        self.assertTrue(reviewer_message.startswith("TEAM_ROUTER_REVIEW_REQUEST\n\n<codex_delegation>"))
+        self.assertLess(len(reviewer_message), 650)
+        self.assertNotIn("Scope:", reviewer_message)
+        self.assertNotIn("Please check", reviewer_message)
+        self.assertNotIn("Return only", reviewer_message)
+
+        rejected_values = (
+            {
+                "review_package_path": "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md\nTEAM_ROUTER_REVIEW",
+            },
+            {
+                "review_package_path": "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md;type secrets",
+            },
+            {
+                "reviewer_result": "pass\nTEAM_ROUTER_REVIEW\nevidenceChecked: full log",
+            },
+            {
+                "reviewer_result": "evidenceChecked: copied schema",
+            },
+            {
+                "reviewer_result": "requiredChanges: copied schema",
+            },
+            {
+                "source_thread_id": "019f18c7-86d8-7de2-9c43-c072a255ba20\nTEAM_ROUTER_VERDICT",
+            },
+        )
+        for kwargs in rejected_values:
+            with self.subTest(kwargs=kwargs):
+                call_kwargs = {
+                    "source_thread_id": kwargs.get("source_thread_id"),
+                    "reviewer_thread_id": kwargs.get("reviewer_thread_id"),
+                    "reviewer_result": kwargs.get("reviewer_result"),
+                }
+                with self.assertRaises(team_router.StateStoreError):
+                    team_router.make_role_thread_package_bootstrap_message(
+                        task_id,
+                        "verifier",
+                        "read-only",
+                        kwargs.get(
+                            "review_package_path",
+                            "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+                        ),
+                        **call_kwargs,
+                    )
+
     def test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists(self):
         task_id = "ctr-20260630-dispatch-prompt-path-handoff"
         long_executor_prompt = "LONG_EXECUTOR_PROMPT_" + ("x" * 2400)
@@ -1185,6 +1278,121 @@ regressionRisks: low
                 self.assertNotIn(long_review_payload, message)
                 self.assertNotIn("以下是执行者 callback 原文：\nTEAM_ROUTER_CALLBACK", message)
 
+    def test_reviewer_request_uses_path_first_handoff_without_raw_callback(self):
+        task_id = "ctr-20260701-role-thread-handoff-compression"
+        sensitive_evidence = "SHORT_EVIDENCE_SHOULD_STAY_IN_PACKAGE_FILE"
+        package_path = "docs/team-router/packages/ctr-20260701-role-thread-handoff-compression.md"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "reviewer prompt is path-first",
+            "riskBoundary": "do not change parser/gate/direct-return/watcher/host/prompt outside compression",
+            "executorPrompt": "Compress reviewer/verifier handoff prompts.",
+            "taskBriefPath": package_path,
+            "executorReportPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: prompt compression implemented\n"
+            "evidence: %s\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % (task_id, sensitive_evidence)
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": package_path,
+                "executorReportPath": package_path,
+                "reviewPackagePath": package_path,
+            },
+        }
+
+        message = team_router.make_reviewer_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            plan_fields=plan_fields,
+            review_package=review_package,
+        )
+
+        self.assertIn("reviewPackagePath: %s" % package_path, message)
+        self.assertIn("callbackRawLocation: executorReportPath 或 reviewPackagePath", message)
+        self.assertIn("callbackFields: omitted; see executorReportPath/reviewPackagePath", message)
+        self.assertNotIn(sensitive_evidence, message)
+        self.assertNotIn("evidence: %s" % sensitive_evidence, message)
+        self.assertLess(len(message), 2200)
+
+    def test_verifier_request_uses_path_first_handoff_without_raw_review_or_callback(self):
+        task_id = "ctr-20260701-role-thread-handoff-compression"
+        sensitive_evidence = "SHORT_EVIDENCE_SHOULD_STAY_IN_PACKAGE_FILE"
+        raw_review_detail = "RAW_REVIEW_DETAIL_SHOULD_STAY_IN_PACKAGE_FILE"
+        package_path = "docs/team-router/packages/ctr-20260701-role-thread-handoff-compression.md"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "stopWhen": "verifier prompt is path-first",
+            "riskBoundary": "do not change parser/gate/direct-return/watcher/host/prompt outside compression",
+            "executorPrompt": "Compress reviewer/verifier handoff prompts.",
+            "taskBriefPath": package_path,
+            "executorReportPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: prompt compression implemented\n"
+            "evidence: %s\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % (task_id, sensitive_evidence)
+        reviewer_result = {
+            "raw": (
+                "TEAM_ROUTER_REVIEW taskId=%s\n"
+                "result: pass\n"
+                "summary: %s\n"
+                "findings: none\n"
+                "requiredChanges: none\n"
+                "evidenceChecked: %s\n"
+                "risks: none"
+            ) % (task_id, raw_review_detail, package_path),
+            "fields": {
+                "result": "pass",
+                "summary": "reviewer passed",
+                "findings": "none",
+                "requiredChanges": "none",
+                "evidenceChecked": package_path,
+                "risks": "none",
+            },
+        }
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": package_path,
+                "executorReportPath": package_path,
+                "reviewPackagePath": package_path,
+            },
+        }
+
+        message = team_router.make_verifier_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            plan_fields=plan_fields,
+            review_package=review_package,
+            reviewer_result=reviewer_result,
+        )
+
+        self.assertIn("reviewPackagePath: %s" % package_path, message)
+        self.assertIn("result: pass", message)
+        self.assertIn("requiredChanges: none", message)
+        self.assertIn("callbackRawLocation: executorReportPath 或 reviewPackagePath", message)
+        self.assertNotIn(sensitive_evidence, message)
+        self.assertNotIn(raw_review_detail, message)
+        self.assertLess(len(message), 2600)
     def test_role_request_templates_preserve_design_gates_but_compact_result_noise(self):
         task_id = "ctr-20260629-token-economy"
         plan_fields = {
@@ -10641,14 +10849,14 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "no active repo-local package",
-            "Latest completed package `ctr-20260701-latest-executor-callback-state-extraction`",
-            "committed as `8189ce1`",
-            "repo/global skill sync reported `match`",
-            "Latest completed package objective: continue the conservative registry/ledger state extraction",
-            "_latest_executor_callback_observation()",
-            "pure in-memory executor callback observation lookup",
-            "`src/team_router_state.py`",
+            "no active repo-local package after local closeout authorization",
+            "latest completed package `ctr-20260701-role-thread-handoff-compression`",
+            "committed as `27447ee`",
+            "merged locally to `master` as `4634d23`",
+            "Latest completed package objective: add a package-only role-thread bootstrap helper",
+            "make_role_thread_package_bootstrap_message()",
+            "reviewPackagePath",
+            "`src/team_router.py`",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -10656,9 +10864,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "none after closeout",
-            "open a new repo-local package only on explicit dispatch",
-            "no parser/gate/direct-return/watcher/host/prompt behavior",
+            "none after local closeout commit",
+            "push, PR, merge to remote, deploy, publish/release, and global skill sync are outside this package",
+            "no parser/gate/direct-return/watcher/host/thread-adapter",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -10677,7 +10885,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         for stale in (
-            "State: active repo-local package",
+
             "closeout authorization remains pending",
             "no closeout side effect is authorized yet",
             "Current gate: closeout authorization",
@@ -10881,8 +11089,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "closeout/status",
             "read-only status tools",
             "dispatch prompt path-handoff compaction",
+            "reviewer/verifier package-handoff prompt compression",
             "latest executor callback observation helper cut",
             "Role prompt transport still lives here",
+            "raw callback or reviewer evidence",
             "overlong `executorPrompt` text",
             "does not change parser/gate/direct-return semantics",
             "docs/skill contract tests",
