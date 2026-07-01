@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package after verifier acceptance for `ctr-20260701-broker-host-readiness-injection` on branch `codex/desktop-plugin-feasibility-spike`; local commit is the closeout side effect.
-- Current package objective: broker/adapter startup readiness plus host-readiness injection. The target is to let an already-running localhost broker feed doctor/readiness evidence and host context injection without starting a production daemon.
-- Starting evidence before opening this package: previous `ctr-20260701-desktop-plugin-feasibility-spike` live smoke was locally closed out as commit `aa7c618`; `create_thread`, `read_thread`, `send_message_to_thread`, and `set_thread_title` are smoke-proven only at the Codex app tool layer, while runtime readiness still needs a Python callable adapter wrapper, `parent_thread_id`, and heartbeat scheduler evidence.
+- State: no active repo-local package after verifier acceptance and local commit for `ctr-20260701-automatic-runtime-wiring`; local branch is ahead of `origin/master` until a separate push/PR gate is authorized.
+- Current package objective: automatic Team Router runtime wiring dry-run. The target is to make the manager automatic-entry path explicit and allow it only when an already-running localhost broker supplies ready host-readiness evidence.
+- Starting evidence before opening this package: previous `ctr-20260701-broker-host-readiness-injection` was merged through PR #7 at `2dc7be4`; post-merge `truth_check`, `doctor`, and `closeout_check` reported clean/synced with `skillSyncStatus: match` and no diff.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Completed package boundary: localhost broker readiness mapping, doctor host-readiness injection, focused tests, package/workbench/plan records, and local closeout commit. No live role dispatch, production daemon, push, PR, merge, deploy, publish/release, or global skill sync was included.
-- Current next gate: none after this local closeout commit; push, PR, merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, and global skill sync remain outside this package unless explicitly authorized later.
+- Current package boundary: add a read-only dry-run runtime wiring report that consumes broker `/readiness`, classifies host readiness, and reports whether `host_context` may be injected into `orchestrate_team_task_with_adapter()`. No thread-tool endpoints are called during dry-run.
+- Current next gate: none for local closeout. push, PR, merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, and global skill sync remain outside this package unless explicitly authorized later.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,23 +27,25 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
-- Implemented `broker_host_readiness_snapshot()` in `src/team_router_broker_adapter.py` to map already-running localhost broker `/readiness` evidence into doctor host-readiness snapshot fields.
-- `scripts/team_router_broker_feasibility_check.py --json` now includes `hostReadinessSnapshot`.
-- `scripts/team_router_doctor.py` now accepts `--broker-url` plus `--session-token` for read-only broker readiness injection; explicit `--host-readiness-json` remains mutually exclusive with broker args.
-- Focused new tests ran OK: 5 tests covering ready/blocked broker snapshot mapping, feasibility output, doctor broker injection, and conflict rejection.
-- Existing broker/feasibility group ran OK: 29 tests.
-- Existing doctor host-readiness group ran OK: 6 tests.
-- Full Team Router test module before reviewer rework ran OK: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 393 tests OK.
-- Reviewer v1 found a P1 overclaim path: blocked broker top-level readiness with otherwise-ready tools/runtime could map to doctor `adapter_smoke_ready`.
-- Rework blocks runtimeProbe in `broker_host_readiness_snapshot()` unless top-level broker readiness is ready and broker missing is empty; added regression for `host_contract_blocked`.
-- Rework focused tests ran OK: 6 tests.
-- Broker/feasibility group after rework ran OK: 30 tests.
-- Full Team Router test module after rework ran OK: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 394 tests OK.
-- Reviewer v2: pass; `requiredChanges: none`; confirmed blocked broker readiness cannot classify as `adapter_smoke_ready`.
-- Verifier: accepted; `requiredChanges: none`; next was local commit only, with no push/PR/merge/deploy/publish/global sync.
+- Added `scripts/team_router_runtime_wiring_check.py` as a read-only dry-run automatic runtime wiring gate.
+- The dry-run consumes broker `/readiness`, classifies the doctor host-readiness snapshot, and reports `automaticEntryAllowed` only when host readiness is ready and `broker_host_context_kwargs()` can build manager startup kwargs.
+- The dry-run does not call `/thread-tools/create_thread`, `/thread-tools/send_message_to_thread`, `/thread-tools/read_thread`, or `/thread-tools/set_thread_title`; tests assert thread-tool calls remain empty.
+- RED focused tests first failed because `scripts/team_router_runtime_wiring_check.py` did not exist.
+- GREEN focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterRuntimeWiringScript -v` -> Ran 3 tests OK.
+- Compile: `py -B -m py_compile src\team_router.py src\team_router_broker_adapter.py scripts\team_router_runtime_wiring_check.py scripts\team_router_broker_feasibility_check.py scripts\team_router_doctor.py tests\test_team_router.py` -> exit 0.
+- Focused broker/runtime group: `py -B -m unittest tests.test_team_router.TestTeamRouterRuntimeWiringScript tests.test_team_router.TestTeamRouterBrokerFeasibilityScript tests.test_team_router.TestTeamRouterBrokerAdapter -v` -> Ran 33 tests OK.
+- Full Team Router test module: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 397 tests OK after updating the workbench current-state guard for this active package.
+- Truth check: `py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skillSync.status: match`; dirty surface is this package only.
+- Doctor check: `py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; next action is reviewer then verifier before closeout.
+- Closeout check: `py -B scripts\team_router_closeout_check.py --json` -> exit 0; `skillSync.status: match`; dirty surface is this package only.
+- `git diff --check` initially reported CRLF/LF warnings plus `tests/test_team_router.py:13705: new blank line at EOF`; EOF cleanup is part of this package before final re-run.
+- Reviewer v1 returned `needs_rework` for stale next-gate wording after verification had completed; rework updated workbench/package next gate to `reviewer re-check, verifier acceptance, then local commit only`.
+- Reviewer v2: pass; `requiredChanges: none`; confirmed dry-run remains non-mutating and current-truth next gate is no longer stale.
+- Verifier: accepted; `requiredChanges: []`; confirmed dry-run only reads `/readiness`, no thread-tool endpoints are called, reviewer stale next-gate finding is fixed, and local commit may proceed.
 
 Previous package verification:
 
+- Previous `ctr-20260701-broker-host-readiness-injection`: implemented `broker_host_readiness_snapshot()`, broker-injected doctor readiness, feasibility `hostReadinessSnapshot`, reviewer v2 pass, verifier accepted, and full suite `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 394 tests OK.
 - RED focused test: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_thread_package_bootstrap_is_pointer_only -v` first failed with `AttributeError: module 'team_router' has no attribute 'make_role_thread_package_bootstrap_message'`.
 - GREEN focused test after implementation: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_thread_package_bootstrap_is_pointer_only -v` -> OK.
 - Compile: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m py_compile src\team_router.py tests\test_team_router.py` -> exit 0.
@@ -86,7 +88,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
-- Current broker host-readiness injection package may change broker adapter/status wiring and tests only; it must not modify dispatch, watcher cadence, registry, ledger, protocol parsing, direct-return behavior, production broker startup, or production scheduling.
+- Current automatic runtime wiring package may change read-only broker runtime wiring checks, docs, and tests only; it must not modify dispatch, watcher cadence, registry, ledger, protocol parsing, direct-return behavior, production broker startup, live role dispatch, or production scheduling.
 - Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
@@ -108,5 +110,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none after verifier acceptance and local closeout commit for `ctr-20260701-broker-host-readiness-injection`.
-- No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, or global skill sync is included unless explicitly authorized later.
+- Current gate: none after verifier acceptance and local commit for this package.
+- No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, or global skill sync is included unless explicitly authorized later.

@@ -858,6 +858,112 @@ class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
 
         self.assertIn("scheduler payload callback not allowed: run_arbitrary_python", str(ctx.exception))
 
+class TestTeamRouterRuntimeWiringScript(unittest.TestCase):
+    def test_runtime_wiring_check_reports_manual_only_without_broker_arguments(self):
+        script = ROOT / "scripts" / "team_router_runtime_wiring_check.py"
+        result = subprocess.run(
+            [sys.executable, "-B", str(script), "--json"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "manual_only")
+        self.assertEqual(report["orchestrationStatus"], "manual_only")
+        self.assertFalse(report["automaticEntryAllowed"])
+        self.assertIn("broker-url", report["missing"])
+        self.assertIn("session-token", report["missing"])
+        self.assertEqual(report["dryRun"]["threadToolCallsExecuted"], [])
+
+    def test_runtime_wiring_check_blocks_automatic_entry_for_blocked_readiness(self):
+        script = ROOT / "scripts" / "team_router_runtime_wiring_check.py"
+        readiness = {
+            "status": "blocked",
+            "brokerReady": False,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": ["broker not ready"],
+        }
+        with fake_broker({"/readiness": (200, {"ok": True, "result": readiness})}) as (base_url, calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "manual_only")
+        self.assertEqual(report["orchestrationStatus"], "host_contract_blocked")
+        self.assertFalse(report["automaticEntryAllowed"])
+        self.assertEqual(report["managerStartupPath"]["injection"], "blocked")
+        self.assertEqual(report["dryRun"]["threadToolCallsExecuted"], [])
+        self.assertEqual([call["path"] for call in calls], ["/readiness"])
+
+    def test_runtime_wiring_check_allows_automatic_entry_only_from_ready_host_context(self):
+        script = ROOT / "scripts" / "team_router_runtime_wiring_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, {"ok": True, "result": readiness})}) as (base_url, calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["orchestrationStatus"], "adapter_smoke_ready")
+        self.assertTrue(report["automaticEntryAllowed"])
+        self.assertEqual(report["managerStartupPath"]["injection"], "host_context")
+        self.assertEqual(report["managerStartupPath"]["hostContextKeys"], [
+            "codex_project_id",
+            "heartbeat_scheduler",
+            "host_readiness_snapshot",
+            "parent_thread_id",
+            "readiness",
+            "thread_adapter",
+        ])
+        self.assertTrue(report["hostReadiness"]["capabilities"]["create_thread"])
+        self.assertTrue(report["hostReadiness"]["capabilities"]["read_thread"])
+        self.assertTrue(report["hostReadiness"]["capabilities"]["send_message_to_thread"])
+        self.assertTrue(report["hostReadiness"]["capabilities"]["set_thread_title"])
+        self.assertEqual(report["dryRun"]["threadToolCallsExecuted"], [])
+        self.assertTrue(all(call["path"] == "/readiness" for call in calls))
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_facade_reexports_broker_adapter_symbols(self):
         import team_router_broker_adapter
@@ -11792,14 +11898,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "active local package `ctr-20260701-broker-host-readiness-injection`",
-            "broker/adapter startup readiness plus host-readiness injection",
-            "already-running localhost broker feed doctor/readiness evidence",
-            "previous `ctr-20260701-desktop-plugin-feasibility-spike` live smoke",
-            "commit `aa7c618`",
-            "Python callable adapter wrapper",
-            "parent_thread_id",
-            "heartbeat scheduler evidence",
+            "no active repo-local package after verifier acceptance and local commit for `ctr-20260701-automatic-runtime-wiring`",
+            "automatic Team Router runtime wiring dry-run",
+            "manager automatic-entry path explicit",
+            "already-running localhost broker supplies ready host-readiness evidence",
+            "previous `ctr-20260701-broker-host-readiness-injection` was merged through PR #7",
+            "`skillSyncStatus: match`",
+            "host_context",
+            "orchestrate_team_task_with_adapter()",
+            "No thread-tool endpoints are called during dry-run",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -11807,8 +11914,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "reviewer/verifier gates",
-            "No live role dispatch, production daemon, push, PR, merge, deploy, publish/release, or global skill sync",
+            "none for local closeout",
+            "push, PR, merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, and global skill sync remain outside this package",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
