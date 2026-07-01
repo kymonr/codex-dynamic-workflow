@@ -311,6 +311,24 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
 
         self.assertIn("scheduler callback not allowed", str(ctx.exception))
 
+    def test_broker_request_rejects_scheduler_wake_mixed_callback_fields(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_request(
+                    config,
+                    "/scheduler/wake",
+                    {
+                        "callback": "watch_team_task_with_adapter",
+                        "managerAction": "run_arbitrary_python",
+                        "runAt": "2026-07-01T10:05:00+08:00",
+                    },
+                )
+
+        self.assertIn("scheduler callback not allowed: run_arbitrary_python", str(ctx.exception))
+
     def test_broker_request_rejects_non_json_response(self):
         import team_router_broker_adapter
 

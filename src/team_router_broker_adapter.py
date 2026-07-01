@@ -58,9 +58,12 @@ def _validate_path(path: str) -> None:
 
 
 def _validate_scheduler_payload(payload: Mapping[str, Any]) -> None:
-    callback = payload.get("callback") or payload.get("managerAction")
-    if callback not in BROKER_SCHEDULER_CALLBACKS:
-        raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
+    callbacks = [payload.get(name) for name in ("callback", "managerAction") if payload.get(name) is not None]
+    if not callbacks:
+        raise BrokerProtocolError("scheduler callback not allowed: None")
+    for callback in callbacks:
+        if callback not in BROKER_SCHEDULER_CALLBACKS:
+            raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
 
 
 def _decode_response(raw: bytes) -> dict[str, Any]:
