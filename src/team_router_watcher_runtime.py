@@ -259,6 +259,45 @@ def watcher_read_allowed(ledger: Mapping[str, Any],
     return role_read_allowed(ledger, observed_at=observed_at, reason=reason)
 
 
+def _watch_arg(payload_args: Mapping[str, Any], snake_name: str, camel_name: str) -> Any:
+    if snake_name in payload_args:
+        return payload_args[snake_name]
+    return payload_args.get(camel_name)
+
+
+def materialize_watcher_call_kwargs(payload: Mapping[str, Any],
+                                    *,
+                                    thread_adapter: Any,
+                                    observed_at: str | None = None,
+                                    heartbeat_scheduler: Any = None,
+                                    turn_limit: int | None = None) -> dict[str, Any]:
+    callback = payload.get("callback") or payload.get("managerAction")
+    if callback != "watch_team_task_with_adapter":
+        raise ProtocolError("scheduler payload callback must be watch_team_task_with_adapter")
+    raw_args = payload.get("kwargs") if isinstance(payload.get("kwargs"), Mapping) else payload.get("watchArgs")
+    if not isinstance(raw_args, Mapping):
+        raise ProtocolError("scheduler payload requires kwargs or watchArgs")
+    observed = observed_at or payload.get("runAt")
+    if not isinstance(observed, str) or not observed:
+        raise ProtocolError("scheduler payload requires runAt or explicit observed_at")
+    out = {
+        "state_root": _required_str(_watch_arg(raw_args, "state_root", "stateRoot"), "state_root"),
+        "project_id": _required_str(_watch_arg(raw_args, "project_id", "projectId"), "project_id"),
+        "task_id": _required_str(_watch_arg(raw_args, "task_id", "taskId"), "task_id"),
+        "permission": _required_str(raw_args.get("permission"), "permission"),
+        "thread_adapter": thread_adapter,
+        "observed_at": observed,
+        "read_reason": _required_str(_watch_arg(raw_args, "read_reason", "readReason"), "read_reason"),
+    }
+    return_thread_id = _watch_arg(raw_args, "return_thread_id", "returnThreadId")
+    if isinstance(return_thread_id, str) and return_thread_id:
+        out["return_thread_id"] = return_thread_id
+    if heartbeat_scheduler is not None:
+        out["heartbeat_scheduler"] = heartbeat_scheduler
+    if turn_limit is not None:
+        out["turn_limit"] = turn_limit
+    return out
+
 def build_watcher_heartbeat_payload(update: dict[str, Any],
                                     *,
                                     state_root: str | Path,
@@ -268,6 +307,7 @@ def build_watcher_heartbeat_payload(update: dict[str, Any],
                                     watcher: Mapping[str, Any] | None = None,
                                     return_thread_id: str | None = None,
                                     read_reason: str = "scheduled watcher heartbeat") -> dict[str, Any] | None:
+
     update_watcher = update.get("watcher") if isinstance(update.get("watcher"), Mapping) else None
     next_wakeup = update.get("nextWakeup") if isinstance(update.get("nextWakeup"), Mapping) else None
     if watcher is None:

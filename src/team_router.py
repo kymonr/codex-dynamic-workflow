@@ -94,6 +94,7 @@ from team_router_watcher_runtime import (
     _waiting_read_discipline,
     build_watcher_heartbeat_payload as _runtime_build_watcher_heartbeat_payload,
     build_watcher_ledger,
+    materialize_watcher_call_kwargs,
     convergence_prompt_allowed,
     next_role_read_policy,
     role_read_allowed,
@@ -198,6 +199,14 @@ PARENT_SIDE_ROLES = {
     },
 }
 
+ROLE_DELIVERY_FIELDS = {
+    "executor": ("callbackDelivery", "callbackFallback"),
+    "reviewer": ("reviewDelivery", "reviewFallback"),
+    "verifier": ("verdictDelivery", "verdictFallback"),
+    "architect": ("architectReviewDelivery", "architectReviewFallback"),
+    "qa": ("qaReviewDelivery", "qaReviewFallback"),
+}
+
 MANAGER_ORCHESTRATION_POLICY = {
     "polling": {
         "mode": "low-frequency event-driven read_thread polling",
@@ -254,12 +263,16 @@ MANAGER_ORCHESTRATION_POLICY = {
             "role",
             "callbackMarker",
             "returnThreadId",
-            "callbackDelivery: direct-send",
-            "callbackFallback: self-thread-marker",
-            "reviewDelivery: direct-send",
-            "reviewFallback: self-thread-marker",
-            "verdictDelivery: direct-send",
-            "verdictFallback: self-thread-marker",
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["executor"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["executor"][1],
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["reviewer"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["reviewer"][1],
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["verifier"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["verifier"][1],
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["architect"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["architect"][1],
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["qa"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["qa"][1],
             "callbackDelivery/reviewDelivery/verdictDelivery: direct-send",
             "callbackFallback/reviewFallback/verdictFallback: self-thread-marker",
         ),
@@ -460,8 +473,8 @@ MANAGER_ORCHESTRATION_POLICY = {
     "verifierDirectReturn": {
         "requiredFields": (
             "returnThreadId",
-            "verdictDelivery: direct-send",
-            "verdictFallback: self-thread-marker",
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["verifier"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["verifier"][1],
         ),
         "sendInstruction": "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_VERDICT block>)",
     },
@@ -503,8 +516,8 @@ MANAGER_ORCHESTRATION_POLICY = {
     },    "reviewerDirectReturn": {
         "requiredFields": (
             "returnThreadId",
-            "reviewDelivery: direct-send",
-            "reviewFallback: self-thread-marker",
+            "%s: direct-send" % ROLE_DELIVERY_FIELDS["reviewer"][0],
+            "%s: self-thread-marker" % ROLE_DELIVERY_FIELDS["reviewer"][1],
         ),
         "sendInstruction": "send_message_to_thread(threadId=<returnThreadId>, prompt=<TEAM_ROUTER_REVIEW block>)",
     },
@@ -2017,9 +2030,10 @@ def make_executor_dispatch_message(task_id: str,
                 "role: Executor",
                 "roleThreadId: %s" % required_role_thread_id,
             ))
+        callback_delivery, callback_fallback = ROLE_DELIVERY_FIELDS["executor"]
         lines.extend((*direct_lines,
-            "callbackDelivery: direct-send",
-            "callbackFallback: self-thread-marker",
+            "%s: direct-send" % callback_delivery,
+            "%s: self-thread-marker" % callback_fallback,
             "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>) 发送最终 TEAM_ROUTER_CALLBACK block。",
             "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
@@ -2508,8 +2522,8 @@ def make_architect_review_request_message(task_id: str,
         return_thread_id=return_thread_id,
         role_thread_id=role_thread_id,
         protocol_role="Architect",
-        delivery_key="architectReviewDelivery",
-        fallback_key="architectReviewFallback",
+        delivery_key=ROLE_DELIVERY_FIELDS["architect"][0],
+        fallback_key=ROLE_DELIVERY_FIELDS["architect"][1],
     ))
     lines.extend((
         "",
@@ -2569,8 +2583,8 @@ def make_qa_review_request_message(task_id: str,
         return_thread_id=return_thread_id,
         role_thread_id=role_thread_id,
         protocol_role="QA",
-        delivery_key="qaReviewDelivery",
-        fallback_key="qaReviewFallback",
+        delivery_key=ROLE_DELIVERY_FIELDS["qa"][0],
+        fallback_key=ROLE_DELIVERY_FIELDS["qa"][1],
     ))
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=path_handoff_enabled)
     if reviewer_lines:
@@ -2621,8 +2635,8 @@ def record_architect_review_request_sent(state_root: str | Path,
         sent_at=sent_at,
         message_id=message_id,
         return_thread_id=return_thread_id,
-        delivery_key="architectReviewDelivery",
-        fallback_key="architectReviewFallback",
+        delivery_key=ROLE_DELIVERY_FIELDS["architect"][0],
+        fallback_key=ROLE_DELIVERY_FIELDS["architect"][1],
     )
     ledger["architectureReview"] = architecture_review
     ledger["status"] = "awaiting_architect_review"
@@ -2651,8 +2665,8 @@ def record_qa_review_request_sent(state_root: str | Path,
         sent_at=sent_at,
         message_id=message_id,
         return_thread_id=return_thread_id,
-        delivery_key="qaReviewDelivery",
-        fallback_key="qaReviewFallback",
+        delivery_key=ROLE_DELIVERY_FIELDS["qa"][0],
+        fallback_key=ROLE_DELIVERY_FIELDS["qa"][1],
     )
     ledger["qaReview"] = qa_review
     ledger["status"] = "awaiting_qa_review"
@@ -2701,9 +2715,10 @@ def make_reviewer_request_message(task_id: str,
                 "role: Reviewer",
                 "roleThreadId: %s" % required_role_thread_id,
             ))
+        review_delivery, review_fallback = ROLE_DELIVERY_FIELDS["reviewer"]
         lines.extend((*direct_lines,
-            "reviewDelivery: direct-send",
-            "reviewFallback: self-thread-marker",
+            "%s: direct-send" % review_delivery,
+            "%s: self-thread-marker" % review_fallback,
             "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_REVIEW block>) 发送最终 TEAM_ROUTER_REVIEW block。",
             "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
@@ -3146,9 +3161,10 @@ def make_verifier_request_message(task_id: str,
                 "role: Verifier",
                 "roleThreadId: %s" % required_role_thread_id,
             ))
+        verdict_delivery, verdict_fallback = ROLE_DELIVERY_FIELDS["verifier"]
         lines.extend((*direct_lines,
-            "verdictDelivery: direct-send",
-            "verdictFallback: self-thread-marker",
+            "%s: direct-send" % verdict_delivery,
+            "%s: self-thread-marker" % verdict_fallback,
             "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_VERDICT block>) 发送最终 TEAM_ROUTER_VERDICT block。",
             "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
             "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",

@@ -423,6 +423,17 @@ risks: none
         self.assertTrue(snapshot["conditionalRolePolicy"]["noCustomRoleRegistry"])
         self.assertEqual(snapshot["conditionalRolePolicy"]["runtimeSkillLoading"], "not supported")
 
+    def test_role_delivery_fields_cover_all_direct_return_roles(self):
+        expected = {
+            "executor": ("callbackDelivery", "callbackFallback"),
+            "reviewer": ("reviewDelivery", "reviewFallback"),
+            "verifier": ("verdictDelivery", "verdictFallback"),
+            "architect": ("architectReviewDelivery", "architectReviewFallback"),
+            "qa": ("qaReviewDelivery", "qaReviewFallback"),
+        }
+
+        self.assertEqual(team_router.ROLE_DELIVERY_FIELDS, expected)
+
     def test_architect_and_qa_markers_have_required_fields_and_enums(self):
         markers = team_router.protocol_contract_snapshot()["markers"]
         architect_required = set(markers["TEAM_ROUTER_ARCHITECT_REVIEW"]["requiredFields"])
@@ -798,6 +809,10 @@ regressionRisks: low
         self.assertIn("reviewFallback: self-thread-marker", model["requiredDispatchFields"])
         self.assertIn("verdictDelivery: direct-send", model["requiredDispatchFields"])
         self.assertIn("verdictFallback: self-thread-marker", model["requiredDispatchFields"])
+        self.assertIn("architectReviewDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("architectReviewFallback: self-thread-marker", model["requiredDispatchFields"])
+        self.assertIn("qaReviewDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("qaReviewFallback: self-thread-marker", model["requiredDispatchFields"])
         self.assertIn("taskId", model["managerReceiptValidation"])
         self.assertIn("sourceThreadId", model["managerReceiptValidation"])
         self.assertIn("role", model["managerReceiptValidation"])
@@ -1866,6 +1881,7 @@ class TestTeamRouterState(unittest.TestCase):
                 "callableTools": list(module.REQUIRED_THREAD_TOOLS),
                 "parentThreadId": "019f0ebf-9047-71d2-86b9-efbf7bc4612d",
                 "heartbeatScheduler": {"scheduleCallable": True},
+                "runtimeProbe": {"status": "ready", "missing": []},
             }
         )
 
@@ -1874,6 +1890,38 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertEqual(ready["missing"], [])
         self.assertTrue(ready["capabilities"]["set_thread_title"])
         self.assertTrue(ready["capabilities"]["heartbeat_scheduler"])
+
+    def test_router_doctor_requires_runtime_probe_for_adapter_smoke_ready(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        base_snapshot = {
+            "adapterCallable": True,
+            "callableTools": list(module.REQUIRED_THREAD_TOOLS),
+            "parentThreadId": "parent-thread",
+            "heartbeatSchedulerCallable": True,
+        }
+
+        blocked = module.classify_host_readiness_snapshot(base_snapshot)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["orchestrationStatus"], "host_contract_blocked")
+        self.assertIn("runtime readiness probe", blocked["missing"])
+        self.assertFalse(blocked["evidence"]["runtimeProbeReady"])
+
+        ready_snapshot = dict(base_snapshot)
+        ready_snapshot["runtimeProbe"] = {"status": "ready", "missing": []}
+
+        ready = module.classify_host_readiness_snapshot(ready_snapshot)
+
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["orchestrationStatus"], "adapter_smoke_ready")
+        self.assertEqual(ready["missing"], [])
+        self.assertTrue(ready["evidence"]["runtimeProbeReady"])
 
     def test_router_doctor_includes_host_readiness_snapshot(self):
         with workspace_temp_dir() as tmp:
@@ -2725,6 +2773,10 @@ risks: none
         self.assertIn("verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
         self.assertIn("callbackDelivery/reviewDelivery/verdictDelivery: direct-send", delivery_model["requiredDispatchFields"])
         self.assertIn("callbackFallback/reviewFallback/verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("architectReviewDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("architectReviewFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("qaReviewDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("qaReviewFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
         self.assertIn("two-step bootstrap", delivery_model["roleThreadBootstrap"])
         self.assertIn("taskId", delivery_model["managerReceiptValidation"])
         self.assertIn("role", delivery_model["managerReceiptValidation"])
@@ -7268,6 +7320,31 @@ regressionRisks: watcher transitions
         self.assertEqual(nested, {"messageId": "msg-nested", "sentAt": "2026-06-22T20:02:00+08:00"})
         self.assertEqual(fallback, {"messageId": None, "sentAt": "2026-06-22T20:03:00+08:00"})
 
+    def test_create_thread_result_schema_accepts_common_thread_id_shapes(self):
+        cases = [
+            ({"threadId": "thread-a"}, "thread-a"),
+            ({"thread_id": "thread-b"}, "thread-b"),
+            ({"id": "thread-c"}, "thread-c"),
+            ({"thread": {"id": "thread-d"}}, "thread-d"),
+            ({"data": {"threadId": "thread-e"}}, "thread-e"),
+            ({"result": {"thread_id": "thread-f"}}, "thread-f"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(team_router._thread_id_from_create_result(raw, "executor"), expected)
+
+    def test_create_thread_result_schema_rejects_missing_thread_id(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router._thread_id_from_create_result({"thread": {"title": "Executor"}}, "executor")
+
+        self.assertIn("create_thread result missing thread id", str(ctx.exception))
+
+    def test_read_thread_result_schema_rejects_missing_messages_array(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.normalize_thread_read_messages({"thread": {"title": "Executor"}})
+
+        self.assertIn("messages array", str(ctx.exception))
+
     def test_thread_adapter_capability_probe_reports_missing_tools(self):
         class MissingTitleAdapter(FakeThreadAdapter):
             set_thread_title = None
@@ -7792,6 +7869,55 @@ regressionRisks: watcher transitions
         self.assertEqual(scheduler.scheduled[0]["runAt"], update["watcher"]["firstCheckAt"])
         self.assertEqual(scheduler.scheduled[0]["watchArgs"]["task_id"], self.task_id)
 
+    def test_watcher_runtime_materializes_scheduler_payload_kwargs(self):
+        adapter = FakeThreadAdapter()
+        scheduler = FakeHeartbeatScheduler()
+        update = {
+            "status": "awaiting_callback",
+            "watcher": {
+                "role": "executor",
+                "threadId": "thread-executor",
+                "expectedMarker": "TEAM_ROUTER_CALLBACK taskId=task-1",
+                "firstCheckAt": "2026-07-01T10:00:30+08:00",
+                "nextAllowedReadAt": "2026-07-01T10:05:00+08:00",
+                "lastReadAt": None,
+            },
+        }
+        payload = team_router_watcher_runtime.build_watcher_heartbeat_payload(
+            update,
+            state_root=self.root,
+            project_id=self.project_id,
+            task_id="task-1",
+            permission="read-only",
+            return_thread_id="parent-thread",
+        )
+
+        kwargs = team_router.materialize_watcher_call_kwargs(
+            payload,
+            thread_adapter=adapter,
+            heartbeat_scheduler=scheduler,
+            turn_limit=3,
+        )
+
+        self.assertEqual(kwargs["state_root"], str(Path(self.root)))
+        self.assertEqual(kwargs["project_id"], self.project_id)
+        self.assertEqual(kwargs["task_id"], "task-1")
+        self.assertEqual(kwargs["permission"], "read-only")
+        self.assertEqual(kwargs["return_thread_id"], "parent-thread")
+        self.assertEqual(kwargs["read_reason"], "scheduled watcher heartbeat")
+        self.assertEqual(kwargs["observed_at"], payload["runAt"])
+        self.assertIs(kwargs["thread_adapter"], adapter)
+        self.assertIs(kwargs["heartbeat_scheduler"], scheduler)
+        self.assertEqual(kwargs["turn_limit"], 3)
+
+    def test_watcher_runtime_rejects_non_watcher_scheduler_payload(self):
+        with self.assertRaises(team_router.ProtocolError) as ctx:
+            team_router.materialize_watcher_call_kwargs(
+                {"callback": "other_callback", "kwargs": {}},
+                thread_adapter=FakeThreadAdapter(),
+            )
+
+        self.assertIn("watch_team_task_with_adapter", str(ctx.exception))
     def test_live_host_context_blocks_missing_parent_thread_id_without_side_effects(self):
         adapter = FullThreadAdapter()
         scheduler = FakeHeartbeatScheduler()
