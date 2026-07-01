@@ -20,7 +20,9 @@ BROKER_THREAD_TOOL_METHODS = (
     "send_message_to_thread",
     "set_thread_title",
 )
-BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS)
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
+    "/readiness",
+)
 
 
 class BrokerProtocolError(StateStoreError):
@@ -101,6 +103,40 @@ def broker_request(
     if not isinstance(result, dict):
         raise BrokerProtocolError("broker result must be a JSON object")
     return dict(result)
+
+
+def _runtime_probe_ready(readiness: Mapping[str, Any]) -> bool:
+    probe = readiness.get("runtimeProbe")
+    if not isinstance(probe, Mapping):
+        return False
+    missing = probe.get("missing")
+    return probe.get("status") == "ready" and isinstance(missing, list) and not missing
+
+
+def fetch_broker_readiness(config: BrokerConfig) -> dict[str, Any]:
+    readiness = broker_request(config, "/readiness", method="GET")
+    if not isinstance(readiness.get("runtimeProbe"), Mapping):
+        raise BrokerProtocolError("broker readiness requires runtimeProbe")
+    return readiness
+
+
+def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
+    readiness = fetch_broker_readiness(config)
+    if readiness.get("status") != "ready":
+        raise BrokerProtocolError("broker readiness is not ready: %s" % readiness.get("missing", []))
+    if not _runtime_probe_ready(readiness):
+        raise BrokerProtocolError("broker readiness runtimeProbe is not ready")
+    parent_thread_id = readiness.get("parentThreadId")
+    if not isinstance(parent_thread_id, str) or not parent_thread_id.strip():
+        raise BrokerProtocolError("broker readiness requires parentThreadId")
+    project_id = readiness.get("projectId")
+    return {
+        "thread_adapter": CodexAppThreadAdapter(config),
+        "parent_thread_id": parent_thread_id.strip(),
+        "codex_project_id": project_id if isinstance(project_id, str) and project_id.strip() else None,
+        "readiness": readiness,
+    }
+
 
 class CodexAppThreadAdapter:
     """Python-callable adapter backed by a localhost Codex Desktop/plugin broker."""

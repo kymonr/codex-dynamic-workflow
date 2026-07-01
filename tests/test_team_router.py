@@ -266,17 +266,16 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
         self.assertIsInstance(ctx.exception, team_router.StateStoreError)
         self.assertIn("broker method not allowed", str(ctx.exception))
 
-    def test_broker_request_rejects_readiness_and_scheduler_paths_in_task_1(self):
+    def test_broker_request_rejects_scheduler_path_before_task_4(self):
         import team_router_broker_adapter
 
         with fake_broker({}) as (base_url, _calls):
             config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
-            for path in ("/readiness", "/scheduler/wake"):
-                with self.subTest(path=path):
-                    with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
-                        team_router_broker_adapter.broker_request(config, path, method="GET")
-                    self.assertIsInstance(ctx.exception, team_router.StateStoreError)
-                    self.assertIn("broker method not allowed", str(ctx.exception))
+            with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/scheduler/wake", method="GET")
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertIn("broker method not allowed", str(ctx.exception))
 
     def test_broker_request_rejects_non_json_response(self):
         import team_router_broker_adapter
@@ -395,6 +394,78 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
         self.assertEqual(readiness["status"], "ready")
         self.assertTrue(readiness["capabilities"]["create_thread"])
         self.assertTrue(readiness["capabilities"]["read_thread"])
+
+    def test_fetch_broker_readiness_requires_runtime_probe_ready(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "blocked",
+            "brokerReady": True,
+            "toolSmokeReady": False,
+            "schedulerReady": False,
+            "parentThreadId": None,
+            "projectId": "project-1",
+            "capabilities": {"create_thread": False},
+            "runtimeProbe": {"status": "blocked", "missing": ["parent_thread_id"]},
+            "missing": ["parent_thread_id"],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            result = team_router_broker_adapter.fetch_broker_readiness(config)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["runtimeProbe"], {"status": "blocked", "missing": ["parent_thread_id"]})
+        self.assertEqual(calls[0]["method"], "GET")
+
+    def test_broker_host_context_kwargs_returns_adapter_parent_and_project(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            kwargs = team_router_broker_adapter.broker_host_context_kwargs(config)
+
+        self.assertIsInstance(kwargs["thread_adapter"], team_router_broker_adapter.CodexAppThreadAdapter)
+        self.assertEqual(kwargs["parent_thread_id"], "thread-parent")
+        self.assertEqual(kwargs["codex_project_id"], "project-1")
+
+    def test_broker_host_context_kwargs_blocks_without_ready_runtime_probe(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {},
+            "runtimeProbe": {"status": "blocked", "missing": ["scheduler smoke"]},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_host_context_kwargs(config)
+
+        self.assertIn("runtimeProbe", str(ctx.exception))
 
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_facade_reexports_broker_adapter_symbols(self):
