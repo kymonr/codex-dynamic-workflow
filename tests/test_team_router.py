@@ -6,8 +6,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import unittest
 import uuid
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from pathlib import Path
 
@@ -135,6 +138,101 @@ class FakeHeartbeatScheduler:
     def schedule(self, **kwargs):
         self.scheduled.append(dict(kwargs))
         return {"scheduled": True}
+
+
+class _FakeBrokerHandler(BaseHTTPRequestHandler):
+    routes = {}
+    calls = []
+
+    def log_message(self, format, *args):
+        return
+
+    def _write_json(self, status, response):
+        encoded = json.dumps(response).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8") if length else "{}"
+        payload = json.loads(body)
+        self.__class__.calls.append({"method": "POST", "path": self.path, "payload": payload})
+        status, response = self.__class__.routes.get(
+            self.path,
+            (404, {"ok": False, "error": {"message": self.path}}),
+        )
+        self._write_json(status, response)
+
+    def do_GET(self):
+        self.__class__.calls.append({"method": "GET", "path": self.path, "payload": None})
+        status, response = self.__class__.routes.get(
+            self.path,
+            (404, {"ok": False, "error": {"message": self.path}}),
+        )
+        self._write_json(status, response)
+
+
+@contextmanager
+def fake_broker(routes):
+    handler = type("FakeBrokerHandler", (_FakeBrokerHandler,), {"routes": dict(routes), "calls": []})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:%d" % server.server_address[1], handler.calls
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+class TestTeamRouterBrokerAdapter(unittest.TestCase):
+    def test_broker_request_posts_json_with_session_token_and_request_id(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/thread-tools/list_projects": (200, {"ok": True, "result": {"projects": []}}),
+        }) as (base_url, calls):
+            config = team_router_broker_adapter.BrokerConfig(
+                base_url=base_url,
+                session_token="session-123",
+                timeout_ms=1000,
+            )
+            result = team_router_broker_adapter.broker_request(
+                config,
+                "/thread-tools/list_projects",
+                {"timeoutMs": 1000},
+            )
+
+        self.assertEqual(result, {"projects": []})
+        self.assertEqual(calls[0]["path"], "/thread-tools/list_projects")
+        self.assertEqual(calls[0]["payload"]["sessionToken"], "session-123")
+        self.assertIn("requestId", calls[0]["payload"])
+
+    def test_broker_request_rejects_non_localhost_base_url(self):
+        import team_router_broker_adapter
+
+        config = team_router_broker_adapter.BrokerConfig(
+            base_url="https://example.com:443",
+            session_token="session-123",
+        )
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIn("localhost broker", str(ctx.exception))
+
+    def test_broker_request_rejects_unknown_thread_tool_path(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/thread-tools/delete_thread", {})
+
+        self.assertIn("broker method not allowed", str(ctx.exception))
 
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_facade_reexports_extracted_protocol_and_policy_symbols(self):
