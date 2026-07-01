@@ -51,7 +51,14 @@ def build_report(broker_url: str | None, session_token: str | None) -> tuple[int
         readiness = fetch_broker_readiness(BrokerConfig(base_url=broker_url, session_token=session_token))
     except StateStoreError as exc:
         return 1, _blocked(["broker readiness"], str(exc))
-    status = "ready" if readiness.get("status") == "ready" else "blocked"
+    runtime_probe = readiness.get("runtimeProbe")
+    runtime_probe_ready = (
+        isinstance(runtime_probe, dict)
+        and runtime_probe.get("status") == "ready"
+        and isinstance(runtime_probe.get("missing"), list)
+        and not runtime_probe.get("missing")
+    )
+    status = "ready" if readiness.get("status") == "ready" and runtime_probe_ready else "blocked"
     report = {
         "mode": "read-only",
         "status": status,

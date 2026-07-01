@@ -95,7 +95,15 @@ def broker_request(
     if method == "GET":
         if path != "/readiness":
             raise BrokerProtocolError("broker HTTP method not allowed for %s: %s" % (path, method))
-        request = Request(url, method="GET")
+        request = Request(
+            url,
+            method="GET",
+            headers={
+                "X-Request-Id": str(request_payload["requestId"]),
+                "X-Session-Token": str(request_payload["sessionToken"]),
+                "X-Timeout-Ms": str(request_payload["timeoutMs"]),
+            },
+        )
     elif method == "POST":
         encoded = json.dumps(request_payload).encode("utf-8")
         request = Request(url, data=encoded, method="POST", headers={"Content-Type": "application/json"})
