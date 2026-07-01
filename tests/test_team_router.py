@@ -222,25 +222,38 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
         self.assertEqual(calls[0]["payload"]["sessionToken"], "session-123")
         self.assertIn("requestId", calls[0]["payload"])
 
-    def test_broker_request_get_allowed_thread_tool_path(self):
+    def test_broker_request_get_allowed_only_for_readiness(self):
         import team_router_broker_adapter
 
+        readiness = {"status": "blocked", "runtimeProbe": {"status": "blocked", "missing": ["parent_thread_id"]}}
         with fake_broker({
-            "/thread-tools/list_projects": (200, {"ok": True, "result": {"projects": []}}),
+            "/readiness": (200, {"ok": True, "result": readiness}),
         }) as (base_url, calls):
             config = team_router_broker_adapter.BrokerConfig(
                 base_url=base_url,
                 session_token="session-123",
                 timeout_ms=1000,
             )
-            result = team_router_broker_adapter.broker_request(
-                config,
-                "/thread-tools/list_projects",
-                method="GET",
-            )
+            result = team_router_broker_adapter.broker_request(config, "/readiness", method="GET")
 
-        self.assertEqual(result, {"projects": []})
-        self.assertEqual(calls[0], {"method": "GET", "path": "/thread-tools/list_projects", "payload": None})
+        self.assertEqual(result, readiness)
+        self.assertEqual(calls[0], {"method": "GET", "path": "/readiness", "payload": None})
+
+    def test_broker_request_rejects_get_for_thread_tools_and_scheduler_wake(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            for path in ("/thread-tools/list_projects", "/scheduler/wake"):
+                with self.subTest(path=path):
+                    with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                        team_router_broker_adapter.broker_request(
+                            config,
+                            path,
+                            {"callback": "watch_team_task_with_adapter"} if path == "/scheduler/wake" else {},
+                            method="GET",
+                        )
+                    self.assertIn("broker HTTP method not allowed", str(ctx.exception))
 
     def test_broker_request_rejects_non_localhost_base_url(self):
         import team_router_broker_adapter

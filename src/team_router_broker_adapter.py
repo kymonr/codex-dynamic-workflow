@@ -93,6 +93,8 @@ def broker_request(
     request_payload.setdefault("timeoutMs", config.timeout_ms)
     timeout_seconds = max(config.timeout_ms, 1) / 1000
     if method == "GET":
+        if path != "/readiness":
+            raise BrokerProtocolError("broker HTTP method not allowed for %s: %s" % (path, method))
         request = Request(url, method="GET")
     elif method == "POST":
         encoded = json.dumps(request_payload).encode("utf-8")
