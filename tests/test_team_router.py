@@ -343,7 +343,71 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
 
         self.assertIsInstance(ctx.exception, team_router.StateStoreError)
         self.assertIn("broker transport error", str(ctx.exception))
+
+    def test_codex_app_thread_adapter_exposes_required_callable_tools(self):
+        import team_router_broker_adapter
+
+        routes = {
+            "/thread-tools/list_projects": (200, {"ok": True, "result": {"projects": [{"projectId": "project-1"}]}}),
+            "/thread-tools/list_threads": (200, {"ok": True, "result": {"threads": [{"threadId": "thread-manager", "archived": False}]}}),
+            "/thread-tools/create_thread": (200, {"ok": True, "result": {"threadId": "thread-new"}}),
+            "/thread-tools/send_message_to_thread": (200, {"ok": True, "result": {"messageId": "msg-1", "sentAt": "2026-07-01T10:00:00+08:00"}}),
+            "/thread-tools/read_thread": (200, {"ok": True, "result": {"messages": [{"messageId": "msg-2", "text": "ok"}]}}),
+            "/thread-tools/set_thread_title": (200, {"ok": True, "result": {"threadId": "thread-parent", "title": "new title"}}),
+        }
+        with fake_broker(routes) as (base_url, calls):
+            adapter = team_router_broker_adapter.CodexAppThreadAdapter(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+
+            self.assertEqual(adapter.list_projects(), {"projects": [{"projectId": "project-1"}]})
+            self.assertEqual(adapter.list_threads(projectId="project-1"), {"threads": [{"threadId": "thread-manager", "archived": False}]})
+            self.assertEqual(adapter.create_thread(prompt="role: executor", target={"type": "project", "projectId": "project-1"}), {"threadId": "thread-new"})
+            self.assertEqual(adapter.send_message_to_thread(threadId="thread-parent", prompt="TEAM_ROUTER_CALLBACK"), {"messageId": "msg-1", "sentAt": "2026-07-01T10:00:00+08:00"})
+            self.assertEqual(adapter.read_thread(threadId="thread-new", turnLimit=20), {"messages": [{"messageId": "msg-2", "text": "ok"}]})
+            self.assertEqual(adapter.set_thread_title(threadId="thread-parent", title="new title"), {"threadId": "thread-parent", "title": "new title"})
+
+        self.assertEqual([call["path"] for call in calls], [
+            "/thread-tools/list_projects",
+            "/thread-tools/list_threads",
+            "/thread-tools/create_thread",
+            "/thread-tools/send_message_to_thread",
+            "/thread-tools/read_thread",
+            "/thread-tools/set_thread_title",
+        ])
+        for call in calls:
+            self.assertEqual(call["payload"]["sessionToken"], "session-123")
+
+    def test_codex_app_thread_adapter_is_usable_by_runtime_capability_probe(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            adapter = team_router_broker_adapter.CodexAppThreadAdapter(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+
+        readiness = team_router.assess_live_orchestration_readiness(
+            adapter,
+            parent_thread_id="thread-parent",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
+        )
+
+        self.assertEqual(readiness["status"], "ready")
+        self.assertTrue(readiness["capabilities"]["create_thread"])
+        self.assertTrue(readiness["capabilities"]["read_thread"])
+
 class TestTeamRouterProtocol(unittest.TestCase):
+    def test_facade_reexports_broker_adapter_symbols(self):
+        import team_router_broker_adapter
+
+        for name in (
+            "BrokerConfig",
+            "BrokerProtocolError",
+            "BrokerTransportError",
+            "CodexAppThreadAdapter",
+        ):
+            self.assertIs(getattr(team_router, name), getattr(team_router_broker_adapter, name))
+
     def test_facade_reexports_extracted_protocol_and_policy_symbols(self):
         self.assertIs(team_router.ProtocolError, team_router_protocol.ProtocolError)
         self.assertIs(team_router.ProtocolMessage, team_router_protocol.ProtocolMessage)

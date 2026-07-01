@@ -101,3 +101,32 @@ def broker_request(
     if not isinstance(result, dict):
         raise BrokerProtocolError("broker result must be a JSON object")
     return dict(result)
+
+class CodexAppThreadAdapter:
+    """Python-callable adapter backed by a localhost Codex Desktop/plugin broker."""
+
+    def __init__(self, config: BrokerConfig):
+        self.config = config
+
+    def _thread_tool(self, method_name: str, **kwargs: Any) -> dict[str, Any]:
+        if method_name not in BROKER_THREAD_TOOL_METHODS:
+            raise BrokerProtocolError("broker method not allowed: %s" % method_name)
+        return broker_request(self.config, "/thread-tools/%s" % method_name, kwargs)
+
+    def list_projects(self, **kwargs: Any) -> dict[str, Any]:
+        return self._thread_tool("list_projects", **kwargs)
+
+    def create_thread(self, **kwargs: Any) -> dict[str, Any]:
+        return self._thread_tool("create_thread", **kwargs)
+
+    def list_threads(self, **kwargs: Any) -> dict[str, Any]:
+        return self._thread_tool("list_threads", **kwargs)
+
+    def read_thread(self, **kwargs: Any) -> dict[str, Any]:
+        return self._thread_tool("read_thread", **kwargs)
+
+    def send_message_to_thread(self, **kwargs: Any) -> dict[str, Any]:
+        return self._thread_tool("send_message_to_thread", **kwargs)
+
+    def set_thread_title(self, **kwargs: Any) -> dict[str, Any]:
+        return self._thread_tool("set_thread_title", **kwargs)
