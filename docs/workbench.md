@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package after local closeout authorization for `ctr-20260701-role-thread-bootstrap-package-only` on branch `codex/role-thread-bootstrap-package-only`; role gates passed and local closeout commit has been recorded.
-- Latest completed package objective: add a package-only role-thread bootstrap helper so manual `create_thread` / role handoff prompts can pass only `reviewPackagePath` plus short metadata instead of inline reviewer marker, verifier marker, callback evidence, or full logs.
-- Starting evidence before opening this package: latest completed package `ctr-20260701-role-thread-handoff-compression` passed reviewer v2 and verifier, was committed as `27447ee`, and was merged locally to `master` as `4634d23`; push, PR, remote merge, deploy, publish/release, and global skill sync remain outside this package unless explicitly authorized later.
+- State: no active repo-local package after verifier acceptance and local closeout commit for `ctr-20260701-desktop-plugin-feasibility-spike` on branch `codex/desktop-plugin-feasibility-spike`.
+- Latest completed package objective: confirm whether Codex Desktop/plugin can provide callable `create_thread`, `read_thread`, `send_message_to_thread`, `set_thread_title`, and scheduler/broker startup capability. The target was feasibility evidence only, not runtime implementation.
+- Starting evidence before opening this package: latest completed package `ctr-20260701-role-thread-bootstrap-package-only` passed reviewer v3 and verifier, was locally closed out as commit `e939444`, and is already contained in local `origin/master`; push, PR, remote merge, deploy, publish/release, and global skill sync remain outside this package unless explicitly authorized later.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Completed package boundary: prompt-construction helper `make_role_thread_package_bootstrap_message()` only in `src/team_router.py`, focused tests, and package/workbench docs; no parser/gate/direct-return/watcher/host/thread-adapter/live adapter/production scheduler behavior was included.
-- Current next gate: none after local closeout commit; push, PR, merge to remote, deploy, publish/release, and global skill sync are outside this package unless explicitly authorized later.
+- Completed package boundary: package/workbench records and feasibility evidence only. No Team Router runtime implementation, adapter rewrite, watcher change, scheduler daemon, broker service, production startup, live thread creation smoke, push, PR, merge, deploy, publish/release, or global skill sync was included.
+- Current next gate: none after local closeout commit; push, PR, merge, deploy, publish/release, live thread smoke, scheduler/broker startup, and global skill sync remain outside this package unless explicitly authorized later.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,6 +27,12 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- Package opened from clean `master` baseline on `codex/desktop-plugin-feasibility-spike`.
+- Feasibility evidence collected: read-only `list_projects`, `list_threads`, and `read_thread` calls succeeded. `create_thread`, `send_message_to_thread`, and `set_thread_title` were descriptor-observed in the controller session, but not invoked and not independently smoke-proven because they mutate Desktop state.
+- Broker/scheduler evidence collected: repo has `CodexAppThreadAdapter` and `BrokerHeartbeatScheduler` clients, but no Desktop/plugin broker startup callable was exposed; `py -B scripts\team_router_broker_feasibility_check.py --json` returned blocked with missing `broker-url` and `session-token`; focused broker feasibility/scheduler tests passed.`r`n- Reviewer v2 passed after mutating-tool claims were downgraded to descriptor-observed / not smoke-proven and plan state was synchronized.`r`n- Verifier accepted the package with `requiredChanges: []`; confirmed no overclaim, no runtime implementation, no live smoke, no push/PR/sync.`r`n- Local closeout: this commit records the evidence-only package closeout; commit is the only included side effect.
+
+Previous package verification:
+
 - RED focused test: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_thread_package_bootstrap_is_pointer_only -v` first failed with `AttributeError: module 'team_router' has no attribute 'make_role_thread_package_bootstrap_message'`.
 - GREEN focused test after implementation: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_thread_package_bootstrap_is_pointer_only -v` -> OK.
 - Compile: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m py_compile src\team_router.py tests\test_team_router.py` -> exit 0.
@@ -40,8 +46,6 @@ Current package verification:
 - Reviewer v3: thread `019f1c7b-e299-7822-bf8a-fbcba74e6049` -> pass; `requiredChanges: none` after short-field/path validation rework.
 - Verifier: thread `019f1c7d-d43c-70b1-a681-adb6fb4a6ea4` -> pass; `requiredChanges: []`.
 - Local closeout: explicitly authorized in-thread; commit is the only included side effect. push/PR/merge/deploy/publish/global sync remain outside this package.
-
-Previous package verification:
 
 - `ctr-20260701-role-thread-handoff-compression`: reviewer/verifier request prompts became path-first and package-oriented; package passed reviewer v2 and verifier, was committed as `27447ee`, and was merged locally to `master` as `4634d23`; no push, PR, deploy, publish/release, or global skill sync was included.
 - Implementation: moved `_latest_executor_callback_observation()` into `src/team_router_state.py` in previous `ctr-20260701-latest-executor-callback-state-extraction`; it passed reviewer v2 and verifier, then was explicitly authorized and committed as `8189ce1`; it was pushed to `origin/master`, and repo/global skill sync reported `match`. It moved `_latest_executor_callback_observation()` into `src/team_router_state.py` as a pure in-memory executor callback observation lookup and is historical baseline only.
@@ -71,6 +75,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
+- Current Desktop/plugin feasibility spike is evidence-only; it does not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, broker startup, or production scheduling.
 - Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
@@ -87,10 +92,10 @@ Older entries are history only. They must not be treated as current git truth / 
 
 - Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
-- Real host integration is still external: no live host adapter implementation, no production scheduler/daemon, and no callable host readiness snapshot is supplied by this repo package.
+- Real host integration may still be external. This active package must prove whether Desktop/plugin callables exist before any runtime readiness claim.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: none after local closeout commit for `ctr-20260701-role-thread-bootstrap-package-only`; push/PR/merge/deploy/publish/global sync remain outside this package.
-- No push, PR, remote merge, deploy, publish/release, live adapter, production scheduler/daemon, or global skill sync is included after local merge.
+- Current gate: none after local closeout commit for `ctr-20260701-desktop-plugin-feasibility-spike`.
+- No push, PR, remote merge, deploy, publish/release, live thread smoke, scheduler/broker startup, or global skill sync is included unless explicitly authorized later.
