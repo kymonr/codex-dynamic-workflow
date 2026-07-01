@@ -4,7 +4,7 @@
 
 - taskId: `ctr-20260702-final-closeout-boundary`
 - branch: `master`
-- permission: final closeout package with one docs-only closeout note and local commit. Excludes runtime changes, test changes, live Codex thread-tool calls, broker/adapter/scheduler startup, global skill sync, push, PR, merge, deploy, and publish/release unless separately authorized.
+- permission: final closeout package with one docs-only closeout note and local commit. Excludes runtime changes, test changes, live Codex thread-tool calls, independent service work, global skill sync, push, PR, merge, deploy, and publish/release unless separately authorized.
 - scope: record the usable boundary, acceptance path, and out-of-project boundary for the current Team Router milestone.
 
 ## Closeout Position
@@ -14,6 +14,9 @@ This milestone is complete as a manual/evidence-driven Team Router foundation.
 Team Router is usable for:
 
 - Manager-facing package flow, evidence handoff, reviewer/verifier gates, and closeout records.
+- Codex desktop skill usage when the app exposes `create_thread`, `send_message_to_thread`, `read_thread`, and `set_thread_title`.
+- Token-light role dispatch through `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` Markdown package files instead of copying large prompts or evidence into every message.
+- Reviewer/verifier direct-return callbacks to the orchestrator via `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`, with self-thread marker fallback.
 - Deterministic local helper behavior in `src/team_router.py` and related extracted modules.
 - Read-only current-truth checks through `scripts/team_router_truth_check.py`.
 - Manager-facing status through `scripts/team_router_doctor.py`.
@@ -21,7 +24,7 @@ Team Router is usable for:
 - Manager polling UX based on supplied snapshots, without hidden live `read_thread` calls.
 - Host adapter readiness smoke checks through `scripts/team_router_host_adapter_readiness_check.py`, using caller-supplied evidence and synthetic callable-shape validation.
 
-The project should not be described as a production live orchestration broker. The current default runtime state remains manual orchestration unless a caller supplies a real host adapter snapshot and the host environment provides callable Codex thread tools plus scheduler support.
+The project should not be described as an independent background service. The intended product shape is a Codex desktop skill plus local helper/readiness scripts. Role-thread creation and reviewer/verifier callback are driven by Codex app thread tools when those tools are available; without those tools, Team Router remains a manual/evidence-driven skill workflow.
 
 ## How To Accept This Milestone
 
@@ -64,13 +67,12 @@ Expected smoke result:
 
 The following work is intentionally not part of this milestone:
 
-- Starting or shipping a production broker.
-- Starting a live host adapter daemon.
-- Scheduling real heartbeat reads.
-- Calling real Codex desktop thread tools.
-- Creating child role threads automatically from this local package.
-- Replacing manual package handoff with background live orchestration.
+- Building or shipping an independent background service.
+- Starting a daemon outside Codex desktop.
+- Adding a separate production scheduler.
+- Calling real Codex desktop thread tools from local acceptance scripts.
+- Replacing Markdown package handoff with copied long prompts or raw evidence blobs.
 - Adding account, token, secret, network, deployment, or production-data requirements.
 - Changing Team Router runtime contracts beyond the already committed helper/readiness surfaces.
 
-Future live orchestration work should start as a separate milestone with its own authorization, evidence package, reviewer/verifier gates, and explicit host-environment proof.
+Future work should focus on better prompt compression into Markdown package files and reliable direct-return callback handling for reviewer/verifier roles. It should stay inside the Codex desktop skill model unless a separate authorization explicitly changes that boundary.

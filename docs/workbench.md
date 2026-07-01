@@ -6,10 +6,10 @@ This is the project-level working record for the current Team Router task state.
 
 - State: no active repo-local package; `ctr-20260702-host-adapter-readiness-check` has completed local review and acceptance and is locally committed by explicit user authorization.
 - Completed package objective: add a read-only host-adapter readiness check that proves whether caller-supplied Codex Desktop thread-tool evidence can be injected as in-process Python callables.
-- Completed package starting evidence: Team Router was clean/synced but `doctor` reported `orchestrationStatus: manual_only` and `hostReadiness.status: not_supplied`; existing broker readiness checks required an external broker, while this package added a local snapshot-based injection-shape probe.
+- Completed package starting evidence: Team Router was clean/synced but `doctor` reported `orchestrationStatus: manual_only` and `hostReadiness.status: not_supplied`; readiness checks now support a local snapshot-based injection-shape probe without making an independent background service the project goal.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
 - Current package boundary: none after local closeout; latest package is complete unless fresh commands show otherwise.
-- Current next gate: none after local closeout. Any push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync requires a separate explicit authorization.
+- Current next gate: none after local closeout. Any push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires a separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -135,7 +135,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
 - Current host-adapter readiness package is locally closed out; future packages may change host-readiness scripts, fixtures, runbook reproduction text, tests, package/workbench records, and verification notes only unless separately authorized.
-- Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
+- Package-only role bootstrap and path-first prompt compression are core Team Router UX: they keep prompts token-light by moving long context into Markdown package files. They do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
 
@@ -157,4 +157,4 @@ Older entries are history only. They must not be treated as current git truth / 
 ## Review And Verification Gate
 
 - Current gate: none after local closeout for `ctr-20260702-host-adapter-readiness-check`; push requires separate explicit authorization.
-- No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
+- No push, PR, remote merge, deploy, publish/release, independent service work, direct live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
