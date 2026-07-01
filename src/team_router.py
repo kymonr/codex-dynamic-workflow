@@ -1099,6 +1099,93 @@ def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
     ))
 
 
+def _role_thread_bootstrap_short_field(value: str, field: str, *,
+                                       allowed: set[str] | None = None,
+                                       max_chars: int = 160) -> str:
+    text = _required_str(value, field).strip()
+    if not text:
+        raise StateStoreError("%s must not be blank" % field)
+    if "\r" in text or "\n" in text:
+        raise StateStoreError("%s must be a single-line short field" % field)
+    if len(text) > max_chars:
+        raise StateStoreError("%s is too long for package bootstrap metadata" % field)
+    evidence_markers = (
+        "TEAM_ROUTER_REVIEW",
+        "TEAM_ROUTER_VERDICT",
+        "TEAM_ROUTER_CALLBACK",
+        "evidenceChecked:",
+        "findings:",
+        "requiredChanges:",
+        "<codex_delegation>",
+    )
+    if any(marker in text for marker in evidence_markers):
+        raise StateStoreError("%s must be short metadata, not protocol evidence" % field)
+    if allowed is not None and text not in allowed:
+        raise StateStoreError("%s has unsupported value: %s" % (field, text))
+    return text
+
+
+def make_role_thread_package_bootstrap_message(task_id: str,
+                                               role: str,
+                                               permission: str,
+                                               review_package_path: str,
+                                               *,
+                                               source_thread_id: str | None = None,
+                                               reviewer_thread_id: str | None = None,
+                                               reviewer_result: str | None = None,
+                                               workspace_root: str | Path | None = None) -> str:
+    _validate_task_id(task_id)
+    _validate_role(role)
+    _validate_permission(permission)
+    workspace = Path.cwd() if workspace_root is None else Path(workspace_root)
+    package_path = _normalize_workspace_metadata_path(
+        _required_str(review_package_path, "reviewPackagePath"),
+        field="reviewPackagePath",
+        workspace_root=workspace.resolve(strict=False),
+    )
+    marker_by_role = {
+        "executor": "TEAM_ROUTER_DISPATCH",
+        "reviewer": "TEAM_ROUTER_REVIEW_REQUEST",
+        "verifier": "TEAM_ROUTER_VERIFY",
+    }
+    marker = marker_by_role.get(role, "TEAM_ROUTER_DISPATCH")
+    lines = [marker, "", "<codex_delegation>"]
+    if source_thread_id is not None:
+        lines.append(
+            "<source_thread_id>%s</source_thread_id>" % _role_thread_bootstrap_short_field(
+                source_thread_id,
+                "sourceThreadId",
+            )
+        )
+    lines.extend((
+        "<input>role: %s" % role,
+        "permission: %s" % permission,
+        "package: %s" % task_id,
+        "reviewPackagePath: %s" % package_path,
+    ))
+    if reviewer_thread_id is not None:
+        lines.append("reviewerThreadId: %s" % _role_thread_bootstrap_short_field(
+            reviewer_thread_id,
+            "reviewerThreadId",
+        ))
+    if reviewer_result is not None:
+        lines.append("reviewerResult: %s" % _role_thread_bootstrap_short_field(
+            reviewer_result,
+            "reviewerResult",
+            allowed={"pass", "needs_rework", "blocked", "fail"},
+            max_chars=32,
+        ))
+    lines.extend((
+        "</input>",
+        "</codex_delegation>",
+        "",
+        "你是 Team Router %s。请只读取 package path 和上方短字段；不要复制 raw callback/review/verifier evidence 或完整日志。" % role,
+        "按 package 中的 role contract 返回标准 TEAM_ROUTER_* marker；保持 permission 边界。",
+        ROLE_HUMAN_LANGUAGE_RULE,
+    ))
+    return "\n".join(lines)
+
+
 def _task_title_from_objective(objective: str) -> str:
     title = _required_str(objective, "objective")
     return " ".join(title.split())

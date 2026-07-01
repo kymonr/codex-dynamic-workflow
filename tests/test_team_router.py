@@ -1034,6 +1034,99 @@ regressionRisks: low
         self.assertIn("taskBriefPath: <任务 brief 的 workspace 路径>", manager_request)
         self.assertIn("executorReportPath: <执行者报告的 workspace 路径>", manager_request)
         self.assertIn("reviewPackagePath: <review package 的 workspace 路径> | inline", manager_request)
+
+    def test_role_thread_package_bootstrap_is_pointer_only(self):
+        task_id = "ctr-20260701-role-thread-bootstrap-package-only"
+        message = team_router.make_role_thread_package_bootstrap_message(
+            task_id,
+            "verifier",
+            "read-only",
+            "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+            source_thread_id="019f18c7-86d8-7de2-9c43-c072a255ba20",
+            reviewer_thread_id="019f1984-0ec5-7f41-84d4-64104e03ef36",
+            reviewer_result="pass",
+        )
+
+        self.assertTrue(message.startswith("TEAM_ROUTER_VERIFY\n\n<codex_delegation>"))
+        self.assertIn("<source_thread_id>019f18c7-86d8-7de2-9c43-c072a255ba20</source_thread_id>", message)
+        self.assertIn("<input>role: verifier", message)
+        self.assertIn("permission: read-only", message)
+        self.assertIn("package: ctr-20260701-role-thread-bootstrap-package-only", message)
+        self.assertIn(
+            "reviewPackagePath: docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+            message,
+        )
+        self.assertIn("reviewerThreadId: 019f1984-0ec5-7f41-84d4-64104e03ef36", message)
+        self.assertIn("reviewerResult: pass", message)
+        self.assertIn("请只读取 package path", message)
+        self.assertIn("不要复制 raw callback/review/verifier evidence", message)
+        self.assertIn("按 package 中的 role contract 返回标准 TEAM_ROUTER_* marker", message)
+        self.assertLess(len(message), 750)
+        for raw_evidence in (
+            "TEAM_ROUTER_REVIEW",
+            "TEAM_ROUTER_VERDICT",
+            "Reviewer v2 marker",
+            "Scope:",
+            "Please check",
+            "Return only",
+            "evidenceChecked:",
+            "findings:",
+            "requiredChanges:",
+            "主工作区 verifier 前 fresh evidence",
+        ):
+            self.assertNotIn(raw_evidence, message)
+
+        reviewer_message = team_router.make_role_thread_package_bootstrap_message(
+            task_id,
+            "reviewer",
+            "read-only",
+            "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+        )
+        self.assertTrue(reviewer_message.startswith("TEAM_ROUTER_REVIEW_REQUEST\n\n<codex_delegation>"))
+        self.assertLess(len(reviewer_message), 650)
+        self.assertNotIn("Scope:", reviewer_message)
+        self.assertNotIn("Please check", reviewer_message)
+        self.assertNotIn("Return only", reviewer_message)
+
+        rejected_values = (
+            {
+                "review_package_path": "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md\nTEAM_ROUTER_REVIEW",
+            },
+            {
+                "review_package_path": "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md;type secrets",
+            },
+            {
+                "reviewer_result": "pass\nTEAM_ROUTER_REVIEW\nevidenceChecked: full log",
+            },
+            {
+                "reviewer_result": "evidenceChecked: copied schema",
+            },
+            {
+                "reviewer_result": "requiredChanges: copied schema",
+            },
+            {
+                "source_thread_id": "019f18c7-86d8-7de2-9c43-c072a255ba20\nTEAM_ROUTER_VERDICT",
+            },
+        )
+        for kwargs in rejected_values:
+            with self.subTest(kwargs=kwargs):
+                call_kwargs = {
+                    "source_thread_id": kwargs.get("source_thread_id"),
+                    "reviewer_thread_id": kwargs.get("reviewer_thread_id"),
+                    "reviewer_result": kwargs.get("reviewer_result"),
+                }
+                with self.assertRaises(team_router.StateStoreError):
+                    team_router.make_role_thread_package_bootstrap_message(
+                        task_id,
+                        "verifier",
+                        "read-only",
+                        kwargs.get(
+                            "review_package_path",
+                            "docs/team-router/packages/ctr-20260701-role-thread-bootstrap-package-only.md",
+                        ),
+                        **call_kwargs,
+                    )
+
     def test_executor_dispatch_omits_long_executor_prompt_when_path_handoff_exists(self):
         task_id = "ctr-20260630-dispatch-prompt-path-handoff"
         long_executor_prompt = "LONG_EXECUTOR_PROMPT_" + ("x" * 2400)
@@ -10756,14 +10849,14 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "no active repo-local package",
-            "Latest completed package `ctr-20260701-latest-executor-callback-state-extraction`",
-            "committed as `8189ce1`",
-            "repo/global skill sync reported `match`",
-            "Latest completed package objective: make reviewer and verifier request prompts path-first",
-            "_latest_executor_callback_observation()",
-            "pure in-memory executor callback observation lookup",
-            "`src/team_router_state.py`",
+            "no active repo-local package after local closeout authorization",
+            "latest completed package `ctr-20260701-role-thread-handoff-compression`",
+            "committed as `27447ee`",
+            "merged locally to `master` as `4634d23`",
+            "Latest completed package objective: add a package-only role-thread bootstrap helper",
+            "make_role_thread_package_bootstrap_message()",
+            "reviewPackagePath",
+            "`src/team_router.py`",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -10771,7 +10864,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "none after local merge",
+            "none after local closeout commit",
             "push, PR, merge to remote, deploy, publish/release, and global skill sync are outside this package",
             "no parser/gate/direct-return/watcher/host/thread-adapter",
             "Current Diff Surface",
