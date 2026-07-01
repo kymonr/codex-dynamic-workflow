@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active repo-local package `ctr-20260702-role-active-wait-polling-cadence`; local branch is `master` and currently ahead of `origin/master` by the previous local live-broker-smoke commit.
-- Current package objective: harden Team Router role active-wait and `read_thread` polling cadence rules. The target is to codify that `active` / `inProgress` / `running` / `working` means the role is still processing, not stuck, and that manager reads should be quiet, bounded, and schedule-aware.
-- Starting evidence before opening this package: user screenshots showed repeated unchanged `read_thread` status updates and manager language that was too quick to consider interrupting/restarting a still-active reviewer/verifier role.
+- State: no active repo-local package; `ctr-20260702-role-active-wait-polling-cadence` has been committed, pushed to `origin/master`, and globally synced.
+- Completed package objective: harden Team Router role active-wait and `read_thread` polling cadence rules. The package codified that `active` / `inProgress` / `running` / `working` means the role is still processing, not stuck, and that manager reads should be quiet, bounded, and schedule-aware.
+- Completed package starting evidence: user screenshots showed repeated unchanged `read_thread` status updates and manager language that was too quick to consider interrupting/restarting still-active role threads.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current package boundary: contract snapshot fields, skill/docs, focused tests, package/workbench updates, and local verification. No live role dispatch, thread-tool calls, broker/adapter/scheduler startup, push, PR, merge, deploy, publish/release, global skill sync, or commit is included unless separately authorized.
-- Current next gate: local commit only if explicitly authorized after verifier v2 acceptance. No push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync is authorized.
+- Current package boundary: none; current truth is clean repo plus synced global skill unless fresh commands show otherwise.
+- Current next gate: none for the completed active-wait/polling-cadence package. Any new package, push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync requires a separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -109,5 +109,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: local commit only if explicitly authorized after verifier v2 acceptance. No push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync is authorized.
-- No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
+- Current gate: none for the completed active-wait/polling-cadence package; the repo and global skill are expected to be clean/synced after fresh checks.
+- No new package, push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
