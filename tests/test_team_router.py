@@ -2468,6 +2468,54 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertIn("current-state claims pending reviewer/verifier gate while live git/skill truth is clean/synced", reasons)
         self.assertIn("current-state claims dirty diff surface while live git/skill truth is clean/synced", reasons)
 
+    def test_truth_check_allows_completed_evidence_mentions_reviewer_verifier(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {"skillSync": {"status": "match"}, "gitStatusShort": [], "diffFiles": []}
+        text = "\n".join(
+            [
+                "# Workbench",
+                "## Current Task",
+                "- State: no active repo-local package; previous package has been committed, pushed, and globally synced.",
+                "- Completed package starting evidence: manager language was too quick to restart a still-active reviewer/verifier role.",
+                "- Current next gate: none; no action required.",
+                "## Current Diff Surface",
+                "Current truth is clean.",
+            ]
+        )
+
+        claims = module.find_stale_state_claims(report, {"docs/workbench.md": text})
+
+        self.assertEqual(claims, [])
+
+    def test_truth_check_flags_current_gate_even_when_it_mentions_historical_records(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {"skillSync": {"status": "match"}, "gitStatusShort": [], "diffFiles": []}
+        text = "\n".join(
+            [
+                "# Workbench",
+                "## Current Task",
+                "- State: clean/synced; no active package.",
+                "- Current next gate: reviewer/verifier review of historical package records.",
+                "## Current Diff Surface",
+                "Current truth is clean.",
+            ]
+        )
+
+        claims = module.find_stale_state_claims(report, {"docs/workbench.md": text})
+
+        reasons = "\n".join(claim["reason"] for claim in claims)
+        self.assertIn("current-state claims pending reviewer/verifier gate while live git/skill truth is clean/synced", reasons)
+
     def test_truth_check_does_not_flag_clean_synced_neutral_current_sections(self):
         spec = importlib.util.spec_from_file_location(
             "team_router_truth_check_under_test",
@@ -11917,10 +11965,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "active repo-local package `ctr-20260702-role-active-wait-polling-cadence`",
-            "role active-wait and `read_thread` polling cadence",
-            "`active` / `inProgress` / `running` / `working` means the role is still processing",
-            "repeated unchanged `read_thread` status updates",
+            "`ctr-20260702-truth-checker-precision` has been locally committed",
+            "make `truth_check` distinguish real current pending reviewer/verifier gates",
+            "completed or historical evidence text that merely mentions reviewer/verifier",
+            "previous closeout workbench text was correct",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -11928,9 +11976,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
-            "No live role dispatch, thread-tool calls",
+            "latest package is complete unless fresh commands show otherwise",
             "Current next gate",
-            "local commit only if explicitly authorized after verifier v2 acceptance",
+            "none for the completed truth-checker precision package",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",

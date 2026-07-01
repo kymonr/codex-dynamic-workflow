@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package; `ctr-20260702-role-active-wait-polling-cadence` has been committed, pushed to `origin/master`, and globally synced.
-- Completed package objective: harden Team Router role active-wait and `read_thread` polling cadence rules. The package codified that `active` / `inProgress` / `running` / `working` means the role is still processing, not stuck, and that manager reads should be quiet, bounded, and schedule-aware.
-- Completed package starting evidence: user screenshots showed repeated unchanged `read_thread` status updates and manager language that was too quick to consider interrupting/restarting still-active role threads.
+- State: no active repo-local package; `ctr-20260702-truth-checker-precision` has been locally committed after local validation.
+- Completed package objective: make `truth_check` distinguish real current pending reviewer/verifier gates from completed or historical evidence text that merely mentions reviewer/verifier.
+- Completed package starting evidence: the previous closeout workbench text was correct, but `truth_check` treated a completed evidence sentence mentioning `reviewer/verifier` as a current pending gate.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current package boundary: none; current truth is clean repo plus synced global skill unless fresh commands show otherwise.
-- Current next gate: none for the completed active-wait/polling-cadence package. Any new package, push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync requires a separate explicit authorization.
+- Current package boundary: none; latest package is complete unless fresh commands show otherwise.
+- Current next gate: none for the completed truth-checker precision package. Any push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync requires a separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -26,6 +26,10 @@ This file intentionally does not list a live diff surface. The current package f
 ## Verification Record
 
 Current package verification:
+
+- `ctr-20260702-truth-checker-precision`: RED focused test `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_truth_check_allows_completed_evidence_mentions_reviewer_verifier -v` first failed because completed evidence was reported as `current-state claims pending reviewer/verifier gate while live git/skill truth is clean/synced`.
+- `ctr-20260702-truth-checker-precision`: GREEN focused regression suite `py -B -m unittest tests.test_team_router.TestTeamRouterState.test_truth_check_allows_completed_evidence_mentions_reviewer_verifier tests.test_team_router.TestTeamRouterState.test_truth_check_detects_stale_current_state_when_clean_synced tests.test_team_router.TestTeamRouterState.test_truth_check_does_not_flag_clean_synced_neutral_current_sections -v` -> Ran 3 tests OK. Review rework added `test_truth_check_flags_current_gate_even_when_it_mentions_historical_records` so real current gates are still flagged even when they mention historical records. Focused doc/status suite including workbench test -> Ran 5 tests OK. Compile with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-truth-precision py -B -m py_compile src\team_router_status_tools.py tests\test_team_router.py` -> exit 0. `git diff --check` -> exit 0 with CRLF/LF warnings only. `py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skillSync.status: match`. `py -B scripts\team_router_closeout_check.py --json` -> exit 0; `skillSync.status: match`.
+
 
 - RED focused contract test first failed with `KeyError: 'manualPollBackoffSeconds'` before adding the new policy fields.
 - GREEN focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_protocol_contract_snapshot_defends_active_role_wait_and_polling_backoff tests.test_team_router.TestTeamRouterSkillDoc.test_manager_docs_cover_active_role_wait_and_polling_backoff -v` -> Ran 2 tests OK.
@@ -109,5 +113,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none for the completed active-wait/polling-cadence package; the repo and global skill are expected to be clean/synced after fresh checks.
-- No new package, push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
+- Current gate: none for the completed truth-checker precision package; the repo and global skill are expected to be clean/synced after fresh checks.
+- No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.

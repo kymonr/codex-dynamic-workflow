@@ -56,6 +56,14 @@ NEUTRAL_GATE_MARKERS = (
     "not pending reviewer",
     "not pending verifier",
 )
+COMPLETED_OR_HISTORICAL_GATE_CONTEXT_PREFIXES = (
+    "completed package",
+    "completed task",
+    "completed work",
+    "previous ",
+    "historical ",
+    "history only",
+)
 DIRTY_DIFF_MARKERS = (
     "dirty because this package is active",
     "`M ",
@@ -186,6 +194,11 @@ def _first_marker_line(lines_: list[str], markers: tuple[str, ...]) -> str | Non
     return None
 
 
+def _completed_or_historical_context_line(normalized: str) -> bool:
+    content = normalized.lstrip("-* ").strip()
+    return any(content.startswith(prefix) for prefix in COMPLETED_OR_HISTORICAL_GATE_CONTEXT_PREFIXES)
+
+
 def _first_pending_gate_line(lines_: list[str]) -> str | None:
     for line in lines_:
         stripped = line.strip()
@@ -193,6 +206,8 @@ def _first_pending_gate_line(lines_: list[str]) -> str | None:
             continue
         normalized = stripped.lower()
         if any(marker in normalized for marker in NEUTRAL_GATE_MARKERS):
+            continue
+        if _completed_or_historical_context_line(normalized):
             continue
         if any(marker in stripped for marker in PENDING_GATE_MARKERS):
             return stripped
