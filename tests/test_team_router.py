@@ -7825,6 +7825,55 @@ regressionRisks: watcher transitions
         self.assertEqual(scheduler.scheduled[0]["runAt"], update["watcher"]["firstCheckAt"])
         self.assertEqual(scheduler.scheduled[0]["watchArgs"]["task_id"], self.task_id)
 
+    def test_watcher_runtime_materializes_scheduler_payload_kwargs(self):
+        adapter = FakeThreadAdapter()
+        scheduler = FakeHeartbeatScheduler()
+        update = {
+            "status": "awaiting_callback",
+            "watcher": {
+                "role": "executor",
+                "threadId": "thread-executor",
+                "expectedMarker": "TEAM_ROUTER_CALLBACK taskId=task-1",
+                "firstCheckAt": "2026-07-01T10:00:30+08:00",
+                "nextAllowedReadAt": "2026-07-01T10:05:00+08:00",
+                "lastReadAt": None,
+            },
+        }
+        payload = team_router_watcher_runtime.build_watcher_heartbeat_payload(
+            update,
+            state_root=self.root,
+            project_id=self.project_id,
+            task_id="task-1",
+            permission="read-only",
+            return_thread_id="parent-thread",
+        )
+
+        kwargs = team_router.materialize_watcher_call_kwargs(
+            payload,
+            thread_adapter=adapter,
+            heartbeat_scheduler=scheduler,
+            turn_limit=3,
+        )
+
+        self.assertEqual(kwargs["state_root"], str(Path(self.root)))
+        self.assertEqual(kwargs["project_id"], self.project_id)
+        self.assertEqual(kwargs["task_id"], "task-1")
+        self.assertEqual(kwargs["permission"], "read-only")
+        self.assertEqual(kwargs["return_thread_id"], "parent-thread")
+        self.assertEqual(kwargs["read_reason"], "scheduled watcher heartbeat")
+        self.assertEqual(kwargs["observed_at"], payload["runAt"])
+        self.assertIs(kwargs["thread_adapter"], adapter)
+        self.assertIs(kwargs["heartbeat_scheduler"], scheduler)
+        self.assertEqual(kwargs["turn_limit"], 3)
+
+    def test_watcher_runtime_rejects_non_watcher_scheduler_payload(self):
+        with self.assertRaises(team_router.ProtocolError) as ctx:
+            team_router.materialize_watcher_call_kwargs(
+                {"callback": "other_callback", "kwargs": {}},
+                thread_adapter=FakeThreadAdapter(),
+            )
+
+        self.assertIn("watch_team_task_with_adapter", str(ctx.exception))
     def test_live_host_context_blocks_missing_parent_thread_id_without_side_effects(self):
         adapter = FullThreadAdapter()
         scheduler = FakeHeartbeatScheduler()
