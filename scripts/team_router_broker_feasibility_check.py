@@ -13,7 +13,7 @@ SRC_DIR = SCRIPT_DIR.parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from team_router_broker_adapter import BrokerConfig, fetch_broker_readiness  # noqa: E402
+from team_router_broker_adapter import BrokerConfig, broker_host_readiness_snapshot, fetch_broker_readiness  # noqa: E402
 from team_router_state import StateStoreError  # noqa: E402
 
 
@@ -67,6 +67,7 @@ def build_report(broker_url: str | None, session_token: str | None) -> tuple[int
         "authorization": _authorization(),
         "runtimeProbe": readiness.get("runtimeProbe"),
         "readiness": readiness,
+        "hostReadinessSnapshot": broker_host_readiness_snapshot(readiness),
     }
     if status != "ready":
         report["missing"] = readiness.get("missing", [])

@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package after role gates accepted the doc-only live-smoke follow-up to `ctr-20260701-desktop-plugin-feasibility-spike` on branch `codex/desktop-plugin-feasibility-spike`.
-- Latest completed package objective: confirm whether Codex Desktop/plugin can provide callable `create_thread`, `read_thread`, `send_message_to_thread`, `set_thread_title`, and scheduler/broker startup capability. The target was feasibility evidence only, not runtime implementation.
-- Starting evidence before opening this package: latest completed package `ctr-20260701-role-thread-bootstrap-package-only` passed reviewer v3 and verifier, was locally closed out as commit `e939444`, and is already contained in local `origin/master`; push, PR, remote merge, deploy, publish/release, and global skill sync remain outside this package unless explicitly authorized later.
+- State: no active repo-local package after verifier acceptance for `ctr-20260701-broker-host-readiness-injection` on branch `codex/desktop-plugin-feasibility-spike`; local commit is the closeout side effect.
+- Current package objective: broker/adapter startup readiness plus host-readiness injection. The target is to let an already-running localhost broker feed doctor/readiness evidence and host context injection without starting a production daemon.
+- Starting evidence before opening this package: previous `ctr-20260701-desktop-plugin-feasibility-spike` live smoke was locally closed out as commit `aa7c618`; `create_thread`, `read_thread`, `send_message_to_thread`, and `set_thread_title` are smoke-proven only at the Codex app tool layer, while runtime readiness still needs a Python callable adapter wrapper, `parent_thread_id`, and heartbeat scheduler evidence.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Completed package boundary: package/workbench records, feasibility evidence, and separately authorized live Desktop thread-tool smoke evidence only. No Team Router runtime implementation, adapter rewrite, watcher change, scheduler daemon, broker service, production startup beyond smoke thread state, push, PR, merge, deploy, publish/release, or global skill sync was included.
-- Current next gate: none after this doc-only live-smoke closeout commit; push, PR, merge, deploy, publish/release, scheduler/broker startup, and global skill sync remain outside this package unless explicitly authorized later.
+- Completed package boundary: localhost broker readiness mapping, doctor host-readiness injection, focused tests, package/workbench/plan records, and local closeout commit. No live role dispatch, production daemon, push, PR, merge, deploy, publish/release, or global skill sync was included.
+- Current next gate: none after this local closeout commit; push, PR, merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, and global skill sync remain outside this package unless explicitly authorized later.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,14 +27,20 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
-- Package opened from clean `master` baseline on `codex/desktop-plugin-feasibility-spike`.
-- Feasibility evidence collected: `list_projects`, `list_threads`, and `read_thread` read-only calls succeeded. After separate live smoke authorization, `create_thread`, `send_message_to_thread`, and `set_thread_title` were invoked against smoke thread `019f1e10-cb80-7321-af2a-e7a4b2c45820`; all are smoke-proven at the Codex app tool layer. `set_thread_title` needed retry/backoff after an initial `No Codex thread found...`.
-- Broker/scheduler evidence collected: repo has `CodexAppThreadAdapter` and `BrokerHeartbeatScheduler` clients, but no Desktop/plugin broker startup callable was exposed; `py -B scripts\team_router_broker_feasibility_check.py --json` returned blocked with missing `broker-url` and `session-token`; focused broker feasibility/scheduler tests passed.
-- Reviewer v2 passed after mutating-tool claims were downgraded to descriptor-observed / not smoke-proven and plan state was synchronized.
-- Verifier accepted the original package with `requiredChanges: []`; later live smoke was separately authorized and must be re-reviewed/re-verified after this record update.
-- Local closeout: commit `9c68c34` recorded the evidence-only package closeout; this follow-up records separately authorized live smoke evidence only.
-- Live smoke reviewer: pass; `requiredChanges: none`; evidence checked includes clean scoped doc diff, `truth_check` staleClaims `[]`, `doctor` manual_only/not_supplied, `closeout_check` expected docs, and retry caveat.
-- Live smoke verifier: accepted; `requiredChanges: none`; next was local doc-only commit only, with no push/PR/merge/deploy/publish/global sync.
+- Implemented `broker_host_readiness_snapshot()` in `src/team_router_broker_adapter.py` to map already-running localhost broker `/readiness` evidence into doctor host-readiness snapshot fields.
+- `scripts/team_router_broker_feasibility_check.py --json` now includes `hostReadinessSnapshot`.
+- `scripts/team_router_doctor.py` now accepts `--broker-url` plus `--session-token` for read-only broker readiness injection; explicit `--host-readiness-json` remains mutually exclusive with broker args.
+- Focused new tests ran OK: 5 tests covering ready/blocked broker snapshot mapping, feasibility output, doctor broker injection, and conflict rejection.
+- Existing broker/feasibility group ran OK: 29 tests.
+- Existing doctor host-readiness group ran OK: 6 tests.
+- Full Team Router test module before reviewer rework ran OK: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 393 tests OK.
+- Reviewer v1 found a P1 overclaim path: blocked broker top-level readiness with otherwise-ready tools/runtime could map to doctor `adapter_smoke_ready`.
+- Rework blocks runtimeProbe in `broker_host_readiness_snapshot()` unless top-level broker readiness is ready and broker missing is empty; added regression for `host_contract_blocked`.
+- Rework focused tests ran OK: 6 tests.
+- Broker/feasibility group after rework ran OK: 30 tests.
+- Full Team Router test module after rework ran OK: `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 394 tests OK.
+- Reviewer v2: pass; `requiredChanges: none`; confirmed blocked broker readiness cannot classify as `adapter_smoke_ready`.
+- Verifier: accepted; `requiredChanges: none`; next was local commit only, with no push/PR/merge/deploy/publish/global sync.
 
 Previous package verification:
 
@@ -80,7 +86,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
-- Current Desktop/plugin feasibility spike plus live smoke record is evidence-only; it does not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, broker startup, or production scheduling.
+- Current broker host-readiness injection package may change broker adapter/status wiring and tests only; it must not modify dispatch, watcher cadence, registry, ledger, protocol parsing, direct-return behavior, production broker startup, or production scheduling.
 - Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
@@ -102,5 +108,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none after this doc-only live-smoke closeout commit for `ctr-20260701-desktop-plugin-feasibility-spike`.
-- No push, PR, remote merge, deploy, publish/release, scheduler/broker startup, or global skill sync is included unless explicitly authorized later.
+- Current gate: none after verifier acceptance and local closeout commit for `ctr-20260701-broker-host-readiness-injection`.
+- No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, or global skill sync is included unless explicitly authorized later.

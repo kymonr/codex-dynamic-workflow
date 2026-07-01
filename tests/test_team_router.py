@@ -559,6 +559,109 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
         self.assertIn("runtimeProbe", str(ctx.exception))
 
 
+    def test_broker_host_readiness_snapshot_maps_ready_broker_for_doctor(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+
+        snapshot = team_router_broker_adapter.broker_host_readiness_snapshot(readiness)
+
+        self.assertTrue(snapshot["adapterCallable"])
+        self.assertEqual(snapshot["parentThreadId"], "thread-parent")
+        self.assertTrue(snapshot["heartbeatSchedulerCallable"])
+        self.assertEqual(snapshot["runtimeProbe"], {"status": "ready", "missing": []})
+        for tool_name in team_router_broker_adapter.BROKER_THREAD_TOOL_METHODS:
+            self.assertTrue(snapshot["callableTools"][tool_name])
+
+    def test_broker_host_readiness_snapshot_maps_blocked_broker_for_doctor(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "blocked",
+            "brokerReady": True,
+            "toolSmokeReady": False,
+            "schedulerReady": False,
+            "parentThreadId": "",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": False,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": False,
+                "set_thread_title": False,
+                "heartbeat_scheduler": False,
+            },
+            "runtimeProbe": {"status": "blocked", "missing": ["parent_thread_id", "callable heartbeat scheduler"]},
+            "missing": ["parent_thread_id", "scheduler smoke"],
+        }
+
+        snapshot = team_router_broker_adapter.broker_host_readiness_snapshot(readiness)
+
+        self.assertTrue(snapshot["adapterCallable"])
+        self.assertEqual(snapshot["parentThreadId"], "")
+        self.assertFalse(snapshot["heartbeatSchedulerCallable"])
+        self.assertFalse(snapshot["callableTools"]["create_thread"])
+        self.assertEqual(snapshot["runtimeProbe"]["missing"], ["parent_thread_id", "callable heartbeat scheduler", "broker readiness"])
+        self.assertEqual(snapshot["brokerMissing"], ["parent_thread_id", "scheduler smoke"])
+
+    def test_broker_host_readiness_snapshot_keeps_blocked_broker_from_reporting_ready(self):
+        import importlib.util
+        import team_router_broker_adapter
+
+        doctor_spec = importlib.util.spec_from_file_location(
+            "team_router_doctor_under_test",
+            ROOT / "scripts" / "team_router_doctor.py",
+        )
+        doctor_module = importlib.util.module_from_spec(doctor_spec)
+        doctor_spec.loader.exec_module(doctor_module)
+        readiness = {
+            "status": "blocked",
+            "brokerReady": False,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": ["broker not ready"],
+        }
+
+        snapshot = team_router_broker_adapter.broker_host_readiness_snapshot(readiness)
+        classified = doctor_module.classify_host_readiness_snapshot(snapshot)
+
+        self.assertEqual(classified["status"], "blocked")
+        self.assertEqual(classified["orchestrationStatus"], "host_contract_blocked")
+        self.assertIn("runtime readiness probe", classified["missing"])
+        self.assertIn("broker readiness", snapshot["runtimeProbe"]["missing"])
+        self.assertFalse(classified["evidence"]["runtimeProbeReady"])
+
 class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
     def test_broker_feasibility_check_blocks_without_broker_arguments(self):
         script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
@@ -662,6 +765,43 @@ class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertEqual(report["status"], "blocked")
         self.assertEqual(report["missing"], ["manual_only"])
+
+    def test_broker_feasibility_check_includes_host_readiness_snapshot(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        snapshot = report["hostReadinessSnapshot"]
+        self.assertTrue(snapshot["adapterCallable"])
+        self.assertTrue(snapshot["callableTools"]["set_thread_title"])
+        self.assertTrue(snapshot["heartbeatSchedulerCallable"])
+        self.assertEqual(snapshot["parentThreadId"], "thread-parent")
 
     def test_scheduler_payload_materializes_with_broker_scheduler(self):
         import team_router_broker_adapter
@@ -2579,6 +2719,90 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertIn("hostReadiness=blocked", report["summary"])
             self.assertIn("nextAction", report)
             self.assertNotIn("created role thread", report["summary"])
+    def test_router_doctor_can_inject_host_readiness_from_broker(self):
+        script = ROOT / "scripts" / "team_router_doctor.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with workspace_temp_dir() as tmp, fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(script),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--broker-url",
+                    base_url,
+                    "--session-token",
+                    "session-123",
+                    "--json",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["hostReadiness"]["status"], "ready")
+        self.assertEqual(report["orchestrationStatus"], "adapter_smoke_ready")
+        self.assertTrue(report["hostReadiness"]["capabilities"]["set_thread_title"])
+
+    def test_router_doctor_rejects_host_readiness_file_and_broker_args_together(self):
+        script = ROOT / "scripts" / "team_router_doctor.py"
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            host_snapshot = tmp_path / "host-readiness.json"
+            host_snapshot.write_text("{}", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(script),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--host-readiness-json",
+                    str(host_snapshot),
+                    "--broker-url",
+                    "http://127.0.0.1:1",
+                    "--session-token",
+                    "session-123",
+                    "--json",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("choose either --host-readiness-json or --broker-url", result.stderr)
+
     def test_router_doctor_reports_plain_status_without_dispatch(self):
         with workspace_temp_dir() as tmp:
             tmp_path = Path(tmp)
@@ -11568,14 +11792,14 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "no active repo-local package after local closeout authorization",
-            "latest completed package `ctr-20260701-role-thread-handoff-compression`",
-            "committed as `27447ee`",
-            "merged locally to `master` as `4634d23`",
-            "Latest completed package objective: add a package-only role-thread bootstrap helper",
-            "make_role_thread_package_bootstrap_message()",
-            "reviewPackagePath",
-            "`src/team_router.py`",
+            "active local package `ctr-20260701-broker-host-readiness-injection`",
+            "broker/adapter startup readiness plus host-readiness injection",
+            "already-running localhost broker feed doctor/readiness evidence",
+            "previous `ctr-20260701-desktop-plugin-feasibility-spike` live smoke",
+            "commit `aa7c618`",
+            "Python callable adapter wrapper",
+            "parent_thread_id",
+            "heartbeat scheduler evidence",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -11583,9 +11807,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current next gate",
-            "none after local closeout commit",
-            "push, PR, merge to remote, deploy, publish/release, and global skill sync are outside this package",
-            "no parser/gate/direct-return/watcher/host/thread-adapter",
+            "reviewer/verifier gates",
+            "No live role dispatch, production daemon, push, PR, merge, deploy, publish/release, or global skill sync",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -11600,7 +11823,6 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Previous `ctr-20260630-ledger-transition-state-extraction`",
             "_has_observation_content()",
             "_search_anchor()",
-            "no live host adapter implementation",
         ):
             self.assertIn(needle, text)
         for stale in (

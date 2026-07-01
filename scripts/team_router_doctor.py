@@ -17,6 +17,7 @@ if str(SRC_DIR) not in sys.path:
 
 import team_router_status_tools
 import team_router_truth_check
+from team_router_broker_adapter import BrokerConfig, broker_host_readiness_snapshot, fetch_broker_readiness
 
 try:
     import team_router as team_router_core
@@ -310,6 +311,15 @@ def _load_host_readiness_snapshot(path: Path | None) -> dict[str, object] | None
     raise ValueError("host readiness snapshot must be a JSON object")
 
 
+
+def _load_broker_host_readiness_snapshot(broker_url: str | None, session_token: str | None) -> dict[str, object] | None:
+    if not broker_url and not session_token:
+        return None
+    if not broker_url or not session_token:
+        raise ValueError("--broker-url and --session-token must be supplied together")
+    readiness = fetch_broker_readiness(BrokerConfig(base_url=broker_url, session_token=session_token))
+    return broker_host_readiness_snapshot(readiness)
+
 def build_doctor_report(
     repo_root: Path = team_router_truth_check.DEFAULT_REPO_ROOT,
     global_skill: Path = team_router_truth_check.DEFAULT_GLOBAL_SKILL,
@@ -360,10 +370,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scan-file", type=Path, action="append", default=[])
     parser.add_argument("--role-status-json", type=Path, help="read-only JSON snapshot of role thread observations")
     parser.add_argument("--host-readiness-json", type=Path, help="read-only JSON snapshot of host adapter readiness evidence")
+    parser.add_argument("--broker-url", help="localhost Codex Desktop/plugin broker URL for read-only host readiness injection")
+    parser.add_argument("--session-token", help="session token for --broker-url")
     parser.add_argument("--json", action="store_true", help="emit JSON report")
     args = parser.parse_args(argv)
     role_status_snapshot = _load_role_status_snapshot(args.role_status_json)
+    if args.host_readiness_json and (args.broker_url or args.session_token):
+        parser.error("choose either --host-readiness-json or --broker-url, not both")
     host_readiness_snapshot = _load_host_readiness_snapshot(args.host_readiness_json)
+    try:
+        broker_snapshot = _load_broker_host_readiness_snapshot(args.broker_url, args.session_token)
+    except Exception as exc:
+        parser.error(str(exc))
+    if broker_snapshot is not None:
+        host_readiness_snapshot = broker_snapshot
     report = build_doctor_report(
         args.repo_root,
         args.global_skill,

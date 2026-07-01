@@ -143,6 +143,48 @@ def fetch_broker_readiness(config: BrokerConfig) -> dict[str, Any]:
     return readiness
 
 
+
+def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def broker_host_readiness_snapshot(readiness: Mapping[str, Any]) -> dict[str, Any]:
+    """Map broker /readiness evidence into scripts/team_router_doctor.py snapshot shape."""
+    capabilities = _mapping_or_empty(readiness.get("capabilities"))
+    callable_tools = {
+        method_name: bool(capabilities.get(method_name))
+        for method_name in BROKER_THREAD_TOOL_METHODS
+    }
+    runtime_probe = readiness.get("runtimeProbe")
+    if not isinstance(runtime_probe, Mapping):
+        runtime_probe = {"status": "blocked", "missing": ["runtime readiness probe"]}
+    broker_missing = _list_or_empty(readiness.get("missing"))
+    broker_ready = readiness.get("status") == "ready" and bool(readiness.get("brokerReady")) and not broker_missing
+    if not broker_ready:
+        probe_missing = _list_or_empty(runtime_probe.get("missing"))
+        if "broker readiness" not in probe_missing:
+            probe_missing.append("broker readiness")
+        runtime_probe = {"status": "blocked", "missing": probe_missing}
+    parent_thread_id = readiness.get("parentThreadId")
+    scheduler_ready = broker_ready and (bool(readiness.get("schedulerReady")) or bool(capabilities.get("heartbeat_scheduler")))
+    return {
+        "source": "broker-readiness",
+        "brokerReady": broker_ready,
+        "brokerStatus": readiness.get("status"),
+        "brokerMissing": broker_missing,
+        "projectId": readiness.get("projectId") if isinstance(readiness.get("projectId"), str) else None,
+        "codexAppThreadToolsExposed": bool(readiness.get("toolSmokeReady")) or any(callable_tools.values()),
+        "adapterCallable": True,
+        "callableTools": callable_tools,
+        "parentThreadId": parent_thread_id.strip() if isinstance(parent_thread_id, str) else "",
+        "heartbeatSchedulerCallable": scheduler_ready,
+        "runtimeProbe": dict(runtime_probe),
+    }
+
 def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
     readiness = fetch_broker_readiness(config)
     if readiness.get("status") != "ready":
@@ -159,6 +201,7 @@ def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
         "parent_thread_id": parent_thread_id.strip(),
         "codex_project_id": project_id if isinstance(project_id, str) and project_id.strip() else None,
         "readiness": readiness,
+        "host_readiness_snapshot": broker_host_readiness_snapshot(readiness),
     }
 
 
