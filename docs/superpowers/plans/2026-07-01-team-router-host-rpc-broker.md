@@ -190,11 +190,7 @@ BROKER_THREAD_TOOL_METHODS = (
     "send_message_to_thread",
     "set_thread_title",
 )
-BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
-    "/readiness",
-    "/scheduler/wake",
-)
-BROKER_SCHEDULER_CALLBACKS = ("watch_team_task_with_adapter",)
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS)
 
 
 class BrokerProtocolError(StateStoreError):
@@ -549,6 +545,14 @@ Expected: FAIL: missing readiness helpers.
 
 - [ ] **Step 3: Implement readiness helpers**
 
+Extend `BROKER_ALLOWED_PATHS` in `src/team_router_broker_adapter.py` to include readiness before adding helpers:
+
+```python
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
+    "/readiness",
+)
+```
+
 Append to `src/team_router_broker_adapter.py`:
 
 ```python
@@ -613,7 +617,7 @@ git commit -m "feat: normalize broker readiness evidence"
 - Consumes: `BrokerConfig`, `broker_request(...)`
 - Consumes: `team_router.materialize_watcher_call_kwargs(payload, *, thread_adapter, observed_at=None, heartbeat_scheduler=None, turn_limit=None)`
 - Produces: `class BrokerHeartbeatScheduler`
-- Produces: tests proving callback allowlist and materialization path.
+- Produces: tests proving callback allowlist, raw broker_request bypass rejection, host context scheduler wiring, and materialization path.
 
 - [ ] **Step 1: Write scheduler allowlist tests**
 
@@ -652,7 +656,47 @@ Add to `TestTeamRouterBrokerAdapter`:
         self.assertIn("scheduler callback not allowed", str(ctx.exception))
 ```
 
-- [ ] **Step 2: Write materialization integration test**
+- [ ] **Step 2: Write raw bypass and host-context scheduler tests**
+
+Add to `TestTeamRouterBrokerAdapter`:
+
+```python
+    def test_broker_request_rejects_scheduler_wake_arbitrary_callback(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_request(
+                    config,
+                    "/scheduler/wake",
+                    {"callback": "run_arbitrary_python", "runAt": "2026-07-01T10:05:00+08:00"},
+                )
+
+        self.assertIn("scheduler callback not allowed", str(ctx.exception))
+
+    def test_broker_host_context_kwargs_returns_heartbeat_scheduler_after_task_4(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {"heartbeat_scheduler": True},
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            kwargs = team_router_broker_adapter.broker_host_context_kwargs(config)
+
+        self.assertIsInstance(kwargs["heartbeat_scheduler"], team_router_broker_adapter.BrokerHeartbeatScheduler)
+```
+
+- [ ] **Step 3: Write materialization integration test**
 
 Add to `TestTeamRouterBrokerAdapter`:
 
@@ -693,15 +737,25 @@ Add to `TestTeamRouterBrokerAdapter`:
         self.assertEqual(kwargs["turn_limit"], 3)
 ```
 
-- [ ] **Step 3: Run RED scheduler tests**
+- [ ] **Step 4: Run RED scheduler tests**
 
 ```powershell
-py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_rejects_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_scheduler_payload_materializes_with_broker_scheduler -v
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_rejects_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_request_rejects_scheduler_wake_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_returns_heartbeat_scheduler_after_task_4 tests.test_team_router.TestTeamRouterBrokerAdapter.test_scheduler_payload_materializes_with_broker_scheduler -v
 ```
 
 Expected: FAIL because `BrokerHeartbeatScheduler` does not exist yet.
 
-- [ ] **Step 4: Implement scheduler wrapper**
+- [ ] **Step 5: Implement scheduler wrapper**
+
+Extend `BROKER_ALLOWED_PATHS` and add the scheduler callback allowlist in `src/team_router_broker_adapter.py` before adding the scheduler wrapper:
+
+```python
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
+    "/readiness",
+    "/scheduler/wake",
+)
+BROKER_SCHEDULER_CALLBACKS = ("watch_team_task_with_adapter",)
+```
 
 Append to `src/team_router_broker_adapter.py`:
 
@@ -713,21 +767,24 @@ class BrokerHeartbeatScheduler:
         self.config = config
 
     def schedule(self, **kwargs: Any) -> dict[str, Any]:
-        callback = kwargs.get("callback") or kwargs.get("managerAction")
-        if callback not in BROKER_SCHEDULER_CALLBACKS:
-            raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
         return broker_request(self.config, "/scheduler/wake", kwargs)
 ```
 
-- [ ] **Step 5: Run GREEN scheduler tests**
+Also update `broker_request(...)` so `/scheduler/wake` validates `callback` / `managerAction` against `BROKER_SCHEDULER_CALLBACKS` before sending. Update `broker_host_context_kwargs(...)` to include:
+
+```python
+        "heartbeat_scheduler": BrokerHeartbeatScheduler(config),
+```
+
+- [ ] **Step 6: Run GREEN scheduler tests**
 
 ```powershell
-py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_rejects_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_scheduler_payload_materializes_with_broker_scheduler -v
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_rejects_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_request_rejects_scheduler_wake_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_returns_heartbeat_scheduler_after_task_4 tests.test_team_router.TestTeamRouterBrokerAdapter.test_scheduler_payload_materializes_with_broker_scheduler -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 6: Run cadence regression tests**
+- [ ] **Step 7: Run cadence regression tests**
 
 ```powershell
 py -B -m unittest tests.test_team_router.TestTeamRouterState.test_waiting_read_discipline_moves_next_allowed_after_single_first_check tests.test_team_router.TestTeamRouterState.test_role_read_interval_uses_five_minute_minimum tests.test_team_router.TestTeamRouterState.test_watcher_runtime_builds_facade_watcher_ledger -v
@@ -735,7 +792,7 @@ py -B -m unittest tests.test_team_router.TestTeamRouterState.test_waiting_read_d
 
 Expected: PASS. Do not change cadence constants.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```powershell
 git add src\team_router_broker_adapter.py tests\test_team_router.py
@@ -1016,7 +1073,7 @@ Spec coverage:
 
 - Desktop/plugin authority domain required: Task 5 feasibility check and Task 6 blocker closeout.
 - Localhost RPC broker preferred bridge: Tasks 1-3.
-- Exact RPC request/response shape: Tasks 1-3 tests.
+- Exact RPC request/response shape: Tasks 1-3 tests; Task 1 is thread-tools only, Task 3 adds readiness, Task 4 adds scheduler wake.
 - Parent thread id lifecycle and invalidation: Task 3 readiness and host context kwargs; external lifecycle remains Desktop/plugin feasibility requirement.
 - Scheduler responsibilities without daemon: Task 4.
 - Readiness JSON including `runtimeProbe`: Task 3 and Task 6.
@@ -1029,7 +1086,7 @@ Known boundary:
 
 Type consistency:
 
-- `BrokerConfig`, `CodexAppThreadAdapter`, `fetch_broker_readiness`, and `broker_host_context_kwargs` are introduced before readiness tasks use them; `BrokerHeartbeatScheduler` is introduced in Task 4 before scheduler checks use it.
+- `BrokerConfig`, `CodexAppThreadAdapter`, `fetch_broker_readiness`, and `broker_host_context_kwargs` are introduced before readiness tasks use them; `BrokerHeartbeatScheduler` is introduced in Task 4 before scheduler checks and host-context scheduler wiring use it.
 - `watch_team_task_with_adapter` is the only scheduler callback allowed.
 - Thread tool names match existing `THREAD_TOOL_NAMES`.
 

@@ -6,8 +6,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import unittest
 import uuid
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 from pathlib import Path
 
@@ -136,7 +139,597 @@ class FakeHeartbeatScheduler:
         self.scheduled.append(dict(kwargs))
         return {"scheduled": True}
 
+
+class _FakeBrokerHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+    routes = {}
+    calls = []
+
+    def log_message(self, format, *args):
+        return
+
+    def _write_response(self, status, response):
+        body = response
+        content_type = "application/json"
+        if isinstance(response, dict) and "__raw__" in response:
+            raw = response["__raw__"]
+            body = raw.encode("utf-8") if isinstance(raw, str) else raw
+            content_type = response.get("content_type", "application/octet-stream")
+        else:
+            body = json.dumps(response).encode("utf-8")
+            content_type = "application/json"
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8") if length else "{}"
+        payload = json.loads(body)
+        self.__class__.calls.append({"method": "POST", "path": self.path, "payload": payload})
+        status, response = self.__class__.routes.get(
+            self.path,
+            (404, {"ok": False, "error": {"message": self.path}}),
+        )
+        self._write_response(status, response)
+
+    def do_GET(self):
+        self.__class__.calls.append({"method": "GET", "path": self.path, "payload": None, "headers": dict(self.headers)})
+        status, response = self.__class__.routes.get(
+            self.path,
+            (404, {"ok": False, "error": {"message": self.path}}),
+        )
+        self._write_response(status, response)
+
+
+@contextmanager
+def fake_broker(routes):
+    handler = type("FakeBrokerHandler", (_FakeBrokerHandler,), {"routes": dict(routes), "calls": []})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:%d" % server.server_address[1], handler.calls
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+class TestTeamRouterBrokerAdapter(unittest.TestCase):
+    def test_broker_request_posts_json_with_session_token_and_request_id(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/thread-tools/list_projects": (200, {"ok": True, "result": {"projects": []}}),
+        }) as (base_url, calls):
+            config = team_router_broker_adapter.BrokerConfig(
+                base_url=base_url,
+                session_token="session-123",
+                timeout_ms=1000,
+            )
+            result = team_router_broker_adapter.broker_request(
+                config,
+                "/thread-tools/list_projects",
+                {"timeoutMs": 1000},
+            )
+
+        self.assertEqual(result, {"projects": []})
+        self.assertEqual(calls[0]["method"], "POST")
+        self.assertEqual(calls[0]["path"], "/thread-tools/list_projects")
+        self.assertEqual(calls[0]["payload"]["sessionToken"], "session-123")
+        self.assertIn("requestId", calls[0]["payload"])
+
+    def test_broker_request_get_allowed_only_for_readiness(self):
+        import team_router_broker_adapter
+
+        readiness = {"status": "blocked", "runtimeProbe": {"status": "blocked", "missing": ["parent_thread_id"]}}
+        with fake_broker({
+            "/readiness": (200, {"ok": True, "result": readiness}),
+        }) as (base_url, calls):
+            config = team_router_broker_adapter.BrokerConfig(
+                base_url=base_url,
+                session_token="session-123",
+                timeout_ms=1000,
+            )
+            result = team_router_broker_adapter.broker_request(config, "/readiness", method="GET")
+
+        self.assertEqual(result, readiness)
+        self.assertEqual(calls[0]["method"], "GET")
+        self.assertEqual(calls[0]["path"], "/readiness")
+        self.assertIsNone(calls[0]["payload"])
+        self.assertIn("X-Request-Id", calls[0]["headers"])
+        self.assertEqual(calls[0]["headers"]["X-Session-Token"], "session-123")
+        self.assertEqual(calls[0]["headers"]["X-Timeout-Ms"], "1000")
+
+    def test_broker_request_rejects_get_for_thread_tools_and_scheduler_wake(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            for path in ("/thread-tools/list_projects", "/scheduler/wake"):
+                with self.subTest(path=path):
+                    with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                        team_router_broker_adapter.broker_request(
+                            config,
+                            path,
+                            {"callback": "watch_team_task_with_adapter"} if path == "/scheduler/wake" else {},
+                            method="GET",
+                        )
+                    self.assertIn("broker HTTP method not allowed", str(ctx.exception))
+
+    def test_broker_request_rejects_non_localhost_base_url(self):
+        import team_router_broker_adapter
+
+        config = team_router_broker_adapter.BrokerConfig(
+            base_url="https://example.com:443",
+            session_token="session-123",
+        )
+        with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+            team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertIn("localhost broker", str(ctx.exception))
+
+    def test_broker_request_rejects_unknown_thread_tool_path(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/thread-tools/delete_thread", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertIn("broker method not allowed", str(ctx.exception))
+
+    def test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/scheduler/wake": (200, {"ok": True, "result": {"scheduled": True}}),
+        }) as (base_url, calls):
+            scheduler = team_router_broker_adapter.BrokerHeartbeatScheduler(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+            result = scheduler.schedule(
+                callback="watch_team_task_with_adapter",
+                runAt="2026-07-01T10:05:00+08:00",
+                kwargs={"task_id": "task-1"},
+            )
+
+        self.assertEqual(result, {"scheduled": True})
+        self.assertEqual(calls[0]["path"], "/scheduler/wake")
+        self.assertEqual(calls[0]["payload"]["callback"], "watch_team_task_with_adapter")
+
+    def test_broker_heartbeat_scheduler_rejects_arbitrary_callback(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            scheduler = team_router_broker_adapter.BrokerHeartbeatScheduler(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                scheduler.schedule(callback="run_arbitrary_python", runAt="2026-07-01T10:05:00+08:00")
+
+        self.assertIn("scheduler callback not allowed", str(ctx.exception))
+
+    def test_broker_request_rejects_scheduler_wake_arbitrary_callback(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_request(
+                    config,
+                    "/scheduler/wake",
+                    {"callback": "run_arbitrary_python", "runAt": "2026-07-01T10:05:00+08:00"},
+                )
+
+        self.assertIn("scheduler callback not allowed", str(ctx.exception))
+
+    def test_broker_request_rejects_scheduler_wake_mixed_callback_fields(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_request(
+                    config,
+                    "/scheduler/wake",
+                    {
+                        "callback": "watch_team_task_with_adapter",
+                        "managerAction": "run_arbitrary_python",
+                        "runAt": "2026-07-01T10:05:00+08:00",
+                    },
+                )
+
+        self.assertIn("scheduler callback not allowed: run_arbitrary_python", str(ctx.exception))
+
+    def test_broker_request_rejects_non_json_response(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/thread-tools/list_projects": (200, {"__raw__": "not json", "content_type": "text/plain"}),
+        }) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertEqual(str(ctx.exception), "broker response must be JSON")
+
+    def test_broker_request_rejects_json_non_object_response(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/thread-tools/list_projects": (200, ["not", "an", "object"]),
+        }) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertEqual(str(ctx.exception), "broker response must be a JSON object")
+
+    def test_broker_request_raises_protocol_error_with_broker_message(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/thread-tools/list_projects": (200, {"ok": False, "error": {"message": "broker said no"}}),
+        }) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertEqual(str(ctx.exception), "broker said no")
+
+    def test_broker_request_maps_http_error_to_transport_error(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/thread-tools/list_projects": (503, {"ok": False, "error": {"message": "down"}}),
+        }) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router_broker_adapter.BrokerTransportError) as ctx:
+                team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertIn("broker HTTP error: 503", str(ctx.exception))
+
+    def test_broker_request_maps_unreachable_broker_to_transport_error(self):
+        import team_router_broker_adapter
+
+        config = team_router_broker_adapter.BrokerConfig(
+            base_url="http://127.0.0.1:1",
+            session_token="session-123",
+            timeout_ms=100,
+        )
+        with self.assertRaises(team_router_broker_adapter.BrokerTransportError) as ctx:
+            team_router_broker_adapter.broker_request(config, "/thread-tools/list_projects", {})
+
+        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
+        self.assertIn("broker transport error", str(ctx.exception))
+
+    def test_codex_app_thread_adapter_exposes_required_callable_tools(self):
+        import team_router_broker_adapter
+
+        routes = {
+            "/thread-tools/list_projects": (200, {"ok": True, "result": {"projects": [{"projectId": "project-1"}]}}),
+            "/thread-tools/list_threads": (200, {"ok": True, "result": {"threads": [{"threadId": "thread-manager", "archived": False}]}}),
+            "/thread-tools/create_thread": (200, {"ok": True, "result": {"threadId": "thread-new"}}),
+            "/thread-tools/send_message_to_thread": (200, {"ok": True, "result": {"messageId": "msg-1", "sentAt": "2026-07-01T10:00:00+08:00"}}),
+            "/thread-tools/read_thread": (200, {"ok": True, "result": {"messages": [{"messageId": "msg-2", "text": "ok"}]}}),
+            "/thread-tools/set_thread_title": (200, {"ok": True, "result": {"threadId": "thread-parent", "title": "new title"}}),
+        }
+        with fake_broker(routes) as (base_url, calls):
+            adapter = team_router_broker_adapter.CodexAppThreadAdapter(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+
+            self.assertEqual(adapter.list_projects(), {"projects": [{"projectId": "project-1"}]})
+            self.assertEqual(adapter.list_threads(projectId="project-1"), {"threads": [{"threadId": "thread-manager", "archived": False}]})
+            self.assertEqual(adapter.create_thread(prompt="role: executor", target={"type": "project", "projectId": "project-1"}), {"threadId": "thread-new"})
+            self.assertEqual(adapter.send_message_to_thread(threadId="thread-parent", prompt="TEAM_ROUTER_CALLBACK"), {"messageId": "msg-1", "sentAt": "2026-07-01T10:00:00+08:00"})
+            self.assertEqual(adapter.read_thread(threadId="thread-new", turnLimit=20), {"messages": [{"messageId": "msg-2", "text": "ok"}]})
+            self.assertEqual(adapter.set_thread_title(threadId="thread-parent", title="new title"), {"threadId": "thread-parent", "title": "new title"})
+
+        self.assertEqual([call["path"] for call in calls], [
+            "/thread-tools/list_projects",
+            "/thread-tools/list_threads",
+            "/thread-tools/create_thread",
+            "/thread-tools/send_message_to_thread",
+            "/thread-tools/read_thread",
+            "/thread-tools/set_thread_title",
+        ])
+        for call in calls:
+            self.assertEqual(call["payload"]["sessionToken"], "session-123")
+
+    def test_codex_app_thread_adapter_is_usable_by_runtime_capability_probe(self):
+        import team_router_broker_adapter
+
+        with fake_broker({}) as (base_url, _calls):
+            adapter = team_router_broker_adapter.CodexAppThreadAdapter(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+
+        readiness = team_router.assess_live_orchestration_readiness(
+            adapter,
+            parent_thread_id="thread-parent",
+            heartbeat_scheduler=FakeHeartbeatScheduler(),
+        )
+
+        self.assertEqual(readiness["status"], "ready")
+        self.assertTrue(readiness["capabilities"]["create_thread"])
+        self.assertTrue(readiness["capabilities"]["read_thread"])
+
+    def test_fetch_broker_readiness_requires_runtime_probe_ready(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "blocked",
+            "brokerReady": True,
+            "toolSmokeReady": False,
+            "schedulerReady": False,
+            "parentThreadId": None,
+            "projectId": "project-1",
+            "capabilities": {"create_thread": False},
+            "runtimeProbe": {"status": "blocked", "missing": ["parent_thread_id"]},
+            "missing": ["parent_thread_id"],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            result = team_router_broker_adapter.fetch_broker_readiness(config)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["runtimeProbe"], {"status": "blocked", "missing": ["parent_thread_id"]})
+        self.assertEqual(calls[0]["method"], "GET")
+
+    def test_broker_host_context_kwargs_returns_adapter_parent_and_project(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            kwargs = team_router_broker_adapter.broker_host_context_kwargs(config)
+
+        self.assertIsInstance(kwargs["thread_adapter"], team_router_broker_adapter.CodexAppThreadAdapter)
+        self.assertIsInstance(kwargs["heartbeat_scheduler"], team_router_broker_adapter.BrokerHeartbeatScheduler)
+        self.assertEqual(kwargs["parent_thread_id"], "thread-parent")
+        self.assertEqual(kwargs["codex_project_id"], "project-1")
+
+    def test_broker_host_context_kwargs_returns_heartbeat_scheduler_after_task_4(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {"heartbeat_scheduler": True},
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            kwargs = team_router_broker_adapter.broker_host_context_kwargs(config)
+
+        self.assertIsInstance(kwargs["heartbeat_scheduler"], team_router_broker_adapter.BrokerHeartbeatScheduler)
+
+    def test_broker_host_context_kwargs_blocks_without_ready_runtime_probe(self):
+        import team_router_broker_adapter
+
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {},
+            "runtimeProbe": {"status": "blocked", "missing": ["scheduler smoke"]},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                team_router_broker_adapter.broker_host_context_kwargs(config)
+
+        self.assertIn("runtimeProbe", str(ctx.exception))
+
+
+class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
+    def test_broker_feasibility_check_blocks_without_broker_arguments(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        result = subprocess.run(
+            [sys.executable, "-B", str(script), "--json"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "blocked")
+        self.assertIn("broker-url", report["missing"])
+        self.assertIn("session-token", report["missing"])
+        self.assertFalse(report["authorization"]["desktopPluginChange"])
+
+    def test_broker_feasibility_check_reports_ready_readiness(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["runtimeProbe"], {"status": "ready", "missing": []})
+        self.assertFalse(report["authorization"]["desktopPluginChange"])
+
+    def test_broker_feasibility_check_blocks_inconsistent_runtime_probe(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": False,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {"heartbeat_scheduler": False},
+            "runtimeProbe": {"status": "blocked", "missing": ["scheduler smoke"]},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["runtimeProbe"], {"status": "blocked", "missing": ["scheduler smoke"]})
+
+    def test_broker_feasibility_check_blocks_top_level_missing(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {"heartbeat_scheduler": True},
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": ["manual_only"],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(report["missing"], ["manual_only"])
+
+    def test_scheduler_payload_materializes_with_broker_scheduler(self):
+        import team_router_broker_adapter
+
+        adapter = FakeThreadAdapter()
+        with fake_broker({
+            "/scheduler/wake": (200, {"ok": True, "result": {"scheduled": True}}),
+        }) as (base_url, _calls):
+            scheduler = team_router_broker_adapter.BrokerHeartbeatScheduler(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+            payload = {
+                "callback": "watch_team_task_with_adapter",
+                "runAt": "2026-07-01T10:05:00+08:00",
+                "kwargs": {
+                    "state_root": str(ROOT),
+                    "project_id": "project-1",
+                    "task_id": "task-1",
+                    "permission": "read-only",
+                    "return_thread_id": "thread-parent",
+                    "read_reason": "scheduled watcher heartbeat",
+                },
+            }
+
+            kwargs = team_router.materialize_watcher_call_kwargs(
+                payload,
+                thread_adapter=adapter,
+                heartbeat_scheduler=scheduler,
+                turn_limit=3,
+            )
+
+        self.assertIs(kwargs["thread_adapter"], adapter)
+        self.assertIs(kwargs["heartbeat_scheduler"], scheduler)
+        self.assertEqual(kwargs["observed_at"], "2026-07-01T10:05:00+08:00")
+        self.assertEqual(kwargs["turn_limit"], 3)
+
+    def test_scheduler_payload_materializer_rejects_mixed_callback_fields(self):
+        adapter = FakeThreadAdapter()
+        payload = {
+            "callback": "watch_team_task_with_adapter",
+            "managerAction": "run_arbitrary_python",
+            "runAt": "2026-07-01T10:05:00+08:00",
+            "kwargs": {
+                "state_root": str(ROOT),
+                "project_id": "project-1",
+                "task_id": "task-1",
+                "permission": "read-only",
+                "read_reason": "scheduled watcher heartbeat",
+            },
+        }
+
+        with self.assertRaises(team_router.ProtocolError) as ctx:
+            team_router.materialize_watcher_call_kwargs(payload, thread_adapter=adapter)
+
+        self.assertIn("scheduler payload callback not allowed: run_arbitrary_python", str(ctx.exception))
+
 class TestTeamRouterProtocol(unittest.TestCase):
+    def test_facade_reexports_broker_adapter_symbols(self):
+        import team_router_broker_adapter
+
+        for name in (
+            "BrokerConfig",
+            "BrokerProtocolError",
+            "BrokerTransportError",
+            "CodexAppThreadAdapter",
+        ):
+            self.assertIs(getattr(team_router, name), getattr(team_router_broker_adapter, name))
+
     def test_facade_reexports_extracted_protocol_and_policy_symbols(self):
         self.assertIs(team_router.ProtocolError, team_router_protocol.ProtocolError)
         self.assertIs(team_router.ProtocolMessage, team_router_protocol.ProtocolMessage)
