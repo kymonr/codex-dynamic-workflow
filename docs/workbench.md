@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package; `ctr-20260702-host-adapter-readiness-check` has completed local review and acceptance and is locally committed by explicit user authorization.
-- Completed package objective: add a read-only host-adapter readiness check that proves whether caller-supplied Codex Desktop thread-tool evidence can be injected as in-process Python callables.
-- Completed package starting evidence: Team Router was clean/synced but `doctor` reported `orchestrationStatus: manual_only` and `hostReadiness.status: not_supplied`; readiness checks now support a local snapshot-based injection-shape probe without making an independent background service the project goal.
+- State: no active repo-local package; `ctr-20260702-short-role-request-template` completed review and verification and is locally committed under Complex Task authorization.
+- Completed package objective: make reviewer/verifier package-path prompts default to short protocol plus Markdown paths instead of inlining checklist/schema text.
+- Completed package starting evidence: dogfood screenshots showed the role request and review callback still repeated long scope/checklist/schema text even though package paths were supplied.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
 - Current package boundary: none after local closeout; latest package is complete unless fresh commands show otherwise.
-- Current next gate: none after local closeout. Any push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires a separate explicit authorization.
+- Current next gate: none locally after the current commit. Any push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires a separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,6 +27,17 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- `ctr-20260702-short-role-request-template`: RED focused tests first failed because generated package-path reviewer/verifier prompts still lacked `returnContract` and retained verbose direct-return/schema lines.
+- `ctr-20260702-short-role-request-template`: GREEN focused tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-short-template-green3 py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_package_paths_uses_minimal_protocol_template -v` -> Ran 2 tests OK.
+- `ctr-20260702-short-role-request-template`: focused regression suite with path-first handoff, short templates, design-gate preservation, package metadata, and direct-return metadata -> Ran 8 tests OK.
+- `ctr-20260702-short-role-request-template`: reviewer v1 thread `019f1f23-8d8c-7512-9124-5a8bf984d68b` -> `needs_rework`; pure `inlineFallback: true` without a real path was incorrectly using the compact path template.
+- `ctr-20260702-short-role-request-template`: rework RED inline-fallback tests first failed with the compact `returnContract`/`replyFields` shape; rework GREEN after narrowing compact mode to real path fields -> Ran 8 focused prompt tests OK.
+- `ctr-20260702-short-role-request-template`: reviewer v2 thread `019f1f23-8d8c-7512-9124-5a8bf984d68b` -> `pass`; verifier v1 thread `019f1f2a-50dd-70b3-950d-333cb5bdef40` -> `needs_rework` because compact `replyFields` omitted parser-required `findings` / `evidenceChecked` fields.
+- `ctr-20260702-short-role-request-template`: parser-compatibility RED tests first failed; after keeping compact `replyFields` parser-compatible and shortening placeholder/language text, GREEN parser tests -> Ran 2 tests OK; expanded focused suite with prompt length, inline fallback, parser compatibility, role metadata, and workbench guard -> Ran 11 tests OK.
+- `ctr-20260702-short-role-request-template`: reviewer v3 thread `019f1f23-8d8c-7512-9124-5a8bf984d68b` -> `pass`; verifier v2 thread `019f1f2a-50dd-70b3-950d-333cb5bdef40` -> `needs_rework` because the workbench `Review And Verification Gate` section still named the previous host-adapter package as current.
+- `ctr-20260702-short-role-request-template`: gate rework updated the workbench current gate to this package and tightened the workbench guard against stale host-adapter closeout text in the gate section.
+- `ctr-20260702-short-role-request-template`: verifier v3 thread `019f1f2a-50dd-70b3-950d-333cb5bdef40` direct-returned `pass` to the manager thread; requiredChanges none; next gate is local commit only.
+- `ctr-20260702-short-role-request-template`: compile exit 0; `git diff --check` exit 0 with CRLF/LF replacement warnings only; final focused suite including workbench current-state guard -> Ran 9 tests OK; `truth_check` staleClaims empty and skillSync match; `doctor` reports dirty/manual_only and reviewer-then-verifier nextAction; `closeout_check` exits 0.
 - `ctr-20260702-host-adapter-readiness-check`: RED focused tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-red py -B -m unittest tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_accepts_callable_snapshot_without_tool_calls tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_check_blocks_model_side_descriptors -v` first failed because `scripts/team_router_host_adapter_readiness_check.py` did not exist.
 - `ctr-20260702-host-adapter-readiness-check`: GREEN focused tests after adding the read-only script with `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-green1` -> Ran 2 tests OK.
 - `ctr-20260702-host-adapter-readiness-check`: RED fixture test `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-host-adapter-red2 py -B -m unittest tests.test_team_router.TestTeamRouterState.test_host_adapter_readiness_fixture_reports_ready_without_tool_calls -v` first failed because `tests/fixtures/team_router/host_adapter_callable_ready_snapshot.json` was missing.
@@ -156,5 +167,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none after local closeout for `ctr-20260702-host-adapter-readiness-check`; push requires separate explicit authorization.
+- Current gate: none locally after the current commit for `ctr-20260702-short-role-request-template`; push requires separate explicit authorization.
 - No push, PR, remote merge, deploy, publish/release, independent service work, direct live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.

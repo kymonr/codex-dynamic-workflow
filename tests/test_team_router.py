@@ -2198,6 +2198,135 @@ regressionRisks: low
         self.assertNotIn("evidence: %s" % sensitive_evidence, message)
         self.assertLess(len(message), 2200)
 
+    def test_reviewer_request_with_package_paths_uses_minimal_protocol_template(self):
+        task_id = "ctr-20260702-short-role-template"
+        package_path = "docs/team-router/packages/ctr-20260702-short-role-template.md"
+        plan_fields = {
+            "scope": "docs only",
+            "taskBriefPath": package_path,
+            "executorReportPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: docs updated\n"
+            "evidence: see package\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": package_path,
+                "executorReportPath": package_path,
+                "reviewPackagePath": package_path,
+            },
+        }
+
+        message = team_router.make_reviewer_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            "thread-parent",
+            role_thread_id="thread-reviewer",
+            plan_fields=plan_fields,
+            review_package=review_package,
+        )
+
+        self.assertIn("returnContract: direct-send TEAM_ROUTER_REVIEW then same block fallback", message)
+        self.assertIn("replyFields: result,summary,findings,requiredChanges,evidenceChecked,risks,next", message)
+        self.assertIn("reviewPackagePath: %s" % package_path, message)
+        self.assertNotIn("直接回传约定：", message)
+        self.assertNotIn("请在本线程按以下格式回复：", message)
+        self.assertNotIn("evidenceChecked:", message)
+        self.assertNotIn("directReturnAttempt:", message)
+        self.assertLess(len(message), 1500)
+
+    def test_compact_reviewer_reply_fields_match_parser_required_fields(self):
+        task_id = "ctr-20260702-short-role-template"
+        package_path = "docs/team-router/packages/ctr-20260702-short-role-template.md"
+        plan_fields = {
+            "scope": "docs only",
+            "taskBriefPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: docs updated\n"
+            "evidence: see package\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+
+        message = team_router.make_reviewer_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            plan_fields=plan_fields,
+        )
+
+        self.assertIn("replyFields: result,summary,findings,requiredChanges,evidenceChecked,risks,next", message)
+        parsed = team_router.parse_review(
+            "TEAM_ROUTER_REVIEW taskId=%s\n"
+            "result: pass\n"
+            "summary: ok\n"
+            "findings: none\n"
+            "requiredChanges: none\n"
+            "evidenceChecked: %s\n"
+            "risks: none\n"
+            "next: verifier" % (task_id, package_path),
+            task_id,
+        )
+        self.assertEqual(parsed.fields["result"], "pass")
+
+    def test_reviewer_request_with_inline_fallback_without_paths_keeps_detailed_template(self):
+        task_id = "ctr-20260702-short-role-inline-fallback"
+        plan_fields = {"scope": "docs only"}
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: docs updated inline\n"
+            "evidence: inline callback\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+        review_package = {
+            "gateClass": "PACKAGE",
+            "status": "recorded",
+            "inlineFallback": True,
+            "paths": {},
+        }
+
+        message = team_router.make_reviewer_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            "thread-parent",
+            role_thread_id="thread-reviewer",
+            plan_fields=plan_fields,
+            review_package=review_package,
+        )
+
+        self.assertIn("inlineFallback: true", message)
+        self.assertIn("审查包元数据（仅作为证据）：", message)
+        self.assertIn("packageEvidenceBoundary: evidence metadata only", message)
+        self.assertIn("直接回传约定：", message)
+        self.assertIn("请在本线程按以下格式回复：", message)
+        self.assertIn("evidenceChecked:", message)
+        self.assertIn("directReturnAttempt:", message)
+        self.assertNotIn("returnContract:", message)
+        self.assertNotIn("replyFields:", message)
+        self.assertNotIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
+        self.assertNotIn("packageEvidenceBoundary: path metadata only", message)
+
     def test_verifier_request_uses_path_first_handoff_without_raw_review_or_callback(self):
         task_id = "ctr-20260701-role-thread-handoff-compression"
         sensitive_evidence = "SHORT_EVIDENCE_SHOULD_STAY_IN_PACKAGE_FILE"
@@ -2266,6 +2395,159 @@ regressionRisks: low
         self.assertNotIn(sensitive_evidence, message)
         self.assertNotIn(raw_review_detail, message)
         self.assertLess(len(message), 2600)
+
+    def test_verifier_request_with_package_paths_uses_minimal_protocol_template(self):
+        task_id = "ctr-20260702-short-role-template"
+        package_path = "docs/team-router/packages/ctr-20260702-short-role-template.md"
+        plan_fields = {
+            "scope": "docs only",
+            "taskBriefPath": package_path,
+            "executorReportPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: docs updated\n"
+            "evidence: see package\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % task_id
+        reviewer_result = {
+            "fields": {
+                "result": "pass",
+                "summary": "reviewer passed",
+                "findings": "none",
+                "requiredChanges": "none",
+                "evidenceChecked": package_path,
+                "risks": "none",
+            },
+        }
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": package_path,
+                "executorReportPath": package_path,
+                "reviewPackagePath": package_path,
+            },
+        }
+
+        message = team_router.make_verifier_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            "thread-parent",
+            role_thread_id="thread-verifier",
+            plan_fields=plan_fields,
+            review_package=review_package,
+            reviewer_result=reviewer_result,
+        )
+
+        self.assertIn("returnContract: direct-send TEAM_ROUTER_VERDICT then same block fallback", message)
+        self.assertIn("replyFields: result,summary,requiredChanges,evidenceChecked,risks,next", message)
+        self.assertIn("reviewPackagePath: %s" % package_path, message)
+        self.assertNotIn("直接回传约定：", message)
+        self.assertNotIn("请在本线程按以下格式回复：", message)
+        self.assertNotIn("验证者检查项：", message)
+        self.assertNotIn("evidenceChecked:", message)
+        self.assertNotIn("directReturnAttempt:", message)
+        self.assertLess(len(message), 1700)
+
+    def test_compact_verifier_reply_fields_match_parser_required_fields(self):
+        task_id = "ctr-20260702-short-role-template"
+        package_path = "docs/team-router/packages/ctr-20260702-short-role-template.md"
+        plan_fields = {
+            "scope": "docs only",
+            "taskBriefPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: docs updated\n"
+            "evidence: see package\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % task_id
+
+        message = team_router.make_verifier_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            plan_fields=plan_fields,
+        )
+
+        self.assertIn("replyFields: result,summary,requiredChanges,evidenceChecked,risks,next", message)
+        parsed = team_router.parse_verdict(
+            "TEAM_ROUTER_VERDICT taskId=%s\n"
+            "result: pass\n"
+            "summary: ok\n"
+            "requiredChanges: none\n"
+            "evidenceChecked: %s\n"
+            "risks: none\n"
+            "next: commit" % (task_id, package_path),
+            task_id,
+        )
+        self.assertEqual(parsed.fields["result"], "pass")
+
+    def test_verifier_request_with_inline_fallback_without_paths_keeps_detailed_template(self):
+        task_id = "ctr-20260702-short-role-inline-fallback"
+        plan_fields = {"scope": "docs only"}
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: docs updated inline\n"
+            "evidence: inline callback\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % task_id
+        reviewer_result = {
+            "fields": {
+                "result": "pass",
+                "summary": "reviewer passed",
+                "findings": "none",
+                "requiredChanges": "none",
+                "evidenceChecked": "inline review",
+                "risks": "none",
+            },
+        }
+        review_package = {
+            "gateClass": "PACKAGE",
+            "status": "recorded",
+            "inlineFallback": True,
+            "paths": {},
+        }
+
+        message = team_router.make_verifier_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            "thread-parent",
+            role_thread_id="thread-verifier",
+            plan_fields=plan_fields,
+            review_package=review_package,
+            reviewer_result=reviewer_result,
+        )
+
+        self.assertIn("inlineFallback: true", message)
+        self.assertIn("审查包元数据（仅作为证据）：", message)
+        self.assertIn("packageEvidenceBoundary: evidence metadata only", message)
+        self.assertIn("直接回传约定：", message)
+        self.assertIn("验证者检查项：", message)
+        self.assertIn("请在本线程按以下格式回复：", message)
+        self.assertIn("evidenceChecked:", message)
+        self.assertIn("directReturnAttempt:", message)
+        self.assertNotIn("returnContract:", message)
+        self.assertNotIn("replyFields:", message)
+        self.assertNotIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
+        self.assertNotIn("packageEvidenceBoundary: path metadata only", message)
+
     def test_role_request_templates_preserve_design_gates_but_compact_result_noise(self):
         task_id = "ctr-20260629-token-economy"
         plan_fields = {
@@ -2327,11 +2609,19 @@ regressionRisks: low
 
         for message in messages:
             with self.subTest(marker=message.splitlines()[0]):
-                self.assertIn("designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。", message)
-                self.assertIn("passResultPolicy: pass/done 只回传短 summary、changed/verification/risks/nextGate；needs_rework/fail/blocked 才展开 findings/evidence。", message)
-                self.assertIn("verificationOutputPolicy: 通过的测试只报告 command + suite count + OK；失败时再粘贴失败详情或 rerun verbose。", message)
-                self.assertIn("fallbackReadPolicy: direct-return manager inbox 是默认；self-thread read_thread 只作为 bounded degraded fallback。", message)
-                self.assertIn("longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
+                self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", message)
+                if message.startswith(("TEAM_ROUTER_REVIEW_REQUEST", "TEAM_ROUTER_VERIFY")):
+                    self.assertIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
+                    self.assertIn("taskBriefPath:", message)
+                    self.assertIn("reviewPackagePath:", message)
+                    self.assertNotIn("designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。", message)
+                    self.assertNotIn("longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
+                else:
+                    self.assertIn("designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。", message)
+                    self.assertIn("passResultPolicy: pass/done 只回传短 summary、changed/verification/risks/nextGate；needs_rework/fail/blocked 才展开 findings/evidence。", message)
+                    self.assertIn("verificationOutputPolicy: 通过的测试只报告 command + suite count + OK；失败时再粘贴失败详情或 rerun verbose。", message)
+                    self.assertIn("fallbackReadPolicy: direct-return manager inbox 是默认；self-thread read_thread 只作为 bounded degraded fallback。", message)
+                    self.assertIn("longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
 
 class TestTeamRouterState(unittest.TestCase):
     def test_closeout_check_reports_read_only_status_and_unauthorized_gates(self):
@@ -5415,9 +5705,14 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         for message in messages:
             self.assertIn("riskBoundary: workspace writes only; no external release", message)
-            self.assertIn("审查包元数据（仅作为证据）：", message)
-            self.assertIn("运行时边界：Team Router runtime 不得读取、执行、信任或自动生成", message)
             self.assertIn("packageEvidenceBoundary:", message)
+            if message.startswith(("TEAM_ROUTER_REVIEW_REQUEST", "TEAM_ROUTER_VERIFY")):
+                self.assertIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
+                self.assertNotIn("审查包元数据（仅作为证据）：", message)
+                self.assertNotIn("运行时边界：Team Router runtime 不得读取、执行、信任或自动生成", message)
+            else:
+                self.assertIn("审查包元数据（仅作为证据）：", message)
+                self.assertIn("运行时边界：Team Router runtime 不得读取、执行、信任或自动生成", message)
             self.assertIn("gateClass: PACKAGE", message)
             self.assertIn("metadataStatus: recorded", message)
             self.assertIn("inlineFallback: true", message)
@@ -12369,11 +12664,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         for needle in (
             "no active repo-local package",
-            "`ctr-20260702-host-adapter-readiness-check` has completed local review and acceptance",
-            "read-only host-adapter readiness check",
-            "in-process Python callables",
-            "`doctor` reported `orchestrationStatus: manual_only`",
-            "local snapshot-based injection-shape probe",
+            "`ctr-20260702-short-role-request-template` completed review and verification and is locally committed",
+            "Completed package objective: make reviewer/verifier package-path prompts default to short protocol plus Markdown paths",
+            "Completed package starting evidence: dogfood screenshots showed the role request and review callback still repeated long scope/checklist/schema text",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12382,9 +12675,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
             "none after local closeout",
-            "ctr-20260702-host-adapter-readiness-check",
+            "none locally after the current commit",
+            "ctr-20260702-short-role-request-template",
             "Current next gate",
-            "none after local closeout",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -12413,6 +12706,12 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("\b", text)
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
+        self.assertIn(
+            "Current gate: none locally after the current commit for `ctr-20260702-short-role-request-template`",
+            review_gate_section,
+        )
+        self.assertNotIn("ctr-20260702-host-adapter-readiness-check", review_gate_section)
+        self.assertNotIn("Current gate: none after local closeout", review_gate_section)
         self.assertIn("Historical Records", text)
         self.assertIn("Older entries are history only", historical_section)
         self.assertIn("ctr-20260628-team-router-optimization-1-6", historical_section)

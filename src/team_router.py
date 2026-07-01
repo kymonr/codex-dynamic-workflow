@@ -1802,8 +1802,58 @@ def _role_handoff_has_package_paths(handoff_lines: list[str]) -> bool:
     return any(line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:")) for line in handoff_lines)
 
 
-def _role_handoff_has_package_metadata(handoff_lines: list[str]) -> bool:
-    return any(line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:", "inlineFallback: true")) for line in handoff_lines)
+def _minimal_role_request_handoff_lines(handoff_lines: list[str]) -> list[str]:
+    keep_prefixes = (
+        "roleCommunicationMode:",
+        "riskBoundary:",
+        "gateClass:",
+        "metadataStatus:",
+        "inlineFallback:",
+        "taskBriefPath:",
+        "executorReportPath:",
+        "reviewPackagePath:",
+    )
+    compact = [line for line in handoff_lines if line.startswith(keep_prefixes)]
+    if "packageEvidenceBoundary: path metadata only" not in compact:
+        insert_at = 1 if compact and compact[0].startswith("roleCommunicationMode:") else 0
+        compact.insert(insert_at, "packageEvidenceBoundary: path metadata only")
+    compact.insert(1, "defaultRules: use skill defaults; expand only for needs_rework/blocked")
+    return compact
+
+
+def _direct_return_prompt_lines(role_key: str,
+                                marker: str,
+                                return_thread_id: str,
+                                role_thread_id: str | None,
+                                *,
+                                compact: bool) -> list[str]:
+    direct_lines = [
+        "sourceThreadId: %s" % return_thread_id,
+        "returnThreadId: %s" % return_thread_id,
+        "orchestratorThreadId: %s" % return_thread_id,
+    ]
+    if role_thread_id is not None:
+        required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
+        direct_lines.extend((
+            "sourceRoleThreadId: %s" % required_role_thread_id,
+            "role: %s" % role_key.title(),
+            "roleThreadId: %s" % required_role_thread_id,
+        ))
+    delivery, fallback = ROLE_DELIVERY_FIELDS[role_key]
+    direct_lines.extend((
+        "%s: direct-send" % delivery,
+        "%s: self-thread-marker" % fallback,
+    ))
+    if compact:
+        direct_lines.append("returnContract: direct-send %s then same block fallback" % marker)
+        return direct_lines
+    direct_lines.extend((
+        "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 %s block>) 发送最终 %s block。" % (marker, marker),
+        "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+        "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
+        "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
+    ))
+    return direct_lines
 
 
 def _compact_prompt_value(value: Any, *, path_hint: str, limit: int = 240) -> str | None:
@@ -1854,8 +1904,8 @@ def _reviewer_result_prompt_lines(reviewer_result: Mapping[str, Any] | str | Non
     lines = ["审查者结果上下文：", "验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。"]
     if compact:
         if fields:
-            lines.append("审查者结果摘要（长原文/完整证据见 reviewPackagePath）：")
-            for key in ("result", "summary", "findings", "requiredChanges", "evidenceChecked", "risks"):
+            lines = ["reviewerResult: compact; see reviewPackagePath"]
+            for key in ("result", "summary", "findings", "requiredChanges", "risks"):
                 value = _compact_prompt_value(fields.get(key), path_hint="reviewPackagePath")
                 if value is not None:
                     lines.append("%s: %s" % (key, value))
@@ -2710,51 +2760,48 @@ def make_reviewer_request_message(task_id: str,
         "responsibility: 识别设计风险、规则缺口、遗漏和新的坏模式；不是最终验收",
     ]
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
-    path_handoff_enabled = _role_handoff_has_package_metadata(handoff_lines)
-    compact_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    path_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    compact_handoff_enabled = path_handoff_enabled
+    if path_handoff_enabled:
+        handoff_lines = _minimal_role_request_handoff_lines(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
-        direct_lines = [
-            "sourceThreadId: %s" % return_thread_id,
-            "returnThreadId: %s" % return_thread_id,
-            "orchestratorThreadId: %s" % return_thread_id,
-        ]
-        if role_thread_id is not None:
-            required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
-            direct_lines.extend((
-                "sourceRoleThreadId: %s" % required_role_thread_id,
-                "role: Reviewer",
-                "roleThreadId: %s" % required_role_thread_id,
-            ))
-        review_delivery, review_fallback = ROLE_DELIVERY_FIELDS["reviewer"]
-        lines.extend((*direct_lines,
-            "%s: direct-send" % review_delivery,
-            "%s: self-thread-marker" % review_fallback,
-            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_REVIEW block>) 发送最终 TEAM_ROUTER_REVIEW block。",
-            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
-            "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
-            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
+        lines.extend(_direct_return_prompt_lines(
+            "reviewer",
+            "TEAM_ROUTER_REVIEW",
+            return_thread_id,
+            role_thread_id,
+            compact=path_handoff_enabled,
         ))
     lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
-    lines.extend((
-        "",
-        ROLE_HUMAN_LANGUAGE_RULE,
-        "",
-        "请在本线程按以下格式回复：",
-        "TEAM_ROUTER_REVIEW taskId=%s" % task_id,
-        "result: pass | needs_rework | blocked",
-        "summary: <中文审查摘要，短句，不复述执行者 callback>",
-        "findings: <对抗性发现或 none>",
-        "requiredChanges: <none 或需要修改的内容>",
-        "evidenceChecked: <已核验证据；长证据写 reviewPackagePath>",
-        "risks: <none 或风险>",
-        "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
-    ))
     if path_handoff_enabled:
-        lines.append("reviewPackagePath: <review package 路径或 inline>")
-    if return_thread_id is not None:
+        lines.extend((
+            "",
+            "language: keys English; prose Chinese",
+            "",
+            "replyMarker: TEAM_ROUTER_REVIEW taskId=%s" % task_id,
+            "replyFields: result,summary,findings,requiredChanges,evidenceChecked,risks,next",
+        ))
+    else:
+        lines.extend((
+            "",
+            ROLE_HUMAN_LANGUAGE_RULE,
+            "",
+            "请在本线程按以下格式回复：",
+            "TEAM_ROUTER_REVIEW taskId=%s" % task_id,
+            "result: pass | needs_rework | blocked",
+            "summary: <中文审查摘要，短句，不复述执行者 callback>",
+            "findings: <对抗性发现或 none>",
+            "requiredChanges: <none 或需要修改的内容>",
+            "evidenceChecked: <已核验证据；长证据写 reviewPackagePath>",
+            "risks: <none 或风险>",
+            "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
+        ))
+    if path_handoff_enabled:
+        lines.append("reviewPackagePath: <path|inline>")
+    if return_thread_id is not None and not path_handoff_enabled:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
             "directReturnTarget: <适用时填写 returnThreadId>",
@@ -3156,44 +3203,36 @@ def make_verifier_request_message(task_id: str,
     ]
     callback_fields = parse_callback(callback_block, task_id).fields
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
-    path_handoff_enabled = _role_handoff_has_package_metadata(handoff_lines)
-    compact_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    path_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    compact_handoff_enabled = path_handoff_enabled
+    if path_handoff_enabled:
+        handoff_lines = _minimal_role_request_handoff_lines(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
-        direct_lines = [
-            "sourceThreadId: %s" % return_thread_id,
-            "returnThreadId: %s" % return_thread_id,
-            "orchestratorThreadId: %s" % return_thread_id,
-        ]
-        if role_thread_id is not None:
-            required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
-            direct_lines.extend((
-                "sourceRoleThreadId: %s" % required_role_thread_id,
-                "role: Verifier",
-                "roleThreadId: %s" % required_role_thread_id,
-            ))
-        verdict_delivery, verdict_fallback = ROLE_DELIVERY_FIELDS["verifier"]
-        lines.extend((*direct_lines,
-            "%s: direct-send" % verdict_delivery,
-            "%s: self-thread-marker" % verdict_fallback,
-            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_VERDICT block>) 发送最终 TEAM_ROUTER_VERDICT block。",
-            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
-            "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
-            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
+        lines.extend(_direct_return_prompt_lines(
+            "verifier",
+            "TEAM_ROUTER_VERDICT",
+            return_thread_id,
+            role_thread_id,
+            compact=path_handoff_enabled,
         ))
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=compact_handoff_enabled)
-    lines.extend((
-        "",
-        "验证者检查项：",
-        "确认执行者 evidence 满足 scope/stopWhen，并且没有越过 permission、riskBoundary 或 packageEvidenceBoundary。",
-    ))
-    if reviewer_lines:
+    if path_handoff_enabled:
+        lines.extend(("", "verify: scope,permission,packageEvidenceBoundary,reviewer-requiredChanges"))
+    else:
         lines.extend((
-            "返回 pass 前，确认 reviewer requiredChanges 已满足。",
             "",
+            "验证者检查项：",
+            "确认执行者 evidence 满足 scope/stopWhen，并且没有越过 permission、riskBoundary 或 packageEvidenceBoundary。",
         ))
+    if reviewer_lines:
+        if not path_handoff_enabled:
+            lines.extend((
+                "返回 pass 前，确认 reviewer requiredChanges 已满足。",
+                "",
+            ))
         lines.extend(reviewer_lines)
     qa_lines = _qa_result_prompt_lines(qa_result)
     if qa_lines:
@@ -3208,29 +3247,41 @@ def make_verifier_request_message(task_id: str,
         qa_result=qa_result,
     )
     if evidence_only["allowed"]:
+        if path_handoff_enabled:
+            lines.extend(("", "fastPath: evidence-only allowed if package evidence covers scope"))
+        else:
+            lines.extend((
+                "",
+                "本次验证可考虑 evidence-only fast path。",
+                "如果执行者 evidence 加 reviewer result 已足够覆盖授权范围，可以不重新运行命令，也不扩大检查范围。",
+                "仍需列出剩余风险，并明确说明 stage/commit/push/PR/release 未执行。",
+            ))
+    lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
+    if path_handoff_enabled:
         lines.extend((
             "",
-            "本次验证可考虑 evidence-only fast path。",
-            "如果执行者 evidence 加 reviewer result 已足够覆盖授权范围，可以不重新运行命令，也不扩大检查范围。",
-            "仍需列出剩余风险，并明确说明 stage/commit/push/PR/release 未执行。",
+            "language: keys English; prose Chinese",
+            "",
+            "replyMarker: TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+            "replyFields: result,summary,requiredChanges,evidenceChecked,risks,next",
         ))
-    lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
-    lines.extend((
-        "",
-        ROLE_HUMAN_LANGUAGE_RULE,
-        "",
-        "请在本线程按以下格式回复：",
-        "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
-        "result: pass | needs_rework | blocked",
-        "summary: <中文验收摘要，短句，不复述执行者 callback 或 reviewer 原文>",
-        "requiredChanges: <none 或需要修改的内容>",
-        "evidenceChecked: <已核验证据；长证据写 reviewPackagePath>",
-        "risks: <none 或风险>",
-        "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
-    ))
+    else:
+        lines.extend((
+            "",
+            ROLE_HUMAN_LANGUAGE_RULE,
+            "",
+            "请在本线程按以下格式回复：",
+            "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+            "result: pass | needs_rework | blocked",
+            "summary: <中文验收摘要，短句，不复述执行者 callback 或 reviewer 原文>",
+            "requiredChanges: <none 或需要修改的内容>",
+            "evidenceChecked: <已核验证据；长证据写 reviewPackagePath>",
+            "risks: <none 或风险>",
+            "deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>",
+        ))
     if path_handoff_enabled:
-        lines.append("reviewPackagePath: <review package 路径或 inline>")
-    if return_thread_id is not None:
+        lines.append("reviewPackagePath: <path|inline>")
+    if return_thread_id is not None and not path_handoff_enabled:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
             "directReturnTarget: <适用时填写 returnThreadId>",
