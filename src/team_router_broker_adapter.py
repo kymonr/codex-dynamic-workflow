@@ -20,11 +20,7 @@ BROKER_THREAD_TOOL_METHODS = (
     "send_message_to_thread",
     "set_thread_title",
 )
-BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
-    "/readiness",
-    "/scheduler/wake",
-)
-BROKER_SCHEDULER_CALLBACKS = ("watch_team_task_with_adapter",)
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS)
 
 
 class BrokerProtocolError(StateStoreError):
