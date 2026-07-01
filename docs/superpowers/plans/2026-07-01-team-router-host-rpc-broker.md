@@ -26,7 +26,7 @@
 
 ## File Structure
 
-- Create `src/team_router_broker_adapter.py`: broker config, localhost RPC client, thread adapter wrapper, readiness helpers, scheduler wrapper.
+- Create `src/team_router_broker_adapter.py`: broker config, localhost RPC client, thread adapter wrapper, readiness helpers, and later scheduler wrapper.
 - Modify `src/team_router.py`: re-export stable broker adapter symbols after tests pass.
 - Modify `tests/test_team_router.py`: fake broker tests for client, adapter, readiness, scheduler, facade exports.
 - Create `scripts/team_router_broker_feasibility_check.py`: read-only checker for externally supplied broker URL/token.
@@ -458,7 +458,6 @@ git commit -m "feat: expose codex app broker thread adapter"
 
 **Interfaces:**
 - Consumes: `BrokerConfig`, `CodexAppThreadAdapter`, `broker_request(...)`
-- Produces: `class BrokerHeartbeatScheduler`
 - Produces: `fetch_broker_readiness(config: BrokerConfig) -> dict[str, Any]`
 - Produces: `broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]`
 
@@ -489,7 +488,7 @@ Add to `TestTeamRouterBrokerAdapter`:
         self.assertEqual(result["runtimeProbe"], {"status": "blocked", "missing": ["parent_thread_id"]})
         self.assertEqual(calls[0]["method"], "GET")
 
-    def test_broker_host_context_kwargs_returns_adapter_parent_scheduler_and_project(self):
+    def test_broker_host_context_kwargs_returns_adapter_parent_and_project(self):
         import team_router_broker_adapter
 
         readiness = {
@@ -506,7 +505,6 @@ Add to `TestTeamRouterBrokerAdapter`:
                 "read_thread": True,
                 "send_message_to_thread": True,
                 "set_thread_title": True,
-                "heartbeat_scheduler": True,
             },
             "runtimeProbe": {"status": "ready", "missing": []},
             "missing": [],
@@ -518,7 +516,6 @@ Add to `TestTeamRouterBrokerAdapter`:
         self.assertIsInstance(kwargs["thread_adapter"], team_router_broker_adapter.CodexAppThreadAdapter)
         self.assertEqual(kwargs["parent_thread_id"], "thread-parent")
         self.assertEqual(kwargs["codex_project_id"], "project-1")
-        self.assertIsInstance(kwargs["heartbeat_scheduler"], team_router_broker_adapter.BrokerHeartbeatScheduler)
 
     def test_broker_host_context_kwargs_blocks_without_ready_runtime_probe(self):
         import team_router_broker_adapter
@@ -545,28 +542,16 @@ Add to `TestTeamRouterBrokerAdapter`:
 - [ ] **Step 2: Run RED**
 
 ```powershell
-py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_fetch_broker_readiness_requires_runtime_probe_ready tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_returns_adapter_parent_scheduler_and_project tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_blocks_without_ready_runtime_probe -v
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_fetch_broker_readiness_requires_runtime_probe_ready tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_returns_adapter_parent_and_project tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_blocks_without_ready_runtime_probe -v
 ```
 
-Expected: FAIL: missing readiness helpers and scheduler class.
+Expected: FAIL: missing readiness helpers.
 
 - [ ] **Step 3: Implement readiness helpers**
 
 Append to `src/team_router_broker_adapter.py`:
 
 ```python
-class BrokerHeartbeatScheduler:
-    """Callable heartbeat scheduler facade backed by broker /scheduler/wake."""
-
-    def __init__(self, config: BrokerConfig):
-        self.config = config
-
-    def schedule(self, **kwargs: Any) -> dict[str, Any]:
-        callback = kwargs.get("callback") or kwargs.get("managerAction")
-        if callback not in BROKER_SCHEDULER_CALLBACKS:
-            raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
-        return broker_request(self.config, "/scheduler/wake", kwargs)
-
 
 def _runtime_probe_ready(readiness: Mapping[str, Any]) -> bool:
     probe = readiness.get("runtimeProbe")
@@ -596,7 +581,6 @@ def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
     return {
         "thread_adapter": CodexAppThreadAdapter(config),
         "parent_thread_id": parent_thread_id.strip(),
-        "heartbeat_scheduler": BrokerHeartbeatScheduler(config),
         "codex_project_id": project_id if isinstance(project_id, str) and project_id.strip() else None,
         "readiness": readiness,
     }
@@ -605,7 +589,7 @@ def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
 - [ ] **Step 4: Run GREEN**
 
 ```powershell
-py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_fetch_broker_readiness_requires_runtime_probe_ready tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_returns_adapter_parent_scheduler_and_project tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_blocks_without_ready_runtime_probe -v
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_fetch_broker_readiness_requires_runtime_probe_ready tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_returns_adapter_parent_and_project tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_host_context_kwargs_blocks_without_ready_runtime_probe -v
 ```
 
 Expected: PASS.
@@ -626,8 +610,9 @@ git commit -m "feat: normalize broker readiness evidence"
 - Modify: `tests/test_team_router.py`
 
 **Interfaces:**
-- Consumes: `BrokerHeartbeatScheduler.schedule(**kwargs)`
+- Consumes: `BrokerConfig`, `broker_request(...)`
 - Consumes: `team_router.materialize_watcher_call_kwargs(payload, *, thread_adapter, observed_at=None, heartbeat_scheduler=None, turn_limit=None)`
+- Produces: `class BrokerHeartbeatScheduler`
 - Produces: tests proving callback allowlist and materialization path.
 
 - [ ] **Step 1: Write scheduler allowlist tests**
@@ -708,15 +693,41 @@ Add to `TestTeamRouterBrokerAdapter`:
         self.assertEqual(kwargs["turn_limit"], 3)
 ```
 
-- [ ] **Step 3: Run scheduler tests**
+- [ ] **Step 3: Run RED scheduler tests**
 
 ```powershell
 py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_rejects_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_scheduler_payload_materializes_with_broker_scheduler -v
 ```
 
-Expected after Task 3: PASS.
+Expected: FAIL because `BrokerHeartbeatScheduler` does not exist yet.
 
-- [ ] **Step 4: Run cadence regression tests**
+- [ ] **Step 4: Implement scheduler wrapper**
+
+Append to `src/team_router_broker_adapter.py`:
+
+```python
+class BrokerHeartbeatScheduler:
+    """Callable heartbeat scheduler facade backed by broker /scheduler/wake."""
+
+    def __init__(self, config: BrokerConfig):
+        self.config = config
+
+    def schedule(self, **kwargs: Any) -> dict[str, Any]:
+        callback = kwargs.get("callback") or kwargs.get("managerAction")
+        if callback not in BROKER_SCHEDULER_CALLBACKS:
+            raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
+        return broker_request(self.config, "/scheduler/wake", kwargs)
+```
+
+- [ ] **Step 5: Run GREEN scheduler tests**
+
+```powershell
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker_heartbeat_scheduler_rejects_arbitrary_callback tests.test_team_router.TestTeamRouterBrokerAdapter.test_scheduler_payload_materializes_with_broker_scheduler -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Run cadence regression tests**
 
 ```powershell
 py -B -m unittest tests.test_team_router.TestTeamRouterState.test_waiting_read_discipline_moves_next_allowed_after_single_first_check tests.test_team_router.TestTeamRouterState.test_role_read_interval_uses_five_minute_minimum tests.test_team_router.TestTeamRouterState.test_watcher_runtime_builds_facade_watcher_ledger -v
@@ -724,7 +735,7 @@ py -B -m unittest tests.test_team_router.TestTeamRouterState.test_waiting_read_d
 
 Expected: PASS. Do not change cadence constants.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```powershell
 git add src\team_router_broker_adapter.py tests\test_team_router.py
@@ -746,9 +757,10 @@ git commit -m "test: lock broker scheduler wake contract"
 
 - [ ] **Step 1: Write CLI tests**
 
-Add to `TestTeamRouterState`:
+Add a new class near `TestTeamRouterBrokerAdapter`:
 
 ```python
+class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
     def test_broker_feasibility_check_blocks_without_broker_arguments(self):
         script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
         result = subprocess.run(
@@ -804,7 +816,7 @@ Add to `TestTeamRouterState`:
 - [ ] **Step 2: Run RED**
 
 ```powershell
-py -B -m unittest tests.test_team_router.TestTeamRouterState.test_broker_feasibility_check_blocks_without_broker_arguments tests.test_team_router.TestTeamRouterState.test_broker_feasibility_check_reports_ready_readiness -v
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerFeasibilityScript.test_broker_feasibility_check_blocks_without_broker_arguments tests.test_team_router.TestTeamRouterBrokerFeasibilityScript.test_broker_feasibility_check_reports_ready_readiness -v
 ```
 
 Expected: FAIL because script missing.
@@ -902,7 +914,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run GREEN**
 
 ```powershell
-py -B -m unittest tests.test_team_router.TestTeamRouterState.test_broker_feasibility_check_blocks_without_broker_arguments tests.test_team_router.TestTeamRouterState.test_broker_feasibility_check_reports_ready_readiness -v
+py -B -m unittest tests.test_team_router.TestTeamRouterBrokerFeasibilityScript.test_broker_feasibility_check_blocks_without_broker_arguments tests.test_team_router.TestTeamRouterBrokerFeasibilityScript.test_broker_feasibility_check_reports_ready_readiness -v
 ```
 
 Expected: PASS.
@@ -938,10 +950,10 @@ Expected: exit 0.
 - [ ] **Step 2: Run broker-focused tests**
 
 ```powershell
-$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-rpc-broker'; $env:TMP='C:\tmp'; $env:TEMP='C:\tmp'; py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter -v
+$env:PYTHONPYCACHEPREFIX='C:\tmp\pycache-team-router-host-rpc-broker'; $env:TMP='C:\tmp'; $env:TEMP='C:\tmp'; py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter tests.test_team_router.TestTeamRouterBrokerFeasibilityScript -v
 ```
 
-Expected: all broker adapter tests PASS.
+Expected: all broker adapter and feasibility script tests PASS.
 
 - [ ] **Step 3: Run scheduler and readiness regression tests**
 
@@ -970,6 +982,9 @@ py -B scripts\team_router_broker_feasibility_check.py --json
 Expected:
 
 ```text
+team_router_truth_check.py exit 0
+team_router_doctor.py exit 0
+team_router_broker_feasibility_check.py exit 2 by design when broker arguments are absent
 truth_check staleClaims: []
 doctor without host readiness snapshot: orchestrationStatus manual_only, hostReadiness.status not_supplied
 broker feasibility without broker arguments: status blocked, missing broker-url/session-token, no Desktop/plugin mutation authorization
@@ -1014,7 +1029,7 @@ Known boundary:
 
 Type consistency:
 
-- `BrokerConfig`, `CodexAppThreadAdapter`, `BrokerHeartbeatScheduler`, `fetch_broker_readiness`, and `broker_host_context_kwargs` are introduced before later tasks use them.
+- `BrokerConfig`, `CodexAppThreadAdapter`, `fetch_broker_readiness`, and `broker_host_context_kwargs` are introduced before readiness tasks use them; `BrokerHeartbeatScheduler` is introduced in Task 4 before scheduler checks use it.
 - `watch_team_task_with_adapter` is the only scheduler callback allowed.
 - Thread tool names match existing `THREAD_TOOL_NAMES`.
 
