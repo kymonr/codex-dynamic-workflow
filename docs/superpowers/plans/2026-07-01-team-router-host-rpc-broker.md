@@ -190,11 +190,7 @@ BROKER_THREAD_TOOL_METHODS = (
     "send_message_to_thread",
     "set_thread_title",
 )
-BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
-    "/readiness",
-    "/scheduler/wake",
-)
-BROKER_SCHEDULER_CALLBACKS = ("watch_team_task_with_adapter",)
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS)
 
 
 class BrokerProtocolError(StateStoreError):
@@ -549,6 +545,14 @@ Expected: FAIL: missing readiness helpers.
 
 - [ ] **Step 3: Implement readiness helpers**
 
+Extend `BROKER_ALLOWED_PATHS` in `src/team_router_broker_adapter.py` to include readiness before adding helpers:
+
+```python
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
+    "/readiness",
+)
+```
+
 Append to `src/team_router_broker_adapter.py`:
 
 ```python
@@ -702,6 +706,16 @@ py -B -m unittest tests.test_team_router.TestTeamRouterBrokerAdapter.test_broker
 Expected: FAIL because `BrokerHeartbeatScheduler` does not exist yet.
 
 - [ ] **Step 4: Implement scheduler wrapper**
+
+Extend `BROKER_ALLOWED_PATHS` and add the scheduler callback allowlist in `src/team_router_broker_adapter.py` before adding the scheduler wrapper:
+
+```python
+BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
+    "/readiness",
+    "/scheduler/wake",
+)
+BROKER_SCHEDULER_CALLBACKS = ("watch_team_task_with_adapter",)
+```
 
 Append to `src/team_router_broker_adapter.py`:
 
@@ -1016,7 +1030,7 @@ Spec coverage:
 
 - Desktop/plugin authority domain required: Task 5 feasibility check and Task 6 blocker closeout.
 - Localhost RPC broker preferred bridge: Tasks 1-3.
-- Exact RPC request/response shape: Tasks 1-3 tests.
+- Exact RPC request/response shape: Tasks 1-3 tests; Task 1 is thread-tools only, Task 3 adds readiness, Task 4 adds scheduler wake.
 - Parent thread id lifecycle and invalidation: Task 3 readiness and host context kwargs; external lifecycle remains Desktop/plugin feasibility requirement.
 - Scheduler responsibilities without daemon: Task 4.
 - Readiness JSON including `runtimeProbe`: Task 3 and Task 6.
