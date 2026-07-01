@@ -291,6 +291,111 @@ def classify_role_thread_status_snapshot(snapshot: dict[str, object] | list[dict
     }
 
 
+def _manager_polling_snapshot(snapshot: dict[str, object] | list[dict[str, object]] | None) -> dict[str, object] | None:
+    if not isinstance(snapshot, dict):
+        return None
+    raw = _first_present(
+        snapshot,
+        (
+            "managerPolling",
+            "managerPollingStatus",
+            "manager_polling",
+            "manager_polling_status",
+        ),
+    )
+    return raw if isinstance(raw, dict) else None
+
+
+def _manager_polling_summary(decision: dict[str, object]) -> str:
+    action = str(decision.get("action") or "unknown")
+    reason = str(decision.get("reportReason") or "")
+    next_allowed = decision.get("nextAllowedReadAt")
+    if action == "read_suppressed":
+        if isinstance(next_allowed, str):
+            return "manager polling read suppressed until %s; %s" % (next_allowed, reason)
+        return "manager polling read suppressed; %s" % reason
+    if action == "unchanged_active_status_suppressed":
+        return "manager polling observed unchanged active status; %s" % reason
+    if action == "status_change_report":
+        return "manager polling should report the role status change"
+    if action == "no_status_report":
+        return "manager polling found no status change to report"
+    return "manager polling decision: %s" % action
+
+
+def classify_manager_polling_status_snapshot(
+    snapshot: dict[str, object] | list[dict[str, object]] | None,
+) -> dict[str, object]:
+    polling_snapshot = _manager_polling_snapshot(snapshot)
+    if polling_snapshot is None:
+        return {
+            "mode": "read-only",
+            "status": "not_supplied",
+            "shouldRead": False,
+            "shouldReport": False,
+            "summary": "no manager polling snapshot supplied; no thread tools are called by doctor",
+            "boundary": "evidence-only; no thread tools are called by doctor",
+        }
+    if team_router_core is None or not hasattr(team_router_core, "manager_polling_status_update"):
+        return {
+            "mode": "read-only",
+            "status": "unavailable",
+            "shouldRead": False,
+            "shouldReport": False,
+            "summary": "manager polling helper is unavailable in this script copy",
+            "boundary": "evidence-only; no thread tools are called by doctor",
+        }
+    ledger = polling_snapshot.get("ledger")
+    if not isinstance(ledger, dict):
+        return {
+            "mode": "read-only",
+            "status": "invalid_snapshot",
+            "shouldRead": False,
+            "shouldReport": False,
+            "summary": "manager polling snapshot missing ledger",
+            "boundary": "evidence-only; no thread tools are called by doctor",
+        }
+    observed_at = str(_first_present(polling_snapshot, ("observedAt", "observed_at")) or "").strip()
+    if not observed_at:
+        return {
+            "mode": "read-only",
+            "status": "invalid_snapshot",
+            "shouldRead": False,
+            "shouldReport": False,
+            "summary": "manager polling snapshot missing observedAt",
+            "boundary": "evidence-only; no thread tools are called by doctor",
+        }
+    wakeup = polling_snapshot.get("wakeup")
+    if wakeup is not None and not isinstance(wakeup, dict):
+        wakeup = None
+    observed_status = _first_present(polling_snapshot, ("observedStatus", "observed_status"))
+    read_reason = str(
+        _first_present(polling_snapshot, ("readReason", "read_reason"))
+        or "scheduled watcher heartbeat"
+    )
+    decision = team_router_core.manager_polling_status_update(
+        ledger,
+        wakeup,
+        observed_at=observed_at,
+        observed_status=None if observed_status is None else str(observed_status),
+        read_reason=read_reason,
+    )
+    status = str(decision.get("action") or "unknown")
+    result = {
+        "mode": "read-only",
+        "status": status,
+        "shouldRead": bool(decision.get("shouldRead")),
+        "shouldReport": bool(decision.get("shouldReport")),
+        "summary": _manager_polling_summary(decision),
+        "boundary": "evidence-only; no thread tools are called by doctor",
+        "decision": decision,
+    }
+    for key in ("observedStatus", "previousReportedStatus", "nextAllowedReadAt", "reportReason"):
+        if key in decision:
+            result[key] = decision[key]
+    return result
+
+
 def _load_role_status_snapshot(path: Path | None) -> dict[str, object] | list[dict[str, object]] | None:
     if path is None:
         return None
@@ -331,6 +436,7 @@ def build_doctor_report(
     truth_status = _truth_status(truth)
     next_action = _next_action(truth_status, truth)
     role_status = classify_role_thread_status_snapshot(role_status_snapshot)
+    manager_polling_status = classify_manager_polling_status_snapshot(role_status_snapshot)
     host_readiness = classify_host_readiness_snapshot(host_readiness_snapshot)
     orchestration_status = str(host_readiness["orchestrationStatus"])
     summary = (
@@ -338,9 +444,10 @@ def build_doctor_report(
         "truthStatus=%s; "
         "orchestrationStatus=%s; "
         "hostReadiness=%s; "
+        "managerPolling=%s; "
         "nextAction=%s; "
         "unauthorized=commit,push,PR,merge,deploy,global skill sync"
-    ) % (truth_status, orchestration_status, host_readiness["status"], next_action)
+    ) % (truth_status, orchestration_status, host_readiness["status"], manager_polling_status["status"], next_action)
     return {
         "mode": "read-only",
         "truthStatus": truth_status,
@@ -349,6 +456,7 @@ def build_doctor_report(
         "nextAction": next_action,
         "authorization": truth["authorization"],
         "roleThreadStatus": role_status,
+        "managerPollingStatus": manager_polling_status,
         "hostReadiness": host_readiness,
         "truth": truth,
     }
@@ -359,6 +467,7 @@ def _print_text_report(report: dict[str, object]) -> None:
     print("truthStatus: %s" % report["truthStatus"])
     print("orchestrationStatus: %s" % report["orchestrationStatus"])
     print("hostReadiness: %s" % report["hostReadiness"]["summary"])
+    print("managerPolling: %s" % report["managerPollingStatus"]["summary"])
     print("summary: %s" % report["summary"])
     print("authorization: no commit, no push, no PR, no merge, no deploy, no global sync")
 

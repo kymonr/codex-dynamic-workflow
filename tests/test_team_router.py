@@ -2754,6 +2754,77 @@ class TestTeamRouterState(unittest.TestCase):
             self.assertEqual(report["roleThreadStatus"]["mode"], "read-only")
             self.assertIn("hostReadiness", report)
 
+    def test_router_doctor_includes_manager_polling_status_decision_from_snapshot(self):
+        with workspace_temp_dir() as tmp:
+            tmp_path = Path(tmp)
+            global_skill = tmp_path / "global" / "codex-team-router"
+            shutil.copytree(ROOT / "skills" / "codex-team-router", global_skill)
+            role_snapshot = tmp_path / "role-status.json"
+            role_snapshot.write_text(
+                json.dumps(
+                    {
+                        "roles": [],
+                        "managerPolling": {
+                            "ledger": {
+                                "taskId": "ctr-polling-ux",
+                                "status": "awaiting_callback",
+                                "roleThreadStatus": "inProgress",
+                                "readDiscipline": {
+                                    "gateClass": "STRICT",
+                                    "lastReadAt": "2026-07-02T10:00:30+08:00",
+                                    "lastReportedRoleStatus": "in_progress",
+                                    "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+                                    "minimumIntervalSeconds": 300,
+                                    "directReturnExpected": True,
+                                },
+                            },
+                            "wakeup": {
+                                "role": "reviewer",
+                                "threadId": "thread-reviewer",
+                                "expectedMarker": "TEAM_ROUTER_REVIEW taskId=ctr-polling-ux",
+                                "searchAnchor": {"sentAt": "2026-07-02T10:00:00+08:00"},
+                                "reason": "awaiting reviewer",
+                            },
+                            "observedAt": "2026-07-02T10:04:00+08:00",
+                            "observedStatus": "inProgress",
+                            "readReason": "scheduled watcher heartbeat",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(ROOT / "scripts" / "team_router_doctor.py"),
+                    "--repo-root",
+                    str(ROOT),
+                    "--global-skill",
+                    str(global_skill),
+                    "--role-status-json",
+                    str(role_snapshot),
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            polling = report["managerPollingStatus"]
+            self.assertEqual(polling["mode"], "read-only")
+            self.assertEqual(polling["status"], "read_suppressed")
+            self.assertFalse(polling["shouldRead"])
+            self.assertFalse(polling["shouldReport"])
+            self.assertEqual(polling["nextAllowedReadAt"], "2026-07-02T10:05:30+08:00")
+            self.assertIn("without repeated status narration", polling["summary"])
+            self.assertIn("managerPolling=read_suppressed", report["summary"])
+            self.assertIn("no thread tools", polling["boundary"])
+
     def test_router_doctor_classifies_host_readiness_snapshot(self):
         spec = importlib.util.spec_from_file_location(
             "team_router_doctor_under_test",
@@ -12075,10 +12146,11 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "`ctr-20260702-live-role-polling-ux-enforcement` has been locally committed",
-            "make manager polling/status output testable",
-            "no repeated unchanged active narration",
-            "early reads and repeated unchanged active reports are suppressed",
+            "no active repo-local package",
+            "`ctr-20260702-manager-polling-doctor-ux` has completed local review and acceptance",
+            "surface `manager_polling_status_update()` in `scripts/team_router_doctor.py`",
+            "caller-supplied evidence",
+            "did not yet expose its quiet polling decision",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12086,9 +12158,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
-            "latest package is complete unless fresh commands show otherwise",
+            "none after local closeout",
             "Current next gate",
-            "none for the completed live-role polling UX enforcement package",
+            "none after local closeout",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
