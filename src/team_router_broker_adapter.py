@@ -57,6 +57,12 @@ def _validate_path(path: str) -> None:
         raise BrokerProtocolError("broker method not allowed: %s" % path)
 
 
+def _validate_scheduler_payload(payload: Mapping[str, Any]) -> None:
+    callback = payload.get("callback") or payload.get("managerAction")
+    if callback not in BROKER_SCHEDULER_CALLBACKS:
+        raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
+
+
 def _decode_response(raw: bytes) -> dict[str, Any]:
     try:
         decoded = json.loads(raw.decode("utf-8"))
@@ -77,6 +83,8 @@ def broker_request(
     _validate_path(path)
     url = _base_url(config) + path
     request_payload = dict(payload or {})
+    if path == "/scheduler/wake":
+        _validate_scheduler_payload(request_payload)
     request_payload.setdefault("requestId", str(uuid4()))
     request_payload.setdefault("sessionToken", config.session_token)
     request_payload.setdefault("timeoutMs", config.timeout_ms)
@@ -134,6 +142,7 @@ def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
     project_id = readiness.get("projectId")
     return {
         "thread_adapter": CodexAppThreadAdapter(config),
+        "heartbeat_scheduler": BrokerHeartbeatScheduler(config),
         "parent_thread_id": parent_thread_id.strip(),
         "codex_project_id": project_id if isinstance(project_id, str) and project_id.strip() else None,
         "readiness": readiness,
@@ -147,9 +156,6 @@ class BrokerHeartbeatScheduler:
         self.config = config
 
     def schedule(self, **kwargs: Any) -> dict[str, Any]:
-        callback = kwargs.get("callback") or kwargs.get("managerAction")
-        if callback not in BROKER_SCHEDULER_CALLBACKS:
-            raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
         return broker_request(self.config, "/scheduler/wake", kwargs)
 
 
