@@ -7301,6 +7301,31 @@ regressionRisks: watcher transitions
         self.assertEqual(nested, {"messageId": "msg-nested", "sentAt": "2026-06-22T20:02:00+08:00"})
         self.assertEqual(fallback, {"messageId": None, "sentAt": "2026-06-22T20:03:00+08:00"})
 
+    def test_create_thread_result_schema_accepts_common_thread_id_shapes(self):
+        cases = [
+            ({"threadId": "thread-a"}, "thread-a"),
+            ({"thread_id": "thread-b"}, "thread-b"),
+            ({"id": "thread-c"}, "thread-c"),
+            ({"thread": {"id": "thread-d"}}, "thread-d"),
+            ({"data": {"threadId": "thread-e"}}, "thread-e"),
+            ({"result": {"thread_id": "thread-f"}}, "thread-f"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(team_router._thread_id_from_create_result(raw, "executor"), expected)
+
+    def test_create_thread_result_schema_rejects_missing_thread_id(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router._thread_id_from_create_result({"thread": {"title": "Executor"}}, "executor")
+
+        self.assertIn("create_thread result missing thread id", str(ctx.exception))
+
+    def test_read_thread_result_schema_rejects_missing_messages_array(self):
+        with self.assertRaises(team_router.StateStoreError) as ctx:
+            team_router.normalize_thread_read_messages({"thread": {"title": "Executor"}})
+
+        self.assertIn("messages array", str(ctx.exception))
+
     def test_thread_adapter_capability_probe_reports_missing_tools(self):
         class MissingTitleAdapter(FakeThreadAdapter):
             set_thread_title = None
