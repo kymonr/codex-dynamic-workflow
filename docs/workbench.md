@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package after verifier acceptance and local commit for `ctr-20260701-live-broker-smoke`; local branch is ahead of `origin/master` until a separate push/PR gate is authorized.
-- Last package objective: live broker smoke. The package only checked whether the current Desktop/workspace environment exposed a real localhost Team Router broker URL/session token that could satisfy `/readiness` and the existing host-readiness gate.
-- Starting evidence before opening this package: previous `ctr-20260701-automatic-runtime-wiring` was merged through PR #8 at `a99b767`; post-merge `truth_check`, `doctor`, and `closeout_check` reported clean/synced with `skillSync.status: match`, `orchestrationStatus: manual_only`, `hostReadiness.status: not_supplied`, and no diff.
+- State: active repo-local package `ctr-20260702-role-active-wait-polling-cadence`; local branch is `master` and currently ahead of `origin/master` by the previous local live-broker-smoke commit.
+- Current package objective: harden Team Router role active-wait and `read_thread` polling cadence rules. The target is to codify that `active` / `inProgress` / `running` / `working` means the role is still processing, not stuck, and that manager reads should be quiet, bounded, and schedule-aware.
+- Starting evidence before opening this package: user screenshots showed repeated unchanged `read_thread` status updates and manager language that was too quick to consider interrupting/restarting a still-active reviewer/verifier role.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Last package boundary: docs-only live broker smoke record. It made no code changes, thread-tool calls, live role dispatch, broker daemon startup, push, PR, merge, deploy, publish/release, or global skill sync.
-- Current next gate: none for local closeout. push, PR, merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, and global skill sync remain outside unless explicitly authorized later. A future live pass requires a real broker URL/session token.
+- Current package boundary: contract snapshot fields, skill/docs, focused tests, package/workbench updates, and local verification. No live role dispatch, thread-tool calls, broker/adapter/scheduler startup, push, PR, merge, deploy, publish/release, global skill sync, or commit is included unless separately authorized.
+- Current next gate: local commit only if explicitly authorized after verifier v2 acceptance. No push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync is authorized.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,24 +27,22 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
-- Starting status: `git status -sb --untracked-files=all` -> `## master...origin/master`.
-- Starting truth check: `py -B scripts\team_router_truth_check.py --json` -> clean/synced; `diffFiles: []`; `gitStatusShort: []`; `staleClaims: []`; `skillSync.status: match`.
-- Starting doctor: `py -B scripts\team_router_doctor.py --json` -> `truthStatus: clean_synced`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`.
-- Environment discovery found no `broker-url`, `session-token`, or Team Router broker environment variable.
-- Repo discovery found only documented/scripted broker argument references; no live broker URL/token was configured in the repo.
-- Localhost candidate `/readiness` probes returned non-Team Router evidence: HTML app pages, 404s, 401 from an unrelated local service, connection resets, empty replies, HTTPS mismatch, and timeouts. No candidate returned a valid Team Router readiness payload.
-- `py -B scripts\team_router_broker_feasibility_check.py --json` without args -> exit 1; `status: blocked`; missing `broker-url` and `session-token`.
-- `py -B scripts\team_router_runtime_wiring_check.py --json` without args -> exit 1; `status: manual_only`; `orchestrationStatus: manual_only`; `automaticEntryAllowed: false`; missing `broker-url` and `session-token`; no thread-tool calls executed.
-- Current conclusion: live broker smoke is blocked, not passed. Team Router remains `manual_only` until a real broker URL/session token is supplied or a broker/adapter startup package exposes one through host readiness injection.
-- Final truth check after docs update: `py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skillSync.status: match`; dirty surface is this docs-only package.
-- Final doctor after docs update: `py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`.
-- Final closeout check after docs update: `py -B scripts\team_router_closeout_check.py --json` -> exit 0; `skillSync.status: match`; dirty surface is this docs-only package.
-- `git diff --check` initially reported a workbench EOF blank-line issue; fixed before final re-run.
-- Reviewer: thread `019f1e5e-c50e-7c10-89d1-d2c8dfc6e130` -> pass; `requiredChanges: []`; confirmed blocked smoke conclusion is evidence-backed and no automatic-ready/live-dispatch overclaim is present.
-- Verifier: thread `019f1e5f-faf5-7492-af2e-9ae7bd8e0c50` -> accepted; `requiredChanges: []`; `acceptedForCommit: true`; confirmed local commit may proceed and push/PR/merge/global sync remain outside.
+- RED focused contract test first failed with `KeyError: 'manualPollBackoffSeconds'` before adding the new policy fields.
+- GREEN focused tests: `py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_protocol_contract_snapshot_defends_active_role_wait_and_polling_backoff tests.test_team_router.TestTeamRouterSkillDoc.test_manager_docs_cover_active_role_wait_and_polling_backoff -v` -> Ran 2 tests OK.
+- Skill documentation suite after entrypoint compression and workbench current-truth test update: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-active-wait py -B -m unittest tests.test_team_router.TestTeamRouterSkillDoc -q` -> Ran 51 tests OK.
+- Compile: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-active-wait py -B -m py_compile src\team_router.py tests\test_team_router.py` -> exit 0.
+- Focused regression suite: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-active-wait py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_protocol_contract_snapshot_defends_active_role_wait_and_polling_backoff tests.test_team_router.TestTeamRouterProtocol.test_protocol_contract_snapshot_includes_active_role_return_model tests.test_team_router.TestTeamRouterSkillDoc.test_manager_docs_cover_active_role_wait_and_polling_backoff tests.test_team_router.TestTeamRouterSkillDoc.test_manager_orchestration_policy_docs_cover_polling_reuse_and_verifier_return tests.test_team_router.TestTeamRouterSkillDoc.test_workbench_tracks_current_task_without_stale_diff_surface -v` -> Ran 5 tests OK.
+- `git diff --check` -> exit 0; Git printed CRLF/LF replacement warnings for touched text files only.
+- Truth check: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-active-wait py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skill.entrypointBytes: 7160`; `skill.underTarget: true`; `skillSync.status: mismatch` because repo skill changes are not globally synced in this package.
+- Doctor check: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-active-wait py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `orchestrationStatus: manual_only`; `hostReadiness.status: not_supplied`; `nextAction` says reviewer then verifier before closeout; unauthorized includes commit, push, PR, merge, deploy, global skill sync.
+- Closeout check: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-active-wait py -B scripts\team_router_closeout_check.py --json` -> exit 0; reports the same expected dirty package surface and `skillSync.status: mismatch`.
+- Reviewer v1: thread `019f1e8a-2a08-7971-921d-96d967da59a2` -> `needs_rework`; required change was to align package/workbench next-gate wording with the already-completed local verification record and doctor output.
+- Rework after reviewer v1: updated package/workbench next-gate wording and the workbench current-truth test anchor; reran focused 2-test suite OK; git diff --check exit 0 with CRLF/LF warnings only; truth_check/doctor/closeout_check exit 0 with staleClaims empty, truthStatus dirty, orchestrationStatus manual_only, and expected skillSync mismatch.
+- Reviewer v2: thread `019f1e8a-2a08-7971-921d-96d967da59a2` -> `pass`; requiredChanges: none; confirmed current-gate rework is aligned and no dense polling or premature restart ambiguity was reintroduced.
+- Verifier v1: thread `019f1e93-a360-7220-af9e-a801336e13dd` -> `rejected`; required change was to align package/workbench current-gate wording with reviewer v2 already passed, making verifier final acceptance the current gate and leaving local commit separate unless accepted and explicitly authorized.
+- Verifier v2: thread `019f1e93-a360-7220-af9e-a801336e13dd` -> `accepted`; requiredChanges: none; acceptedForCommit: true; local commit still requires explicit user authorization and push/PR/merge/global sync remain outside.
 
 Previous package verification:
-
 - Previous `ctr-20260701-automatic-runtime-wiring`: added the read-only runtime wiring dry-run, passed reviewer v2 and verifier, was committed as `5931dda`, pushed, and merged through PR #8 at `a99b767`.
 - Previous `ctr-20260701-broker-host-readiness-injection`: implemented `broker_host_readiness_snapshot()`, broker-injected doctor readiness, feasibility `hostReadinessSnapshot`, reviewer v2 pass, verifier accepted, and full suite `py -B -m unittest discover -s tests -p test_team_router.py -q` -> Ran 394 tests OK.
 - RED focused test: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_thread_package_bootstrap_is_pointer_only -v` first failed with `AttributeError: module 'team_router' has no attribute 'make_role_thread_package_bootstrap_message'`.
@@ -89,7 +87,7 @@ Older entries are history only. They must not be treated as current git truth / 
 - `src/team_router.py` remains a deterministic helper library.
 - Runtime/docs/tests changes require an active package plus reviewer/verifier gates.
 - Workbench current state must not claim old completed tasks as active work.
-- Current live broker smoke package may change package/workbench docs only; it must not modify code, tests, dispatch, watcher cadence, registry, ledger, protocol parsing, direct-return behavior, production broker startup, live role dispatch, or production scheduling.
+- Current active-wait/polling-cadence package may change contract snapshot fields, skill/docs, tests, package/workbench records, and verification notes only; it must not modify parser marker schema, registry/ledger state transitions, direct-return receipt validation, production broker startup, live role dispatch, or host adapter implementation.
 - Package-only role bootstrap and path-first prompt compression are evidence handoff UX only; they do not modify dispatch, watcher cadence, registry, ledger, protocol parsing, host integration, direct-return behavior, or production scheduling.
 
 ## Addy Engineering Checklists Workbench Note
@@ -106,10 +104,10 @@ Older entries are history only. They must not be treated as current git truth / 
 
 - Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
-- Real host integration is still external. This active package did not discover a live broker URL/session token, so any automatic-entry claim remains blocked.
+- Active role status can be misread as stuck if the manager narrates every unchanged poll or suggests duplicate role restart too early; this package makes that behavior explicitly invalid.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: none after verifier acceptance and local commit.
+- Current gate: local commit only if explicitly authorized after verifier v2 acceptance. No push, PR, merge, deploy, publish/release, production broker startup, live role dispatch, thread-tool calls, or global skill sync is authorized.
 - No push, PR, remote merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.

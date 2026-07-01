@@ -27,7 +27,7 @@ Manager Mode only starts on explicit role-intent phrases: “你是管理者”,
 
 Manager Mode is sticky for the current task and continues an already-active Manager Mode task with terse follow-ups. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement, classification, or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
 
-Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates; ambiguous follow-ups never skip the next gate. Skill/rule/Superpowers write requests such as `记录进skill`, `优化 skill`, or `改规则`, and skill/process requests such as `记录进skill`, `修`, `继续`, or `复利`, still route through executor/reviewer/verifier (executor -> reviewer -> verifier) when the gate applies. Superpowers can guide planning/TDD/debugging/verification, but does not grant manager write authority. `local-package` is executor-only, not manager direct-edit permission.
+Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates; ambiguous follow-ups never skip the next gate. Skill/rule/process writes route executor -> reviewer -> verifier when applicable. Superpowers grants no manager write authority. `local-package` is executor-only.
 
 ## Live Boundary
 
@@ -38,6 +38,8 @@ list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> 
 ```
 
 Use one role-thread creation path per task. Adapter-created orchestration requires in-process Python callables, `parent_thread_id`, callable `set_thread_title`, and a host heartbeat scheduler for `watch_team_task_with_adapter()` at `firstCheckAt` / `nextAllowedReadAt`. Model-side tool descriptors are not Python callables. Without that contract, status is `tool_error` / `manual orchestration only`; copy-paste prompts are handoff text, not live dispatch evidence. Explain blocked readiness with `assess_live_orchestration_readiness()` / `parent_entry_guard()`.
+
+Active role wait: `active`/`inProgress`/`running`/`working` means normal processing, not stuck. do not restart/replace or send shorter delta while active. Poll: one first check, then `10s -> 20s -> 40s` or `firstCheckAt`/`nextAllowedReadAt`; do not repeat unchanged active status; one timeout notice max.
 
 Reuse existing roles for the same task/task family; rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception.
 

@@ -226,7 +226,12 @@ MANAGER_ORCHESTRATION_POLICY = {
         ),
         "zeroReadBoundary": "direct-send return is preferred, but bounded status reads are allowed and remain required as fallback; zero-read waiting is not required",
         "forbidden": "continuous polling or mid-run instruction injection through read_thread follow-up messages",
-        "userVisibleUpdates": "report only status changes, timeouts, blocked states, or completion",
+        "userVisibleUpdates": "report the first active observation once, then report only status changes, timeouts, blocked states, or completion; do not repeat unchanged active status after every read_thread poll",
+        "manualPollBackoffSeconds": (10, 20, 40),
+        "activeRoleStatusMeaning": "active/inProgress/running/working means the role is still doing normal processing, not a failure or stuck signal",
+        "activeRoleInterventionBoundary": "while a role remains active/inProgress/running/working, do not restart it, do not create a replacement role, and do not send a shorter delta prompt or convergence nudge just because it is still processing",
+        "timeoutNoticePolicy": "emit one timeout notice at most before any intervention decision; do not repeatedly promise one more poll",
+        "scheduleRespect": "honor firstCheckAt and nextAllowedReadAt; no manual reads before nextAllowedReadAt except user-triggered status/stop/immediate, timeout, or blocker handling",
     },
     "watcherAutomation": {
         "ledgerFields": ("role", "threadId", "expectedMarker", "lastReadAt", "firstCheckAt", "nextAllowedReadAt", "status", "waitingReason", "nextManagerAction"),
@@ -340,6 +345,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         ),
         "blockedWhileRoleStatus": ("active", "inProgress", "running", "working"),
         "retryWithFreshRoleThread": "allowed only after the current role thread is blocked, failed, or stale; slow progress alone is not enough",
+        "activeRoleMeaning": "active/inProgress/running/working means the role is still processing information; manager waits instead of interrupting, restarting, or sending a shorter delta prompt",
     },
     "startupFailureRecovery": {
         "startupFailureSignature": "exit code -1073741502 with no stdout/stderr is an environment/tooling startup failure, not a task-code failure",

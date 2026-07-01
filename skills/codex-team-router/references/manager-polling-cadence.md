@@ -6,6 +6,7 @@ When a manager or dispatcher delegates work to a router, executor, reviewer, or 
 
 - After dispatch, give the role thread time to work.
 - Do not spam `read_thread` every few seconds just because the task was freshly assigned.
+- Treat `active`, `inProgress`, `running`, and `working` as normal processing signals, not failure signals.
 - User-facing progress updates still matter, but updates do not require frequent polling.
 
 ## First Check
@@ -17,8 +18,10 @@ When a manager or dispatcher delegates work to a router, executor, reviewer, or 
 ## Backoff
 
 - Use backoff for follow-up checks instead of fixed short intervals.
+- For manual parent-thread polling, a small visible pattern is `10s -> 20s -> 40s`; after that, wait for a role event, user-triggered status/stop/immediate request, timeout/blocker handling, or the ordinary 300 second heartbeat window.
 - A normal pattern is one ordinary heartbeat no more frequently than every 5 minutes for the same role/thread; do not shrink the cadence just because the role has not pushed a reply.
 - Do not perform multiple `read_thread` calls within a few seconds unless there is a concrete reason to intervene immediately.
+- If `firstCheckAt` or `nextAllowedReadAt` exists, respect it; no manual reads before `nextAllowedReadAt` except user-triggered status/stop/immediate, timeout, or blocker handling.
 
 ## When To Read Or Intervene
 
@@ -33,12 +36,14 @@ When a manager or dispatcher delegates work to a router, executor, reviewer, or 
 - Convergence prompts must also be used sparingly.
 - Usually the manager should let the role thread work for a meaningful interval before sending a nudge.
 - Do not send a convergence prompt immediately after dispatch just because no output appeared yet.
+- do not restart, replace, or open a duplicate role, and do not send a shorter delta prompt while the current role is still active/running/working; slow progress alone is not enough.
 
 ## User Updates
 
 - Keep the user informed in plain language about what is happening.
 - Summaries should reflect the current state in terms a user can understand.
 - A good user update does not require high-frequency polling.
+- Report only the first active observation, status changes, timeout/blocker, or completion; do not repeat unchanged active status after every poll. Emit one timeout notice at most before any intervention decision.
 
 Manager watcher heartbeat contract: ordinary manager watcher/read_thread polling for the same role thread is at most once every 5 minutes (300 seconds). The app or host heartbeat must use the watcher ledger fields role/thread id, expected marker, lastReadAt, firstCheckAt, nextAllowedReadAt, waiting reason, and next manager action to call watch_team_task_with_adapter() at wake time; the helper itself also suppresses repeated scheduled reads before the allowed time unless the read reason is user-triggered status/stop/immediate, timeout, or blocker handling. Run one short observation-only first check at firstCheckAt so very fast role completions can be received immediately; after that single short check, set the next proactive read to at least 300 seconds after that read and return to the normal 5 minutes heartbeat cadence. User-triggered status/stop/immediate requests may bypass the 300 second wait, but active/running role threads still require observation-only waiting and no convergence instruction. Role writing a marker is not receipt by the manager; completion feedback is received only when direct-send reaches the manager inbox or the watcher/heartbeat reads the role thread and captures TEAM_ROUTER_PLAN, TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, or TEAM_ROUTER_VERDICT. If a role appears completed or idle without the expected marker, the manager records needs_feedback/missing protocol and asks the same role thread for structured feedback instead of treating the task as successful. When the flow finishes, report the result once in plain language for the user, stop_and_delete_heartbeat for accepted closeout, explicitly say stage/commit/push/PR/publish/release were not done, and keep the manager boundary: the manager/dispatcher does not directly edit files unless the user explicitly authorizes that specific file change; commit/PR/publish/release require a separate prompt and authorization.
 ## Architect And QA Watcher Paths

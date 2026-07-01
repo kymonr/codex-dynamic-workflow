@@ -1674,6 +1674,25 @@ regressionRisks: low
         self.assertIn("scope-limited closeout", model["boundedControlFallback"])
         self.assertIn("already-confirmed facts", model["boundedControlFallback"])
 
+    def test_protocol_contract_snapshot_defends_active_role_wait_and_polling_backoff(self):
+        policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
+        polling = policy["polling"]
+        convergence = policy["convergence"]
+
+        self.assertEqual(polling["manualPollBackoffSeconds"], (10, 20, 40))
+        self.assertIn("active/inProgress/running/working", polling["activeRoleStatusMeaning"])
+        self.assertIn("normal processing", polling["activeRoleStatusMeaning"])
+        self.assertIn("do not restart", polling["activeRoleInterventionBoundary"])
+        self.assertIn("do not send a shorter delta prompt", polling["activeRoleInterventionBoundary"])
+        self.assertIn("first active observation", polling["userVisibleUpdates"])
+        self.assertIn("status changes", polling["userVisibleUpdates"])
+        self.assertIn("do not repeat unchanged active status", polling["userVisibleUpdates"])
+        self.assertIn("one timeout notice", polling["timeoutNoticePolicy"])
+        self.assertIn("firstCheckAt", polling["scheduleRespect"])
+        self.assertIn("nextAllowedReadAt", polling["scheduleRespect"])
+        self.assertIn("no manual reads before nextAllowedReadAt", polling["scheduleRespect"])
+        self.assertIn("slow progress alone is not enough", convergence["retryWithFreshRoleThread"])
+        self.assertIn("active/inProgress/running/working means the role is still processing", convergence["activeRoleMeaning"])
     def test_protocol_contract_snapshot_includes_standing_role_reuse_policy(self):
         policy = team_router.protocol_contract_snapshot()["managerOrchestrationPolicy"]
         reuse = policy["roleReuse"]
@@ -11898,24 +11917,20 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "no active repo-local package after verifier acceptance and local commit for `ctr-20260701-automatic-runtime-wiring`",
-            "automatic Team Router runtime wiring dry-run",
-            "manager automatic-entry path explicit",
-            "already-running localhost broker supplies ready host-readiness evidence",
-            "previous `ctr-20260701-broker-host-readiness-injection` was merged through PR #7",
-            "`skillSyncStatus: match`",
-            "host_context",
-            "orchestrate_team_task_with_adapter()",
-            "No thread-tool endpoints are called during dry-run",
+            "active repo-local package `ctr-20260702-role-active-wait-polling-cadence`",
+            "role active-wait and `read_thread` polling cadence",
+            "`active` / `inProgress` / `running` / `working` means the role is still processing",
+            "repeated unchanged `read_thread` status updates",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
+            "Current package boundary",
+            "No live role dispatch, thread-tool calls",
             "Current next gate",
-            "none for local closeout",
-            "push, PR, merge, deploy, publish/release, production scheduler/broker daemon, live role dispatch, and global skill sync remain outside this package",
+            "local commit only if explicitly authorized after verifier v2 acceptance",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -12625,8 +12640,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`执行者-Team Router 管理者模式触发词修复`",
             "`验证者-Team Router 管理者模式触发词修复`",
             "set_thread_title",
-            "Skill/rule/Superpowers write requests such as `记录进skill`",
-            "still route through executor/reviewer/verifier",
+            "Skill/rule/process writes route executor -> reviewer -> verifier",
+            "Superpowers grants no manager write authority",
             "first manager-side action",
             "before creating, dispatching, or normalizing child role threads",
             "explicit role-intent phrases",
@@ -13283,6 +13298,38 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             with self.subTest(path=name, focused="bounded-control-closeout"):
                 self.assertIn("scope-limited closeout from already-confirmed facts", text)
 
+    def test_manager_docs_cover_active_role_wait_and_polling_backoff(self):
+        polling_docs = (
+            ("README.md", (ROOT / "README.md").read_text(encoding="utf-8")),
+            ("codex-team-router skill contract", self._skill_contract_text()),
+            (
+                "manager-polling-cadence.md",
+                (ROOT / "skills" / "codex-team-router" / "references" / "manager-polling-cadence.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+            (
+                "codex-team-router-live-orchestration.md",
+                (ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md").read_text(
+                    encoding="utf-8"
+                ),
+            ),
+        )
+        for name, text in polling_docs:
+            with self.subTest(path=name, focused="active-role-wait-and-backoff"):
+                haystack = text.lower()
+                for needle in (
+                    "active",
+                    "normal processing",
+                    "10s -> 20s -> 40s",
+                    "firstcheckat",
+                    "nextallowedreadat",
+                    "do not restart",
+                    "shorter delta",
+                    "do not repeat unchanged active status",
+                    "one timeout notice",
+                ):
+                    self.assertIn(needle, haystack)
     def test_manager_and_manual_docs_cover_closeout_reporting_and_compounding_decision(self):
         manager_mode = (
             ROOT / "skills" / "codex-team-router" / "references" / "manager-mode.md"
