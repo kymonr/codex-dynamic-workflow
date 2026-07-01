@@ -22,7 +22,9 @@ BROKER_THREAD_TOOL_METHODS = (
 )
 BROKER_ALLOWED_PATHS = tuple("/thread-tools/%s" % name for name in BROKER_THREAD_TOOL_METHODS) + (
     "/readiness",
+    "/scheduler/wake",
 )
+BROKER_SCHEDULER_CALLBACKS = ("watch_team_task_with_adapter",)
 
 
 class BrokerProtocolError(StateStoreError):
@@ -136,6 +138,19 @@ def broker_host_context_kwargs(config: BrokerConfig) -> dict[str, Any]:
         "codex_project_id": project_id if isinstance(project_id, str) and project_id.strip() else None,
         "readiness": readiness,
     }
+
+
+class BrokerHeartbeatScheduler:
+    """Callable heartbeat scheduler facade backed by broker /scheduler/wake."""
+
+    def __init__(self, config: BrokerConfig):
+        self.config = config
+
+    def schedule(self, **kwargs: Any) -> dict[str, Any]:
+        callback = kwargs.get("callback") or kwargs.get("managerAction")
+        if callback not in BROKER_SCHEDULER_CALLBACKS:
+            raise BrokerProtocolError("scheduler callback not allowed: %s" % callback)
+        return broker_request(self.config, "/scheduler/wake", kwargs)
 
 
 class CodexAppThreadAdapter:

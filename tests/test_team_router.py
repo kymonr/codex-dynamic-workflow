@@ -266,16 +266,36 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
         self.assertIsInstance(ctx.exception, team_router.StateStoreError)
         self.assertIn("broker method not allowed", str(ctx.exception))
 
-    def test_broker_request_rejects_scheduler_path_before_task_4(self):
+    def test_broker_heartbeat_scheduler_posts_only_allowed_watcher_callback(self):
+        import team_router_broker_adapter
+
+        with fake_broker({
+            "/scheduler/wake": (200, {"ok": True, "result": {"scheduled": True}}),
+        }) as (base_url, calls):
+            scheduler = team_router_broker_adapter.BrokerHeartbeatScheduler(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+            result = scheduler.schedule(
+                callback="watch_team_task_with_adapter",
+                runAt="2026-07-01T10:05:00+08:00",
+                kwargs={"task_id": "task-1"},
+            )
+
+        self.assertEqual(result, {"scheduled": True})
+        self.assertEqual(calls[0]["path"], "/scheduler/wake")
+        self.assertEqual(calls[0]["payload"]["callback"], "watch_team_task_with_adapter")
+
+    def test_broker_heartbeat_scheduler_rejects_arbitrary_callback(self):
         import team_router_broker_adapter
 
         with fake_broker({}) as (base_url, _calls):
-            config = team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
-            with self.assertRaises(team_router_broker_adapter.BrokerProtocolError) as ctx:
-                team_router_broker_adapter.broker_request(config, "/scheduler/wake", method="GET")
+            scheduler = team_router_broker_adapter.BrokerHeartbeatScheduler(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+            with self.assertRaises(team_router.StateStoreError) as ctx:
+                scheduler.schedule(callback="run_arbitrary_python", runAt="2026-07-01T10:05:00+08:00")
 
-        self.assertIsInstance(ctx.exception, team_router.StateStoreError)
-        self.assertIn("broker method not allowed", str(ctx.exception))
+        self.assertIn("scheduler callback not allowed", str(ctx.exception))
 
     def test_broker_request_rejects_non_json_response(self):
         import team_router_broker_adapter
@@ -466,6 +486,41 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
                 team_router_broker_adapter.broker_host_context_kwargs(config)
 
         self.assertIn("runtimeProbe", str(ctx.exception))
+
+    def test_scheduler_payload_materializes_with_broker_scheduler(self):
+        import team_router_broker_adapter
+
+        adapter = FakeThreadAdapter()
+        with fake_broker({
+            "/scheduler/wake": (200, {"ok": True, "result": {"scheduled": True}}),
+        }) as (base_url, _calls):
+            scheduler = team_router_broker_adapter.BrokerHeartbeatScheduler(
+                team_router_broker_adapter.BrokerConfig(base_url=base_url, session_token="session-123")
+            )
+            payload = {
+                "callback": "watch_team_task_with_adapter",
+                "runAt": "2026-07-01T10:05:00+08:00",
+                "kwargs": {
+                    "state_root": str(ROOT),
+                    "project_id": "project-1",
+                    "task_id": "task-1",
+                    "permission": "read-only",
+                    "return_thread_id": "thread-parent",
+                    "read_reason": "scheduled watcher heartbeat",
+                },
+            }
+
+            kwargs = team_router.materialize_watcher_call_kwargs(
+                payload,
+                thread_adapter=adapter,
+                heartbeat_scheduler=scheduler,
+                turn_limit=3,
+            )
+
+        self.assertIs(kwargs["thread_adapter"], adapter)
+        self.assertIs(kwargs["heartbeat_scheduler"], scheduler)
+        self.assertEqual(kwargs["observed_at"], "2026-07-01T10:05:00+08:00")
+        self.assertEqual(kwargs["turn_limit"], 3)
 
 class TestTeamRouterProtocol(unittest.TestCase):
     def test_facade_reexports_broker_adapter_symbols(self):
