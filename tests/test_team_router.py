@@ -540,6 +540,59 @@ class TestTeamRouterBrokerAdapter(unittest.TestCase):
 
         self.assertIn("runtimeProbe", str(ctx.exception))
 
+
+class TestTeamRouterBrokerFeasibilityScript(unittest.TestCase):
+    def test_broker_feasibility_check_blocks_without_broker_arguments(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        result = subprocess.run(
+            [sys.executable, "-B", str(script), "--json"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "blocked")
+        self.assertIn("broker-url", report["missing"])
+        self.assertIn("session-token", report["missing"])
+        self.assertFalse(report["authorization"]["desktopPluginChange"])
+
+    def test_broker_feasibility_check_reports_ready_readiness(self):
+        script = ROOT / "scripts" / "team_router_broker_feasibility_check.py"
+        readiness = {
+            "status": "ready",
+            "brokerReady": True,
+            "toolSmokeReady": True,
+            "schedulerReady": True,
+            "parentThreadId": "thread-parent",
+            "projectId": "project-1",
+            "capabilities": {
+                "list_projects": True,
+                "create_thread": True,
+                "list_threads": True,
+                "read_thread": True,
+                "send_message_to_thread": True,
+                "set_thread_title": True,
+                "heartbeat_scheduler": True,
+            },
+            "runtimeProbe": {"status": "ready", "missing": []},
+            "missing": [],
+        }
+        with fake_broker({"/readiness": (200, readiness)}) as (base_url, _calls):
+            result = subprocess.run(
+                [sys.executable, "-B", str(script), "--broker-url", base_url, "--session-token", "session-123", "--json"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["runtimeProbe"], {"status": "ready", "missing": []})
+        self.assertFalse(report["authorization"]["desktopPluginChange"])
+
     def test_scheduler_payload_materializes_with_broker_scheduler(self):
         import team_router_broker_adapter
 
