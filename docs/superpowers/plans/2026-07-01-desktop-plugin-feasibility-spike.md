@@ -100,3 +100,27 @@ Use read-only reviewer/verifier for the evidence docs. They must verify no overc
 - [x] **Step 3: Commit after gates**
 
 If reviewer and verifier pass, stage only task files and commit locally. No push/PR/merge/deploy/global sync.
+
+### Task 4: Separately Authorized Live Smoke Record
+
+**Files:**
+- Modify: `docs/workbench.md`
+- Modify: `docs/team-router/packages/ctr-20260701-desktop-plugin-feasibility-spike.md`
+
+**Interfaces:**
+- Consumes: live smoke thread `019f1e10-cb80-7321-af2a-e7a4b2c45820`.
+- Produces: updated smoke-proven verdict for Codex app tool layer, still excluding runtime/broker startup claims.
+
+- [x] **Step 1: Run authorized live smoke**
+
+Run: `list_projects`, `create_thread`, `send_message_to_thread`, `read_thread`, and `set_thread_title`.
+
+Expected: thread tools work. If `set_thread_title` fails immediately after create, retry after thread is visible.
+
+- [x] **Step 2: Record smoke evidence**
+
+Update package/workbench with thread id, ACK blocks, and retry caveat.
+
+- [x] **Step 3: Re-run current truth checks and role gates**
+
+Run: `truth_check`, `doctor`, `closeout_check`, reviewer, verifier, then commit this doc-only update. Result: `truth_check` staleClaims `[]`; `doctor` manual_only/not_supplied; `closeout_check` expected docs; reviewer pass; verifier accepted; local doc-only commit follows.

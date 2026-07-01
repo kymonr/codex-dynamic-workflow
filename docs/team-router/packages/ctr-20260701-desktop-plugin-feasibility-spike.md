@@ -4,7 +4,7 @@
 
 - taskId: `ctr-20260701-desktop-plugin-feasibility-spike`
 - branch: `codex/desktop-plugin-feasibility-spike`
-- permission: package opening and feasibility-spike planning only; implementation, commit, push, PR, merge, deploy, publish/release, and global skill sync are not included unless separately authorized.
+- permission: original feasibility-spike package plus separately authorized live smoke follow-up. This follow-up includes doc-only evidence update, reviewer/verifier re-check, and local commit after gates. Runtime implementation, push, PR, merge, deploy, publish/release, and global skill sync are not included.
 - scope: `docs/workbench.md`, this package file, and read-only feasibility evidence for Codex Desktop/plugin callable availability.
 
 ## Objective
@@ -50,11 +50,11 @@ Excluded:
 
 ## Executor Feasibility Evidence
 
-- Tool discovery in the controller session reported `codex_app` tool descriptors for `create_thread`, `read_thread`, `send_message_to_thread`, `set_thread_title`, `list_projects`, and `list_threads`; reviewer did not independently reproduce every mutating descriptor, so mutating-tool availability is recorded as descriptor-observed, not smoke-proven.
+- Tool discovery in the controller session reported `codex_app` tool descriptors for `create_thread`, `read_thread`, `send_message_to_thread`, `set_thread_title`, `list_projects`, and `list_threads`. Initial reviewer required mutating-tool claims to stay descriptor-observed until a separate live smoke was authorized.
 - Read-only `codex_app.list_projects()` succeeded and returned project `D:\codex\Team Router` with host `local`.
 - Read-only `codex_app.list_threads(query="Team Router")` succeeded and returned Team Router threads, including active thread `019f1df4-cae0-7dd3-9ed0-9e0b7f0b63c4`.
 - Read-only `codex_app.read_thread(threadId="019f1df4-cae0-7dd3-9ed0-9e0b7f0b63c4", hostId="local")` succeeded and returned recent turns from this active thread.
-- `create_thread`, `send_message_to_thread`, and `set_thread_title` were descriptor-observed in the controller session but not invoked and not independently smoke-proven, because they mutate Desktop state and this package does not authorize a live thread smoke.
+- After separate live smoke authorization, `create_thread`, `send_message_to_thread`, and `set_thread_title` were invoked against smoke thread `019f1e10-cb80-7321-af2a-e7a4b2c45820`; all three are now smoke-proven for the current Codex Desktop session. `set_thread_title` failed once immediately after creation with `No Codex thread found...`, then succeeded on retry, so callers should use short retry/backoff after `create_thread`.
 - CodeGraph evidence: `src/team_router_host_runtime.py` requires in-process Python callables for the thread adapter, a `parent_thread_id`, and a callable heartbeat scheduler before live orchestration is ready. Model-side tool descriptors still need a host adapter wrapper before Team Router runtime can use them as Python callables.
 - CodeGraph evidence: `src/team_router_broker_adapter.py` provides `CodexAppThreadAdapter.create_thread/read_thread/send_message_to_thread/set_thread_title` methods and `BrokerHeartbeatScheduler.schedule()`, but these call a localhost broker; they do not start the broker.
 - `py -B scripts\team_router_broker_feasibility_check.py --json` without broker args returned `status: blocked`, missing `broker-url` and `session-token`.
@@ -63,18 +63,42 @@ Excluded:
 
 ## Feasibility Verdict
 
-- Current Codex Desktop/plugin session proved `read_thread` callable by read-only invocation. `create_thread`, `send_message_to_thread`, and `set_thread_title` were descriptor-observed but not smoke-proven.
+- Current Codex Desktop/plugin session smoke-proved `create_thread`, `read_thread`, `send_message_to_thread`, and `set_thread_title` as model-side Codex app tools.
 - `read_thread` is proven callable by a successful read-only invocation.
-- `create_thread`, `send_message_to_thread`, and `set_thread_title` are not claimed runtime-ready or smoke-proven; using them would create/modify/send Desktop thread state and needs separate live-smoke authorization.
+- `create_thread`, `send_message_to_thread`, and `set_thread_title` are smoke-proven at the Codex app tool layer, but this still does not make them in-process Python callables for Team Router runtime without an adapter wrapper.
 - Team Router runtime still cannot treat model-side tool descriptors as in-process Python callables by itself. Runtime readiness needs an adapter wrapper such as the existing localhost broker adapter plus broker readiness including `parentThreadId` and runtime probe.
 - No Desktop/plugin callable for scheduler/broker startup was exposed in this session. Existing repo code can call `/scheduler/wake` through `BrokerHeartbeatScheduler` only after an external broker exists and supplies URL/token/readiness.
+
+## Live Smoke Evidence
+
+- Separate authorization granted for live smoke after local closeout commit `9c68c34`.
+- `codex_app.list_projects()` succeeded and returned project `D:\codex\Team Router`.
+- `codex_app.create_thread(target project D:\codex\Team Router local)` succeeded with thread `019f1e10-cb80-7321-af2a-e7a4b2c45820`.
+- Initial smoke thread replied exactly:
+  - `TEAM_ROUTER_SMOKE_ACK`
+  - `status: ready`
+  - `summary: create_thread succeeded`
+- `codex_app.send_message_to_thread(threadId="019f1e10-cb80-7321-af2a-e7a4b2c45820")` succeeded.
+- Follow-up smoke reply was exactly:
+  - `TEAM_ROUTER_SMOKE_ACK`
+  - `status: followup_received`
+  - `summary: send_message_to_thread succeeded`
+- `codex_app.read_thread(threadId="019f1e10-cb80-7321-af2a-e7a4b2c45820")` succeeded and returned both smoke turns.
+- `codex_app.set_thread_title(threadId="019f1e10-cb80-7321-af2a-e7a4b2c45820")` first returned `No Codex thread found for threadId: 019f1e10-cb80-7321-af2a-e7a4b2c45820`, then succeeded on retry.
+- Final `read_thread` confirmed title `smoke-Team Router Desktop callable test`.
 ## Verification Record
 
 - Package opened from clean `master` baseline on `codex/desktop-plugin-feasibility-spike`.
-- Executor feasibility evidence collected and recorded in this package.`r`n- Reviewer v1 returned needs_rework for mutating-tool overclaim and incomplete plan status; package/workbench/plan reworked to mark `create_thread`, `send_message_to_thread`, and `set_thread_title` as descriptor-observed / not smoke-proven.`r`n- Reviewer v2: pass; `requiredChanges: none`; risk retained that live smoke needs separate authorization.`r`n- Verifier: accepted; `requiredChanges: []`; confirmed package target and evidence boundary, no runtime implementation, no live smoke, no push/PR/sync.`r`n- Local closeout: this commit records the evidence-only package closeout; commit is the only included side effect.
+- Executor feasibility evidence collected and recorded in this package.
+- Reviewer v1 returned needs_rework for mutating-tool overclaim and incomplete plan status; package/workbench/plan reworked to mark `create_thread`, `send_message_to_thread`, and `set_thread_title` as descriptor-observed / not smoke-proven.
+- Reviewer v2: pass; `requiredChanges: none`; risk retained that live smoke needs separate authorization.
+- Verifier: accepted; `requiredChanges: []`; confirmed package target and evidence boundary, no runtime implementation, no live smoke at that gate, no push/PR/sync.
+- Local closeout: commit `9c68c34` recorded the evidence-only package closeout; later live smoke was separately authorized and this follow-up records that evidence only.
+- Live smoke reviewer: pass; `requiredChanges: none`; confirmed app-tool-layer smoke conclusion stays bounded and runtime/broker/scheduler non-readiness remains explicit.
+- Live smoke verifier: accepted; `requiredChanges: none`; confirmed doc-only closeout may proceed to local commit, with no push/PR/merge/deploy/publish/global sync.
 
 ## Review And Verification Gate
 
-Current next gate: none after verifier acceptance and local closeout commit.
+Current next gate: none after this doc-only live-smoke closeout commit.
 
-push, PR, merge, deploy, publish/release, live thread smoke, scheduler/broker startup, and global skill sync remain outside this package unless separately authorized.
+push, PR, merge, deploy, publish/release, additional live thread smoke, scheduler/broker startup, and global skill sync remain outside this package unless separately authorized.
