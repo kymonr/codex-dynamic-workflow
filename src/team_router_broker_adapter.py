@@ -88,6 +88,7 @@ def broker_request(
         with urlopen(request, timeout=timeout_seconds) as response:
             response_body = response.read()
     except HTTPError as exc:
+        exc.close()
         raise BrokerTransportError("broker HTTP error: %s" % exc.code) from exc
     except URLError as exc:
         raise BrokerTransportError("broker transport error: %s" % exc.reason) from exc

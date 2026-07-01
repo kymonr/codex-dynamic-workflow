@@ -194,8 +194,8 @@ def fake_broker(routes):
         yield "http://127.0.0.1:%d" % server.server_address[1], handler.calls
     finally:
         server.shutdown()
-        server.server_close()
         thread.join(timeout=2)
+        server.server_close()
 
 
 class TestTeamRouterBrokerAdapter(unittest.TestCase):
