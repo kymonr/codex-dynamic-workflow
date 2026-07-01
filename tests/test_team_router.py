@@ -423,6 +423,17 @@ risks: none
         self.assertTrue(snapshot["conditionalRolePolicy"]["noCustomRoleRegistry"])
         self.assertEqual(snapshot["conditionalRolePolicy"]["runtimeSkillLoading"], "not supported")
 
+    def test_role_delivery_fields_cover_all_direct_return_roles(self):
+        expected = {
+            "executor": ("callbackDelivery", "callbackFallback"),
+            "reviewer": ("reviewDelivery", "reviewFallback"),
+            "verifier": ("verdictDelivery", "verdictFallback"),
+            "architect": ("architectReviewDelivery", "architectReviewFallback"),
+            "qa": ("qaReviewDelivery", "qaReviewFallback"),
+        }
+
+        self.assertEqual(team_router.ROLE_DELIVERY_FIELDS, expected)
+
     def test_architect_and_qa_markers_have_required_fields_and_enums(self):
         markers = team_router.protocol_contract_snapshot()["markers"]
         architect_required = set(markers["TEAM_ROUTER_ARCHITECT_REVIEW"]["requiredFields"])
@@ -798,6 +809,10 @@ regressionRisks: low
         self.assertIn("reviewFallback: self-thread-marker", model["requiredDispatchFields"])
         self.assertIn("verdictDelivery: direct-send", model["requiredDispatchFields"])
         self.assertIn("verdictFallback: self-thread-marker", model["requiredDispatchFields"])
+        self.assertIn("architectReviewDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("architectReviewFallback: self-thread-marker", model["requiredDispatchFields"])
+        self.assertIn("qaReviewDelivery: direct-send", model["requiredDispatchFields"])
+        self.assertIn("qaReviewFallback: self-thread-marker", model["requiredDispatchFields"])
         self.assertIn("taskId", model["managerReceiptValidation"])
         self.assertIn("sourceThreadId", model["managerReceiptValidation"])
         self.assertIn("role", model["managerReceiptValidation"])
@@ -2758,6 +2773,10 @@ risks: none
         self.assertIn("verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
         self.assertIn("callbackDelivery/reviewDelivery/verdictDelivery: direct-send", delivery_model["requiredDispatchFields"])
         self.assertIn("callbackFallback/reviewFallback/verdictFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("architectReviewDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("architectReviewFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
+        self.assertIn("qaReviewDelivery: direct-send", delivery_model["requiredDispatchFields"])
+        self.assertIn("qaReviewFallback: self-thread-marker", delivery_model["requiredDispatchFields"])
         self.assertIn("two-step bootstrap", delivery_model["roleThreadBootstrap"])
         self.assertIn("taskId", delivery_model["managerReceiptValidation"])
         self.assertIn("role", delivery_model["managerReceiptValidation"])
