@@ -3407,6 +3407,116 @@ risks: none
         self.assertTrue(decision["allowed"])
         self.assertEqual(decision["action"], "read_allowed")
 
+    def test_manager_polling_status_update_suppresses_early_read_and_repeated_active_report(self):
+        ledger = {
+            "taskId": "ctr-20260702-live-role-polling-ux",
+            "objective": "enforce quiet manager polling",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "inProgress",
+            "readDiscipline": {
+                "gateClass": "STRICT",
+                "lastReadAt": "2026-07-02T10:00:30+08:00",
+                "lastReportedRoleStatus": "in_progress",
+                "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+                "minimumIntervalSeconds": 300,
+                "directReturnExpected": True,
+            },
+        }
+        wakeup = {
+            "role": "reviewer",
+            "threadId": "thread-reviewer",
+            "expectedMarker": "TEAM_ROUTER_REVIEW taskId=ctr-20260702-live-role-polling-ux",
+            "searchAnchor": {"sentAt": "2026-07-02T10:00:00+08:00"},
+            "reason": "awaiting reviewer",
+        }
+
+        decision = team_router.manager_polling_status_update(
+            ledger,
+            wakeup,
+            observed_at="2026-07-02T10:04:00+08:00",
+            observed_status="inProgress",
+            read_reason="scheduled watcher heartbeat",
+        )
+
+        self.assertFalse(decision["shouldRead"])
+        self.assertFalse(decision["shouldReport"])
+        self.assertEqual(decision["action"], "read_suppressed")
+        self.assertEqual(decision["nextAllowedReadAt"], "2026-07-02T10:05:30+08:00")
+        self.assertIn("without repeated status narration", decision["reportReason"])
+
+    def test_manager_polling_status_update_suppresses_unchanged_active_status_after_allowed_read(self):
+        ledger = {
+            "taskId": "ctr-20260702-live-role-polling-ux",
+            "objective": "enforce quiet manager polling",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "inProgress",
+            "readDiscipline": {
+                "gateClass": "STRICT",
+                "lastReadAt": "2026-07-02T10:00:30+08:00",
+                "lastReportedRoleStatus": "in_progress",
+                "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+                "minimumIntervalSeconds": 300,
+                "directReturnExpected": True,
+            },
+        }
+        wakeup = {
+            "role": "reviewer",
+            "threadId": "thread-reviewer",
+            "expectedMarker": "TEAM_ROUTER_REVIEW taskId=ctr-20260702-live-role-polling-ux",
+            "searchAnchor": {"sentAt": "2026-07-02T10:00:00+08:00"},
+            "reason": "awaiting reviewer",
+        }
+
+        decision = team_router.manager_polling_status_update(
+            ledger,
+            wakeup,
+            observed_at="2026-07-02T10:05:30+08:00",
+            observed_status="inProgress",
+            read_reason="scheduled watcher heartbeat",
+        )
+
+        self.assertTrue(decision["shouldRead"])
+        self.assertFalse(decision["shouldReport"])
+        self.assertEqual(decision["action"], "unchanged_active_status_suppressed")
+        self.assertIn("status changes", decision["reportReason"])
+
+    def test_manager_polling_status_update_reports_status_changes_only(self):
+        ledger = {
+            "taskId": "ctr-20260702-live-role-polling-ux",
+            "objective": "enforce quiet manager polling",
+            "status": "awaiting_callback",
+            "roleThreadStatus": "running",
+            "readDiscipline": {
+                "gateClass": "STRICT",
+                "lastReadAt": "2026-07-02T10:00:30+08:00",
+                "lastReportedRoleStatus": "in_progress",
+                "nextAllowedReadAt": "2026-07-02T10:05:30+08:00",
+                "minimumIntervalSeconds": 300,
+                "directReturnExpected": True,
+            },
+        }
+        wakeup = {
+            "role": "reviewer",
+            "threadId": "thread-reviewer",
+            "expectedMarker": "TEAM_ROUTER_REVIEW taskId=ctr-20260702-live-role-polling-ux",
+            "searchAnchor": {"sentAt": "2026-07-02T10:00:00+08:00"},
+            "reason": "awaiting reviewer",
+        }
+
+        decision = team_router.manager_polling_status_update(
+            ledger,
+            wakeup,
+            observed_at="2026-07-02T10:05:30+08:00",
+            observed_status="running",
+            read_reason="scheduled watcher heartbeat",
+        )
+
+        self.assertTrue(decision["shouldRead"])
+        self.assertTrue(decision["shouldReport"])
+        self.assertEqual(decision["action"], "status_change_report")
+        self.assertEqual(decision["previousReportedStatus"], "in_progress")
+        self.assertEqual(decision["observedStatus"], "running")
+
     def test_role_read_allowed_does_not_bypass_on_incidental_stop_word(self):
         ledger = {
             "taskId": "ctr-20260624-120000-fast",
@@ -11965,10 +12075,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "`ctr-20260702-truth-checker-precision` has been locally committed",
-            "make `truth_check` distinguish real current pending reviewer/verifier gates",
-            "completed or historical evidence text that merely mentions reviewer/verifier",
-            "previous closeout workbench text was correct",
+            "`ctr-20260702-live-role-polling-ux-enforcement` has been locally committed",
+            "make manager polling/status output testable",
+            "no repeated unchanged active narration",
+            "early reads and repeated unchanged active reports are suppressed",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -11978,7 +12088,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Current package boundary",
             "latest package is complete unless fresh commands show otherwise",
             "Current next gate",
-            "none for the completed truth-checker precision package",
+            "none for the completed live-role polling UX enforcement package",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",

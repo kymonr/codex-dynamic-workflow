@@ -223,6 +223,60 @@ def build_watcher_ledger(wakeup: Mapping[str, Any] | None,
     }
 
 
+def manager_polling_status_update(ledger: Mapping[str, Any],
+                                  wakeup: Mapping[str, Any] | None,
+                                  *,
+                                  observed_at: str,
+                                  observed_status: str | None = None,
+                                  read_reason: str = "scheduled watcher heartbeat") -> dict[str, Any]:
+    read_decision = watcher_read_allowed(
+        ledger,
+        wakeup,
+        observed_at=observed_at,
+        read_reason=read_reason,
+    )
+    status = _normalized_role_activity_status(
+        observed_status if observed_status is not None else ledger.get("roleThreadStatus"),
+    )
+    if not status:
+        status = _normalized_role_activity_status(ledger.get("status"))
+    discipline = ledger.get("readDiscipline") if isinstance(ledger.get("readDiscipline"), Mapping) else {}
+    previous_reported = _normalized_role_activity_status(discipline.get("lastReportedRoleStatus"))
+    base: dict[str, Any] = {
+        "shouldRead": bool(read_decision.get("allowed")),
+        "shouldReport": False,
+        "observedStatus": status,
+        "previousReportedStatus": previous_reported or None,
+        "readDecision": read_decision,
+    }
+    next_allowed = read_decision.get("nextAllowedReadAt")
+    if isinstance(next_allowed, str):
+        base["nextAllowedReadAt"] = next_allowed
+    if not read_decision.get("allowed"):
+        base.update({
+            "action": "read_suppressed",
+            "reportReason": "wait until nextAllowedReadAt without repeated status narration",
+        })
+        return base
+    if status in ACTIVE_ROLE_CONVERGENCE_STATUSES and previous_reported == status:
+        base.update({
+            "action": "unchanged_active_status_suppressed",
+            "reportReason": "unchanged active role status; report only status changes, timeout/blocker, or completion",
+        })
+        return base
+    if status and previous_reported != status:
+        base.update({
+            "shouldReport": True,
+            "action": "status_change_report",
+            "reportReason": "role status changed since last manager report",
+        })
+        return base
+    base.update({
+        "action": "no_status_report",
+        "reportReason": "no status change to report",
+    })
+    return base
+
 def watcher_read_allowed(ledger: Mapping[str, Any],
                          wakeup: Mapping[str, Any] | None,
                          *,

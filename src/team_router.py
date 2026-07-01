@@ -101,6 +101,7 @@ from team_router_watcher_runtime import (
     build_watcher_heartbeat_payload as _runtime_build_watcher_heartbeat_payload,
     build_watcher_ledger,
     materialize_watcher_call_kwargs,
+    manager_polling_status_update,
     convergence_prompt_allowed,
     next_role_read_policy,
     role_read_allowed,
