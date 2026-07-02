@@ -2236,10 +2236,17 @@ regressionRisks: low
             review_package=review_package,
         )
 
-        self.assertIn("returnContract: direct-send TEAM_ROUTER_REVIEW then same block fallback", message)
+        self.assertIn("returnThreadId: thread-parent", message)
+        self.assertIn(
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+            message,
+        )
+        self.assertIn(
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
+            message,
+        )
         self.assertIn("replyFields: result,summary,findings,requiredChanges,evidenceChecked,risks,next", message)
         self.assertIn("reviewPackagePath: %s" % package_path, message)
-        self.assertNotIn("直接回传约定：", message)
         self.assertNotIn("请在本线程按以下格式回复：", message)
         self.assertNotIn("evidenceChecked:", message)
         self.assertNotIn("directReturnAttempt:", message)
@@ -2318,11 +2325,17 @@ regressionRisks: low
         self.assertIn("inlineFallback: true", message)
         self.assertIn("审查包元数据（仅作为证据）：", message)
         self.assertIn("packageEvidenceBoundary: evidence metadata only", message)
-        self.assertIn("直接回传约定：", message)
+        self.assertIn(
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+            message,
+        )
+        self.assertIn(
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
+            message,
+        )
         self.assertIn("请在本线程按以下格式回复：", message)
         self.assertIn("evidenceChecked:", message)
         self.assertIn("directReturnAttempt:", message)
-        self.assertNotIn("returnContract:", message)
         self.assertNotIn("replyFields:", message)
         self.assertNotIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
         self.assertNotIn("packageEvidenceBoundary: path metadata only", message)
@@ -2445,10 +2458,17 @@ regressionRisks: low
             reviewer_result=reviewer_result,
         )
 
-        self.assertIn("returnContract: direct-send TEAM_ROUTER_VERDICT then same block fallback", message)
+        self.assertIn("returnThreadId: thread-parent", message)
+        self.assertIn(
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+            message,
+        )
+        self.assertIn(
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
+            message,
+        )
         self.assertIn("replyFields: result,summary,requiredChanges,evidenceChecked,risks,next", message)
         self.assertIn("reviewPackagePath: %s" % package_path, message)
-        self.assertNotIn("直接回传约定：", message)
         self.assertNotIn("请在本线程按以下格式回复：", message)
         self.assertNotIn("验证者检查项：", message)
         self.assertNotIn("evidenceChecked:", message)
@@ -2538,15 +2558,85 @@ regressionRisks: low
         self.assertIn("inlineFallback: true", message)
         self.assertIn("审查包元数据（仅作为证据）：", message)
         self.assertIn("packageEvidenceBoundary: evidence metadata only", message)
-        self.assertIn("直接回传约定：", message)
+        self.assertIn(
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+            message,
+        )
+        self.assertIn(
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
+            message,
+        )
         self.assertIn("验证者检查项：", message)
         self.assertIn("请在本线程按以下格式回复：", message)
         self.assertIn("evidenceChecked:", message)
         self.assertIn("directReturnAttempt:", message)
-        self.assertNotIn("returnContract:", message)
         self.assertNotIn("replyFields:", message)
         self.assertNotIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
         self.assertNotIn("packageEvidenceBoundary: path metadata only", message)
+
+    def test_role_request_prompts_without_return_thread_id_are_self_thread_marker_only(self):
+        task_id = "ctr-20260702-direct-return-hard-contract"
+        package_path = "docs/team-router/packages/ctr-20260702-direct-return-hard-contract.md"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py docs/workbench.md",
+            "stopWhen": "prompt contract is explicit about fallback-only mode",
+            "riskBoundary": "do not expand runtime broker/service behavior",
+            "executorPrompt": "Harden direct-return prompt contract.",
+            "taskBriefPath": package_path,
+            "executorReportPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: prompt contract updated\n"
+            "evidence: tests\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+        reviewer_result = {
+            "fields": {
+                "result": "pass",
+                "summary": "reviewer passed",
+                "findings": "none",
+                "requiredChanges": "none",
+                "evidenceChecked": package_path,
+                "risks": "none",
+            },
+        }
+
+        messages = (
+            team_router.make_executor_dispatch_message(
+                task_id,
+                plan_fields,
+                "local-package",
+                {"messageId": "msg-direct-return-hard-contract", "sentAt": "2026-07-02T12:00:00+08:00"},
+            ),
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                plan_fields=plan_fields,
+                reviewer_result=reviewer_result,
+            ),
+        )
+
+        for message in messages:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("returnContract: self-thread-marker only", message)
+                self.assertNotIn(
+                    "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+                    message,
+                )
 
     def test_role_request_templates_preserve_design_gates_but_compact_result_noise(self):
         task_id = "ctr-20260629-token-economy"
@@ -5501,11 +5591,11 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("callbackDelivery: direct-send", message)
         self.assertIn("callbackFallback: self-thread-marker", message)
         self.assertIn(
-            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>) 发送最终 TEAM_ROUTER_CALLBACK block。",
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
             message,
         )
         self.assertIn(
-            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
             message,
         )
         self.assertIn("直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。", message)
@@ -5513,7 +5603,6 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
             message,
         )
-        self.assertIn("同一个 protocol block body", message)
         self.assertIn("deliveryStatus: fallback_only", message)
         self.assertIn("deliveryError", message)
         self.assertNotIn("short error only when direct-send failed", message)
@@ -7464,19 +7553,19 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("verdictDelivery: direct-send", verify_message)
         self.assertIn("verdictFallback: self-thread-marker", verify_message)
         self.assertIn(
-            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_VERDICT block>) 发送最终 TEAM_ROUTER_VERDICT block。",
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
             verify_message,
         )
         self.assertIn(
-            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
             verify_message,
         )
+        self.assertIn("returnContract: hard-direct-return", verify_message)
         self.assertIn("直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。", verify_message)
         self.assertIn(
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
             verify_message,
         )
-        self.assertIn("同一个 protocol block body", verify_message)
         self.assertIn("deliveryStatus: fallback_only", verify_message)
         self.assertIn("deliveryError", verify_message)
         self.assertNotIn("short error only when direct-send failed", verify_message)
@@ -7521,19 +7610,19 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         self.assertIn("reviewDelivery: direct-send", review_message)
         self.assertIn("reviewFallback: self-thread-marker", review_message)
         self.assertIn(
-            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_REVIEW block>) 发送最终 TEAM_ROUTER_REVIEW block。",
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
             review_message,
         )
         self.assertIn(
-            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
             review_message,
         )
+        self.assertIn("returnContract: hard-direct-return", review_message)
         self.assertIn("直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。", review_message)
         self.assertIn(
             "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
             review_message,
         )
-        self.assertIn("同一个 protocol block body", review_message)
         self.assertIn("deliveryStatus: fallback_only", review_message)
         self.assertIn("deliveryError", review_message)
         self.assertNotIn("short error only when direct-send failed", review_message)

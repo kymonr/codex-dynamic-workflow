@@ -1830,30 +1830,39 @@ def _direct_return_prompt_lines(role_key: str,
     direct_lines = [
         "sourceThreadId: %s" % return_thread_id,
         "returnThreadId: %s" % return_thread_id,
-        "orchestratorThreadId: %s" % return_thread_id,
     ]
     if role_thread_id is not None:
         required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
         direct_lines.extend((
             "sourceRoleThreadId: %s" % required_role_thread_id,
             "role: %s" % role_key.title(),
-            "roleThreadId: %s" % required_role_thread_id,
         ))
+        if not compact:
+            direct_lines.append("roleThreadId: %s" % required_role_thread_id)
     delivery, fallback = ROLE_DELIVERY_FIELDS[role_key]
-    direct_lines.extend((
-        "%s: direct-send" % delivery,
-        "%s: self-thread-marker" % fallback,
-    ))
     if compact:
-        direct_lines.append("returnContract: direct-send %s then same block fallback" % marker)
+        direct_lines.extend((
+            "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+            "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
+        ))
         return direct_lines
     direct_lines.extend((
-        "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 %s block>) 发送最终 %s block。" % (marker, marker),
-        "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
+        "orchestratorThreadId: %s" % return_thread_id,
+        "%s: direct-send" % delivery,
+        "%s: self-thread-marker" % fallback,
+        "returnContract: hard-direct-return",
+        "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
+        "Then print the same full TEAM_ROUTER_* block in this thread as fallback.",
+    ))
+    direct_lines.extend((
         "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
         "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
     ))
     return direct_lines
+
+
+def _self_thread_only_prompt_lines() -> list[str]:
+    return ["returnContract: self-thread-marker only"]
 
 
 def _compact_prompt_value(value: Any, *, path_hint: str, limit: int = 240) -> str | None:
@@ -2081,27 +2090,15 @@ def make_executor_dispatch_message(task_id: str,
         lines.extend(handoff_lines)
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
-        direct_lines = [
-            "sourceThreadId: %s" % return_thread_id,
-            "returnThreadId: %s" % return_thread_id,
-            "orchestratorThreadId: %s" % return_thread_id,
-        ]
-        if role_thread_id is not None:
-            required_role_thread_id = _required_str(role_thread_id, "roleThreadId")
-            direct_lines.extend((
-                "sourceRoleThreadId: %s" % required_role_thread_id,
-                "role: Executor",
-                "roleThreadId: %s" % required_role_thread_id,
-            ))
-        callback_delivery, callback_fallback = ROLE_DELIVERY_FIELDS["executor"]
-        lines.extend((*direct_lines,
-            "%s: direct-send" % callback_delivery,
-            "%s: self-thread-marker" % callback_fallback,
-            "直接回传约定：先调用 send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_CALLBACK block>) 发送最终 TEAM_ROUTER_CALLBACK block。",
-            "直接回传约定：然后在本 role 线程最终回复里输出同一个 protocol block body，作为 self-thread-marker fallback。",
-            "直接回传校验字段：taskId, role, sourceThreadId, sourceRoleThreadId。",
-            "直接回传 fallback metadata：deliveryStatus: fallback_only; deliveryError: <仅 direct-send 失败时填写短错误>。",
+        lines.extend(_direct_return_prompt_lines(
+            "executor",
+            "TEAM_ROUTER_CALLBACK",
+            return_thread_id,
+            role_thread_id,
+            compact=False,
         ))
+    else:
+        lines.extend(_self_thread_only_prompt_lines())
     lines.extend((
         "",
         *_executor_startup_failure_prompt_lines(),
@@ -2775,6 +2772,8 @@ def make_reviewer_request_message(task_id: str,
             role_thread_id,
             compact=path_handoff_enabled,
         ))
+    else:
+        lines.extend(_self_thread_only_prompt_lines())
     lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
     if path_handoff_enabled:
         lines.extend((
@@ -3218,6 +3217,8 @@ def make_verifier_request_message(task_id: str,
             role_thread_id,
             compact=path_handoff_enabled,
         ))
+    else:
+        lines.extend(_self_thread_only_prompt_lines())
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=compact_handoff_enabled)
     if path_handoff_enabled:
         lines.extend(("", "verify: scope,permission,packageEvidenceBoundary,reviewer-requiredChanges"))

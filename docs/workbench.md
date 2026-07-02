@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package; `ctr-20260702-manager-quick-card` completed reviewer/verifier gates and is entering the authorized local commit gate.
-- Completed package objective: add a Manager Quick Card so real Team Router use starts from short protocol plus Markdown paths instead of inline checklist text.
-- Completed package starting evidence: dogfood screenshots showed role requests still felt too long for daily use even after package-path prompt compression.
+- State: active repo-local package `ctr-20260702-direct-return-hard-contract`; implementation and focused local verification are in progress, with no commit/push/PR authorization open.
+- Current package objective: harden executor/reviewer/verifier role request prompts so `returnThreadId` always forces the same direct-return contract, and the no-`returnThreadId` path says `self-thread-marker only`.
+- Current package starting evidence: compact reviewer/verifier prompts still summarized direct-return as `returnContract: direct-send ... then same block fallback`, executor/reviewer/verifier prompts did not all contain the requested hard English lines, and no-return prompts did not explicitly say `self-thread-marker only`.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current package boundary: repo skill documentation, focused doc tests, and package/workbench records only; no runtime, parser, broker, scheduler, live thread tools, or global skill sync.
-- Current next gate: local commit only under the current authorization. Any push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires a separate explicit authorization.
+- Current package boundary: `src/team_router.py`, focused prompt tests in `tests/test_team_router.py`, and package/workbench records only; no parser/runtime ledger, watcher cadence, broker/service, live thread tools, commit, or global skill sync.
+- Current next gate: finish local hygiene verification for this package, then return to external reviewer/verifier gates. Any commit, push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,6 +27,17 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- `ctr-20260702-direct-return-hard-contract`: RED focused suite first failed because compact reviewer/verifier prompts still used the old `returnContract: direct-send ... then same block fallback` summary, detailed executor/reviewer/verifier prompts did not all contain the requested hard English lines, and no-`returnThreadId` prompts did not explicitly say `returnContract: self-thread-marker only`.
+- `ctr-20260702-direct-return-hard-contract`: reviewer rework found that legacy reviewer/verifier direct-return metadata tests in `tests/test_team_router.py` still asserted the old Chinese direct-return wording and same-protocol-body phrasing; rework narrowed to those old assertions plus evidence refresh only.
+- `ctr-20260702-direct-return-hard-contract`: reviewer rework legacy suite `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-rework-legacy py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_reviewer_request_supports_direct_return_delivery_metadata tests.test_team_router.TestTeamRouterManagerIntegration.test_verifier_request_supports_direct_return_delivery_metadata -v` -> Ran 2 tests OK.
+- `ctr-20260702-direct-return-hard-contract`: GREEN focused suite `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-green2 py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_executor_dispatch_supports_direct_return_delivery_metadata tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_inline_fallback_without_paths_keeps_detailed_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_inline_fallback_without_paths_keeps_detailed_template tests.test_team_router.TestTeamRouterProtocol.test_role_request_prompts_without_return_thread_id_are_self_thread_marker_only -v` -> Ran 6 tests OK.
+- `ctr-20260702-direct-return-hard-contract`: reviewer rework focused suite rerun `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-rework-focused py -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_executor_dispatch_supports_direct_return_delivery_metadata tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_inline_fallback_without_paths_keeps_detailed_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_inline_fallback_without_paths_keeps_detailed_template tests.test_team_router.TestTeamRouterProtocol.test_role_request_prompts_without_return_thread_id_are_self_thread_marker_only -v` -> Ran 6 tests OK.
+- `ctr-20260702-direct-return-hard-contract`: compile `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-compile py -B -m py_compile src\team_router.py tests\test_team_router.py` -> exit 0.
+- `ctr-20260702-direct-return-hard-contract`: reviewer rework compile rerun `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-rework-compile py -B -m py_compile src\team_router.py tests\test_team_router.py` -> exit 0.
+- `ctr-20260702-direct-return-hard-contract`: `git diff --check` -> exit 0; Git printed CRLF/LF replacement warnings for `docs/workbench.md`, `src/team_router.py`, and `tests/test_team_router.py` only.
+- `ctr-20260702-direct-return-hard-contract`: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-truth py -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; dirty local package surface is `docs/workbench.md`, `src/team_router.py`, `tests/test_team_router.py`, and the new package doc; `skillSync.status: mismatch` remains historical/unrelated because global sync is not authorized here.
+- `ctr-20260702-direct-return-hard-contract`: `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-direct-return-doctor py -B scripts\team_router_doctor.py --json` -> exit 0; `truthStatus: dirty`; `orchestrationStatus: manual_only`; `nextAction` remains reviewer then verifier before closeout.
+- `ctr-20260702-direct-return-hard-contract`: reviewer rework truth/doctor rerun -> `truth_check` exit 0 with `staleClaims: []`; `doctor` exit 0 with `truthStatus: dirty` and `orchestrationStatus: manual_only`.
 - `ctr-20260702-manager-quick-card`: focused skill doc checks after adding the quick card -> Ran 3 tests OK; the entrypoint size guard first caught a 7307-byte overflow, then passed at 7172 bytes after compressing entrypoint wording.
 - `ctr-20260702-manager-quick-card`: full `TestTeamRouterSkillDoc` suite -> Ran 53 tests OK; compile exit 0; `git diff --check` exit 0 with CRLF/LF replacement warnings for existing text files.
 - `ctr-20260702-manager-quick-card`: `truth_check` exit 0 with `staleClaims: []`, skill entrypoint 7172 bytes under target, and expected repo/global skillSync `mismatch` because global sync is not authorized.
@@ -166,6 +177,7 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Current Risks
 
+- Hardening the prompt contract can re-bloat compact path-first prompts; focused size tests now cover the reviewer/verifier compact templates and the no-return fallback path.
 - Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
 - Host readiness can be overclaimed if model-side tool descriptors are treated as Python callables; the current package keeps descriptor-only evidence blocked and records `threadToolCallsExecuted: 0`.
@@ -173,5 +185,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: local commit only for `ctr-20260702-manager-quick-card`; global sync and push each require separate explicit authorization.
+- Current gate: local hygiene verification for `ctr-20260702-direct-return-hard-contract`, then external reviewer/verifier gates. No local commit is authorized in this package.
 - No push, PR, remote merge, deploy, publish/release, independent service work, direct live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
