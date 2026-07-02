@@ -1,13 +1,13 @@
 ---
 name: codex-team-router
-description: Use for Codex Team Router orchestration: visible roles, Manager Mode, gates, direct return, architect/qa, self-change, sync gates.
+description: Use for Codex Team Router orchestration: roles, Manager Mode, gates, direct return, reviewer/verifier, sync gates.
 ---
 
 # Codex Team Router
 
-Short entrypoint only. Keep this file under the Codex 8KB cap; deep protocol details live in `references/` and are part of the Team Router contract.
+Short entrypoint only. Keep under the Codex 8KB cap; deep protocol details live in `references/` and are part of the Team Router contract.
 
-Team Router controls Codex desktop role threads, registry/ledger state, direct return, and conditional reviewer gates. Formal conditional roles `architect` and `qa` are documented in `references/conditional-roles.md`.
+Team Router controls Codex desktop role threads, registry/ledger, direct return, and reviewer gates. architect/qa details: `references/conditional-roles.md`.
 
 ## Roles
 
@@ -28,6 +28,8 @@ Manager Mode only starts on explicit role-intent phrases: “你是管理者”,
 Manager Mode is sticky for the current task and continues an already-active Manager Mode task with terse follow-ups. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement, classification, or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
 
 Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates; ambiguous follow-ups never skip the next gate. Skill/rule/process writes route executor -> reviewer -> verifier when applicable. Superpowers grants no manager write authority. `local-package` is executor-only.
+
+Daily Manager shortcut: `references/manager-quick-card.md`.
 
 ## Live Boundary
 
@@ -70,6 +72,7 @@ Use `scripts/team_router_closeout_check.py` for read-only closeout status: git s
 ## References
 
 - `references/manager-mode.md`
+- `references/manager-quick-card.md`
 - `references/side-effect-taxonomy.md`
 - `references/role-handoff-and-review-package.md`
 - `references/agent-assist-policy.md`

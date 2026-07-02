@@ -12557,6 +12557,7 @@ regressionRisks: watcher transitions
 class TestTeamRouterSkillDoc(unittest.TestCase):
     REQUIRED_SKILL_REFERENCE_FILES = (
         "manager-mode.md",
+        "manager-quick-card.md",
         "side-effect-taxonomy.md",
         "role-handoff-and-review-package.md",
         "agent-assist-policy.md",
@@ -12609,6 +12610,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertIn("no unarchive exception", skill_text)
         self.assertIn("Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates", skill_text)
         self.assertIn("ambiguous follow-ups never skip the next gate", skill_text)
+        self.assertIn("Daily Manager shortcut: `references/manager-quick-card.md`", skill_text)
         self.assertNotIn("reuse it only after it is unarchived", skill_text)
         self.assertNotIn("reuse only after it is unarchived", skill_text)
         for filename in self.REQUIRED_SKILL_REFERENCE_FILES:
@@ -12664,9 +12666,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         for needle in (
             "no active repo-local package",
-            "`ctr-20260702-short-role-request-template` completed review and verification and is locally committed",
-            "Completed package objective: make reviewer/verifier package-path prompts default to short protocol plus Markdown paths",
-            "Completed package starting evidence: dogfood screenshots showed the role request and review callback still repeated long scope/checklist/schema text",
+            "`ctr-20260702-manager-quick-card` completed reviewer/verifier gates and is entering the authorized local commit gate",
+            "Completed package objective: add a Manager Quick Card so real Team Router use starts from short protocol plus Markdown paths",
+            "Completed package starting evidence: dogfood screenshots showed role requests still felt too long for daily use",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12674,9 +12676,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
-            "none after local closeout",
-            "none locally after the current commit",
-            "ctr-20260702-short-role-request-template",
+            "repo skill documentation, focused doc tests, and package/workbench records only",
+            "local commit only under the current authorization",
+            "ctr-20260702-manager-quick-card",
             "Current next gate",
             "Current Diff Surface",
             "Current truth is command-derived",
@@ -12707,9 +12709,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn(
-            "Current gate: none locally after the current commit for `ctr-20260702-short-role-request-template`",
+            "Current gate: local commit only for `ctr-20260702-manager-quick-card`; global sync and push each require separate explicit authorization",
             review_gate_section,
         )
+        self.assertNotIn("ctr-20260702-short-role-request-template", review_gate_section)
         self.assertNotIn("ctr-20260702-host-adapter-readiness-check", review_gate_section)
         self.assertNotIn("Current gate: none after local closeout", review_gate_section)
         self.assertIn("Historical Records", text)

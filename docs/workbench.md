@@ -4,12 +4,12 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: no active repo-local package; `ctr-20260702-short-role-request-template` completed review and verification and is locally committed under Complex Task authorization.
-- Completed package objective: make reviewer/verifier package-path prompts default to short protocol plus Markdown paths instead of inlining checklist/schema text.
-- Completed package starting evidence: dogfood screenshots showed the role request and review callback still repeated long scope/checklist/schema text even though package paths were supplied.
+- State: no active repo-local package; `ctr-20260702-manager-quick-card` completed reviewer/verifier gates and is entering the authorized local commit gate.
+- Completed package objective: add a Manager Quick Card so real Team Router use starts from short protocol plus Markdown paths instead of inline checklist text.
+- Completed package starting evidence: dogfood screenshots showed role requests still felt too long for daily use even after package-path prompt compression.
 - Current git truth must come from fresh commands, not this copied text: `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -B scripts\team_router_truth_check.py --json`, and `py -B scripts\team_router_doctor.py --json`.
-- Current package boundary: none after local closeout; latest package is complete unless fresh commands show otherwise.
-- Current next gate: none locally after the current commit. Any push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires a separate explicit authorization.
+- Current package boundary: repo skill documentation, focused doc tests, and package/workbench records only; no runtime, parser, broker, scheduler, live thread tools, or global skill sync.
+- Current next gate: local commit only under the current authorization. Any push, PR, merge, deploy, publish/release, direct live role dispatch, thread-tool calls, independent service work, or global skill sync requires a separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -27,6 +27,12 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- `ctr-20260702-manager-quick-card`: focused skill doc checks after adding the quick card -> Ran 3 tests OK; the entrypoint size guard first caught a 7307-byte overflow, then passed at 7172 bytes after compressing entrypoint wording.
+- `ctr-20260702-manager-quick-card`: full `TestTeamRouterSkillDoc` suite -> Ran 53 tests OK; compile exit 0; `git diff --check` exit 0 with CRLF/LF replacement warnings for existing text files.
+- `ctr-20260702-manager-quick-card`: `truth_check` exit 0 with `staleClaims: []`, skill entrypoint 7172 bytes under target, and expected repo/global skillSync `mismatch` because global sync is not authorized.
+- `ctr-20260702-manager-quick-card`: `doctor` exit 0 with `truthStatus: dirty`, `orchestrationStatus: manual_only`, and nextAction reviewer then verifier before closeout; `closeout_check` exit 0 with dirty local package and expected skillSync mismatch.
+- `ctr-20260702-manager-quick-card`: reviewer thread `019f21ea-ba8b-7cd2-b1a3-88aeacdc9dd4` -> `pass`; it accepted the existing dirty diff as an executor draft after explicitly reviewing the procedural violation.
+- `ctr-20260702-manager-quick-card`: verifier thread `019f21ec-970e-7fb2-b005-3c6e104b0782` -> `pass`; requiredChanges none; next gate local commit only, with global sync and push still separate.
 - `ctr-20260702-short-role-request-template`: RED focused tests first failed because generated package-path reviewer/verifier prompts still lacked `returnContract` and retained verbose direct-return/schema lines.
 - `ctr-20260702-short-role-request-template`: GREEN focused tests `PYTHONPYCACHEPREFIX=C:\tmp\team-router-pycache-short-template-green3 py -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_package_paths_uses_minimal_protocol_template -v` -> Ran 2 tests OK.
 - `ctr-20260702-short-role-request-template`: focused regression suite with path-first handoff, short templates, design-gate preservation, package metadata, and direct-return metadata -> Ran 8 tests OK.
@@ -167,5 +173,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: none locally after the current commit for `ctr-20260702-short-role-request-template`; push requires separate explicit authorization.
+- Current gate: local commit only for `ctr-20260702-manager-quick-card`; global sync and push each require separate explicit authorization.
 - No push, PR, remote merge, deploy, publish/release, independent service work, direct live role dispatch, thread-tool calls, or global skill sync is included unless explicitly authorized later.
