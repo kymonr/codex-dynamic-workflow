@@ -1854,17 +1854,55 @@ regressionRisks: low
         for message in messages:
             with self.subTest(marker=message.splitlines()[0]):
                 self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", message)
-                self.assertIn("deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>", message)
                 self.assertIn("taskBriefPath", message)
                 self.assertIn("executorReportPath", message)
                 self.assertIn("reviewPackagePath", message)
-                self.assertIn("不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
-                self.assertIn("保留 executor/reviewer/verifier gate；省 token 只改变交接形状", message)
+                self.assertIn("returnPayload: summary+path/counts; no logs", message)
+        self.assertIn("不要复制完整 diff、完整日志、完整背景或完整角色推理", messages[0])
+        self.assertIn("保留 executor/reviewer/verifier gate；省 token 只改变交接形状", messages[0])
+        self.assertIn("deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>", messages[0])
         self.assertIn("executorReportPath: <报告路径或 inline>", messages[0])
         self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[0])
-        self.assertIn("长日志/完整证据写 executorReportPath 或 reviewPackagePath", messages[0])
-        self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[1])
-        self.assertIn("reviewPackagePath: <review package 路径或 inline>", messages[2])
+        self.assertIn("summary: <中文 1-2 行，不复述背景；done 只写结果>", messages[0])
+        self.assertIn("evidence: <executorReportPath/reviewPackagePath 路径；tests: 短计数；不要粘贴完整日志>", messages[0])
+        self.assertIn("longEvidencePolicy: 长 evidence/checklist/log transcript 写入 executorReportPath 或 reviewPackagePath；blocked 可写短原因加路径", messages[0])
+        self.assertIn("reviewPackagePath: <path|inline>", messages[1])
+        self.assertIn("reviewPackagePath: <path|inline>", messages[2])
+        for message in messages[1:]:
+            with self.subTest(reply_policy=message.splitlines()[0]):
+                self.assertIn(
+                    "replyPolicy: pass 1-2 lines; evidence path+counts; rework actionable; logs in path",
+                    message,
+                )
+
+    def test_compact_reply_examples_accept_path_valued_evidence_checked(self):
+        task_id = "ctr-20260702-compact-role-return-payload"
+        package_path = "docs/team-router/packages/ctr-20260702-compact-role-return-payload.md"
+        review_block = (
+            "TEAM_ROUTER_REVIEW taskId=%s\n"
+            "result: pass\n"
+            "summary: 短返回模板已审查，证据指向 package。\n"
+            "findings: none\n"
+            "requiredChanges: none\n"
+            "evidenceChecked: %s; tests: 4 prompt/parser checks\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % (task_id, package_path)
+        verdict_block = (
+            "TEAM_ROUTER_VERDICT taskId=%s\n"
+            "result: pass\n"
+            "summary: 短返回模板验收通过，未改变 runtime 行为。\n"
+            "requiredChanges: none\n"
+            "evidenceChecked: %s; tests: 4 prompt/parser checks\n"
+            "risks: none\n"
+            "next: closeout"
+        ) % (task_id, package_path)
+
+        review = team_router.parse_review(review_block, task_id)
+        verdict = team_router.parse_verdict(verdict_block, task_id)
+
+        self.assertEqual(review.fields["evidenceChecked"], "%s; tests: 4 prompt/parser checks" % package_path)
+        self.assertEqual(verdict.fields["evidenceChecked"], "%s; tests: 4 prompt/parser checks" % package_path)
 
 
     def test_manager_reviewer_verifier_prompts_codify_path_handoff_contract(self):
@@ -1898,6 +1936,11 @@ regressionRisks: low
                 self.assertIn("taskBriefPath", prompt)
                 self.assertIn("executorReportPath", prompt)
                 self.assertIn("reviewPackagePath", prompt)
+                self.assertIn("returnPayloadPolicy: pass/done 只写 1-2 行 summary", prompt)
+                self.assertIn("path-valued evidence/evidenceChecked", prompt)
+                self.assertIn("tests 只写短计数", prompt)
+                self.assertIn("longEvidencePolicy: 长日志、完整 checklist、transcript 和完整证据写入", prompt)
+                self.assertIn("reworkPayloadPolicy: fail/needs_rework/blocked", prompt)
                 self.assertIn("路径只作为交接证据", prompt)
                 self.assertIn("permission", prompt)
                 self.assertIn("riskBoundary", prompt)
@@ -2192,8 +2235,8 @@ regressionRisks: low
         )
 
         self.assertIn("reviewPackagePath: %s" % package_path, message)
+        self.assertIn("callbackContext: compact; see executorReportPath/reviewPackagePath", message)
         self.assertIn("callbackRawLocation: executorReportPath 或 reviewPackagePath", message)
-        self.assertIn("callbackFields: omitted; see executorReportPath/reviewPackagePath", message)
         self.assertNotIn(sensitive_evidence, message)
         self.assertNotIn("evidence: %s" % sensitive_evidence, message)
         self.assertLess(len(message), 2200)
@@ -12754,10 +12797,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "no active repo-local package",
-            "`ctr-20260702-manager-quick-card` completed reviewer/verifier gates and is entering the authorized local commit gate",
-            "Completed package objective: add a Manager Quick Card so real Team Router use starts from short protocol plus Markdown paths",
-            "Completed package starting evidence: dogfood screenshots showed role requests still felt too long for daily use",
+            "active repo-local package `ctr-20260702-compact-role-return-payload`",
+            "Current package objective: make executor/reviewer/verifier pass/done return payloads compact by default",
+            "Current package starting evidence: executor delivery format still allowed longer summaries",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12765,9 +12807,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
-            "repo skill documentation, focused doc tests, and package/workbench records only",
-            "local commit only under the current authorization",
-            "ctr-20260702-manager-quick-card",
+            "focused prompt/parser tests",
+            "no parser required-field changes",
+            "local commit gate is now explicitly authorized",
+            "ctr-20260702-compact-role-return-payload",
             "Current next gate",
             "Current Diff Surface",
             "Current truth is command-derived",
@@ -12798,9 +12841,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn(
-            "Current gate: local commit only for `ctr-20260702-manager-quick-card`; global sync and push each require separate explicit authorization",
+            "Current gate: local commit only for `ctr-20260702-compact-role-return-payload`; reviewer/verifier gates passed",
             review_gate_section,
         )
+        self.assertNotIn("ctr-20260702-direct-return-hard-contract", review_gate_section)
         self.assertNotIn("ctr-20260702-short-role-request-template", review_gate_section)
         self.assertNotIn("ctr-20260702-host-adapter-readiness-check", review_gate_section)
         self.assertNotIn("Current gate: none after local closeout", review_gate_section)
