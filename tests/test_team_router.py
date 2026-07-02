@@ -1857,7 +1857,7 @@ regressionRisks: low
                 self.assertIn("taskBriefPath", message)
                 self.assertIn("executorReportPath", message)
                 self.assertIn("reviewPackagePath", message)
-                self.assertIn("returnPayload: summary+path/counts; no logs", message)
+        self.assertIn("returnPayload: summary+path/counts; no logs", messages[0])
         self.assertIn("不要复制完整 diff、完整日志、完整背景或完整角色推理", messages[0])
         self.assertIn("保留 executor/reviewer/verifier gate；省 token 只改变交接形状", messages[0])
         self.assertIn("deltaSince: <first-response 或上一个 TEAM_ROUTER_* marker/package path>", messages[0])
@@ -1872,6 +1872,121 @@ regressionRisks: low
             with self.subTest(reply_policy=message.splitlines()[0]):
                 self.assertIn(
                     "replyPolicy: pass 1-2 lines; evidence path+counts; rework actionable; logs in path",
+                    message,
+                )
+
+    def test_role_request_templates_codify_md_first_caveman_transport(self):
+        task_id = "ctr-20260702-md-first-caveman-transport"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py docs/workbench.md",
+            "stopWhen": "md-first + caveman transport prompt contract is documented and verified",
+            "riskBoundary": "prompt/policy wording only; no parser/runtime/watcher changes",
+            "executorPrompt": (
+                "把重要事实、证据、完整 checklist 和 transcript 放进 Markdown package/report，"
+                "parent/role chat 只回 marker/path/result/counts/next。"
+            ),
+            "taskBriefPath": "docs/team-router/packages/ctr-20260702-md-first-caveman-transport.md",
+            "executorReportPath": "docs/team-router/packages/ctr-20260702-md-first-caveman-transport.md#executor-report",
+            "reviewPackagePath": "docs/team-router/packages/ctr-20260702-md-first-caveman-transport.md",
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: md-first transport 已写入 prompt。\n"
+            "evidence: %s; tests: short counts only\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % (task_id, plan_fields["reviewPackagePath"])
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": plan_fields["taskBriefPath"],
+                "executorReportPath": plan_fields["executorReportPath"],
+                "reviewPackagePath": plan_fields["reviewPackagePath"],
+            },
+        }
+
+        messages = (
+            team_router.make_executor_dispatch_message(
+                task_id,
+                plan_fields,
+                "local-package",
+                {"messageId": "msg-dispatch", "sentAt": "2026-07-02T10:00:00+08:00"},
+                return_thread_id="manager-thread",
+                role_thread_id="executor-thread",
+                review_package=review_package,
+            ),
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                return_thread_id="manager-thread",
+                role_thread_id="reviewer-thread",
+                plan_fields=plan_fields,
+                review_package=review_package,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "local-package",
+                plan_fields["scope"],
+                return_thread_id="manager-thread",
+                role_thread_id="verifier-thread",
+                plan_fields=plan_fields,
+                review_package=review_package,
+                reviewer_result={
+                    "fields": {
+                        "result": "pass",
+                        "summary": "短审查摘要",
+                        "requiredChanges": "none",
+                        "risks": "none",
+                    }
+                },
+            ),
+        )
+
+        snapshot = team_router.protocol_contract_snapshot()
+        economy = snapshot["roleHandoffReviewPackagePolicy"]["roleCommunicationEconomy"]
+        self.assertEqual(
+            economy["mdFirstPolicy"],
+            "important facts, decisions, evidence, full logs, checklists, and transcripts go to taskBriefPath, executorReportPath, or reviewPackagePath",
+        )
+        self.assertEqual(
+            economy["parentRoleChatPolicy"],
+            "parent/role chat carries only TEAM_ROUTER_* marker blocks, path pointers, result, short counts, risks, and next",
+        )
+        self.assertEqual(
+            economy["cavemanTransportPolicy"],
+            "compress only ordinary prose, fluff, and repeated context; preserve TEAM_ROUTER_* schema, field names, enum values, paths, commands, errors, and requiredChanges exactly",
+        )
+
+        for message in messages:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("mdFirstPolicy", message)
+                self.assertIn("cavemanTransportPolicy", message)
+                self.assertIn("TEAM_ROUTER_* schema", message)
+                self.assertIn("paths", message)
+                self.assertIn("commands", message)
+                self.assertIn("errors", message)
+                self.assertIn("requiredChanges", message)
+                self.assertNotIn("full checklist:", message)
+                self.assertNotIn("full transcript:", message)
+
+        self.assertIn("importantFactsRoute: taskBriefPath/executorReportPath/reviewPackagePath", messages[0])
+        self.assertIn("parentRoleChatPolicy: marker,path,result,short-counts,next only", messages[0])
+        self.assertIn(
+            "noFullLogsInParentThread: full logs/checklists/transcripts stay in package/report paths",
+            messages[0],
+        )
+
+        for message in messages[1:]:
+            with self.subTest(minimal_role_prompt=message.splitlines()[0]):
+                self.assertIn("replyFields:", message)
+                self.assertIn("reviewPackagePath: <path|inline>", message)
+                self.assertIn(
+                    "MUST call send_message_to_thread(threadId=<returnThreadId>, prompt=<full TEAM_ROUTER_* block>)",
                     message,
                 )
 
@@ -2744,7 +2859,7 @@ regressionRisks: low
             with self.subTest(marker=message.splitlines()[0]):
                 self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", message)
                 if message.startswith(("TEAM_ROUTER_REVIEW_REQUEST", "TEAM_ROUTER_VERIFY")):
-                    self.assertIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
+                    self.assertIn("defaultRules:mdFirstPolicy;cavemanTransportPolicy;TEAM_ROUTER_* schema commands/errors requiredChanges", message)
                     self.assertIn("taskBriefPath:", message)
                     self.assertIn("reviewPackagePath:", message)
                     self.assertNotIn("designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。", message)
@@ -5839,7 +5954,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             self.assertIn("riskBoundary: workspace writes only; no external release", message)
             self.assertIn("packageEvidenceBoundary:", message)
             if message.startswith(("TEAM_ROUTER_REVIEW_REQUEST", "TEAM_ROUTER_VERIFY")):
-                self.assertIn("defaultRules: use skill defaults; expand only for needs_rework/blocked", message)
+                self.assertIn("defaultRules:mdFirstPolicy;cavemanTransportPolicy;TEAM_ROUTER_* schema commands/errors requiredChanges", message)
                 self.assertNotIn("审查包元数据（仅作为证据）：", message)
                 self.assertNotIn("运行时边界：Team Router runtime 不得读取、执行、信任或自动生成", message)
             else:
@@ -12797,9 +12912,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "active repo-local package `ctr-20260702-compact-role-return-payload`",
-            "Current package objective: make executor/reviewer/verifier pass/done return payloads compact by default",
-            "Current package starting evidence: executor delivery format still allowed longer summaries",
+            "active repo-local package `ctr-20260702-md-first-caveman-transport`",
+            "Current package objective: implement md-first + caveman transport prompt/policy rules",
+            "Current package starting evidence: compact role prompts already use package paths",
             "Current git truth must come from fresh commands",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
@@ -12807,10 +12922,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`py -B scripts\\team_router_truth_check.py --json`",
             "`py -B scripts\\team_router_doctor.py --json`",
             "Current package boundary",
-            "focused prompt/parser tests",
+            "focused prompt/policy tests",
             "no parser required-field changes",
-            "local commit gate is now explicitly authorized",
-            "ctr-20260702-compact-role-return-payload",
+            "executor, reviewer, and verifier gates passed",
+            "ctr-20260702-md-first-caveman-transport",
             "Current next gate",
             "Current Diff Surface",
             "Current truth is command-derived",
@@ -12841,9 +12956,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn(
-            "Current gate: local commit only for `ctr-20260702-compact-role-return-payload`; reviewer/verifier gates passed",
+            "Current gate: local commit closeout for `ctr-20260702-md-first-caveman-transport`",
             review_gate_section,
         )
+        self.assertNotIn("ctr-20260702-compact-role-return-payload`", review_gate_section)
         self.assertNotIn("ctr-20260702-direct-return-hard-contract", review_gate_section)
         self.assertNotIn("ctr-20260702-short-role-request-template", review_gate_section)
         self.assertNotIn("ctr-20260702-host-adapter-readiness-check", review_gate_section)

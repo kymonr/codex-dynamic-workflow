@@ -628,6 +628,9 @@ ROLE_HANDOFF_REVIEW_PACKAGE_POLICY = {
         "defaultMode": "protocol block plus stable path references",
         "designPlanningPolicy": "preserve full brainstorming/spec/plan reasoning; do not compress design gates to save tokens",
         "protocolBlockPolicy": "TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, and TEAM_ROUTER_VERDICT carry only parser-compatible fields, short human summaries, evidence pointers, risks, and next steps",
+        "mdFirstPolicy": "important facts, decisions, evidence, full logs, checklists, and transcripts go to taskBriefPath, executorReportPath, or reviewPackagePath",
+        "parentRoleChatPolicy": "parent/role chat carries only TEAM_ROUTER_* marker blocks, path pointers, result, short counts, risks, and next",
+        "cavemanTransportPolicy": "compress only ordinary prose, fluff, and repeated context; preserve TEAM_ROUTER_* schema, field names, enum values, paths, commands, errors, and requiredChanges exactly",
         "passResultPolicy": "compact parent callback/verdict on pass/done; expand findings/evidence only for needs_rework/fail/blocked",
         "verificationOutputPolicy": "passing tests report command, suite count, and OK; paste failure details or rerun verbose only on failure",
         "threadPollingPolicy": "manager inbox direct-return first; self-thread read_thread is bounded degraded fallback only",
@@ -1763,6 +1766,11 @@ ROLE_COMMUNICATION_ECONOMY_PROMPT_LINES = (
     "roleCommunicationMode: concise-protocol-plus-paths",
     "tokenBoundary: 保留 executor/reviewer/verifier gate；省 token 只改变交接形状。",
     "designPlanningPolicy: 保留 brainstorming/spec/plan 的完整设计判断，不为了省 token 压缩设计 gate。",
+    "mdFirstPolicy: important facts go to taskBriefPath/executorReportPath/reviewPackagePath.",
+    "importantFactsRoute: taskBriefPath/executorReportPath/reviewPackagePath",
+    "parentRoleChatPolicy: marker,path,result,short-counts,next only",
+    "noFullLogsInParentThread: full logs/checklists/transcripts stay in package/report paths",
+    "cavemanTransportPolicy: compress prose/fluff/repetition only; preserve TEAM_ROUTER_* schema, field names, enum values, paths, commands, errors, requiredChanges.",
     "passResultPolicy: pass/done 只回传短 summary、changed/verification/risks/nextGate；needs_rework/fail/blocked 才展开 findings/evidence。",
     "verificationOutputPolicy: 通过的测试只报告 command + suite count + OK；失败时再粘贴失败详情或 rerun verbose。",
     "longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理；长内容写入 taskBriefPath、executorReportPath 或 reviewPackagePath。",
@@ -1775,6 +1783,11 @@ ROLE_COMMUNICATION_ECONOMY_PACKAGE_PROMPT_LINES = (
     "roleCommunicationMode: concise-protocol-plus-paths",
     "tokenBoundary: 保留 executor/reviewer/verifier gate；省 token 只改变交接形状。",
     "designPlanningPolicy: keep design gates.",
+    "mdFirstPolicy: important facts go to taskBriefPath/executorReportPath/reviewPackagePath.",
+    "importantFactsRoute: taskBriefPath/executorReportPath/reviewPackagePath",
+    "parentRoleChatPolicy: marker,path,result,short-counts,next only",
+    "noFullLogsInParentThread: full logs/checklists/transcripts stay in package/report paths",
+    "cavemanTransportPolicy: compress prose/fluff/repetition only; preserve TEAM_ROUTER_* schema, field names, enum values, paths, commands, errors, requiredChanges.",
     "passResultPolicy: pass/done short; expand only for needs_rework/fail/blocked.",
     "verificationOutputPolicy: pass command+OK; failure details.",
     "longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理；use taskBriefPath/executorReportPath/reviewPackagePath.",
@@ -1814,16 +1827,34 @@ def _minimal_role_request_handoff_lines(handoff_lines: list[str]) -> list[str]:
         "gateClass:",
         "metadataStatus:",
         "inlineFallback:",
-        "returnPayload:",
+        "mdFirstPolicy:",
+        "importantFactsRoute:",
+        "parentRoleChatPolicy:",
+        "noFullLogsInParentThread:",
+        "cavemanTransportPolicy:",
         "taskBriefPath:",
         "executorReportPath:",
         "reviewPackagePath:",
     )
-    compact = [line for line in handoff_lines if line.startswith(keep_prefixes)]
-    if "packageEvidenceBoundary: path metadata only" not in compact:
+    compact: list[str] = []
+    for line in handoff_lines:
+        if line.startswith((
+            "mdFirstPolicy:",
+            "importantFactsRoute:",
+            "parentRoleChatPolicy:",
+            "noFullLogsInParentThread:",
+            "cavemanTransportPolicy:",
+        )):
+            continue
+        elif line.startswith(keep_prefixes):
+            compact.append(line)
+    if not any(line.startswith("packageEvidenceBoundary:") for line in compact):
         insert_at = 1 if compact and compact[0].startswith("roleCommunicationMode:") else 0
-        compact.insert(insert_at, "packageEvidenceBoundary: path metadata only")
-    compact.insert(1, "defaultRules: use skill defaults; expand only for needs_rework/blocked")
+        compact.insert(insert_at, "packageEvidenceBoundary:")
+    compact.insert(
+        1,
+        "defaultRules:mdFirstPolicy;cavemanTransportPolicy;TEAM_ROUTER_* schema commands/errors requiredChanges",
+    )
     return compact
 
 
