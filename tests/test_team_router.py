@@ -13160,7 +13160,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
 
         for needle in (
             "State: local closeout for `ctr-20260703-compact-readonly-role-request`",
-            "Objective: compress ordinary `READ_ONLY` reviewer/verifier role requests without `reviewPackagePath`",
+            "Objective: compress ordinary no-package `READ_ONLY` role prompts",
             "short Chinese `action:` / `riskBoundary:` lines",
             "one-line `reply:` guidance",
             "Fresh command truth at package start",

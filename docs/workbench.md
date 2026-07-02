@@ -5,7 +5,7 @@ This is the project-level working record for the current Team Router task state.
 ## Current Task
 
 - State: local closeout for `ctr-20260703-compact-readonly-role-request`; executor done, reviewer passed, verifier accepted, and global skill sync is `match`.
-- Objective: compress ordinary `READ_ONLY` reviewer/verifier role requests without `reviewPackagePath` so they use short Chinese `action:` / `riskBoundary:` lines and one-line `reply:` guidance instead of raw callback plus full reply templates.
+- Objective: compress ordinary no-package `READ_ONLY` role prompts so they use short Chinese `action:` / `riskBoundary:` lines and one-line `reply:` guidance instead of raw callback plus full reply templates.
 - Fresh command truth at package start: `git status -sb --untracked-files=all` -> `## master...origin/master` clean before this package; no project-local `AGENTS.md` was present.
 - Current package evidence belongs in `docs/team-router/packages/ctr-20260703-compact-readonly-role-request.md`; final status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -X utf8 -B scripts\team_router_truth_check.py --json`, and `py -X utf8 -B scripts\team_router_closeout_check.py`.
 - Current next gate: authorized local commit and publish for `ctr-20260703-compact-readonly-role-request`. PR, merge, deploy, or unrelated service work still requires separate explicit authorization.
