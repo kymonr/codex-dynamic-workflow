@@ -1926,6 +1926,7 @@ def _callback_context_prompt_lines(callback_block: str, task_id: str, *, compact
         return ["", "以下是执行者 callback 原文：", callback_block]
     lines = [
         "",
+        "executorCallback: see reviewPackagePath",
         "callbackContext: compact; see executorReportPath/reviewPackagePath",
         "callbackRawLocation: executorReportPath 或 reviewPackagePath",
     ]
@@ -1946,18 +1947,18 @@ def _reviewer_result_prompt_lines(reviewer_result: Mapping[str, Any] | str | Non
     else:
         raw = _prompt_str(reviewer_result)
         fields = {}
-    lines = ["审查者结果上下文：", "验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。"]
     if compact:
+        lines = ["reviewerResult: see reviewPackagePath"]
         if fields:
-            lines = ["reviewerResult: compact; see reviewPackagePath"]
             for key in ("result", "summary", "findings", "requiredChanges", "risks"):
                 value = _compact_prompt_value(fields.get(key), path_hint="reviewPackagePath")
                 if value is not None:
                     lines.append("%s: %s" % (key, value))
             return lines
         if raw is not None:
-            lines.extend(("审查者 review 原文已省略；请从 reviewPackagePath 核验证据。", "reviewRaw: <omitted; see reviewPackagePath>"))
+            lines.append("reviewRawLocation: reviewPackagePath")
             return lines
+    lines = ["审查者结果上下文：", "验证者返回 pass 前，必须确认 reviewer requiredChanges 已满足。"]
     if raw is not None:
         lines.extend(("以下是审查者 review 原文：", raw))
         return lines
@@ -2797,9 +2798,12 @@ def make_reviewer_request_message(task_id: str,
     path_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
     compact_handoff_enabled = path_handoff_enabled
     if path_handoff_enabled:
+        lines = [line for line in lines if line != "responsibility: adversarial review; not final acceptance"]
         handoff_lines = _minimal_role_request_handoff_lines(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
+    if path_handoff_enabled:
+        lines.append("action: review reviewPackagePath; check executorCallback")
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         lines.extend(_direct_return_prompt_lines(
@@ -3244,6 +3248,8 @@ def make_verifier_request_message(task_id: str,
         handoff_lines = _minimal_role_request_handoff_lines(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
+    if path_handoff_enabled:
+        lines.append("action: verify reviewPackagePath; check executorCallback/reviewerResult")
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         lines.extend(_direct_return_prompt_lines(

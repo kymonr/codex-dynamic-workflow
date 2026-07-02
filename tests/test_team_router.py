@@ -2376,7 +2376,9 @@ regressionRisks: low
                 self.assertIn("roleCommunicationMode: concise-protocol-plus-paths", message)
                 self.assertIn("executorReportPath: docs/team-router/packages/ctr-compact-downstream.md", message)
                 self.assertIn("reviewPackagePath: docs/team-router/packages/ctr-compact-downstream.md", message)
-                self.assertIn("执行者 callback 摘要", message)
+                self.assertIn("callbackContext: compact; see executorReportPath/reviewPackagePath", message)
+                self.assertIn("callbackRawLocation: executorReportPath 或 reviewPackagePath", message)
+                self.assertNotIn("执行者 callback 摘要", message)
                 self.assertNotIn(long_payload, message)
                 self.assertNotIn(long_review_payload, message)
                 self.assertNotIn("以下是执行者 callback 原文：\nTEAM_ROUTER_CALLBACK", message)
@@ -2427,6 +2429,110 @@ regressionRisks: low
         self.assertNotIn(sensitive_evidence, message)
         self.assertNotIn("evidence: %s" % sensitive_evidence, message)
         self.assertLess(len(message), 2200)
+
+    def test_package_path_manager_requests_reference_callback_and_review_results_by_path(self):
+        task_id = "ctr-20260703-manager-request-compression"
+        package_path = "docs/team-router/packages/ctr-20260703-manager-request-compression.md"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py docs/workbench.md %s" % package_path,
+            "stopWhen": "manager role requests use package pointers instead of inline role results",
+            "riskBoundary": "local package only; no commit/push/PR/merge/deploy/global sync",
+            "taskBriefPath": package_path,
+            "executorReportPath": package_path,
+            "reviewPackagePath": package_path,
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: RAW_CALLBACK_SUMMARY_SHOULD_NOT_INLINE\n"
+            "evidence: RAW_CALLBACK_EVIDENCE_SHOULD_NOT_INLINE\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+        reviewer_raw = (
+            "TEAM_ROUTER_REVIEW taskId=%s\n"
+            "result: pass\n"
+            "summary: RAW_REVIEW_SUMMARY_SHOULD_NOT_INLINE\n"
+            "findings: none\n"
+            "requiredChanges: RAW_REVIEW_REQUIRED_CHANGES_SHOULD_NOT_INLINE\n"
+            "evidenceChecked: RAW_REVIEW_EVIDENCE_SHOULD_NOT_INLINE\n"
+            "risks: none\n"
+            "next: verifier"
+        ) % task_id
+        review_package = {
+            "gateClass": "PACKAGE",
+            "paths": {
+                "taskBriefPath": package_path,
+                "executorReportPath": package_path,
+                "reviewPackagePath": package_path,
+            },
+        }
+
+        reviewer_message = team_router.make_reviewer_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            "thread-parent",
+            role_thread_id="thread-reviewer",
+            plan_fields=plan_fields,
+            review_package=review_package,
+        )
+        verifier_message = team_router.make_verifier_request_message(
+            task_id,
+            callback_block,
+            "local-package",
+            plan_fields["scope"],
+            "thread-parent",
+            role_thread_id="thread-verifier",
+            plan_fields=plan_fields,
+            review_package=review_package,
+            reviewer_result=reviewer_raw,
+        )
+
+        expected = (
+            (
+                reviewer_message,
+                "TEAM_ROUTER_REVIEW_REQUEST taskId=%s" % task_id,
+                "role: Reviewer",
+                "sourceRoleThreadId: thread-reviewer",
+                "replyMarker: TEAM_ROUTER_REVIEW taskId=%s" % task_id,
+                "replyFields: result,summary,findings,requiredChanges,evidenceChecked,risks,next",
+                "action: review reviewPackagePath; check executorCallback",
+            ),
+            (
+                verifier_message,
+                "TEAM_ROUTER_VERIFY taskId=%s" % task_id,
+                "role: Verifier",
+                "sourceRoleThreadId: thread-verifier",
+                "replyMarker: TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+                "replyFields: result,summary,requiredChanges,evidenceChecked,risks,next",
+                "action: verify reviewPackagePath; check executorCallback/reviewerResult",
+            ),
+        )
+        for message, marker, role_line, source_role_line, reply_marker, reply_fields, action_line in expected:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, message)
+                self.assertIn("permission: local-package", message)
+                self.assertIn("returnThreadId: thread-parent", message)
+                self.assertIn("sourceThreadId: thread-parent", message)
+                self.assertIn(role_line, message)
+                self.assertIn(source_role_line, message)
+                self.assertIn("scope: %s" % plan_fields["scope"], message)
+                self.assertIn("reviewPackagePath: %s" % package_path, message)
+                self.assertIn(action_line, message)
+                self.assertIn("executorCallback: see reviewPackagePath", message)
+                self.assertIn(reply_marker, message)
+                self.assertIn(reply_fields, message)
+                self.assertNotIn("TEAM_ROUTER_CALLBACK taskId=", message)
+                self.assertNotIn("RAW_CALLBACK_SUMMARY_SHOULD_NOT_INLINE", message)
+                self.assertNotIn("RAW_CALLBACK_EVIDENCE_SHOULD_NOT_INLINE", message)
+        self.assertIn("reviewerResult: see reviewPackagePath", verifier_message)
+        self.assertNotIn("TEAM_ROUTER_REVIEW taskId=%s\nresult: pass" % task_id, verifier_message)
+        self.assertNotIn("RAW_REVIEW_SUMMARY_SHOULD_NOT_INLINE", verifier_message)
+        self.assertNotIn("RAW_REVIEW_REQUIRED_CHANGES_SHOULD_NOT_INLINE", verifier_message)
+        self.assertNotIn("RAW_REVIEW_EVIDENCE_SHOULD_NOT_INLINE", verifier_message)
 
     def test_reviewer_request_with_package_paths_uses_minimal_protocol_template(self):
         task_id = "ctr-20260702-short-role-template"
@@ -12984,21 +13090,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "active repo-local package `ctr-20260702-single-summary-count-only-return`",
-            "Current package objective: tighten package-path pass/done return templates",
-            "Current package starting evidence: compact reviewer/verifier prompts already used package paths",
-            "Current git truth must come from fresh commands",
+            "State: active local package `ctr-20260703-manager-request-compression`",
+            "Objective: compress package-path manager role requests",
+            "`executorCallback: see reviewPackagePath`",
+            "`reviewerResult: see reviewPackagePath`",
+            "Fresh command truth at package start",
+            "existing dirty `README.md`, `docs/workbench.md`, `tests/test_team_router.py`",
+            "docs/team-router/packages/ctr-20260703-skill-repair.md",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
-            "`py -B scripts\\team_router_truth_check.py --json`",
-            "`py -B scripts\\team_router_doctor.py --json`",
-            "Current package boundary",
-            "focused prompt/template tests",
-            "no parser required-field changes",
-            "docs/team-router/packages/ctr-20260702-single-summary-count-only-return.md",
-            "ctr-20260702-single-summary-count-only-return",
+            "`py -X utf8 -B scripts\\team_router_truth_check.py --json`",
+            "`py -X utf8 -B scripts\\team_router_closeout_check.py`",
+            "docs/team-router/packages/ctr-20260703-manager-request-compression.md",
             "Current next gate",
+            "reviewer for `ctr-20260703-manager-request-compression`",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -13028,11 +13134,17 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn(
-            "Current gate: local commit closeout for `ctr-20260702-single-summary-count-only-return`",
+            "Current gate: reviewer for `ctr-20260703-manager-request-compression`; verifier follows reviewer pass.",
             review_gate_section,
         )
-        self.assertIn("executor, reviewer, and verifier gates passed", review_gate_section)
+        self.assertNotIn("executor, reviewer, and verifier gates passed", review_gate_section)
+        self.assertNotIn("none; await the next explicit package dispatch", current_task_section)
         self.assertNotIn("verifier re-check is the current gate", current_task_section)
+        self.assertNotIn("active repo-local package `ctr-20260702-single-summary-count-only-return`", current_task_section)
+        self.assertNotIn("Current package objective: tighten package-path pass/done return templates", current_task_section)
+        self.assertNotIn("Current package starting evidence: compact reviewer/verifier prompts already used package paths", current_task_section)
+        self.assertNotIn("Current package boundary", current_task_section)
+        self.assertNotIn("Current next gate: local commit closeout for `ctr-20260702-single-summary-count-only-return`", current_task_section)
         self.assertNotIn("ctr-20260702-compact-role-return-payload`", review_gate_section)
         self.assertNotIn("ctr-20260702-direct-return-hard-contract", review_gate_section)
         self.assertNotIn("ctr-20260702-short-role-request-template", review_gate_section)
@@ -13618,6 +13730,16 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "receiptChannel: <manager-inbox or read_thread>",
         ):
             self.assertIn(needle, runbook)
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme_main = readme.split("Compatibility note:", 1)[0]
+        readme_compatibility = readme.split("Compatibility note:", 1)[1]
+        self.assertIn(
+            "send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)",
+            readme_main,
+        )
+        self.assertNotIn("send_message_to_thread(sourceThreadId, protocolBlock)", readme_main)
+        self.assertIn("send_message_to_thread(sourceThreadId, protocolBlock)", readme_compatibility)
 
     def test_direct_return_reference_matches_active_role_return_contract(self):
         text = (self._skill_references_dir() / "direct-return.md").read_text(encoding="utf-8")
