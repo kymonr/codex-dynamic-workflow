@@ -111,6 +111,8 @@ Default role communication mode is protocol block plus stable path references. `
 
 Long context, diff evidence, logs, detailed reports, and reviewer/verifier evidence bundles should move into `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` when the role can access the same workspace. If a shared path is unavailable, mark inline fallback explicitly and keep the inline block bounded.
 
+Ordinary `READ_ONLY` reviewer/verifier requests without `reviewPackagePath` should still stay compact: keep protocol markers/fields/enums English, include Chinese `action:` and `riskBoundary:`, summarize executor callback fields without raw callback text, and use a single `reply:` line naming the required `TEAM_ROUTER_REVIEW` or `TEAM_ROUTER_VERDICT` fields. This no-path compact mode is for ordinary read-only role requests only; explicit `inlineFallback: true`, package gates, rework/failure detail, and path-based package handoff keep their existing semantics.
+
 Follow-up messages should be delta-only follow-up: state what changed since the prior protocol block or package, what remains blocked, and the next gate. Do not restate background, unchanged scope, unchanged risks, or already supplied evidence.
 
 Manager closeout should report acceptedBy, changed, verified, remainingRisk, nextGate, and compoundingDecision without copying full role reasoning.

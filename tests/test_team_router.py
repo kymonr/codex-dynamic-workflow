@@ -2093,6 +2093,72 @@ regressionRisks: low
                 self.assertNotIn("full checklist", message)
 
 
+    def test_read_only_role_requests_without_review_package_stay_compact(self):
+        task_id = "ctr-20260703-compact-readonly-role-request"
+        plan_fields = {
+            "scope": "src/team_router.py tests/test_team_router.py",
+            "riskBoundary": "只读检查；不修改文件、不运行写入命令",
+            "executorPrompt": "只读检查普通 reviewer/verifier 请求模板。",
+        }
+        callback_block = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\n"
+            "status: done\n"
+            "final: true\n"
+            "summary: 已完成只读检查\n"
+            "evidence: focused inspection\n"
+            "risks: none\n"
+            "next: reviewer"
+        ) % task_id
+
+        messages = (
+            team_router.make_reviewer_request_message(
+                task_id,
+                callback_block,
+                "read-only",
+                plan_fields["scope"],
+                "thread-parent",
+                role_thread_id="thread-reviewer",
+                plan_fields=plan_fields,
+            ),
+            team_router.make_verifier_request_message(
+                task_id,
+                callback_block,
+                "read-only",
+                plan_fields["scope"],
+                "thread-parent",
+                role_thread_id="thread-verifier",
+                plan_fields=plan_fields,
+            ),
+        )
+
+        expectations = (
+            (
+                messages[0],
+                "action: 只读审查执行者 callback；检查 scope/riskBoundary；返回 TEAM_ROUTER_REVIEW。",
+                "reply: TEAM_ROUTER_REVIEW result,summary,findings,requiredChanges,evidenceChecked,risks,next",
+            ),
+            (
+                messages[1],
+                "action: 只读验收执行者 callback；检查 scope/riskBoundary；返回 TEAM_ROUTER_VERDICT。",
+                "reply: TEAM_ROUTER_VERDICT result,summary,requiredChanges,evidenceChecked,risks,next",
+            ),
+        )
+        for message, action_line, reply_line in expectations:
+            with self.subTest(marker=message.splitlines()[0]):
+                self.assertIn("permission: read-only", message)
+                self.assertIn("riskBoundary: 只读检查；不修改文件、不运行写入命令", message)
+                self.assertIn(action_line, message)
+                self.assertIn(reply_line, message)
+                self.assertNotIn("reviewPackagePath:", message)
+                self.assertNotIn("Fresh parent facts:", message)
+                self.assertNotIn("Review expectations:", message)
+                self.assertNotIn("请在本线程按以下格式回复：", message)
+                self.assertNotIn("result: pass | needs_rework | blocked", message)
+                self.assertNotIn("summary: <中文", message)
+                self.assertNotIn("evidenceChecked:", message)
+                self.assertNotIn("directReturnAttempt:", message)
+
+
     def test_manager_reviewer_verifier_prompts_codify_path_handoff_contract(self):
         task_id = "ctr-20260630-role-thread-prompt-path-contract"
         role_prompts = (
@@ -10942,7 +11008,10 @@ regressionRisks: watcher transitions
 
         self.assertEqual(updated["status"], "verifying")
         self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-verifier")
-        self.assertIn("TEAM_ROUTER_CALLBACK taskId=ctr-20260622-160000-a7f3", adapter.sent[-1]["kwargs"]["prompt"])
+        prompt = adapter.sent[-1]["kwargs"]["prompt"]
+        self.assertIn("executorCallback: compact; raw omitted", prompt)
+        self.assertIn("callbackSummary: ok", prompt)
+        self.assertNotIn("manual note after executor callback", prompt)
 
     def test_fake_thread_adapter_runs_manager_executor_verifier_smoke(self):
         adapter = FakeThreadAdapter()
@@ -13090,21 +13159,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "State: active local package `ctr-20260703-manager-request-compression`",
-            "Objective: compress package-path manager role requests",
-            "`executorCallback: see reviewPackagePath`",
-            "`reviewerResult: see reviewPackagePath`",
+            "State: local closeout for `ctr-20260703-compact-readonly-role-request`",
+            "Objective: compress ordinary `READ_ONLY` reviewer/verifier role requests without `reviewPackagePath`",
+            "short Chinese `action:` / `riskBoundary:` lines",
+            "one-line `reply:` guidance",
             "Fresh command truth at package start",
-            "existing dirty `README.md`, `docs/workbench.md`, `tests/test_team_router.py`",
-            "docs/team-router/packages/ctr-20260703-skill-repair.md",
+            "`## master...origin/master` clean before this package",
+            "no project-local `AGENTS.md` was present",
             "`git status -sb --untracked-files=all`",
             "`git status -s --untracked-files=all`",
             "`git diff --name-only`",
             "`py -X utf8 -B scripts\\team_router_truth_check.py --json`",
             "`py -X utf8 -B scripts\\team_router_closeout_check.py`",
-            "docs/team-router/packages/ctr-20260703-manager-request-compression.md",
+            "docs/team-router/packages/ctr-20260703-compact-readonly-role-request.md",
             "Current next gate",
-            "reviewer for `ctr-20260703-manager-request-compression`",
+            "authorized local commit and publish for `ctr-20260703-compact-readonly-role-request`",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -13134,10 +13203,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn(
-            "Current gate: reviewer for `ctr-20260703-manager-request-compression`; verifier follows reviewer pass.",
+            "Current gate: authorized local closeout/commit and publish for `ctr-20260703-compact-readonly-role-request`; reviewer and verifier gates have passed.",
             review_gate_section,
         )
-        self.assertNotIn("executor, reviewer, and verifier gates passed", review_gate_section)
+        self.assertIn("reviewer and verifier gates have passed", review_gate_section)
         self.assertNotIn("none; await the next explicit package dispatch", current_task_section)
         self.assertNotIn("verifier re-check is the current gate", current_task_section)
         self.assertNotIn("active repo-local package `ctr-20260702-single-summary-count-only-return`", current_task_section)
@@ -13194,6 +13263,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Next external gated step after local commit",
             "Current gate: local commit closeout for `ctr-20260702-md-first-caveman-transport`",
             "Current gate: reviewer for `ctr-20260702-single-summary-count-only-return`",
+            "active local package `ctr-20260703-manager-request-compression`",
+            "Current next gate: reviewer for `ctr-20260703-manager-request-compression`",
         ):
             self.assertNotIn(stale_current, current_task_section + current_diff_section)
         self.assertNotIn("send this status-tools package to reviewer, then verifier", review_gate_section)

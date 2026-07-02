@@ -1820,6 +1820,22 @@ def _role_handoff_has_package_paths(handoff_lines: list[str]) -> bool:
     return any(line.startswith(("taskBriefPath:", "executorReportPath:", "reviewPackagePath:")) for line in handoff_lines)
 
 
+def _read_only_role_request_compact_enabled(permission: str, handoff_lines: list[str]) -> bool:
+    if permission != "read-only":
+        return False
+    if _role_handoff_has_package_paths(handoff_lines):
+        return False
+    return not any(line.startswith("inlineFallback: true") for line in handoff_lines)
+
+
+def _minimal_read_only_role_request_handoff_lines(handoff_lines: list[str]) -> list[str]:
+    return [
+        line
+        for line in handoff_lines
+        if line.startswith(("roleCommunicationMode:", "riskBoundary:"))
+    ]
+
+
 def _minimal_role_request_handoff_lines(handoff_lines: list[str]) -> list[str]:
     keep_prefixes = (
         "roleCommunicationMode:",
@@ -1935,6 +1951,26 @@ def _callback_context_prompt_lines(callback_block: str, task_id: str, *, compact
     except ProtocolError as exc:
         lines.append("callbackParseStatus: omitted raw callback; parse failed: %s" % exc.__class__.__name__)
         return lines
+    return lines
+
+
+def _compact_callback_summary_prompt_lines(callback_block: str, task_id: str) -> list[str]:
+    lines = ["", "executorCallback: compact; raw omitted"]
+    try:
+        fields = parse_callback(callback_block, task_id).fields
+    except ProtocolError as exc:
+        lines.append("callbackParseStatus: raw omitted; parse failed: %s" % exc.__class__.__name__)
+        return lines
+    for field, label in (
+        ("status", "callbackStatus"),
+        ("summary", "callbackSummary"),
+        ("evidence", "callbackEvidence"),
+        ("risks", "callbackRisks"),
+        ("next", "callbackNext"),
+    ):
+        value = _compact_prompt_value(fields.get(field), path_hint="callback")
+        if value is not None:
+            lines.append("%s: %s" % (label, value))
     return lines
 
 
@@ -2796,14 +2832,21 @@ def make_reviewer_request_message(task_id: str,
     ]
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
     path_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    compact_read_only_enabled = _read_only_role_request_compact_enabled(permission, handoff_lines)
+    compact_request_enabled = path_handoff_enabled or compact_read_only_enabled
     compact_handoff_enabled = path_handoff_enabled
     if path_handoff_enabled:
         lines = [line for line in lines if line != "responsibility: adversarial review; not final acceptance"]
         handoff_lines = _minimal_role_request_handoff_lines(handoff_lines)
+    elif compact_read_only_enabled:
+        lines = [line for line in lines if line != "responsibility: adversarial review; not final acceptance"]
+        handoff_lines = _minimal_read_only_role_request_handoff_lines(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
     if path_handoff_enabled:
         lines.append("action: review reviewPackagePath; check executorCallback")
+    elif compact_read_only_enabled:
+        lines.append("action: 只读审查执行者 callback；检查 scope/riskBoundary；返回 TEAM_ROUTER_REVIEW。")
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         lines.extend(_direct_return_prompt_lines(
@@ -2815,13 +2858,21 @@ def make_reviewer_request_message(task_id: str,
         ))
     else:
         lines.extend(_self_thread_only_prompt_lines())
-    lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
+    if compact_read_only_enabled:
+        lines.extend(_compact_callback_summary_prompt_lines(callback_block, task_id))
+    else:
+        lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
     if path_handoff_enabled:
         lines.extend((
             "",
             "replyMarker: TEAM_ROUTER_REVIEW taskId=%s" % task_id,
             "replyFields: result,summary,findings,requiredChanges,evidenceChecked,risks,next",
             "replyPolicy: pass/done exactly one summary field; evidenceChecked format: <reviewPackagePath>; tests: N OK; checks: M OK",
+        ))
+    elif compact_read_only_enabled:
+        lines.extend((
+            "",
+            "reply: TEAM_ROUTER_REVIEW result,summary,findings,requiredChanges,evidenceChecked,risks,next",
         ))
     else:
         lines.extend((
@@ -2840,7 +2891,7 @@ def make_reviewer_request_message(task_id: str,
         ))
     if path_handoff_enabled:
         lines.append("reviewPackagePath: <path|inline>")
-    if return_thread_id is not None and not path_handoff_enabled:
+    if return_thread_id is not None and not compact_request_enabled:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
             "directReturnTarget: <适用时填写 returnThreadId>",
@@ -3243,13 +3294,19 @@ def make_verifier_request_message(task_id: str,
     callback_fields = parse_callback(callback_block, task_id).fields
     handoff_lines = _role_handoff_prompt_lines(plan_fields, review_package)
     path_handoff_enabled = _role_handoff_has_package_paths(handoff_lines)
+    compact_read_only_enabled = _read_only_role_request_compact_enabled(permission, handoff_lines)
+    compact_request_enabled = path_handoff_enabled or compact_read_only_enabled
     compact_handoff_enabled = path_handoff_enabled
     if path_handoff_enabled:
         handoff_lines = _minimal_role_request_handoff_lines(handoff_lines)
+    elif compact_read_only_enabled:
+        handoff_lines = _minimal_read_only_role_request_handoff_lines(handoff_lines)
     if handoff_lines:
         lines.extend(handoff_lines)
     if path_handoff_enabled:
         lines.append("action: verify reviewPackagePath; check executorCallback/reviewerResult")
+    elif compact_read_only_enabled:
+        lines.append("action: 只读验收执行者 callback；检查 scope/riskBoundary；返回 TEAM_ROUTER_VERDICT。")
     if return_thread_id is not None:
         return_thread_id = _required_str(return_thread_id, "returnThreadId")
         lines.extend(_direct_return_prompt_lines(
@@ -3261,9 +3318,11 @@ def make_verifier_request_message(task_id: str,
         ))
     else:
         lines.extend(_self_thread_only_prompt_lines())
-    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=compact_handoff_enabled)
+    reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=path_handoff_enabled)
     if path_handoff_enabled:
         lines.extend(("", "verify: scope,permission,packageEvidenceBoundary,reviewer-requiredChanges"))
+    elif compact_read_only_enabled:
+        lines.append("verify: scope,permission,riskBoundary")
     else:
         lines.extend((
             "",
@@ -3299,13 +3358,21 @@ def make_verifier_request_message(task_id: str,
                 "如果执行者 evidence 加 reviewer result 已足够覆盖授权范围，可以不重新运行命令，也不扩大检查范围。",
                 "仍需列出剩余风险，并明确说明 stage/commit/push/PR/release 未执行。",
             ))
-    lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
+    if compact_read_only_enabled:
+        lines.extend(_compact_callback_summary_prompt_lines(callback_block, task_id))
+    else:
+        lines.extend(_callback_context_prompt_lines(callback_block, task_id, compact=compact_handoff_enabled))
     if path_handoff_enabled:
         lines.extend((
             "",
             "replyMarker: TEAM_ROUTER_VERDICT taskId=%s" % task_id,
             "replyFields: result,summary,requiredChanges,evidenceChecked,risks,next",
             "replyPolicy: pass/done exactly one summary field; evidenceChecked format: <reviewPackagePath>; tests: N OK; checks: M OK",
+        ))
+    elif compact_read_only_enabled:
+        lines.extend((
+            "",
+            "reply: TEAM_ROUTER_VERDICT result,summary,requiredChanges,evidenceChecked,risks,next",
         ))
     else:
         lines.extend((
@@ -3323,7 +3390,7 @@ def make_verifier_request_message(task_id: str,
         ))
     if path_handoff_enabled:
         lines.append("reviewPackagePath: <path|inline>")
-    if return_thread_id is not None and not path_handoff_enabled:
+    if return_thread_id is not None and not compact_request_enabled:
         lines.extend((
             "directReturnAttempt: sent | unavailable | failed",
             "directReturnTarget: <适用时填写 returnThreadId>",

@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: active local package `ctr-20260703-manager-request-compression`; implementation and focused prompt regression are in progress under `local-package`.
-- Objective: compress package-path manager role requests so `TEAM_ROUTER_REVIEW_REQUEST` and `TEAM_ROUTER_VERIFY` use path/delta pointers such as `executorCallback: see reviewPackagePath` and `reviewerResult: see reviewPackagePath` instead of embedding raw role result blocks.
-- Fresh command truth at package start: `git status -sb --untracked-files=all` -> `## master...origin/master` with existing dirty `README.md`, `docs/workbench.md`, `tests/test_team_router.py`, and untracked `docs/team-router/packages/ctr-20260703-skill-repair.md`; those accepted dirty files are preserved and not reverted.
-- Current package evidence belongs in `docs/team-router/packages/ctr-20260703-manager-request-compression.md`; final status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -X utf8 -B scripts\team_router_truth_check.py --json`, and `py -X utf8 -B scripts\team_router_closeout_check.py`.
-- Current next gate: reviewer for `ctr-20260703-manager-request-compression` after local verification; verifier follows reviewer pass. Push, PR, merge, deploy, publish/release, independent service work, or global skill sync requires separate explicit authorization.
+- State: local closeout for `ctr-20260703-compact-readonly-role-request`; executor done, reviewer passed, verifier accepted, and global skill sync is `match`.
+- Objective: compress ordinary `READ_ONLY` reviewer/verifier role requests without `reviewPackagePath` so they use short Chinese `action:` / `riskBoundary:` lines and one-line `reply:` guidance instead of raw callback plus full reply templates.
+- Fresh command truth at package start: `git status -sb --untracked-files=all` -> `## master...origin/master` clean before this package; no project-local `AGENTS.md` was present.
+- Current package evidence belongs in `docs/team-router/packages/ctr-20260703-compact-readonly-role-request.md`; final status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -X utf8 -B scripts\team_router_truth_check.py --json`, and `py -X utf8 -B scripts\team_router_closeout_check.py`.
+- Current next gate: authorized local commit and publish for `ctr-20260703-compact-readonly-role-request`. PR, merge, deploy, or unrelated service work still requires separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -26,6 +26,18 @@ This file intentionally does not list a live diff surface. The current package f
 
 Current package verification:
 
+- `ctr-20260703-compact-readonly-role-request`: RED focused test `py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_read_only_role_requests_without_review_package_stay_compact -v` first failed because no-package `read-only` reviewer/verifier requests still emitted raw callback, detailed reply template, and no compact Chinese `action:` / one-line `reply:`.
+- `ctr-20260703-compact-readonly-role-request`: GREEN focused test `py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_read_only_role_requests_without_review_package_stay_compact -v` -> Ran 1 test OK.
+- `ctr-20260703-compact-readonly-role-request`: adjacent prompt regression `py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_role_request_templates_default_to_compact_path_based_outputs tests.test_team_router.TestTeamRouterProtocol.test_package_path_manager_requests_reference_callback_and_review_results_by_path tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_reviewer_request_with_inline_fallback_without_paths_keeps_detailed_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_package_paths_uses_minimal_protocol_template tests.test_team_router.TestTeamRouterProtocol.test_verifier_request_with_inline_fallback_without_paths_keeps_detailed_template -v` -> Ran 6 tests OK.
+- `ctr-20260703-compact-readonly-role-request`: direct-return/recent-callback rework regression `py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterManagerIntegration.test_reviewer_request_supports_direct_return_delivery_metadata tests.test_team_router.TestTeamRouterManagerIntegration.test_verifier_request_supports_direct_return_delivery_metadata tests.test_team_router.TestTeamRouterManagerIntegration.test_verifier_request_uses_recent_executor_callback_observation tests.test_team_router.TestTeamRouterManagerIntegration.test_watch_sends_reviewer_request_for_high_risk_callback tests.test_team_router.TestTeamRouterProtocol.test_read_only_role_requests_without_review_package_stay_compact -v` -> Ran 5 tests OK.
+- `ctr-20260703-compact-readonly-role-request`: full suite `py -X utf8 -B -m unittest tests.test_team_router -v` -> Ran 425 tests OK.
+- `ctr-20260703-compact-readonly-role-request`: truth check `py -X utf8 -B scripts\team_router_truth_check.py --json` -> exit 0; `staleClaims: []`; `skill.entrypointBytes: 7169`; `skillSync.status: mismatch` because global sync is not authorized.
+- `ctr-20260703-compact-readonly-role-request`: closeout check `py -X utf8 -B scripts\team_router_closeout_check.py --json` -> exit 0; no commit, push, PR, merge, deploy, or global sync authorization.
+- `ctr-20260703-compact-readonly-role-request`: skill sync check `py -X utf8 -B scripts\team_router_skill_sync_check.py --check` -> exit 1 with expected `status: mismatch` for repo-local `SKILL.md` and `references/role-handoff-and-review-package.md`; sync remains a separate gate.
+- `ctr-20260703-compact-readonly-role-request`: `git diff --check` -> exit 0; Git printed CRLF/LF replacement warnings for touched text files only.
+- `ctr-20260703-compact-readonly-role-request`: reviewer direct-return pass from thread `019f23eb-6322-7aa0-91f5-869fb607d87b`; requiredChanges none.
+- `ctr-20260703-compact-readonly-role-request`: verifier direct-return pass from thread `019f23ef-0610-7912-86d2-034ebfaa0240`; requiredChanges none; next gate local closeout/commit plus authorized global sync/publish.
+- `ctr-20260703-compact-readonly-role-request`: authorized global skill sync `py -X utf8 -B scripts\team_router_skill_sync_check.py --sync` -> `status: match`; follow-up `--check` -> `status: match`.
 - `ctr-20260703-manager-request-compression`: RED focused test `PYTHONPYCACHEPREFIX=C:\tmp\team-router-request-compression\pycache-red TMP=C:\tmp\team-router-request-compression TEMP=C:\tmp\team-router-request-compression py -X utf8 -B -m unittest tests.test_team_router -k package_path_manager_requests_reference_callback -v` first failed because compact reviewer/verifier package-path requests lacked `action:` lines, `executorCallback: see reviewPackagePath`, and `reviewerResult: see reviewPackagePath`.
 - `ctr-20260703-manager-request-compression`: GREEN focused test `PYTHONPYCACHEPREFIX=C:\tmp\team-router-request-compression\pycache-green-focused TMP=C:\tmp\team-router-request-compression TEMP=C:\tmp\team-router-request-compression py -X utf8 -B -m unittest tests.test_team_router -k package_path_manager_requests_reference_callback -v` -> Ran 1 test OK.
 - `ctr-20260703-manager-request-compression`: protocol regression `PYTHONPYCACHEPREFIX=C:\tmp\team-router-request-compression\pycache-protocol2 TMP=C:\tmp\team-router-request-compression TEMP=C:\tmp\team-router-request-compression py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterProtocol -v` -> Ran 58 tests OK.
@@ -204,12 +216,12 @@ Older entries are history only. They must not be treated as current git truth / 
 ## Current Risks
 
 - Hardening the prompt contract can re-bloat compact path-first prompts; focused size tests now cover the reviewer/verifier compact templates and the no-return fallback path.
-- Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; non-package/no-path inline fallback must remain covered by tests.
+- Prompt compression can accidentally hide evidence from reviewer/verifier if path metadata is missing; ordinary no-path `read-only` requests use compact callback summaries, while explicit `inlineFallback: true` stays on the detailed template and remains covered by tests.
 - Public imports must continue through `src/team_router.py` unless a later explicit compatibility gate broadens the import contract.
 - Host readiness can be overclaimed if model-side tool descriptors are treated as Python callables; the current package keeps descriptor-only evidence blocked and records `threadToolCallsExecuted: 0`.
 - Git may print CRLF/LF replacement warnings for existing text files.
 
 ## Review And Verification Gate
 
-- Current gate: reviewer for `ctr-20260703-manager-request-compression`; verifier follows reviewer pass. Local commit, push, PR, merge, deploy, publish/release, independent service work, direct live role dispatch outside the requested callback, and global skill sync are not included.
-- No commit, push, PR, remote merge, deploy, publish/release, independent service work, direct live role dispatch outside the requested callback, or global skill sync is included unless explicitly authorized later.
+- Current gate: authorized local closeout/commit and publish for `ctr-20260703-compact-readonly-role-request`; reviewer and verifier gates have passed.
+- No PR, remote merge, deploy, independent service work, or direct live role dispatch outside this closeout is included unless explicitly authorized later.
