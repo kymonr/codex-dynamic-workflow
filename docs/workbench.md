@@ -4,11 +4,11 @@ This is the project-level working record for the current Team Router task state.
 
 ## Current Task
 
-- State: local closeout for `ctr-20260703-compact-readonly-role-request`; executor done, reviewer passed, verifier accepted, and global skill sync is `match`.
-- Objective: compress ordinary no-package `READ_ONLY` role prompts so they use short Chinese `action:` / `riskBoundary:` lines and one-line `reply:` guidance instead of raw callback plus full reply templates.
-- Fresh command truth at package start: `git status -sb --untracked-files=all` -> `## master...origin/master` clean before this package; no project-local `AGENTS.md` was present.
-- Current package evidence belongs in `docs/team-router/packages/ctr-20260703-compact-readonly-role-request.md`; final status must come from fresh `git status -sb --untracked-files=all`, `git status -s --untracked-files=all`, `git diff --name-only`, `py -X utf8 -B scripts\team_router_truth_check.py --json`, and `py -X utf8 -B scripts\team_router_closeout_check.py`.
-- Current next gate: authorized local commit and publish for `ctr-20260703-compact-readonly-role-request`. PR, merge, deploy, or unrelated service work still requires separate explicit authorization.
+- State: local closeout for `ctr-20260705-workbench-truth-reverse-check`; implementation done, reviewer passed, verifier accepted, and local commit is authorized.
+- Objective: fix the workbench current-truth wording, update the matching test anchor, and make `find_stale_state_claims()` catch live-dirty text that claims clean/no diff.
+- Fresh command truth at package start: `git status -sb --untracked-files=all` -> `## master...origin/master` with `M docs/workbench.md`; repo/global skill sync reported `match`; no project-local `AGENTS.md` was present.
+- Current evidence: reviewer passed; verifier accepted; `TestTeamRouterState + TestTeamRouterSkillDoc` -> 118 tests OK; `scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; `git diff --check` -> exit 0 with CRLF/LF warnings only.
+- Current next gate: local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized. Push, PR, merge, deploy, global skill sync, and unrelated service work still require separate explicit authorization.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -24,7 +24,7 @@ This file intentionally does not list a live diff surface. The current package f
 
 ## Verification Record
 
-Current package verification:
+Recent package verification history:
 
 - `ctr-20260703-compact-readonly-role-request`: RED focused test `py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_read_only_role_requests_without_review_package_stay_compact -v` first failed because no-package `read-only` reviewer/verifier requests still emitted raw callback, detailed reply template, and no compact Chinese `action:` / one-line `reply:`.
 - `ctr-20260703-compact-readonly-role-request`: GREEN focused test `py -X utf8 -B -m unittest tests.test_team_router.TestTeamRouterProtocol.test_read_only_role_requests_without_review_package_stay_compact -v` -> Ran 1 test OK.
@@ -223,5 +223,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: authorized local closeout/commit and publish for `ctr-20260703-compact-readonly-role-request`; reviewer and verifier gates have passed.
-- No PR, remote merge, deploy, independent service work, or direct live role dispatch outside this closeout is included unless explicitly authorized later.
+- Current gate: local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized after reviewer pass and verifier acceptance.
+- Commit, push, PR, merge, deploy, independent service work, global skill sync, or direct live role dispatch require separate explicit authorization.

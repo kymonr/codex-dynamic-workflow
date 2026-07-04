@@ -73,6 +73,11 @@ DIRTY_DIFF_MARKERS = (
     "modified `",
     "untracked package",
 )
+CLEAN_STATE_MARKERS = (
+    "git status -s --untracked-files=all` -> clean",
+    "git diff --name-only` -> none",
+    "report clean/synced current truth",
+)
 
 
 def run_git(repo_root: Path, args: list[str]) -> dict[str, object]:
@@ -312,6 +317,16 @@ def find_stale_state_claims(report: dict[str, object], scan_texts: dict[str, str
                     "live git status has no short-status entries",
                 )
             )
+        if actual_dirty and is_workbench_path(path):
+            clean_line = _first_marker_line(current_lines_, CLEAN_STATE_MARKERS)
+            if clean_line:
+                claims.append(
+                    _claim(
+                        path,
+                        "current-state claims clean diff surface while live git truth is dirty",
+                        clean_line,
+                    )
+                )
         if actual_clean_synced:
             active_line = _first_marker_line(current_lines_, ACTIVE_CURRENT_STATE_MARKERS)
             if active_line:

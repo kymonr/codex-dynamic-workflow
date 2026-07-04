@@ -3250,6 +3250,30 @@ class TestTeamRouterState(unittest.TestCase):
         self.assertIn("current-state claims pending reviewer/verifier gate while live git/skill truth is clean/synced", reasons)
         self.assertIn("current-state claims dirty diff surface while live git/skill truth is clean/synced", reasons)
 
+    def test_truth_check_detects_clean_claim_when_live_git_is_dirty(self):
+        spec = importlib.util.spec_from_file_location(
+            "team_router_truth_check_under_test",
+            ROOT / "scripts" / "team_router_truth_check.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report = {"skillSync": {"status": "match"}, "gitStatusShort": [" M docs/workbench.md"], "diffFiles": ["docs/workbench.md"]}
+        text = "\n".join(
+            [
+                "# Workbench",
+                "## Current Task",
+                "- State: clean baseline after closeout.",
+                "- Fresh command truth: `git status -s --untracked-files=all` -> clean; `git diff --name-only` -> none.",
+                "## Current Diff Surface",
+                "Current truth is command-derived.",
+            ]
+        )
+
+        claims = module.find_stale_state_claims(report, {"docs/workbench.md": text})
+
+        reasons = "\n".join(claim["reason"] for claim in claims)
+        self.assertIn("current-state claims clean diff surface while live git truth is dirty", reasons)
+
     def test_truth_check_allows_completed_evidence_mentions_reviewer_verifier(self):
         spec = importlib.util.spec_from_file_location(
             "team_router_truth_check_under_test",
@@ -13159,21 +13183,22 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "State: local closeout for `ctr-20260703-compact-readonly-role-request`",
-            "Objective: compress ordinary no-package `READ_ONLY` role prompts",
-            "short Chinese `action:` / `riskBoundary:` lines",
-            "one-line `reply:` guidance",
+            "State: local closeout for `ctr-20260705-workbench-truth-reverse-check`",
+            "implementation done, reviewer passed, verifier accepted, and local commit is authorized",
+            "Objective: fix the workbench current-truth wording",
+            "update the matching test anchor",
+            "make `find_stale_state_claims()` catch live-dirty text that claims clean/no diff",
             "Fresh command truth at package start",
-            "`## master...origin/master` clean before this package",
+            "`## master...origin/master` with `M docs/workbench.md`",
             "no project-local `AGENTS.md` was present",
-            "`git status -sb --untracked-files=all`",
-            "`git status -s --untracked-files=all`",
-            "`git diff --name-only`",
-            "`py -X utf8 -B scripts\\team_router_truth_check.py --json`",
-            "`py -X utf8 -B scripts\\team_router_closeout_check.py`",
-            "docs/team-router/packages/ctr-20260703-compact-readonly-role-request.md",
+            "reviewer passed",
+            "verifier accepted",
+            "`TestTeamRouterState + TestTeamRouterSkillDoc` -> 118 tests OK",
+            "`scripts\\team_router_truth_check.py --json` -> `staleClaims: []`",
+            "`scripts\\team_router_closeout_check.py --json` -> `skillSync.status: match`",
+            "`git diff --check` -> exit 0",
             "Current next gate",
-            "authorized local commit and publish for `ctr-20260703-compact-readonly-role-request`",
+            "local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized",
             "Current Diff Surface",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
@@ -13203,10 +13228,10 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
         self.assertIn(
-            "Current gate: authorized local closeout/commit and publish for `ctr-20260703-compact-readonly-role-request`; reviewer and verifier gates have passed.",
+            "Current gate: local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized after reviewer pass and verifier acceptance.",
             review_gate_section,
         )
-        self.assertIn("reviewer and verifier gates have passed", review_gate_section)
+        self.assertIn("Commit, push, PR, merge, deploy", review_gate_section)
         self.assertNotIn("none; await the next explicit package dispatch", current_task_section)
         self.assertNotIn("verifier re-check is the current gate", current_task_section)
         self.assertNotIn("active repo-local package `ctr-20260702-single-summary-count-only-return`", current_task_section)
