@@ -1,6 +1,6 @@
 ---
 name: codex-team-router
-description: Use for Codex Team Router orchestration: roles, Manager Mode, gates, direct return, reviewer/verifier, sync gates.
+description: "Use when the user explicitly requests Codex Team Router, Manager Mode, visible role threads, or Team Router gates."
 ---
 
 # Codex Team Router
@@ -49,7 +49,7 @@ Reuse existing roles for the same task/task family; rework returns to the origin
 
 With explicit parent id, role records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send to `returnThreadId` with `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`, then output the same protocol block body as self-thread-marker fallback. Manager validates `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; malformed returns are recorded for fallback recovery and cannot advance scope. See `references/direct-return.md`.
 
-Team Router dispatch uses Codex desktop thread roles, not `multi_agent_v1` workers/subagents.
+Team Router dispatch uses Codex desktop thread roles, not collaboration subagents.
 
 ## Gates
 

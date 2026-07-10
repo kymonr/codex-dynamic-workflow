@@ -21,7 +21,7 @@ Bare `create_thread` plus later `read_thread` is not a valid Team Router role re
 
 ## Role Thread Requirement
 
-Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to `multi_agent_v1` workers/subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
+Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to collaboration subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
 
 Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can call `send_message_to_thread`. An archived role/thread is unavailable for reuse, period: create or use a non-archived visible replacement role and record the replacement reason. If a non-archived role is still not user-visible, read_thread readable, or otherwise usable, treat it as unavailable/broken and replace it with a visible role. If direct-send is unavailable or fails for a given run, keep the self-thread marker as fallback for that run and record fallback-only metadata on the local protocol block: `deliveryStatus: fallback_only` plus `deliveryError` only when direct-send was unavailable or failed.
 

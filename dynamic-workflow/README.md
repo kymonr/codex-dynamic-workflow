@@ -15,7 +15,7 @@
 
 ## 后端选择（v0.3）
 
-- `native-subagent`：当前 Codex 会话已暴露 `multi_agent_v1.spawn_agent` / `wait_agent`，且用户明确要求 dynamic-workflow / subagent / multi-agent / parallel agents / 并行分路处理时默认使用。主会话直接调用工具、等待结果并汇总；不生成 `summary.json` / `agent.log` / 运行目录。
+- `native-subagent`：当前 Codex 会话已暴露 `spawn_agent` / `wait_agent`，且用户明确要求 dynamic-workflow / subagent / multi-agent / parallel agents / 并行分路处理时默认使用。主会话直接调用工具、等待结果并汇总；不生成 `summary.json` / `agent.log` / 运行目录。
 - `cli-runner`：只有需要 `summary.json`、`agent.log`、结构化输出、token 汇总、runner stage 屏障、真实 `codex exec` smoke，写模式 `prepare` / `dispatch` / `collect` 的隔离副本与 clean gates，当前会话没有 native 工具，或用户明确点名 `cli-runner` / `codex exec` 路径时使用。`runner.py` 是普通 Python 子进程，不能调用主会话里的 `spawn_agent`/MCP 工具。
 - 两种后端都必须先报子代理数量、阶段、并发、耗时和用量风险。用户当轮明确要求启动 `native-subagent` / `cli-runner` 即视为允许本轮 Codex 自调度和目录传递，不再额外追问外部模型导出确认。
 
