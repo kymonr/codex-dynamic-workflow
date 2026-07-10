@@ -367,8 +367,8 @@ MANAGER_ORCHESTRATION_POLICY = {
         "teamRouterContextDefault": "when the user asks in a Team Router project context to dispatch a role, reviewer, executor, or verifier, default to creating or reusing the visible Team Router role thread; do not reinterpret that as a multi_agent/subagent request unless the user explicitly asks for external subagents",
         "managerModeProcessWriteBoundary": {
             "triggerExamples": ("记录进skill", "改进skill", "优化 skill", "改规则", "superpowers修", "写进规则", "修", "继续", "复利"),
-            "defaultHandling": "active Manager Mode treats file-writing skill/process requests and terse repair/continue/compounding requests as dispatch-only orchestration: classify sideEffect/Fast Lane, produce exact executor delegation, and route executor -> reviewer -> verifier unless the user explicitly switches role and authorizes manager direct edits; the manager must not personally edit files",
-            "managerAllowedActions": ("rename parent thread", "classify side effect/gate", "produce exact executor delegation", "dispatch executor/reviewer/verifier", "report status"),
+            "defaultHandling": "active Manager Mode treats file-writing skill/process requests and terse repair/continue/compounding requests as proposal-only orchestration: classify sideEffect/Fast Lane and produce exact executor delegation, but do not create or dispatch roles or write routing state until the user explicitly requests that current-turn dispatch gate; after that gate, route executor -> reviewer -> verifier; the manager must not personally edit files",
+            "managerAllowedActions": ("classify side effect/gate", "produce exact executor delegation proposal", "report status", "after an explicit current-turn dispatch request, rename parent thread and dispatch executor/reviewer/verifier"),
             "managerForbiddenActions": ("personally edit files", "run implementation commands"),
         },
         "superpowersBoundary": "superpowers skills may guide planning/TDD/debugging/verification, but in Team Router Manager Mode they do not grant manager write authority; file changes route through executor/reviewer/verifier",
@@ -578,7 +578,7 @@ SIDE_EFFECT_TAXONOMY_POLICY = {
         "description": "push/PR/merge/deploy/publish/release",
         "requires": "separate publish/release authorization",
     },
-    "terseApprovalBoundary": "in active Manager Mode, 可以/修/继续/开始修/先修/修这个/do it authorize at most DISPATCH_ONLY unless the user explicitly switches out of Manager Mode",
+    "terseApprovalBoundary": "in active Manager Mode, 可以/修/继续/开始修/先修/修这个/do it authorize only a dispatch proposal; they do not authorize create_thread, role messages, registry/ledger writes, implementation, or actual DISPATCH_ONLY, which requires an explicit current-turn create/dispatch request",
     "namedReviewerRequirement": "when reviewer is required or named for Team Router self changes, use the visible reviewer role conversation; subagent fallback is not allowed",
 }
 

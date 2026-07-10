@@ -5014,17 +5014,20 @@ risks: none
         self.assertIn("classify sideEffect/Fast Lane", process_write_boundary["defaultHandling"])
         self.assertIn("exact executor delegation", process_write_boundary["defaultHandling"])
         self.assertIn("executor -> reviewer -> verifier", process_write_boundary["defaultHandling"])
-        self.assertIn("explicitly switches role", process_write_boundary["defaultHandling"])
+        self.assertIn("explicitly requests that current-turn dispatch gate", process_write_boundary["defaultHandling"])
         self.assertIn("classify side effect/gate", process_write_boundary["managerAllowedActions"])
-        self.assertIn("produce exact executor delegation", process_write_boundary["managerAllowedActions"])
-        self.assertIn("dispatch executor/reviewer/verifier", process_write_boundary["managerAllowedActions"])
+        self.assertIn("produce exact executor delegation proposal", process_write_boundary["managerAllowedActions"])
+        allowed_actions = "\n".join(process_write_boundary["managerAllowedActions"])
+        self.assertIn("explicit current-turn dispatch request", allowed_actions)
+        self.assertIn("dispatch executor/reviewer/verifier", allowed_actions)
         self.assertIn("personally edit files", process_write_boundary["managerForbiddenActions"])
         self.assertIn("planning/TDD/debugging/verification", agent_policy["superpowersBoundary"])
         self.assertIn("do not grant manager write authority", agent_policy["superpowersBoundary"])
         self.assertIn("file changes route through executor/reviewer/verifier", agent_policy["superpowersBoundary"])
         for needle in ("优化 skill", "改规则", "修", "继续", "复利"):
             self.assertIn(needle, process_write_boundary["triggerExamples"])
-        self.assertIn("dispatch-only", process_write_boundary["defaultHandling"])
+        self.assertIn("proposal-only", process_write_boundary["defaultHandling"])
+        self.assertIn("do not create or dispatch roles or write routing state", process_write_boundary["defaultHandling"])
         self.assertIn("must not personally edit files", process_write_boundary["defaultHandling"])
         self.assertIn("read-only auxiliary", "\n".join(agent_policy["allowedAuxUse"]))
         self.assertIn("gstack browser QA", "\n".join(agent_policy["allowedAuxUse"]))
@@ -5185,7 +5188,9 @@ risks: none
         self.assertIn("explicit separate authorization", policy["HEAVY_OR_RISKY"]["requires"])
         self.assertIn("push/PR/merge/deploy/publish/release", policy["EXTERNAL_RELEASE"]["description"])
         self.assertIn("separate publish/release authorization", policy["EXTERNAL_RELEASE"]["requires"])
-        self.assertIn("at most DISPATCH_ONLY", policy["terseApprovalBoundary"])
+        self.assertIn("authorize only a dispatch proposal", policy["terseApprovalBoundary"])
+        self.assertIn("do not authorize create_thread, role messages, registry/ledger writes", policy["terseApprovalBoundary"])
+        self.assertIn("explicit current-turn create/dispatch request", policy["terseApprovalBoundary"])
         self.assertIn("subagent fallback is not allowed", policy["namedReviewerRequirement"])
 
     def test_active_manager_dispatches_small_artifact_policy_writes(self):
@@ -13076,6 +13081,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
     REQUIRED_SKILL_REFERENCE_FILES = (
         "manager-mode.md",
         "manager-quick-card.md",
+        "manager-polling-cadence.md",
         "side-effect-taxonomy.md",
         "role-handoff-and-review-package.md",
         "agent-assist-policy.md",
@@ -13971,7 +13977,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "set_thread_title",
             "Skill/rule/process writes route executor -> reviewer -> verifier",
             "Superpowers grants no manager write authority",
-            "first manager-side action",
+            "Title changes require explicit current-turn authorization",
             "before creating, dispatching, or normalizing child role threads",
             "explicit role-intent phrases",
             "“你是管理者”",
@@ -13985,7 +13991,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`manager integration`",
             "continues an already-active Manager Mode task with terse follow-ups",
             "Manager Mode is sticky for the current task",
-            "A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution authorization",
+            "A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution or dispatch authorization",
             "`先修`",
             "`开始修`",
             "`修这个`",
@@ -13996,7 +14002,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "classifying sideEffectTaxonomy/Fast Lane",
             "exact executor delegation",
             "executor write authority stays inside the delegated explicit scope",
-            "Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、commit、push、PR 或 merge",
+            "Manager Mode 禁止亲自修改文件、跑测试、执行实现命令、push、PR 或 merge",
             "If implementation is requested during active Manager Mode",
             "Do not personally edit files or run project commands from Manager Mode",
             "除非用户明确说“切回执行者”",
@@ -14131,7 +14137,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "`manager parser`",
             "`manager integration`",
             "Manager Mode is sticky for the current task",
-            "A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution authorization",
+            "A terse follow-up or implementation command such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `开始处理`, `先处理`, `按刚才说的修`, `go`, or `do it` is not execution or dispatch authorization",
             "`先修`",
             "`开始修`",
             "`修这个`",
@@ -14201,9 +14207,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
                 ):
                     self.assertIn(needle, text)
                 for alternatives in (
-                    ("at most `DISPATCH_ONLY`", "至多授权 `DISPATCH_ONLY`"),
-                    ("not implementation authorization", "不是 implementation authorization"),
-                    ("explicit `local-package` executor delegation", "明确 `local-package` executor delegation"),
+                    ("authorize only a dispatch proposal", "只授权派工方案"),
+                    ("not implementation authorization", "不是 implementation authorization", "not actual `DISPATCH_ONLY` or implementation", "不授权实际 `DISPATCH_ONLY` 或 implementation"),
+                    ("explicit `local-package` executor delegation", "明确 `local-package` executor delegation", "explicitly grants an authorized `local-package` scope"),
                     ("explicitly switches roles", "明确说“切回执行者”"),
                     ("manager file edits", "manager file-edit authorization"),
                     ("current-turn user authorization", "current turn", "当轮明确授权"),
@@ -14483,14 +14489,14 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "protocol_contract_snapshot()",
             "tests/fixtures/team_router/three_role_visible_smoke_scenarios.json",
             "Manager Mode 是当前任务内的粘性角色",
-            "规则更新建议或 dispatch/prepare executor work",
+            "规则更新建议或派工方案准备",
             "`先修`",
             "`开始修`",
             "`修这个`",
             "`开始处理`",
             "`先处理`",
             "`按刚才说的修`",
-            "dispatch/prepare executor work",
+            "实际派工需要用户当轮明确请求 create/dispatch gate",
             "一直持续到明确角色切换",
             "manual helper/record/capture functions",
             "不把 pre-created roles 送进 adapter runner",
@@ -14726,7 +14732,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "may not self-write the lesson as an exception",
             "docs/compounding.md",
             "docs/workbench.md",
-            "living record",
+            "only through a separately authorized workspace-write gate",
+            "never write those files automatically",
             "pending/blocked/skipped",
         ):
             self.assertIn(needle, text)
@@ -15011,8 +15018,8 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Manager Intake Fast Path",
             "classify the next manager action before acting",
             "`READ_ONLY`: inspect current state",
-            "`DISPATCH_ONLY`: refine `TEAM_ROUTER_PLAN`",
-            "Terse follow-ups such as `修`, `继续`, or `do it` authorize at most this path.",
+            "`DISPATCH_ONLY`: after an explicit current-turn create/dispatch request, refine `TEAM_ROUTER_PLAN`",
+            "Terse follow-ups such as `修`, `继续`, or `do it` may prepare this proposal but do not execute it.",
             "`WORKSPACE_WRITE`: modify files",
             "explicit current-turn authorization for the exact file-changing task",
             "`LOCAL_CLOSEOUT`: after verifier pass plus an explicit commit request",

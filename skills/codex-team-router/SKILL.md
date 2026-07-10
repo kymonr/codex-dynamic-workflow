@@ -11,15 +11,9 @@ Team Router controls Codex desktop role threads, registry/ledger, direct return,
 
 ## Roles
 
-- 调度者 / Orchestrator: parent step choice and closeout.
-- 工具宿主边界 / Adapter Host Boundary: callable Codex thread tools.
-- 状态控制器 / State Controller: registry, ledger, anchors, transitions.
-- 规划者 / Manager: role thread; `TEAM_ROUTER_PLAN`.
-- 执行者 / Executor: delegated work; `TEAM_ROUTER_CALLBACK`.
-- 审查者 / Reviewer: conditional read-only/adversarial gate; `TEAM_ROUTER_REVIEW`.
-- 验证者 / Verifier: final acceptance; `TEAM_ROUTER_VERDICT`.
+Roles: 调度者/Orchestrator, 工具宿主边界/Adapter Host Boundary, 状态控制器/State Controller, 规划者/Manager (`TEAM_ROUTER_PLAN`), 执行者/Executor (`TEAM_ROUTER_CALLBACK`), conditional 审查者/Reviewer (`TEAM_ROUTER_REVIEW`), 验证者/Verifier (`TEAM_ROUTER_VERDICT`). Details: `references/manager-mode.md`.
 
-Visible titles use `角色-任务名`. Title changes require explicit current-turn authorization and do not occur merely because Manager Mode was activated. Under that authorization, rename parent/current to `调度者-Team Router <task>` with callable `set_thread_title`; adapter-created orchestration also requires `parent_thread_id`. Missing either means `tool_error` before child dispatch. Normalize child role titles with `set_thread_title` only inside an authorized dispatch gate.
+Visible titles use `角色-任务名`. Title changes require explicit current-turn authorization; authorized dispatch also requires callable `set_thread_title` and `parent_thread_id`, or returns `tool_error`.
 
 ## Manager Mode Hard Rules
 
@@ -39,23 +33,19 @@ Before live orchestration, probe required Codex app tools and stop with `tool_er
 list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread
 ```
 
-Use one role-thread creation path per task. Adapter-created orchestration requires in-process Python callables, `parent_thread_id`, callable `set_thread_title`, and a host heartbeat scheduler for `watch_team_task_with_adapter()` at `firstCheckAt` / `nextAllowedReadAt`. Model-side tool descriptors are not Python callables. Without that contract, status is `tool_error` / `manual orchestration only`; copy-paste prompts are handoff text, not live dispatch evidence. Explain blocked readiness with `assess_live_orchestration_readiness()` / `parent_entry_guard()`.
-
-Active role wait: `active`/`inProgress`/`running`/`working` means normal processing, not stuck. do not restart/replace or send shorter delta while active. Poll: one first check, then `10s -> 20s -> 40s` or `firstCheckAt`/`nextAllowedReadAt`; do not repeat unchanged active status; one timeout notice max.
+Adapter orchestration requires callable thread tools, `parent_thread_id`, `set_thread_title`, and a heartbeat scheduler. Model-side descriptors are not Python callables; otherwise status is `tool_error` / `manual orchestration only`. See `references/adapter-runtime.md` and `references/manager-polling-cadence.md`.
 
 Reuse existing roles for the same task/task family; rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception.
 
 ## Direct Return
 
-With explicit parent id, role records include `returnThreadId`, `orchestratorThreadId`, and `roleThreadId`. Roles direct-send to `returnThreadId` with `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`, then output the same protocol block body as self-thread-marker fallback. Manager validates `taskId`, protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; malformed returns are recorded for fallback recovery and cannot advance scope. See `references/direct-return.md`.
+Roles direct-send the protocol block to `returnThreadId`, then emit the same self-thread marker fallback. Validate `taskId`, `sourceThreadId`, `role`, and `sourceRoleThreadId`; malformed returns cannot advance scope. See `references/direct-return.md`.
 
 Team Router dispatch uses Codex desktop thread roles, not collaboration subagents.
 
 ## Gates
 
-FAST/NORMAL use executor -> verifier. STRICT/PACKAGE process, role protocol, shared-risk, or same-family discipline changes use executor -> reviewer -> verifier. Completion is direct-return first with bounded `read_thread` fallback. Use `classify_team_router_gate()` for compatibility and `explain_team_router_gate()` when a readable reason is needed.
-
-Small low-risk tasks skip reviewer. Router/manager policy, safety/process/role protocol, and shared/high-risk logic use reviewer(read-only/adversarial) before verifier(read-only acceptance). Reviewer is not final; verifier is. Named reviewer self-changes require a reviewer role thread; no subagent fallback. If a review-only request requires a reviewer and no authorized visible reviewer role already exists, report the blocker; do not create one under the review-only gate.
+FAST/NORMAL use executor -> verifier; STRICT/PACKAGE use executor -> reviewer -> verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
 
 ## Lifecycle Gates
 
@@ -67,9 +57,7 @@ Small low-risk tasks skip reviewer. Router/manager policy, safety/process/role p
 
 ## Closeout And Handoff
 
-After completion, default is no role-thread clear and no extra `ROLE_CLOSEOUT`; protocol blocks are anchors. Parent closeout still states changed, verified, accepted by, not done/boundary, risks, next gated step, and `compoundingDecision: recorded | skipped`. Records: durable -> `docs/compounding.md`; task living -> `docs/workbench.md`.
-
-Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. Terse approvals may prepare a dispatch proposal but do not execute `DISPATCH_ONLY`; workspace writes require explicit `local-package` executor delegation; local closeout needs verifier pass plus explicit commit request; push/PR/merge/deploy/global sync require separate authorization.
+Closeout reports changed, verified, accepted by, boundaries, risks, next gate, and `compoundingDecision`; file writes and commit remain separately authorized. See `references/role-closeout.md` and `references/side-effect-taxonomy.md`.
 
 stable file/path handoff: `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` are explicit protocol fields: FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless explicit inline fallback is marked. Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.
 
