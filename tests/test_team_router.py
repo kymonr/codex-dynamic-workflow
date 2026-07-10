@@ -5229,9 +5229,8 @@ risks: none
         self.assertIn("already-confirmed facts", policy["controlFallback"])
         self.assertIn("docs/compounding.md", policy["continuousRecords"])
         self.assertIn("docs/workbench.md", policy["continuousRecords"])
-        self.assertIn("living record", policy["continuousRecords"])
-        self.assertIn("task state", policy["continuousRecords"])
-        self.assertIn("verification", policy["continuousRecords"])
+        self.assertIn("separately authorized workspace-write gate", policy["continuousRecords"])
+        self.assertIn("never write those files automatically", policy["continuousRecords"])
         self.assertIn("pending/blocked/skipped", policy["continuousRecords"])
         self.assertIn("compact is native operation, not chat prompt", policy["compact"])
         self.assertIn("must not send compact or ROLE_CLOSEOUT text", policy["compact"])
@@ -13189,23 +13188,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         review_gate_section = text.split("\n## Review And Verification Gate\n", 1)[1]
 
         for needle in (
-            "State: local closeout for `ctr-20260705-workbench-truth-reverse-check`",
-            "implementation done, reviewer passed, verifier accepted, and local commit is authorized",
-            "Objective: fix the workbench current-truth wording",
-            "update the matching test anchor",
-            "make `find_stale_state_claims()` catch live-dirty text that claims clean/no diff",
-            "Fresh command truth at package start",
-            "`## master...origin/master` with `M docs/workbench.md`",
-            "no project-local `AGENTS.md` was present",
-            "reviewer passed",
-            "verifier accepted",
-            "`TestTeamRouterState + TestTeamRouterSkillDoc` -> 118 tests OK",
-            "`scripts\\team_router_truth_check.py --json` -> `staleClaims: []`",
-            "`scripts\\team_router_closeout_check.py --json` -> `skillSync.status: match`",
-            "`git diff --check` -> exit 0",
-            "Current next gate",
-            "local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized",
-            "Current Diff Surface",
+            "State: no task-specific state is asserted here",
+            "Objective: derive current truth from fresh commands",
+            "Current next gate: none",
             "Current truth is command-derived",
             "This file intentionally does not list a live diff surface",
             "scripts/team_router_truth_check.py",
@@ -13233,10 +13218,7 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
         self.assertNotIn("\b", text)
         self.assertNotIn("`M docs/workbench.md`", current_diff_section)
         self.assertNotIn("closeout authorization remains pending", review_gate_section)
-        self.assertIn(
-            "Current gate: local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized after reviewer pass and verifier acceptance.",
-            review_gate_section,
-        )
+        self.assertIn("Current gate: none", review_gate_section)
         self.assertIn("Commit, push, PR, merge, deploy", review_gate_section)
         self.assertNotIn("none; await the next explicit package dispatch", current_task_section)
         self.assertNotIn("verifier re-check is the current gate", current_task_section)

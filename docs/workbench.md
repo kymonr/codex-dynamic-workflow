@@ -1,14 +1,13 @@
 # Team Router Workbench
 
-This is the project-level working record for the current Team Router task state. It is not the compounding ledger; reusable lessons belong in `docs/compounding.md`. Refresh this file whenever task state, diff surface, verification, or next gate changes.
+This is the project-level working record for Team Router task state. It is not the compounding ledger; reusable lessons belong in `docs/compounding.md`. Refresh it only through a separately authorized workspace-write gate.
 
 ## Current Task
 
-- State: local closeout for `ctr-20260705-workbench-truth-reverse-check`; implementation done, reviewer passed, verifier accepted, and local commit is authorized.
-- Objective: fix the workbench current-truth wording, update the matching test anchor, and make `find_stale_state_claims()` catch live-dirty text that claims clean/no diff.
-- Fresh command truth at package start: `git status -sb --untracked-files=all` -> `## master...origin/master` with `M docs/workbench.md`; repo/global skill sync reported `match`; no project-local `AGENTS.md` was present.
-- Current evidence: reviewer passed; verifier accepted; `TestTeamRouterState + TestTeamRouterSkillDoc` -> 118 tests OK; `scripts\team_router_truth_check.py --json` -> `staleClaims: []`; `scripts\team_router_closeout_check.py --json` -> `skillSync.status: match`; `git diff --check` -> exit 0 with CRLF/LF warnings only.
-- Current next gate: local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized. Push, PR, merge, deploy, global skill sync, and unrelated service work still require separate explicit authorization.
+- State: no task-specific state is asserted here; use the fresh commands below.
+- Objective: derive current truth from fresh commands before making status, diff, verification, or gate claims.
+- Current evidence: none is persisted as live truth in this section.
+- Current next gate: none is asserted here; use the current user instruction and authorization boundaries.
 ## Current Diff Surface
 Current truth is command-derived. Regenerate the current surface with:
 
@@ -223,5 +222,5 @@ Older entries are history only. They must not be treated as current git truth / 
 
 ## Review And Verification Gate
 
-- Current gate: local commit for `ctr-20260705-workbench-truth-reverse-check` is authorized after reviewer pass and verifier acceptance.
+- Current gate: none is asserted here; determine it from the current user instruction and fresh repository evidence.
 - Commit, push, PR, merge, deploy, independent service work, global skill sync, or direct live role dispatch require separate explicit authorization.

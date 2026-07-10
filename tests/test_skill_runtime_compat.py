@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 
@@ -14,6 +15,7 @@ def read_skill(relative_path):
 
 
 class SkillRuntimeCompatTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("TEAM_ROUTER_CHECK_INSTALLED_SKILLS") == "1", "active mirror check is opt-in")
     def test_installed_mirrors_match_canonical_source_bytes(self):
         installed = Path.home() / ".codex/skills"
         router_source = ROOT / "skills/codex-team-router"

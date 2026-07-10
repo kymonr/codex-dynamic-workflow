@@ -587,7 +587,7 @@ ROLE_CLOSEOUT_POLICY = {
     "finalProtocolBlock": "final protocol block is the closeout: TEAM_ROUTER_CALLBACK, TEAM_ROUTER_REVIEW, and TEAM_ROUTER_VERDICT",
     "proactiveReturn": "role must proactively return its final protocol block by direct-send and self-thread fallback when key checks complete; it must not rely on parent polling",
     "controlFallback": "when manager sends CONTROL after bounded wait/read because no final protocol block arrived, role closeout is scope-limited to already-confirmed facts",
-    "continuousRecords": "durable lessons update docs/compounding.md; current task state updates docs/workbench.md as a living record whenever task state, diff surface, verification, or next gate changes; if no durable file is written, closeout explains pending/blocked/skipped",
+    "continuousRecords": "durable lessons may update docs/compounding.md and current task state may update docs/workbench.md only through a separately authorized workspace-write gate; review-only, verification-only, and parent closeout never write those files automatically; if no durable file is written, closeout explains pending/blocked/skipped",
     "compact": "compact is native operation, not chat prompt; manager must not send compact or ROLE_CLOSEOUT text to pretend context compression happened",
     "noCompactTool": "if no compact tool is available, do nothing",
     "exceptionsOnly": [
