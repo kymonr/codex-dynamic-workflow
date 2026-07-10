@@ -48,6 +48,24 @@ class SkillRuntimeCompatTests(unittest.TestCase):
         text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
         self.assertNotIn("multi_agent_v1", text)
 
+    def test_deep_routes_keep_lifecycle_gates_independent(self):
+        router = (ROOT / "skills/codex-team-router/SKILL.md").read_text(encoding="utf-8").lower()
+        dynamic = (ROOT / "dynamic-workflow/skill/SKILL.md").read_text(encoding="utf-8").lower()
+        for text in (router, dynamic):
+            self.assertIn("## lifecycle gates", text)
+            for term in ("review-only", "design acceptance", "implementation", "verification", "closeout", "commit", "create task"):
+                self.assertIn(term, text)
+
+        manager = (ROOT / "skills/codex-team-router/references/manager-mode.md").read_text(encoding="utf-8").lower()
+        taxonomy = (ROOT / "skills/codex-team-router/references/side-effect-taxonomy.md").read_text(encoding="utf-8").lower()
+        closeout = (ROOT / "skills/codex-team-router/references/role-closeout.md").read_text(encoding="utf-8").lower()
+        self.assertIn("title changes require explicit current-turn authorization", router)
+        self.assertNotIn("may authorize the manager to delegate", manager)
+        self.assertIn("title changes require explicit current-turn authorization", manager)
+        self.assertNotIn("authorize routing only", taxonomy)
+        self.assertIn("only through a separately authorized workspace-write gate", closeout)
+        self.assertIn("do not automatically dispatch lesson writes", manager)
+
 
 if __name__ == "__main__":
     unittest.main()

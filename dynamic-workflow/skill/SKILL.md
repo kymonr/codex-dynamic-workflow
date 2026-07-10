@@ -54,6 +54,14 @@ runner.py 是普通 Python 子进程,不能调用主会话里的 `spawn_agent`/M
 6. 不无人值守跑、不脚本自动循环。一次触发只跑一轮。这里禁止的是"脚本/无人值守自动循环";
    你(主会话)在用户在场、每轮都重新报数确认下的人工多轮(见下文"多轮(回合制)模式")不违反本条。
 
+## Lifecycle Gates
+
+- `review-only` / 只读请求只运行只读阶段;不得进入 write prepare、dispatch、implementation 或修复。
+- Brainstorming、plan 或 design acceptance 不授权 implementation、verification、closeout、commit 或 create task actions。
+- Named-fix 请求只授权点名范围;写模式的 prepare、逐任务 dispatch 和 collect 仍各守现有入口闸。
+- Verification-only 只检查并报告;发现问题不自动修复。
+- Collect 只收证据，不授权 apply、closeout、commit、create task 或清理副本。Stop after the authorized stage.
+
 ## native-subagent 后端步骤
 1. 拆解:把任务拆成至少 2 个互相独立的子任务,每个子任务写清身份、范围、只读/写入边界和交付物;
    数量和并发以当前运行时暴露的槽位与工具 schema 为准。

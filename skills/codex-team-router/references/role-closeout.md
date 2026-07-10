@@ -24,7 +24,7 @@ That human-readable closeout must explicitly cover:
 
 Keep it short, concrete, and free of unnecessary internal jargon. Use literal protocol keys, paths, commands, and thread ids only where they help the user inspect evidence. Raw `TEAM_ROUTER_*` blocks, `pass`, `requiredChanges: none`, or helper/state labels alone are not an acceptable parent closeout.
 
-Compounding落实 ownership: the manager reports `compoundingDecision`, concrete reason, and evidence. Durable lesson writes are executor-owned and gated through executor/reviewer/verifier; the manager may not self-write the lesson as an exception. Project-level reusable lessons are continuously recorded in `docs/compounding.md`; current task state is recorded in `docs/workbench.md` as a living record and must be refreshed when task state, diff surface, verification, or next gate changes. If no durable file is written, parent closeout states why the compounding record is pending/blocked/skipped rather than silently omitting it.
+Compounding落实 ownership: the manager reports `compoundingDecision`, concrete reason, and evidence. Durable lesson writes are executor-owned and gated through executor/reviewer/verifier; the manager may not self-write the lesson as an exception. Project-level reusable lessons may be recorded in `docs/compounding.md`, and current task state may be refreshed in `docs/workbench.md`, only through a separately authorized workspace-write gate. Review-only, verification-only, and the parent user-facing closeout never write those files automatically. If no durable file is written, parent closeout states why the compounding record is pending/blocked/skipped rather than silently omitting it.
 
 ## roleCloseoutPolicy
 

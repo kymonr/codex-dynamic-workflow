@@ -19,13 +19,13 @@ Team Router controls Codex desktop role threads, registry/ledger, direct return,
 - 审查者 / Reviewer: conditional read-only/adversarial gate; `TEAM_ROUTER_REVIEW`.
 - 验证者 / Verifier: final acceptance; `TEAM_ROUTER_VERDICT`.
 
-Visible titles use `角色-任务名`. Manager first renames parent/current to `调度者-Team Router <task>` with callable `set_thread_title`; adapter-created orchestration also requires `parent_thread_id`. Missing either means `tool_error` before child dispatch. Normalize child role titles with `set_thread_title`.
+Visible titles use `角色-任务名`. Title changes require explicit current-turn authorization and do not occur merely because Manager Mode was activated. Under that authorization, rename parent/current to `调度者-Team Router <task>` with callable `set_thread_title`; adapter-created orchestration also requires `parent_thread_id`. Missing either means `tool_error` before child dispatch. Normalize child role titles with `set_thread_title` only inside an authorized dispatch gate.
 
 ## Manager Mode Hard Rules
 
 Manager Mode only starts on explicit role-intent phrases: “你是管理者”, “你作为管理者”, “团队管理者”, “进入 Manager Mode”, or `act as team manager`. Bare `manager` or `team manager` does not trigger Manager Mode; 裸 `manager` 不触发 Manager Mode.
 
-Manager Mode is sticky for the current task and continues an already-active Manager Mode task with terse follow-ups. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement, classification, or role dispatch. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise dispatch executor/verifier or ask for role switch.
+Manager Mode is sticky for the current task and continues an already-active Manager Mode task with terse follow-ups. Terse follow-ups such as `修`, `继续`, `处理`, `先修`, `开始修`, `修这个`, `go`, or `do it` authorize only plan/rule refinement, classification, or preparation of a dispatch proposal; they do not authorize `create_thread`, message dispatch, or ledger writes. Manager file edits require current-turn explicit authorization for the exact file-changing task; otherwise propose executor/verifier routing or ask for role switch.
 
 Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates; ambiguous follow-ups never skip the next gate. Skill/rule/process writes route executor -> reviewer -> verifier when applicable. Superpowers grants no manager write authority. `local-package` is executor-only.
 
@@ -55,13 +55,21 @@ Team Router dispatch uses Codex desktop thread roles, not collaboration subagent
 
 FAST/NORMAL use executor -> verifier. STRICT/PACKAGE process, role protocol, shared-risk, or same-family discipline changes use executor -> reviewer -> verifier. Completion is direct-return first with bounded `read_thread` fallback. Use `classify_team_router_gate()` for compatibility and `explain_team_router_gate()` when a readable reason is needed.
 
-Small low-risk tasks skip reviewer. Router/manager policy, safety/process/role protocol, and shared/high-risk logic use reviewer(read-only/adversarial) before verifier(read-only acceptance). Reviewer is not final; verifier is. Named reviewer self-changes require a reviewer role thread; no subagent fallback.
+Small low-risk tasks skip reviewer. Router/manager policy, safety/process/role protocol, and shared/high-risk logic use reviewer(read-only/adversarial) before verifier(read-only acceptance). Reviewer is not final; verifier is. Named reviewer self-changes require a reviewer role thread; no subagent fallback. If a review-only request requires a reviewer and no authorized visible reviewer role already exists, report the blocker; do not create one under the review-only gate.
+
+## Lifecycle Gates
+
+- Brainstorming/planning, design acceptance, implementation, verification, closeout file writes, commit, and create task actions are separate gates.
+- `review-only` and verification-only requests do not edit files, create visible roles/tasks, send role messages, or write registry/ledger state.
+- Design acceptance does not authorize implementation, closeout, commit, or create task actions. A named-fix request stays within its authorized findings and files.
+- `create_thread`, role dispatch, and registry/ledger writes require an explicit current-turn create task or dispatch request plus a known objective, scope, permission boundary, and stop condition.
+- A verifier result produces a user-facing report; closeout file writes and commit still require their own authorization. Stop after the authorized stage.
 
 ## Closeout And Handoff
 
 After completion, default is no role-thread clear and no extra `ROLE_CLOSEOUT`; protocol blocks are anchors. Parent closeout still states changed, verified, accepted by, not done/boundary, risks, next gated step, and `compoundingDecision: recorded | skipped`. Records: durable -> `docs/compounding.md`; task living -> `docs/workbench.md`.
 
-Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. Terse approvals authorize at most `DISPATCH_ONLY`; workspace writes require explicit `local-package` executor delegation; local closeout needs verifier pass plus explicit commit request; push/PR/merge/deploy/global sync require separate authorization.
+Classify manager actions as `READ_ONLY`, `DISPATCH_ONLY`, `LOCAL_CLOSEOUT`, `WORKSPACE_WRITE`, `HEAVY_OR_RISKY`, or `EXTERNAL_RELEASE`. Terse approvals may prepare a dispatch proposal but do not execute `DISPATCH_ONLY`; workspace writes require explicit `local-package` executor delegation; local closeout needs verifier pass plus explicit commit request; push/PR/merge/deploy/global sync require separate authorization.
 
 stable file/path handoff: `taskBriefPath`, `executorReportPath`, and `reviewPackagePath` are explicit protocol fields: FAST/NORMAL optional, STRICT recommended, PACKAGE default required unless explicit inline fallback is marked. Runtime validates/records supplied path metadata, but does not read, execute, trust, or auto-generate package files.
 

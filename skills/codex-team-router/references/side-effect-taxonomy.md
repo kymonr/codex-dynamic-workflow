@@ -16,7 +16,7 @@ Allowed for manager assessment, review routing, watcher checks, and commit close
 
 Routing actions: create or reuse role threads when required, send `TEAM_ROUTER_DISPATCH`, `TEAM_ROUTER_REVIEW_REQUEST`, or `TEAM_ROUTER_VERIFY`, record/capture ledger state, and continue direct-return state transitions.
 
-Allowed in Manager Mode when routing work. `DISPATCH_ONLY` is not equivalent to the manager implementing changes.
+Allowed only after an explicit current-turn request to create or dispatch visible roles. Before any `create_thread`, message send, registry, or ledger write, the objective, scope, permission boundary, and stop condition must be known. Planning, review, design acceptance, and terse replies may prepare dispatch metadata but do not execute `DISPATCH_ONLY`. `DISPATCH_ONLY` is not equivalent to the manager implementing changes.
 
 ### LOCAL_CLOSEOUT
 
@@ -46,7 +46,7 @@ Requires separate publish/release authorization, explicitly separate from local 
 
 ## Precedence Rules
 
-In active Manager Mode, terse approvals like `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, and `do it` authorize at most `DISPATCH_ONLY` unless the user explicitly switches out of Manager Mode.
+In active Manager Mode, terse approvals like `可以`, `修`, `继续`, `开始修`, `先修`, `修这个`, and `do it` authorize only a dispatch proposal. They do not authorize `create_thread`, message dispatch, registry/ledger writes, or implementation unless the user explicitly requests that separate gate.
 
 `READ_ONLY` can support manager judgment, review routing, low-frequency/event-driven watcher/read_thread policy, and commit preflight, but it must not become implementation.
 
@@ -60,7 +60,7 @@ In active Manager Mode, terse approvals like `可以`, `修`, `继续`, `开始�
 
 ## Policy Links
 
-Manager Mode hard rule: terse implementation commands in active Manager Mode authorize routing only, not parent-side implementation.
+Manager Mode hard rule: terse implementation commands in active Manager Mode authorize only routing analysis and a dispatch proposal, not actual dispatch or parent-side implementation.
 
 Manager commit closeout policy: local commit closeout is `LOCAL_CLOSEOUT`; it requires verifier pass and explicit commit request, stages only accepted files, and excludes unrelated untracked files plus push/PR/merge/deploy.
 
@@ -68,4 +68,4 @@ roleCloseoutPolicy: final protocol blocks are the closeout; default is no extra 
 
 Watcher/read_thread policy: manager reads are `READ_ONLY` and must remain low-frequency and event-driven.
 
-Named reviewer requirement: when reviewer is required or named for Team Router self changes, use the visible reviewer role conversation. subagent fallback is not allowed.
+Named reviewer requirement: when reviewer is required or named for Team Router self changes, use an already-authorized visible reviewer role conversation. Subagent fallback is not allowed. Under a review-only gate, if no authorized reviewer role exists, report the blocker instead of creating or dispatching one.
