@@ -16,11 +16,38 @@ def read_skill(relative_path):
 class SkillRuntimeCompatTests(unittest.TestCase):
     def test_installed_mirrors_match_canonical_source_bytes(self):
         installed = Path.home() / ".codex/skills"
+        router_source = ROOT / "skills/codex-team-router"
+        router_files = {
+            source.relative_to(router_source)
+            for source in router_source.rglob("*")
+            if source.is_file() and "__pycache__" not in source.parts
+        }
+        router_installed = installed / "codex-team-router"
+        installed_router_files = {
+            source.relative_to(router_installed)
+            for source in router_installed.rglob("*")
+            if source.is_file() and "__pycache__" not in source.parts
+        }
+        self.assertEqual(router_files, installed_router_files)
         pairs = [
-            (ROOT / "skills/codex-team-router/SKILL.md", installed / "codex-team-router/SKILL.md"),
+            *(
+                (source, installed / "codex-team-router" / source.relative_to(router_source))
+                for source in router_source.rglob("*")
+                if source.is_file() and "__pycache__" not in source.parts
+            ),
             (ROOT / "dynamic-workflow/skill/SKILL.md", installed / "dynamic-workflow/SKILL.md"),
+            (ROOT / "dynamic-workflow/skill/agents/openai.yaml", installed / "dynamic-workflow/agents/openai.yaml"),
+            (ROOT / "dynamic-workflow/skill/evals/evals.json", installed / "dynamic-workflow/evals/evals.json"),
             (ROOT / "dynamic-workflow/src/runner.py", installed / "dynamic-workflow/runner.py"),
         ]
+        self.assertEqual(
+            {Path("SKILL.md"), Path("agents/openai.yaml"), Path("evals/evals.json"), Path("runner.py")},
+            {
+                source.relative_to(installed / "dynamic-workflow")
+                for source in (installed / "dynamic-workflow").rglob("*")
+                if source.is_file() and "__pycache__" not in source.parts
+            },
+        )
         for source, mirror in pairs:
             with self.subTest(mirror=mirror):
                 self.assertEqual(source.read_bytes(), mirror.read_bytes())
@@ -34,6 +61,9 @@ class SkillRuntimeCompatTests(unittest.TestCase):
         metadata, body = read_skill("dynamic-workflow/skill/SKILL.md")
         self.assertEqual(set(metadata), {"name", "description"})
         self.assertTrue(metadata["description"].startswith("Use when"))
+        self.assertIn("$dynamic-workflow", metadata["description"])
+        self.assertNotIn("simultaneous review", metadata["description"])
+        self.assertNotIn("worktree task dispatch", metadata["description"])
         self.assertNotIn("multi_agent_v1", body)
         self.assertIn("`spawn_agent`", body)
         self.assertIn("`wait_agent`", body)

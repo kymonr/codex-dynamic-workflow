@@ -1,0 +1,9 @@
+{
+  "skill_name": "dynamic-workflow",
+  "eval_mode": "tabletop-unexecuted",
+  "evals": [
+    {"id": 1, "name": "positive-explicit-dynamic-workflow", "prompt": "用 $dynamic-workflow 设计一个两路只读研究流程。", "expected_output": "Select dynamic workflow and stop at the requested stage.", "files": []},
+    {"id": 2, "name": "negative-specialized-codexreview", "prompt": "codexreview 这组代码。", "expected_output": "Route to codex-parallel-review, not dynamic-workflow.", "files": []},
+    {"id": 3, "name": "negative-specialized-writers", "prompt": "codex worktree 并行修改三块代码。", "expected_output": "Route to worktree-parallel-dispatch, not dynamic-workflow.", "files": []}
+  ]
+}

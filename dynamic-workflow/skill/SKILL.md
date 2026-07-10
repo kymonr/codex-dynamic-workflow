@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Use when the user explicitly asks for dynamic workflow, multi-agent orchestration, parallel agents, simultaneous review, or isolated worktree task dispatch.
+description: Use when the user explicitly asks for $dynamic-workflow or a dynamic multi-agent workflow that is not a dedicated Codex/DeepSeek review or concurrent-writer worktree route.
 ---
 
 # dynamic-workflow:多子代理工作流编排
