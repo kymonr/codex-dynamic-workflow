@@ -3757,6 +3757,8 @@ def make_reviewer_request_message(task_id: str,
         ))
     else:
         lines.extend(_self_thread_only_prompt_lines())
+    if not path_handoff_enabled:
+        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
     if compact_read_only_enabled:
         lines.extend(_compact_callback_summary_prompt_lines(callback_block, task_id))
     else:
@@ -4234,6 +4236,8 @@ def make_verifier_request_message(task_id: str,
         ))
     else:
         lines.extend(_self_thread_only_prompt_lines())
+    if not path_handoff_enabled:
+        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=path_handoff_enabled)
     if path_handoff_enabled:
         lines.extend(("", "verify: scope,permission,packageEvidenceBoundary,reviewer-requiredChanges"))
@@ -6296,6 +6300,12 @@ def _v2_role_prompt(task_id: str,
         lines.append("completionFields: result, summary, requiredChanges, evidenceChecked, risks")
     else:
         lines.append("completionFields: result, summary, findings, requiredChanges, evidenceChecked, risks")
+    if role in {"reviewer", "verifier"}:
+        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; pass=counts only; detail never direct-send")
+        if role == "reviewer":
+            lines.append("compactReviewerBody: findings=findingCounts/topBlockers; requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath")
+        else:
+            lines.append("compactVerifierBody: requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath")
     return "\n".join(lines)
 
 

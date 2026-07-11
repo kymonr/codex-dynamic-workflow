@@ -167,6 +167,14 @@ Manager Mode: manager must not create implementation artifacts itself under acti
 
 roleCloseoutPolicy: final protocol block is still closeout; no extra closeout messages by default.
 
+## Compact Reviewer/Verifier Return
+
+Reviewer and Verifier direct returns to the parent are fixed compact protocol bodies: at most 12 lines and 1200 UTF-8 bytes. The direct-send and self-thread fallback use the same body. Keep parser and identity fields, then one-line human fields only.
+
+For `needs_rework` or `blocked`, put P0-P3, acceptedEvidence, unverifiedClaims, and verifierFocus in a separate role-thread `TEAM_ROUTER_DETAIL taskId=<taskId>` message. Never direct-send that detail to Manager. The compact final block carries only `findingCounts`, `topBlockers`, `detailThreadId`, `detailAnchor`, and `nextGate`. `detailAnchor` identifies that role-thread detail message; it is not a parent-thread anchor.
+
+When `reviewPackagePath` exists, return that path instead and do not generate `TEAM_ROUTER_DETAIL`. For `pass`/`done`, do not generate detail; use count-only evidence such as `tests: N OK; checks: M OK`.
+
 Progressive disclosure: deep details live in references and are part of the Team Router contract.
 
 Commit closeout risk: when committing after policy/reference splits, manager must stage new reference files explicitly, because `git diff --name-only` omits untracked files.

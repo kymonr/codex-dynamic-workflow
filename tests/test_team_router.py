@@ -16985,6 +16985,60 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "history/current turn normally",
         ):
             self.assertNotIn(stale, text)
+class TestCompactReviewerVerifierReturns(unittest.TestCase):
+    def test_v1_and_v2_reviewer_verifier_prompts_require_compact_parent_return(self):
+        task_id = "ctr-20260712-compact-return"
+        callback = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\n"
+            "summary: done\nevidence: tests: 1 OK\nrisks: none\nnext: reviewer"
+        ) % task_id
+        prompts = (
+            team_router.make_reviewer_request_message(
+                task_id, callback, "read-only", "src only", "parent-thread", role_thread_id="reviewer-thread",
+            ),
+            team_router.make_verifier_request_message(
+                task_id, callback, "read-only", "src only", "parent-thread", role_thread_id="verifier-thread",
+            ),
+            team_router._v2_role_prompt(
+                task_id, "reviewer", {"permission": "read-only", "scope": "src only", "stopCondition": "tests pass"},
+                objective="review", role_thread_id="reviewer-thread", return_thread_id="parent-thread",
+            ),
+            team_router._v2_role_prompt(
+                task_id, "verifier", {"permission": "read-only", "scope": "src only", "stopCondition": "tests pass"},
+                objective="verify", role_thread_id="verifier-thread", return_thread_id="parent-thread",
+            ),
+        )
+
+        for prompt in prompts:
+            self.assertIn("compactReturn: <=12 lines/<1200B; same direct/fallback", prompt)
+        self.assertIn("compactReviewerBody: findings=findingCounts/topBlockers; requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath", prompts[2])
+        self.assertIn("compactVerifierBody: requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath", prompts[3])
+        reviewer_body = "\n".join((
+            "TEAM_ROUTER_REVIEW taskId=%s" % task_id,
+            "sourceThreadId: parent-thread", "sourceRoleThreadId: reviewer-thread", "role: Reviewer",
+            "result: needs_rework", "summary: 需修复", "findings: findingCounts=P1:1; topBlockers=边界",
+            "requiredChanges: nextGate=executor; 补测试", "evidenceChecked: detailThreadId=reviewer-thread; detailAnchor=msg-detail",
+            "risks: none",
+        ))
+        verifier_body = "\n".join((
+            "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+            "sourceThreadId: parent-thread", "sourceRoleThreadId: verifier-thread", "role: Verifier",
+            "result: blocked", "summary: 等待修复", "requiredChanges: nextGate=executor; 补测试",
+            "evidenceChecked: detailThreadId=verifier-thread; detailAnchor=msg-detail", "risks: none",
+        ))
+        for parser, body in ((team_router.parse_review, reviewer_body), (team_router.parse_verdict, verifier_body)):
+            direct_body, fallback_body = body, "\n".join(body.splitlines())
+            self.assertEqual(parser(direct_body, task_id).raw, direct_body)
+            self.assertEqual(parser(fallback_body, task_id).raw, fallback_body)
+            self.assertLessEqual(len(direct_body.splitlines()), 12)
+            self.assertLessEqual(len(direct_body.encode("utf-8")), 1200)
+            self.assertEqual(direct_body, fallback_body)
+        reference = (ROOT / "skills" / "codex-team-router" / "references" / "role-handoff-and-review-package.md").read_text(encoding="utf-8")
+        self.assertIn("at most 12 lines and 1200 UTF-8 bytes", reference)
+        self.assertIn("Never direct-send that detail to Manager", reference)
+        self.assertIn("`detailAnchor` identifies that role-thread detail message", reference)
+
+
 class TestTeamRouterV2FacadePreflight(unittest.TestCase):
     def _direct_authorization(self, *, task_id, parent_thread_id, objective):
         return team_router.make_task_authorization_package(
