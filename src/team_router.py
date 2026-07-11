@@ -39,9 +39,14 @@ from team_router_policy import (
     resolve_v2_route,
 )
 from team_router_v2 import (
+    BOOTSTRAP_MODEL,
+    BOOTSTRAP_THINKING,
+    _role_thread_bootstrap_short_field,
     make_task_authorization_package,
+    make_v2_role_bootstrap_prompt,
     prepare_v2_manager_task,
     resolve_v2_manager_plan,
+    target_fingerprint_for,
     v2_continuation_allowed,
 )
 from team_router_protocol import (
@@ -1160,32 +1165,6 @@ def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
     ))
 
 
-def _role_thread_bootstrap_short_field(value: str, field: str, *,
-                                       allowed: set[str] | None = None,
-                                       max_chars: int = 160) -> str:
-    text = _required_str(value, field).strip()
-    if not text:
-        raise StateStoreError("%s must not be blank" % field)
-    if "\r" in text or "\n" in text:
-        raise StateStoreError("%s must be a single-line short field" % field)
-    if len(text) > max_chars:
-        raise StateStoreError("%s is too long for package bootstrap metadata" % field)
-    evidence_markers = (
-        "TEAM_ROUTER_REVIEW",
-        "TEAM_ROUTER_VERDICT",
-        "TEAM_ROUTER_CALLBACK",
-        "evidenceChecked:",
-        "findings:",
-        "requiredChanges:",
-        "<codex_delegation>",
-    )
-    if any(marker in text for marker in evidence_markers):
-        raise StateStoreError("%s must be short metadata, not protocol evidence" % field)
-    if allowed is not None and text not in allowed:
-        raise StateStoreError("%s has unsupported value: %s" % (field, text))
-    return text
-
-
 def make_role_thread_package_bootstrap_message(task_id: str,
                                                role: str,
                                                permission: str,
@@ -1463,6 +1442,600 @@ def _normalize_adapter_role_title(thread_adapter: Any,
         record = dict(record)
         record["title"] = expected_title
     return record
+
+
+def _v2_target_fingerprint(target: Mapping[str, Any], host_id: str,
+                           supplied: str | None) -> str:
+    fingerprint = target_fingerprint_for(target, host_id)
+    if supplied is not None and _required_str(supplied, "targetFingerprint") != fingerprint:
+        raise StateStoreError("target_fingerprint_mismatch")
+    return fingerprint
+
+
+def _v2_parallel_allowed_for_task(state_root: str | Path, project_id: str,
+                                  task_id: str, requested: bool | None) -> bool:
+    if requested is not None and not isinstance(requested, bool):
+        raise StateStoreError("parallelAllowed must be a boolean")
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if not isinstance(plan, Mapping):
+        return False
+    planned = bool(plan.get("parallelAllowed")) and not bool(plan.get("parallelConflicts"))
+    return planned if requested is None else requested and planned
+
+
+def _v2_text(value: Any, field: str) -> str:
+    value = _required_str(value, field).strip()
+    if not value:
+        raise StateStoreError("%s must be a non-empty string" % field)
+    return value
+
+
+def _v2_adapter_failure_reason(exc: Exception) -> str:
+    text = str(exc).lower()
+    return "model_unavailable" if any(word in text for word in ("model", "thinking", "reasoning")) else "thread_tool_error"
+
+
+def _v2_binding_outcome(outcome: str) -> str:
+    return "new" if outcome in {"created", "recovered"} else outcome
+
+
+def _v2_waiting_status(role: str) -> str:
+    try:
+        return {
+            "architect": "awaiting_architect_review",
+            "executor": "awaiting_callback",
+            "reviewer": "reviewing",
+            "qa": "awaiting_qa_review",
+            "verifier": "verifying",
+        }[role]
+    except KeyError as exc:
+        raise StateStoreError("invalid V2 manager pool role: %s" % role) from exc
+
+
+def _v2_dispatch_entry(*,
+                       role: str,
+                       request_id: str,
+                       thread_id: str | None,
+                       host_id: str,
+                       target_fingerprint: str,
+                       requested_model: str | None,
+                       requested_thinking: str | None,
+                       requested_at: str,
+                       creation_accepted: bool | None,
+                       dispatch_accepted: bool,
+                       binding: str | None = None,
+                       message_id: str | None = None,
+                       sent_at: str | None = None,
+                       failure_reason: str | None = None) -> dict[str, Any]:
+    entry = {
+        "role": role,
+        "requestId": request_id,
+        "hostId": host_id,
+        "targetFingerprint": target_fingerprint,
+        "dispatchAccepted": dispatch_accepted,
+    }
+    if thread_id is not None:
+        entry["threadId"] = thread_id
+        entry["sourceRoleThreadId"] = thread_id
+    if requested_model is not None:
+        entry["requestedModel"] = requested_model
+        entry["requestedThinking"] = requested_thinking
+    if creation_accepted is not None:
+        entry.update({
+            "bootstrapModel": BOOTSTRAP_MODEL,
+            "bootstrapThinking": BOOTSTRAP_THINKING,
+            "creationAccepted": creation_accepted,
+        })
+    if binding is not None:
+        entry["binding"] = binding
+    if sent_at is not None:
+        entry["messageId"] = message_id
+        entry["sentAt"] = sent_at
+        entry["searchAnchor"] = _search_anchor(message_id, sent_at)
+    else:
+        entry["requestedAt"] = requested_at
+    if failure_reason is not None:
+        entry["failureReason"] = failure_reason
+    return entry
+
+
+def _v2_terminal_tool_error(state_root: str | Path,
+                            project_id: str,
+                            task_id: str,
+                            *,
+                            parent_thread_id: str,
+                            role: str,
+                            request_id: str,
+                            host_id: str,
+                            target_fingerprint: str,
+                            requested_at: str,
+                            reason: str,
+                            error: Exception | None = None,
+                            thread_id: str | None = None,
+                            requested_model: str | None = None,
+                            requested_thinking: str | None = None,
+                            creation_accepted: bool | None = None,
+                            binding: str | None = None) -> dict[str, Any]:
+    if thread_id is not None:
+        release_role_claim(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            thread_id=thread_id,
+            task_id=task_id,
+            request_id=request_id,
+        )
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    ledger["dispatches"].append(_v2_dispatch_entry(
+        role=role,
+        request_id=request_id,
+        thread_id=thread_id,
+        host_id=host_id,
+        target_fingerprint=target_fingerprint,
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+        requested_at=requested_at,
+        creation_accepted=creation_accepted,
+        dispatch_accepted=False,
+        binding=binding,
+        failure_reason=reason,
+    ))
+    ledger["status"] = "tool_error"
+    ledger["toolError"] = {
+        "reason": reason,
+        "detail": str(error) if error is not None else reason,
+        "capturedAt": requested_at,
+    }
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    cleanup_terminal_manager_pool_task(
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        task_id=task_id,
+        cleaned_at=requested_at,
+    )
+    result = {"outcome": "tool_error", "reason": reason, "ledger": saved}
+    if thread_id is not None:
+        result["threadId"] = thread_id
+    return result
+
+
+def _record_v2_role_dispatch(state_root: str | Path,
+                             project_id: str,
+                             task_id: str,
+                             *,
+                             role: str,
+                             request_id: str,
+                             thread_id: str,
+                             host_id: str,
+                             target_fingerprint: str,
+                             requested_model: str,
+                             requested_thinking: str,
+                             requested_at: str,
+                             creation_accepted: bool | None,
+                             binding: str,
+                             send_result: Any) -> dict[str, Any]:
+    anchor = thread_send_anchor(send_result, fallback_sent_at=requested_at)
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    ledger["dispatches"].append(_v2_dispatch_entry(
+        role=role,
+        request_id=request_id,
+        thread_id=thread_id,
+        host_id=host_id,
+        target_fingerprint=target_fingerprint,
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+        requested_at=requested_at,
+        creation_accepted=creation_accepted,
+        dispatch_accepted=True,
+        binding=binding,
+        message_id=anchor["messageId"],
+        sent_at=anchor["sentAt"],
+    ))
+    ledger["status"] = _v2_waiting_status(role)
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _v2_bootstrap_identity_matches(text: str, *, request_id: str,
+                                   project_id: str, parent_thread_id: str,
+                                   role: str) -> bool:
+    if not isinstance(text, str):
+        return False
+    expected = {
+        "requestId": request_id,
+        "projectId": project_id,
+        "parentThreadId": parent_thread_id,
+        "role": role,
+    }
+    values = {field: [] for field in expected}
+    marker_count = 0
+    for line in text.splitlines():
+        if line.strip() == "TEAM_ROUTER_ROLE_BOOTSTRAP":
+            marker_count += 1
+        for field in expected:
+            match = re.fullmatch(r"\s*%s\s*:\s*(.*?)\s*" % re.escape(field), line)
+            if match:
+                values[field].append(match.group(1))
+    return marker_count == 1 and all(values[field] == [value] for field, value in expected.items())
+
+
+def recover_v2_creation_intent_with_adapter(thread_adapter: Any,
+                                            state_root: str | Path,
+                                            project_id: str,
+                                            *,
+                                            parent_thread_id: str,
+                                            host_id: str,
+                                            target_fingerprint: str,
+                                            role: str,
+                                            task_id: str,
+                                            request_id: str,
+                                            title: str,
+                                            observed_at: str,
+                                            requested_model: str | None = None,
+                                            requested_thinking: str | None = None) -> dict[str, Any]:
+    host_id = _v2_text(host_id, "hostId")
+    target_fingerprint = _v2_text(target_fingerprint, "targetFingerprint")
+    title = _v2_text(title, "title")
+    observed_at = _v2_text(observed_at, "observedAt")
+
+    def fail(reason: str, error: Exception, *, thread_id: str | None = None,
+             creation_accepted: bool | None = None) -> dict[str, Any]:
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=target_fingerprint,
+            requested_at=observed_at,
+            reason=reason,
+            error=error,
+            thread_id=thread_id,
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            creation_accepted=creation_accepted,
+            binding="new",
+        )
+
+    intent = recover_creation_intent(
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        role=role,
+        request_id=request_id,
+        recovered_at=observed_at,
+    )
+    if intent is None or intent.get("outcome") == "busy":
+        return {"outcome": "missing_creation_intent", "role": role, "requestId": request_id} if intent is None else intent
+    if "outcome" in intent:
+        return intent
+    matches_intent = (
+        intent.get("taskId") == task_id
+        and intent.get("hostId") == host_id
+        and intent.get("targetFingerprint") == target_fingerprint
+        and intent.get("role") == role
+        and intent.get("requestId") == request_id
+        and intent.get("parentThreadId") == parent_thread_id
+    )
+    if not matches_intent:
+        return fail("creation_outcome_unknown", StateStoreError("creation intent identity mismatch"))
+    try:
+        listed = _adapter_call(thread_adapter, "list_threads", query=request_id)
+        thread_ids: list[str] = []
+        for item in _thread_list_items(listed):
+            thread_id, _ = _listed_thread_id_and_title(item)
+            if thread_id is not None and thread_id not in thread_ids:
+                thread_ids.append(thread_id)
+        verified: list[str] = []
+        for thread_id in thread_ids:
+            read = _adapter_call(thread_adapter, "read_thread", threadId=thread_id, hostId=host_id)
+            if any(
+                _v2_bootstrap_identity_matches(
+                    message.get("text", ""),
+                    request_id=request_id,
+                    project_id=project_id,
+                    parent_thread_id=parent_thread_id,
+                    role=role,
+                )
+                for message in normalize_thread_read_messages(read)
+            ):
+                verified.append(thread_id)
+    except Exception as exc:
+        return fail(_v2_adapter_failure_reason(exc), exc)
+    if len(verified) != 1:
+        failure = fail(
+            "creation_outcome_unknown",
+            StateStoreError("verified bootstrap candidates: %d" % len(verified)),
+        )
+        recover_creation_intent(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            recovered_at=observed_at,
+        )
+        return failure
+    thread_id = verified[0]
+    try:
+        finalized = finalize_created_role(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            thread_id=thread_id,
+            title=title,
+            created_at=observed_at,
+        )
+        if finalized["outcome"] != "created":
+            raise StateStoreError("role creation finalization failed: %s" % finalized["outcome"])
+        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
+    except Exception as exc:
+        return fail(
+            _v2_adapter_failure_reason(exc),
+            exc,
+            thread_id=thread_id,
+            creation_accepted=True,
+        )
+    return dict(finalized, outcome="recovered", targetFingerprint=target_fingerprint, creationAccepted=True)
+
+
+def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
+                                           state_root: str | Path,
+                                           project_id: str,
+                                           *,
+                                           parent_thread_id: str,
+                                           host_id: str,
+                                           target: Mapping[str, Any],
+                                           role: str,
+                                           task_id: str,
+                                           request_id: str,
+                                           title: str,
+                                           requested_at: str,
+                                           target_fingerprint: str | None = None,
+                                           parallel_allowed: bool | None = None,
+                                           requested_model: str | None = None,
+                                           requested_thinking: str | None = None) -> dict[str, Any]:
+    host_id = _v2_text(host_id, "hostId")
+    title = _v2_text(title, "title")
+    requested_at = _v2_text(requested_at, "requestedAt")
+    fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
+    parallel_allowed = _v2_parallel_allowed_for_task(
+        state_root,
+        project_id,
+        task_id,
+        parallel_allowed,
+    )
+    reservation = reserve_role_or_creation_intent(
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        host_id=host_id,
+        target_fingerprint=fingerprint,
+        role=role,
+        task_id=task_id,
+        request_id=request_id,
+        claimed_at=requested_at,
+        parallel_allowed=parallel_allowed,
+    )
+    if reservation["outcome"] == "reused":
+        role_record = reservation.get("roleRecord")
+        resumed_creation = (
+            isinstance(role_record, Mapping)
+            and role_record.get("creationRequestId") == request_id
+        )
+        binding_outcome = "created" if resumed_creation else "reused"
+        try:
+            _adapter_call(
+                thread_adapter,
+                "set_thread_title",
+                threadId=reservation["threadId"],
+                title=title,
+            )
+        except Exception as exc:
+            return _v2_terminal_tool_error(
+                state_root,
+                project_id,
+                task_id,
+                parent_thread_id=parent_thread_id,
+                role=role,
+                request_id=request_id,
+                host_id=host_id,
+                target_fingerprint=fingerprint,
+                requested_at=requested_at,
+                reason=_v2_adapter_failure_reason(exc),
+                error=exc,
+                thread_id=reservation["threadId"],
+                requested_model=requested_model,
+                requested_thinking=requested_thinking,
+                binding=_v2_binding_outcome(binding_outcome),
+            )
+        return dict(
+            reservation,
+            outcome=binding_outcome,
+            targetFingerprint=fingerprint,
+            creationAccepted=True if resumed_creation else None,
+        )
+    if reservation["outcome"] != "creation_intent":
+        return dict(reservation, targetFingerprint=fingerprint)
+    if reservation.get("existing"):
+        return recover_v2_creation_intent_with_adapter(
+            thread_adapter,
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            role=role,
+            task_id=task_id,
+            request_id=request_id,
+            title=title,
+            observed_at=requested_at,
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+        )
+    try:
+        created = _adapter_call(
+            thread_adapter,
+            "create_thread",
+            prompt=make_v2_role_bootstrap_prompt(
+                request_id=request_id,
+                project_id=project_id,
+                parent_thread_id=parent_thread_id,
+                role=role,
+            ),
+            target=dict(target),
+            model=BOOTSTRAP_MODEL,
+            thinking=BOOTSTRAP_THINKING,
+        )
+        thread_id = _thread_id_from_create_result(created, role)
+        finalized = finalize_created_role(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            thread_id=thread_id,
+            title=title,
+            created_at=requested_at,
+        )
+        if finalized["outcome"] != "created":
+            raise StateStoreError("role creation finalization failed: %s" % finalized["outcome"])
+        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
+    except Exception as exc:
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            requested_at=requested_at,
+            reason=_v2_adapter_failure_reason(exc),
+            error=exc,
+            thread_id=locals().get("thread_id"),
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            binding="new",
+            creation_accepted=False if "thread_id" not in locals() else True,
+        )
+    return dict(finalized, targetFingerprint=fingerprint, creationAccepted=True)
+
+
+def send_v2_role_request_with_adapter(thread_adapter: Any,
+                                      state_root: str | Path,
+                                      project_id: str,
+                                      *,
+                                      parent_thread_id: str,
+                                      host_id: str,
+                                      target: Mapping[str, Any],
+                                      role: str,
+                                      task_id: str,
+                                      request_id: str,
+                                      title: str,
+                                      prompt: str,
+                                      requested_model: str,
+                                      requested_thinking: str,
+                                      requested_at: str,
+                                      target_fingerprint: str | None = None,
+                                      parallel_allowed: bool | None = None) -> dict[str, Any]:
+    requested_model = _v2_text(requested_model, "requestedModel")
+    requested_thinking = _v2_text(requested_thinking, "requestedThinking")
+    host_id = _v2_text(host_id, "hostId")
+    requested_at = _v2_text(requested_at, "requestedAt")
+    fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
+    if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            requested_at=requested_at,
+            reason="model_forbidden",
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+        )
+    binding = resolve_or_create_v2_role_with_adapter(
+        thread_adapter,
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        host_id=host_id,
+        target=target,
+        target_fingerprint=fingerprint,
+        role=role,
+        task_id=task_id,
+        request_id=request_id,
+        title=title,
+        requested_at=requested_at,
+        parallel_allowed=parallel_allowed,
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+    )
+    if binding["outcome"] not in {"created", "reused", "recovered"}:
+        return binding
+    thread_id = binding["threadId"]
+    try:
+        sent = _adapter_call(
+            thread_adapter,
+            "send_message_to_thread",
+            threadId=thread_id,
+            prompt=_v2_text(prompt, "prompt"),
+            model=requested_model,
+            thinking=requested_thinking,
+        )
+    except Exception as exc:
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=binding["targetFingerprint"],
+            requested_at=requested_at,
+            reason=_v2_adapter_failure_reason(exc),
+            error=exc,
+            thread_id=thread_id,
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            creation_accepted=binding.get("creationAccepted"),
+            binding=_v2_binding_outcome(binding["outcome"]),
+        )
+    saved = _record_v2_role_dispatch(
+        state_root,
+        project_id,
+        task_id,
+        role=role,
+        request_id=request_id,
+        thread_id=thread_id,
+        host_id=host_id,
+        target_fingerprint=binding["targetFingerprint"],
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+        requested_at=requested_at,
+        creation_accepted=binding.get("creationAccepted"),
+        binding=_v2_binding_outcome(binding["outcome"]),
+        send_result=sent,
+    )
+    return {
+        "outcome": "sent",
+        "threadId": thread_id,
+        "binding": _v2_binding_outcome(binding["outcome"]),
+        "ledger": saved,
+    }
 
 
 UNAVAILABLE_ROLE_STATUSES = {"archived", "blocked", "broken", "invalid", "unavailable"}

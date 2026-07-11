@@ -68,10 +68,14 @@ class FakeThreadAdapter:
         self.sent = []
         self.renamed = []
         self.messages = {}
+        self.create_error = None
+        self.send_error = None
         self._thread_count = 0
         self._message_count = 0
 
     def create_thread(self, **kwargs):
+        if self.create_error is not None:
+            raise self.create_error
         prompt = kwargs["prompt"]
         role = "role"
         for line in prompt.splitlines():
@@ -92,6 +96,8 @@ class FakeThreadAdapter:
         return record
 
     def send_message_to_thread(self, **kwargs):
+        if self.send_error is not None:
+            raise self.send_error
         self._message_count += 1
         message_id = "msg-%02d" % self._message_count
         sent_at = "2026-06-22T20:%02d:00+08:00" % self._message_count
@@ -6303,6 +6309,385 @@ class TestTeamRouterJsonState(unittest.TestCase):
                 reloaded["projects"][project_id]["roles"]["manager"]["threadId"],
                 "thread-1",
             )
+
+
+class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
+    def setUp(self):
+        self.td = workspace_temp_dir()
+        self.root = Path(self.td.name) / "state"
+        self.project_id = "project-1"
+        self.target = {
+            "type": "project",
+            "projectId": self.project_id,
+            "environment": {"type": "local"},
+        }
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _save_task(self, task_id="task-1", *, parallel_allowed=False):
+        ledger = team_router.new_v2_task_ledger(
+            self.root,
+            self.project_id,
+            task_id,
+            objective="成本感知路由",
+            project_local_path=self.root,
+            parent_thread_id="parent-1",
+            resolved_plan={"routeRoles": ["executor"], "parallelAllowed": parallel_allowed},
+            task_authorization_package={"packageId": "auth-1"},
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        return team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+
+    def _send(self, adapter, *, task_id="task-1", request_id="request-1", **changes):
+        request = {
+            "parent_thread_id": "parent-1",
+            "host_id": "local",
+            "target": self.target,
+            "role": "executor",
+            "task_id": task_id,
+            "request_id": request_id,
+            "title": "执行者-成本感知路由",
+            "prompt": "实现已确认的成本感知路由任务",
+            "requested_model": "gpt-5.6-terra",
+            "requested_thinking": "medium",
+            "requested_at": "2026-07-11T20:00:00+08:00",
+        }
+        request.update(changes)
+        return team_router.send_v2_role_request_with_adapter(
+            adapter,
+            self.root,
+            self.project_id,
+            **request,
+        )
+
+    def _reserve_intent(self, task_id="task-1", request_id="request-1"):
+        fingerprint = team_router.target_fingerprint_for(self.target, "local")
+        team_router.reserve_role_or_creation_intent(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            host_id="local",
+            target_fingerprint=fingerprint,
+            role="executor",
+            task_id=task_id,
+            request_id=request_id,
+            claimed_at="2026-07-11T20:00:00+08:00",
+        )
+        return fingerprint
+
+    def test_v2_executor_uses_luna_bootstrap_then_terra_dispatch_accepted(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        result = self._send(adapter)
+
+        self.assertEqual(result["outcome"], "sent")
+        self.assertEqual(adapter.created[0]["kwargs"]["model"], "gpt-5.6-luna")
+        self.assertEqual(adapter.created[0]["kwargs"]["thinking"], "medium")
+        self.assertIn("requestId: request-1", adapter.created[0]["kwargs"]["prompt"])
+        self.assertNotIn("hostId", adapter.created[0]["kwargs"])
+        self.assertEqual(adapter.sent[0]["kwargs"]["model"], "gpt-5.6-terra")
+        self.assertEqual(adapter.sent[0]["kwargs"]["thinking"], "medium")
+        self.assertNotIn("hostId", adapter.sent[0]["kwargs"])
+        self.assertNotIn("hostId", adapter.renamed[0])
+
+    def test_v2_send_failure_closes_claim_without_awaiting_callback(self):
+        adapter = FakeThreadAdapter()
+        adapter.send_error = RuntimeError("model rejected")
+        self._save_task()
+        result = self._send(adapter)
+
+        self.assertEqual(result["outcome"], "tool_error")
+        self.assertEqual(result["reason"], "model_unavailable")
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertEqual(ledger["status"], "tool_error")
+        self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_creation_intent_recovery_binds_one_verified_bootstrap_identity_without_create(self):
+        class RecoveryAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.read_calls = []
+
+            def list_threads(self, **kwargs):
+                self.listed = dict(kwargs)
+                return {"threads": [{"threadId": "thread-recovered"}]}
+
+            def read_thread(self, **kwargs):
+                self.read_calls.append(dict(kwargs))
+                return super().read_thread(**kwargs)
+
+        adapter = RecoveryAdapter()
+        self._save_task()
+        fingerprint = self._reserve_intent()
+        adapter.messages["thread-recovered"] = [{
+            "text": team_router.make_v2_role_bootstrap_prompt(
+                request_id="request-1",
+                project_id=self.project_id,
+                parent_thread_id="parent-1",
+                role="executor",
+            ),
+        }]
+
+        result = team_router.recover_v2_creation_intent_with_adapter(
+            adapter,
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            host_id="local",
+            target_fingerprint=fingerprint,
+            role="executor",
+            task_id="task-1",
+            request_id="request-1",
+            title="执行者-成本感知路由",
+            observed_at="2026-07-11T20:00:01+08:00",
+        )
+
+        self.assertEqual((result["outcome"], result["threadId"]), ("recovered", "thread-recovered"))
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.listed, {"query": "request-1"})
+        self.assertEqual(adapter.read_calls, [{"threadId": "thread-recovered", "hostId": "local"}])
+        self.assertEqual(adapter.renamed[-1], {
+            "threadId": "thread-recovered",
+            "title": "执行者-成本感知路由",
+        })
+
+    def test_target_fingerprint_for_is_canonical_and_mismatch_fails_before_pool_mutation(self):
+        equivalent = {
+            "environment": {"type": "local"},
+            "projectId": self.project_id,
+            "type": "project",
+        }
+        fingerprint = team_router.target_fingerprint_for(self.target, "local")
+        self.assertEqual(fingerprint, team_router.target_fingerprint_for(equivalent, "local"))
+        self.assertNotEqual(fingerprint, team_router.target_fingerprint_for(self.target, "remote"))
+        self.assertNotEqual(
+            fingerprint,
+            team_router.target_fingerprint_for({**self.target, "projectId": "project-2"}, "local"),
+        )
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.target_fingerprint_for({}, "local")
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.target_fingerprint_for(self.target, "")
+
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        with self.assertRaisesRegex(team_router.StateStoreError, "target_fingerprint_mismatch"):
+            self._send(adapter, target_fingerprint="wrong")
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "planned")
+
+    def test_v2_reused_executor_refreshes_title_and_sends_explicit_model(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        first = self._send(adapter)
+        thread_id = first["threadId"]
+        team_router.release_role_claim(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            role="executor",
+            thread_id=thread_id,
+            task_id="task-1",
+            request_id="request-1",
+        )
+        self._save_task("task-2")
+
+        reused = self._send(
+            adapter,
+            task_id="task-2",
+            request_id="request-2",
+            title="执行者-复用任务",
+            requested_model="gpt-5.6-luna",
+            requested_thinking="medium",
+        )
+
+        self.assertEqual((reused["outcome"], reused["binding"], reused["threadId"]), ("sent", "reused", thread_id))
+        self.assertEqual(len(adapter.created), 1)
+        self.assertEqual(adapter.sent[-1]["kwargs"]["model"], "gpt-5.6-luna")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["thinking"], "medium")
+        self.assertEqual(adapter.renamed[-1], {"threadId": thread_id, "title": "执行者-复用任务"})
+        self.assertEqual(
+            team_router.load_task_ledger(self.root, self.project_id, "task-2")["dispatches"][-1]["binding"],
+            "reused",
+        )
+
+    def test_v2_parallel_allowed_reaches_role_reservation(self):
+        class ParallelAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.role_counts = {}
+
+            def create_thread(self, **kwargs):
+                result = super().create_thread(**kwargs)
+                thread_id = result["threadId"]
+                count = self.role_counts.get(thread_id, 0) + 1
+                self.role_counts[thread_id] = count
+                if count > 1:
+                    unique_id = "%s-%s" % (thread_id, count)
+                    self.messages[unique_id] = self.messages.pop(thread_id)
+                    result["threadId"] = unique_id
+                return result
+
+        adapter = ParallelAdapter()
+        self._save_task("task-1")
+        self._send(adapter, task_id="task-1", request_id="request-1")
+        self._save_task("task-2", parallel_allowed=False)
+        blocked = self._send(adapter, task_id="task-2", request_id="request-2", parallel_allowed=True)
+        self._save_task("task-3", parallel_allowed=True)
+        parallel = self._send(adapter, task_id="task-3", request_id="request-3", parallel_allowed=True)
+        self._save_task("task-4", parallel_allowed=True)
+        inherited = self._send(adapter, task_id="task-4", request_id="request-4")
+
+        self.assertEqual(blocked["outcome"], "busy")
+        self.assertEqual((parallel["outcome"], parallel["binding"]), ("sent", "new"))
+        self.assertEqual((inherited["outcome"], inherited["binding"]), ("sent", "new"))
+        self.assertEqual(len(adapter.created), 3)
+        self.assertNotEqual(adapter.created[0]["result"]["threadId"], adapter.created[1]["result"]["threadId"])
+
+    def test_v2_non_executor_dispatch_uses_its_own_waiting_state(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+
+        result = self._send(
+            adapter,
+            role="verifier",
+            title="验证者-成本感知路由",
+        )
+
+        self.assertEqual(result["outcome"], "sent")
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "verifying")
+
+    def test_dynamic_model_create_failure_records_rejected_creation_and_cleans_intent(self):
+        adapter = FakeThreadAdapter()
+        adapter.create_error = RuntimeError("model rejected")
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "model_unavailable"))
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertFalse(ledger["dispatches"][-1]["creationAccepted"])
+        self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertEqual(pool["creationIntents"], [])
+
+    def test_v2_title_failure_releases_new_role_claim(self):
+        class TitleFailureAdapter(FakeThreadAdapter):
+            def set_thread_title(self, **kwargs):
+                raise RuntimeError("title transport unavailable")
+
+        adapter = TitleFailureAdapter()
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "thread_tool_error"))
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "tool_error")
+
+    def test_sol_ultra_is_forbidden_before_adapter_dispatch(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+
+        result = self._send(
+            adapter,
+            requested_model=" gpt-5.6-sol ",
+            requested_thinking=" ultra ",
+        )
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "model_forbidden"))
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        self.assertEqual(ledger["dispatches"][-1]["requestedModel"], "gpt-5.6-sol")
+
+    def test_creation_intent_recovery_zero_multiple_or_mismatched_candidates_never_create(self):
+        class RecoveryAdapter(FakeThreadAdapter):
+            def __init__(self, candidates, messages):
+                super().__init__()
+                self.candidates = candidates
+                self.messages.update(messages)
+
+            def list_threads(self, **kwargs):
+                return {"threads": [{"threadId": thread_id} for thread_id in self.candidates]}
+
+        valid = lambda request_id: team_router.make_v2_role_bootstrap_prompt(
+            request_id=request_id,
+            project_id=self.project_id,
+            parent_thread_id="parent-1",
+            role="executor",
+        )
+        cases = (
+            ("zero", (), {}),
+            ("multiple", ("thread-a", "thread-b"), {
+                "thread-a": [{"text": valid("request-multiple")}],
+                "thread-b": [{"text": valid("request-multiple")}],
+            }),
+            ("mismatch", ("thread-wrong",), {
+                "thread-wrong": [{"text": valid("request-other")}],
+            }),
+        )
+        for name, candidates, messages in cases:
+            with self.subTest(name=name):
+                task_id, request_id = "task-%s" % name, "request-%s" % name
+                self._save_task(task_id)
+                adapter = RecoveryAdapter(candidates, messages)
+                self._reserve_intent(task_id, request_id)
+
+                result = team_router.resolve_or_create_v2_role_with_adapter(
+                    adapter,
+                    self.root,
+                    self.project_id,
+                    parent_thread_id="parent-1",
+                    host_id="local",
+                    target=self.target,
+                    role="executor",
+                    task_id=task_id,
+                    request_id=request_id,
+                    title="执行者-恢复测试",
+                    requested_at="2026-07-11T20:00:01+08:00",
+                )
+
+                self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "creation_outcome_unknown"))
+                self.assertEqual(adapter.created, [])
+                ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+                self.assertEqual(ledger["status"], "tool_error")
+                self.assertTrue(any(
+                    item.get("parsedFields", {}).get("reason") == "creation_outcome_unknown"
+                    for item in ledger["observations"]
+                ))
+
+    def test_creation_intent_recovery_missing_thread_tools_fails_closed_without_create(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        self._reserve_intent()
+
+        result = team_router.resolve_or_create_v2_role_with_adapter(
+            adapter,
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            host_id="local",
+            target=self.target,
+            role="executor",
+            task_id="task-1",
+            request_id="request-1",
+            title="执行者-恢复测试",
+            requested_at="2026-07-11T20:00:01+08:00",
+        )
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "thread_tool_error"))
+        self.assertEqual(adapter.created, [])
+
+    def test_v2_dispatch_has_no_native_spawn_agent_fallback(self):
+        source = Path(team_router.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("spawn_agent", source)
 
 
 class TestTeamRouterV2RolePool(unittest.TestCase):

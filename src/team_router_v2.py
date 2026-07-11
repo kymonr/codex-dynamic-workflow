@@ -2,7 +2,10 @@
 """Pure Version 2 Manager authorization and planning helpers."""
 from __future__ import annotations
 
-from typing import Any, Mapping
+import hashlib
+import json
+from collections.abc import Mapping
+from typing import Any
 
 from team_router_policy import (
     resolve_effective_gate,
@@ -28,12 +31,75 @@ MODEL_AUTHORIZATION_SOURCES = frozenset({
     "explicit_cost_aware_entry",
     "complete_per_request_override",
 })
+BOOTSTRAP_MODEL = "gpt-5.6-luna"
+BOOTSTRAP_THINKING = "medium"
 
 
 def _text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise StateStoreError("%s must be a non-empty string" % field)
     return value.strip()
+
+
+def _role_thread_bootstrap_short_field(value: str, field: str, *,
+                                       allowed: set[str] | None = None,
+                                       max_chars: int = 160) -> str:
+    text = _text(value, field)
+    if "\r" in text or "\n" in text:
+        raise StateStoreError("%s must be a single-line short field" % field)
+    if len(text) > max_chars:
+        raise StateStoreError("%s is too long for package bootstrap metadata" % field)
+    evidence_markers = (
+        "TEAM_ROUTER_REVIEW",
+        "TEAM_ROUTER_VERDICT",
+        "TEAM_ROUTER_CALLBACK",
+        "evidenceChecked:",
+        "findings:",
+        "requiredChanges:",
+        "<codex_delegation>",
+    )
+    if any(marker in text for marker in evidence_markers):
+        raise StateStoreError("%s must be short metadata, not protocol evidence" % field)
+    if allowed is not None and text not in allowed:
+        raise StateStoreError("%s has unsupported value: %s" % (field, text))
+    return text
+
+
+def target_fingerprint_for(target: Mapping[str, Any], host_id: str) -> str:
+    if not isinstance(target, Mapping) or not target:
+        raise StateStoreError("invalid target fingerprint input")
+    host_id = _text(host_id, "hostId")
+    try:
+        payload = json.dumps(
+            {"hostId": host_id, "target": dict(target)},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise StateStoreError("invalid target fingerprint input") from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
+def make_v2_role_bootstrap_prompt(*,
+                                  request_id: str,
+                                  project_id: str,
+                                  parent_thread_id: str,
+                                  role: str) -> str:
+    return "\n".join((
+        "TEAM_ROUTER_ROLE_BOOTSTRAP",
+        "requestId: %s" % _role_thread_bootstrap_short_field(request_id, "requestId"),
+        "projectId: %s" % _role_thread_bootstrap_short_field(project_id, "projectId"),
+        "parentThreadId: %s" % _role_thread_bootstrap_short_field(parent_thread_id, "parentThreadId"),
+        "role: %s" % _role_thread_bootstrap_short_field(
+            role,
+            "role",
+            allowed={"executor", "reviewer", "verifier", "architect", "qa"},
+            max_chars=32,
+        ),
+        "action: wait_for_formal_dispatch",
+        "doNotExecuteTask: true",
+    ))
 
 
 def make_task_authorization_package(*,
