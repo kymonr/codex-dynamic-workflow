@@ -6575,6 +6575,193 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
         self.assertEqual(pool["creationIntents"], [])
 
+    def test_v2_model_upgrade_is_once_only_and_receipt_is_requested_only(self):
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "explicit_cost_aware_entry",
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+        }
+        ledger.update({
+            "status": "tool_error",
+            "dispatches": [{
+                "role": "executor",
+                "requestId": "request-1",
+                "threadId": "thread-executor",
+                "binding": "reused",
+                "requestedModel": "gpt-5.6-terra",
+                "requestedThinking": "medium",
+                "dispatchAccepted": False,
+                "failureReason": "callback failure",
+            }],
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+
+        upgraded = team_router.record_v2_model_upgrade(
+            self.root,
+            self.project_id,
+            "task-1",
+            parent_thread_id="parent-1",
+            role="executor",
+            failed_request_id="request-1",
+            execution_class="high",
+            completed_results=["parsed existing registry"],
+            read_files=["src/team_router_state.py"],
+            exact_failure="Terra callback could not resolve the concurrency invariant",
+            unresolved=["prove claim release ordering"],
+            requested_at="2026-07-11T21:05:00+08:00",
+        )
+
+        self.assertEqual(upgraded["modelUpgradeCount"], 1)
+        self.assertEqual(upgraded["status"], "needs_rework")
+        self.assertEqual(upgraded["pendingModelUpgrade"]["requestedModel"], "gpt-5.6-sol")
+        self.assertEqual(upgraded["pendingModelUpgrade"]["upgradedFrom"], "gpt-5.6-terra")
+        receipt = team_router.build_v2_routing_receipt(upgraded)
+        self.assertEqual(receipt["roles"][0]["requestedModel"], "gpt-5.6-terra")
+        self.assertFalse(receipt["solUltraDispatched"])
+        self.assertNotIn("actualModel", str(receipt))
+        self.assertNotIn("cost", str(receipt).lower())
+        self.assertNotIn("token", str(receipt).lower())
+
+        blocked = team_router.record_v2_model_upgrade(
+            self.root,
+            self.project_id,
+            "task-1",
+            parent_thread_id="parent-1",
+            role="executor",
+            failed_request_id="request-1",
+            execution_class="high",
+            completed_results=["parsed existing registry"],
+            read_files=["src/team_router_state.py"],
+            exact_failure="same failure",
+            unresolved=["same unresolved work"],
+            requested_at="2026-07-11T21:06:00+08:00",
+        )
+        self.assertEqual((blocked["status"], blocked["reason"]), ("blocked", "model_upgrade_limit"))
+
+    def test_v2_pending_model_upgrade_consumes_once_and_prefers_failed_thread(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "explicit_cost_aware_entry",
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+        }
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        first = self._send(adapter)
+        team_router.release_role_claim(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            role="executor",
+            thread_id=first["threadId"],
+            task_id="task-1",
+            request_id="request-1",
+        )
+        failed = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        failed["status"] = "tool_error"
+        failed["dispatches"][-1]["failureReason"] = "callback failure"
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", failed)
+        team_router.record_v2_model_upgrade(
+            self.root,
+            self.project_id,
+            "task-1",
+            parent_thread_id="parent-1",
+            role="executor",
+            failed_request_id="request-1",
+            execution_class="high",
+            completed_results=["parsed registry"],
+            read_files=["src/team_router_state.py"],
+            exact_failure="Terra could not prove the invariant",
+            unresolved=["prove claim release ordering"],
+            requested_at="2026-07-11T21:05:00+08:00",
+        )
+
+        consumed = self._send(
+            adapter,
+            request_id="request-2",
+            requested_model="gpt-5.6-terra",
+            requested_thinking="medium",
+        )
+
+        self.assertEqual((consumed["outcome"], consumed["threadId"]), ("sent", first["threadId"]))
+        self.assertEqual(adapter.sent[-1]["kwargs"]["model"], "gpt-5.6-sol")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["thinking"], "high")
+        saved = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertEqual(saved["dispatches"][-1]["upgradedFrom"], "gpt-5.6-terra")
+        self.assertNotIn("pendingModelUpgrade", saved)
+        self.assertEqual(saved["modelUpgradeCount"], 1)
+
+    def test_v2_model_upgrade_rejects_success_or_sol_ultra_before_save(self):
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "explicit_cost_aware_entry",
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+        }
+        ledger["dispatches"] = [{
+            "role": "executor", "requestId": "request-1", "threadId": "thread-executor",
+            "requestedModel": "gpt-5.6-terra", "requestedThinking": "medium", "dispatchAccepted": True,
+        }]
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        kwargs = {
+            "parent_thread_id": "parent-1", "role": "executor", "failed_request_id": "request-1",
+            "execution_class": "high", "completed_results": ["parsed registry"],
+            "read_files": ["src/team_router_state.py"], "exact_failure": "could not prove invariant",
+            "unresolved": ["claim ordering"], "requested_at": "2026-07-11T21:05:00+08:00",
+        }
+        with self.assertRaisesRegex(team_router.StateStoreError, "latest request is not failed"):
+            team_router.record_v2_model_upgrade(self.root, self.project_id, "task-1", **kwargs)
+
+        failed = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        failed["dispatches"][-1].update(dispatchAccepted=False, failureReason="callback failure")
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", failed)
+        before = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_forbidden"):
+            team_router.record_v2_model_upgrade(
+                self.root,
+                self.project_id,
+                "task-1",
+                model="gpt-5.6-sol",
+                thinking="ultra",
+                override_reason="forbidden",
+                **kwargs,
+            )
+        after = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+        self.assertEqual(after, before)
+
+    def test_v2_resolved_model_override_reason_reaches_routing_receipt(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._save_task()
+        ledger["plan"] = {
+            **ledger["plan"],
+            "roleRouting": {
+                "executor": {
+                    "executionClass": "standard",
+                    "requestedModel": "gpt-5.6-terra",
+                    "requestedThinking": "medium",
+                    "modelOverrideReason": "fixed host regression reproduction",
+                },
+            },
+        }
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+
+        self._send(adapter)
+        receipt = team_router.build_v2_routing_receipt(
+            team_router.load_task_ledger(self.root, self.project_id, "task-1"),
+        )
+
+        self.assertEqual(receipt["roles"][-1]["modelOverrideReason"], "fixed host regression reproduction")
+
     def test_v2_title_failure_releases_new_role_claim(self):
         class TitleFailureAdapter(FakeThreadAdapter):
             def set_thread_title(self, **kwargs):
@@ -6688,6 +6875,399 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
     def test_v2_dispatch_has_no_native_spawn_agent_fallback(self):
         source = Path(team_router.__file__).read_text(encoding="utf-8")
         self.assertNotIn("spawn_agent", source)
+
+
+class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
+    def setUp(self):
+        self.td = workspace_temp_dir()
+        self.root = Path(self.td.name) / "state"
+        self.project_id = "project-v2-acceptance"
+        self.task_id = "task-v2-acceptance"
+        self.parent_thread_id = "parent-v2-acceptance"
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _save_awaiting_acceptance(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-v2-acceptance",
+            task_id=self.task_id,
+            parent_thread_id=self.parent_thread_id,
+            objective="implement a narrow local fix",
+            scope="src/example.py only",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T21:00:00+08:00",
+            model_routing_authorization={
+                "authorizedBy": "explicit_cost_aware_entry",
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+            },
+        )
+        plan = team_router.resolve_v2_manager_plan(
+            objective=package["objective"],
+            scope=package["scope"],
+            permission=package["permission"],
+            stop_condition=package["stopCondition"],
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            explicit_roles=("executor",),
+            requested_role_routing={"executor": {"executionClass": "standard"}},
+            ledger_input={"taskId": self.task_id, "parentThreadId": self.parent_thread_id},
+        )
+        ledger = team_router.new_v2_task_ledger(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective=package["objective"],
+            project_local_path=self.root,
+            parent_thread_id=self.parent_thread_id,
+            resolved_plan=plan,
+            task_authorization_package=package,
+            created_at="2026-07-11T21:00:00+08:00",
+        )
+        ledger.update({
+            "status": "manager_acceptance_pending",
+            "dispatches": [{
+                "role": "executor",
+                "requestId": "request-1",
+                "threadId": "thread-executor",
+                "binding": "reused",
+                "requestedModel": "gpt-5.6-terra",
+                "requestedThinking": "medium",
+                "dispatchAccepted": True,
+            }],
+            "observations": [{
+                "type": "callback_raw",
+                "role": "executor",
+                "threadId": "thread-executor",
+                "parsedFields": {"status": "done", "final": "true", "summary": "focused test passed"},
+            }],
+        })
+        return team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+    def _capture_executor_callback(self, ledger, *, risks):
+        ledger = dict(ledger)
+        dispatch = dict(ledger["dispatches"][-1])
+        dispatch.update({
+            "messageId": "msg-executor-dispatch",
+            "sentAt": "2026-07-11T21:00:30+08:00",
+            "searchAnchor": {"messageId": "msg-executor-dispatch", "sentAt": "2026-07-11T21:00:30+08:00"},
+        })
+        ledger["dispatches"] = [dispatch]
+        ledger["status"] = "awaiting_callback"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        return team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-executor-dispatch", "sentAt": "2026-07-11T21:00:30+08:00", "text": "dispatch"},
+                {"messageId": "msg-executor-callback", "sentAt": "2026-07-11T21:00:45+08:00", "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: focused fix done\n"
+                    "evidence: 1 focused test OK\nrisks: %s\nnext: manager"
+                ) % (self.task_id, risks)},
+            ],
+            captured_at="2026-07-11T21:01:00+08:00",
+        )
+
+    def test_v2_normal_executor_callback_manager_acceptance_can_finish(self):
+        self._save_awaiting_acceptance()
+
+        accepted = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="pass",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="none",
+        )
+
+        self.assertEqual(accepted["status"], "done")
+        self.assertEqual(accepted["managerAcceptance"]["result"], "pass")
+        self.assertEqual(accepted["closeout"]["acceptedBy"], "manager")
+        self.assertEqual(accepted["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+
+    def test_v2_manager_acceptance_rework_releases_executor_claim(self):
+        self._save_awaiting_acceptance()
+        team_router.reserve_role_or_creation_intent(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            host_id="local",
+            target_fingerprint="target-v2-acceptance",
+            role="executor",
+            task_id=self.task_id,
+            request_id="request-1",
+            claimed_at="2026-07-11T21:00:00+08:00",
+        )
+        team_router.finalize_created_role(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            role="executor",
+            request_id="request-1",
+            thread_id="thread-executor",
+            title="执行者-局部修复",
+            created_at="2026-07-11T21:00:01+08:00",
+        )
+
+        rework = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="needs_rework",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="one narrow follow-up",
+        )
+
+        self.assertEqual((rework["status"], rework["reworkCount"]), ("dispatched", 1))
+        self.assertEqual(rework["preferredThreadId"], "thread-executor")
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_callback_risk_escalation_requires_closed_routing_before_acceptance(self):
+        ledger = self._save_awaiting_acceptance()
+        before = json.dumps(ledger["plan"], sort_keys=True)
+
+        with self.assertRaisesRegex(team_router.StateStoreError, "plan_invalid: missing roleRouting.reviewer"):
+            team_router.next_v2_route_after_evidence(ledger, {"requestedGateClass": "STRICT"})
+        self.assertEqual(json.dumps(ledger["plan"], sort_keys=True), before)
+
+        ledger["plan"] = dict(ledger["plan"])
+        ledger["plan"]["roleRouting"] = {
+            **ledger["plan"]["roleRouting"],
+            "reviewer": {"executionClass": "high", "requestedModel": "gpt-5.6-sol", "requestedThinking": "high"},
+            "verifier": {"executionClass": "mechanical", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium"},
+        }
+        routed = team_router.next_v2_route_after_evidence(
+            ledger,
+            {"requestedGateClass": "STRICT", "risks": "new protocol risk"},
+        )
+
+        self.assertEqual(routed["status"], "reviewing")
+        self.assertEqual(routed["plan"]["requestedGateClass"], "NORMAL")
+        self.assertEqual(routed["plan"]["effectiveGateClass"], "STRICT")
+        self.assertEqual(tuple(routed["plan"]["routeRoles"]), ("executor", "reviewer", "verifier"))
+        observation = routed["observations"][-1]
+        self.assertEqual(observation["parsedFields"]["previousEffectiveGateClass"], "NORMAL")
+        self.assertEqual(observation["parsedFields"]["effectiveGateClass"], "STRICT")
+
+    def test_v2_executor_callback_enters_manager_acceptance(self):
+        updated = self._capture_executor_callback(self._save_awaiting_acceptance(), risks="none")
+
+        self.assertEqual(updated["status"], "manager_acceptance_pending")
+        self.assertEqual(updated["observations"][-1]["type"], "v2_route_reclassified")
+
+    def test_v2_executor_callback_risk_escalation_bypasses_manager_acceptance(self):
+        ledger = self._save_awaiting_acceptance()
+        ledger["plan"] = dict(ledger["plan"])
+        ledger["plan"]["roleRouting"] = {
+            **ledger["plan"]["roleRouting"],
+            "reviewer": {"executionClass": "high", "requestedModel": "gpt-5.6-sol", "requestedThinking": "high"},
+            "verifier": {"executionClass": "mechanical", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium"},
+        }
+        updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
+
+        self.assertEqual(updated["status"], "reviewing")
+        self.assertEqual(tuple(updated["plan"]["routeRoles"]), ("executor", "reviewer", "verifier"))
+
+    def test_v2_callback_route_error_releases_final_executor_claim(self):
+        ledger = self._save_awaiting_acceptance()
+        team_router.reserve_role_or_creation_intent(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            host_id="local",
+            target_fingerprint="target-v2-acceptance",
+            role="executor",
+            task_id=self.task_id,
+            request_id="request-1",
+            claimed_at="2026-07-11T21:00:00+08:00",
+        )
+        team_router.finalize_created_role(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            role="executor",
+            request_id="request-1",
+            thread_id="thread-executor",
+            title="执行者-局部修复",
+            created_at="2026-07-11T21:00:01+08:00",
+        )
+
+        updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
+
+        self.assertEqual(updated["status"], "blocked")
+        self.assertEqual(updated["routingError"]["reason"], "plan_invalid")
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_closeout_parity_manager_and_verifier_share_receipt_and_format_pool_only(self):
+        self._save_awaiting_acceptance()
+        manager_done = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="pass",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="none",
+        )
+
+        verifier = self._save_awaiting_acceptance()
+        verifier.update({
+            "status": "verifying",
+            "verification": {"request": {
+                "role": "verifier", "threadId": "thread-verifier", "messageId": "msg-verify",
+                "sentAt": "2026-07-11T21:02:00+08:00",
+                "searchAnchor": {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00"},
+                "expectedCallback": "TEAM_ROUTER_VERDICT taskId=%s" % self.task_id,
+            }},
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, verifier)
+        verifier_done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-07-11T21:03:00+08:00", "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: verifier pass\n"
+                    "requiredChanges: none\nevidenceChecked: 1 focused test OK\nrisks: none"
+                ) % self.task_id},
+            ],
+            captured_at="2026-07-11T21:04:00+08:00",
+        )
+
+        self.assertEqual(manager_done["closeout"]["routingReceipt"], verifier_done["closeout"]["routingReceipt"])
+        self.assertEqual(verifier_done["closeout"]["acceptedBy"], "verifier")
+        self.assertEqual(verifier_done["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+        registry = {
+            "projects": {
+                self.project_id: {
+                    "roles": {"manager": {"threadId": "legacy-manager"}},
+                    "managerPools": {
+                        self.parent_thread_id: {"roles": {"executor": [{"threadId": "thread-executor"}] }},
+                        "other-parent": {"roles": {"executor": [{"threadId": "other-thread"}] }},
+                    },
+                },
+            },
+        }
+        rendered = team_router.format_closeout_for_user(verifier_done, registry)
+        self.assertIn("executor: thread-executor", rendered)
+        self.assertNotIn("other-thread", rendered)
+        self.assertIn("acceptedBy: verifier", rendered)
+        self.assertIn("routingReceipt:", rendered)
+
+        legacy = {
+            "projectId": self.project_id,
+            "taskId": "legacy-task",
+            "status": "done",
+            "closeout": {"summary": "legacy", "evidenceChecked": "tests", "risks": "none", "nextAction": "none"},
+        }
+        legacy_rendered = team_router.format_closeout_for_user(legacy, registry)
+        self.assertNotIn("acceptedBy:", legacy_rendered)
+        self.assertNotIn("routingReceipt:", legacy_rendered)
+
+    def test_v2_blocked_manager_closeout_stops_heartbeat(self):
+        self._save_awaiting_acceptance()
+        blocked = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="blocked",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="blocked by host",
+        )
+        self.assertEqual((blocked["status"], blocked["closeout"]["watcherAction"]), ("blocked", "stop_and_delete_heartbeat"))
+
+    def test_v2_second_automatic_rework_blocks_and_stops_heartbeat(self):
+        self._save_awaiting_acceptance()
+        first = team_router.record_manager_acceptance(
+            self.root, self.project_id, self.task_id,
+            result="needs_rework", accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send", scope_checked="src/example.py",
+            evidence_checked="1 focused test OK", risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="one narrow follow-up",
+        )
+        first["status"] = "manager_acceptance_pending"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, first)
+
+        blocked = team_router.record_manager_acceptance(
+            self.root, self.project_id, self.task_id,
+            result="needs_rework", accepted_at="2026-07-11T21:02:00+08:00",
+            callback_receipt="direct-send", scope_checked="src/example.py",
+            evidence_checked="1 focused test OK", risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="still unresolved",
+        )
+
+        self.assertEqual((blocked["status"], blocked["reworkCount"]), ("blocked", 1))
+        self.assertEqual(blocked["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+
+    def test_v2_verifier_rework_releases_final_verifier_claim(self):
+        ledger = self._save_awaiting_acceptance()
+        ledger.update({
+            "status": "verifying",
+            "dispatches": [
+                *ledger["dispatches"],
+                {
+                    "role": "verifier", "requestId": "verifier-request-1", "threadId": "thread-verifier",
+                    "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium", "dispatchAccepted": True,
+                },
+            ],
+            "verification": {"request": {
+                "role": "verifier", "threadId": "thread-verifier", "messageId": "msg-verify",
+                "sentAt": "2026-07-11T21:02:00+08:00",
+                "searchAnchor": {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00"},
+            }},
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        team_router.reserve_role_or_creation_intent(
+            self.root, self.project_id,
+            parent_thread_id=self.parent_thread_id, host_id="local", target_fingerprint="target-v2-acceptance",
+            role="verifier", task_id=self.task_id, request_id="verifier-request-1",
+            claimed_at="2026-07-11T21:00:00+08:00",
+        )
+        team_router.finalize_created_role(
+            self.root, self.project_id, parent_thread_id=self.parent_thread_id, role="verifier",
+            request_id="verifier-request-1", thread_id="thread-verifier", title="验证者-局部修复",
+            created_at="2026-07-11T21:00:01+08:00",
+        )
+
+        rework = team_router.capture_verifier_verdict_from_read(
+            self.root, self.project_id, self.task_id,
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-07-11T21:03:00+08:00", "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nresult: needs_rework\nsummary: narrow fix needed\n"
+                    "requiredChanges: add assertion\nevidenceChecked: focused test\nrisks: none"
+                ) % self.task_id},
+            ],
+            captured_at="2026-07-11T21:04:00+08:00",
+        )
+
+        self.assertEqual((rework["status"], rework["reworkCount"], rework["preferredThreadId"]), ("dispatched", 1, "thread-verifier"))
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        self.assertNotIn("claim", pool["roles"]["verifier"][0])
 
 
 class TestTeamRouterV2RolePool(unittest.TestCase):
@@ -6811,6 +7391,25 @@ class TestTeamRouterV2RolePool(unittest.TestCase):
             team_router.load_task_ledger(self.root, self.project_id, task_id)["preferredThreadId"],
             "thread-executor-a",
         )
+
+    def test_v2_role_pool_prefers_requested_idle_thread_when_two_records_exist(self):
+        self._reserve("task-a", "req-a")
+        self._finalize("req-a", "thread-executor-a")
+        self.assertEqual(
+            self._reserve("task-b", "req-b", parallel_allowed=True)["outcome"],
+            "creation_intent",
+        )
+        self._finalize("req-b", "thread-executor-b")
+        self.assertEqual(self._release("task-b", "req-b", "thread-executor-b")["outcome"], "released")
+        self.assertEqual(self._release("task-a", "req-a", "thread-executor-a")["outcome"], "released")
+
+        preferred = self._reserve(
+            "task-c",
+            "req-c",
+            preferred_thread_id="thread-executor-b",
+        )
+
+        self.assertEqual((preferred["outcome"], preferred["threadId"]), ("reused", "thread-executor-b"))
 
     def test_v2_role_pool_replaces_archived_or_corrupt_records(self):
         with self.assertRaises(team_router.StateStoreError):

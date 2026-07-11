@@ -42,9 +42,14 @@ from team_router_v2 import (
     BOOTSTRAP_MODEL,
     BOOTSTRAP_THINKING,
     _role_thread_bootstrap_short_field,
+    build_v2_routing_receipt,
     make_task_authorization_package,
+    make_manager_acceptance_closeout,
     make_v2_role_bootstrap_prompt,
+    next_v2_route_after_evidence,
     prepare_v2_manager_task,
+    record_manager_acceptance,
+    record_v2_model_upgrade,
     resolve_v2_manager_plan,
     target_fingerprint_for,
     v2_continuation_allowed,
@@ -1505,6 +1510,9 @@ def _v2_dispatch_entry(*,
                        creation_accepted: bool | None,
                        dispatch_accepted: bool,
                        binding: str | None = None,
+                       model_override_reason: str | None = None,
+                       upgraded_from: str | None = None,
+                       carry_forward: Mapping[str, Any] | None = None,
                        message_id: str | None = None,
                        sent_at: str | None = None,
                        failure_reason: str | None = None) -> dict[str, Any]:
@@ -1529,6 +1537,12 @@ def _v2_dispatch_entry(*,
         })
     if binding is not None:
         entry["binding"] = binding
+    if model_override_reason is not None:
+        entry["modelOverrideReason"] = model_override_reason
+    if upgraded_from is not None:
+        entry["upgradedFrom"] = upgraded_from
+    if carry_forward is not None:
+        entry["carryForward"] = dict(carry_forward)
     if sent_at is not None:
         entry["messageId"] = message_id
         entry["sentAt"] = sent_at
@@ -1556,7 +1570,8 @@ def _v2_terminal_tool_error(state_root: str | Path,
                             requested_model: str | None = None,
                             requested_thinking: str | None = None,
                             creation_accepted: bool | None = None,
-                            binding: str | None = None) -> dict[str, Any]:
+                            binding: str | None = None,
+                            model_override_reason: str | None = None) -> dict[str, Any]:
     if thread_id is not None:
         release_role_claim(
             state_root,
@@ -1580,6 +1595,7 @@ def _v2_terminal_tool_error(state_root: str | Path,
         creation_accepted=creation_accepted,
         dispatch_accepted=False,
         binding=binding,
+        model_override_reason=model_override_reason,
         failure_reason=reason,
     ))
     ledger["status"] = "tool_error"
@@ -1616,7 +1632,9 @@ def _record_v2_role_dispatch(state_root: str | Path,
                              requested_at: str,
                              creation_accepted: bool | None,
                              binding: str,
-                             send_result: Any) -> dict[str, Any]:
+                             send_result: Any,
+                             model_override_reason: str | None = None,
+                             upgrade: Mapping[str, Any] | None = None) -> dict[str, Any]:
     anchor = thread_send_anchor(send_result, fallback_sent_at=requested_at)
     ledger = load_task_ledger(state_root, project_id, task_id)
     ledger["dispatches"].append(_v2_dispatch_entry(
@@ -1631,11 +1649,52 @@ def _record_v2_role_dispatch(state_root: str | Path,
         creation_accepted=creation_accepted,
         dispatch_accepted=True,
         binding=binding,
+        model_override_reason=model_override_reason,
+        upgraded_from=upgrade.get("upgradedFrom") if isinstance(upgrade, Mapping) else None,
+        carry_forward={
+            field: upgrade[field]
+            for field in ("completedResults", "readFiles", "exactFailure", "unresolved")
+            if isinstance(upgrade, Mapping) and field in upgrade
+        } if isinstance(upgrade, Mapping) else None,
         message_id=anchor["messageId"],
         sent_at=anchor["sentAt"],
     ))
+    if isinstance(upgrade, Mapping):
+        ledger.pop("pendingModelUpgrade", None)
+        ledger.pop("modelUpgradePending", None)
     ledger["status"] = _v2_waiting_status(role)
     return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _v2_pending_model_upgrade(ledger: Mapping[str, Any], role: str) -> Mapping[str, Any] | None:
+    pending = ledger.get("pendingModelUpgrade")
+    if not isinstance(pending, Mapping) or pending.get("role") != role:
+        return None
+    if pending.get("parentThreadId") != ledger.get("parentThreadId"):
+        raise StateStoreError("model_upgrade_identity_mismatch: parentThreadId")
+    for field in ("requestedModel", "requestedThinking", "upgradedFrom", "completedResults", "readFiles", "exactFailure", "unresolved"):
+        value = pending.get(field)
+        if field in {"completedResults", "readFiles", "unresolved"}:
+            if isinstance(value, str) or not isinstance(value, (list, tuple)) or not value:
+                raise StateStoreError("model_upgrade_invalid: %s is required" % field)
+        elif not isinstance(value, str) or not value:
+            raise StateStoreError("model_upgrade_invalid: %s is required" % field)
+    return pending
+
+
+def _v2_upgrade_prompt(prompt: str, upgrade: Mapping[str, Any] | None) -> str:
+    prompt = _v2_text(prompt, "prompt")
+    if not isinstance(upgrade, Mapping):
+        return prompt
+    return "\n".join((
+        prompt,
+        "",
+        "modelUpgrade: true",
+        "completedResults: %s" % json.dumps(upgrade["completedResults"], ensure_ascii=False),
+        "readFiles: %s" % json.dumps(upgrade["readFiles"], ensure_ascii=False),
+        "exactFailure: %s" % upgrade["exactFailure"],
+        "unresolved: %s" % json.dumps(upgrade["unresolved"], ensure_ascii=False),
+    ))
 
 
 def _v2_bootstrap_identity_matches(text: str, *, request_id: str,
@@ -1799,6 +1858,7 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
                                            requested_at: str,
                                            target_fingerprint: str | None = None,
                                            parallel_allowed: bool | None = None,
+                                           preferred_thread_id: str | None = None,
                                            requested_model: str | None = None,
                                            requested_thinking: str | None = None) -> dict[str, Any]:
     host_id = _v2_text(host_id, "hostId")
@@ -1822,6 +1882,7 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
         request_id=request_id,
         claimed_at=requested_at,
         parallel_allowed=parallel_allowed,
+        preferred_thread_id=preferred_thread_id,
     )
     if reservation["outcome"] == "reused":
         role_record = reservation.get("roleRecord")
@@ -1945,12 +2006,48 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
                                       requested_thinking: str,
                                       requested_at: str,
                                       target_fingerprint: str | None = None,
-                                      parallel_allowed: bool | None = None) -> dict[str, Any]:
+                                      parallel_allowed: bool | None = None,
+                                      preferred_thread_id: str | None = None) -> dict[str, Any]:
     requested_model = _v2_text(requested_model, "requestedModel")
     requested_thinking = _v2_text(requested_thinking, "requestedThinking")
     host_id = _v2_text(host_id, "hostId")
     requested_at = _v2_text(requested_at, "requestedAt")
     fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
+    if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            requested_at=requested_at,
+            reason="model_forbidden",
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+        )
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if _required_str(ledger.get("parentThreadId"), "parentThreadId") != _required_str(parent_thread_id, "parentThreadId"):
+        raise StateStoreError("model_upgrade_identity_mismatch: parentThreadId")
+    upgrade = _v2_pending_model_upgrade(ledger, role)
+    model_override_reason = None
+    if upgrade is not None:
+        requested_model = _v2_text(upgrade.get("requestedModel"), "pendingModelUpgrade.requestedModel")
+        requested_thinking = _v2_text(upgrade.get("requestedThinking"), "pendingModelUpgrade.requestedThinking")
+        model_override_reason = upgrade.get("modelOverrideReason")
+        preferred_thread_id = upgrade.get("preferredThreadId") or preferred_thread_id
+        if ledger.get("status") in TERMINAL_STATUSES:
+            ledger["status"] = "needs_rework"
+            ledger["modelUpgradePending"] = True
+            save_task_ledger(state_root, project_id, task_id, ledger)
+    if model_override_reason is None:
+        plan = ledger.get("resolvedPlan") or ledger.get("plan")
+        routing = plan.get("roleRouting") if isinstance(plan, Mapping) else None
+        role_request = routing.get(role) if isinstance(routing, Mapping) else None
+        if isinstance(role_request, Mapping) and isinstance(role_request.get("modelOverrideReason"), str):
+            model_override_reason = role_request["modelOverrideReason"]
     if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
         return _v2_terminal_tool_error(
             state_root,
@@ -1980,6 +2077,7 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
         title=title,
         requested_at=requested_at,
         parallel_allowed=parallel_allowed,
+        preferred_thread_id=preferred_thread_id,
         requested_model=requested_model,
         requested_thinking=requested_thinking,
     )
@@ -1991,7 +2089,7 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
             thread_adapter,
             "send_message_to_thread",
             threadId=thread_id,
-            prompt=_v2_text(prompt, "prompt"),
+            prompt=_v2_upgrade_prompt(prompt, upgrade),
             model=requested_model,
             thinking=requested_thinking,
         )
@@ -2013,6 +2111,7 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
             requested_thinking=requested_thinking,
             creation_accepted=binding.get("creationAccepted"),
             binding=_v2_binding_outcome(binding["outcome"]),
+            model_override_reason=model_override_reason,
         )
     saved = _record_v2_role_dispatch(
         state_root,
@@ -2028,6 +2127,8 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
         requested_at=requested_at,
         creation_accepted=binding.get("creationAccepted"),
         binding=_v2_binding_outcome(binding["outcome"]),
+        model_override_reason=model_override_reason,
+        upgrade=upgrade,
         send_result=sent,
     )
     return {
@@ -3142,11 +3243,69 @@ def _apply_executor_callback_message(ledger: dict[str, Any],
         observation["receipt"] = dict(receipt)
         ledger["observations"].append(observation)
     ledger["callbackReceipt"] = dict(receipt)
+    if task_workflow_version(ledger) == 2:
+        ledger = next_v2_route_after_evidence(ledger, msg.fields)
+        return _clear_waiting_read_state(ledger)
     gate_class = classify_team_router_gate(ledger)
     ledger["gateClass"] = gate_class
     ledger["status"] = "reviewing" if gate_class_requires_reviewer(gate_class) else "verifying"
     ledger = _clear_waiting_read_state(ledger)
     return ledger
+
+
+def _finalize_v2_executor_callback(state_root: str | Path,
+                                   project_id: str,
+                                   task_id: str,
+                                   ledger: dict[str, Any],
+                                   dispatch: Mapping[str, Any],
+                                   msg: ProtocolMessage) -> dict[str, Any]:
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) != 2 or str(msg.fields.get("final", "")).lower() != "true":
+        return saved
+    thread_id = dispatch.get("threadId")
+    request_id = dispatch.get("requestId")
+    if not (isinstance(thread_id, str) and thread_id and isinstance(request_id, str) and request_id):
+        return saved
+    release_role_claim(
+        state_root,
+        project_id,
+        parent_thread_id=_required_str(saved.get("parentThreadId"), "parentThreadId"),
+        role="executor",
+        thread_id=thread_id,
+        task_id=task_id,
+        request_id=request_id,
+    )
+    return load_task_ledger(state_root, project_id, task_id)
+
+
+def _v2_executor_callback_route_error(ledger: dict[str, Any], error: StateStoreError) -> dict[str, Any]:
+    ledger["status"] = "blocked"
+    ledger["routingError"] = {"reason": str(error).split(":", 1)[0], "detail": str(error)}
+    return _clear_waiting_read_state(ledger)
+
+
+def _release_v2_final_role_claim(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 ledger: Mapping[str, Any],
+                                 role: str) -> None:
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    for dispatch in reversed(dispatches):
+        if not isinstance(dispatch, Mapping) or dispatch.get("role") != role:
+            continue
+        thread_id = dispatch.get("threadId")
+        request_id = dispatch.get("requestId")
+        if isinstance(thread_id, str) and thread_id and isinstance(request_id, str) and request_id:
+            release_role_claim(
+                state_root,
+                project_id,
+                parent_thread_id=_required_str(ledger.get("parentThreadId"), "parentThreadId"),
+                role=role,
+                thread_id=thread_id,
+                task_id=task_id,
+                request_id=request_id,
+            )
+        return
 
 
 def capture_executor_callback_from_read(state_root: str | Path,
@@ -3181,8 +3340,13 @@ def capture_executor_callback_from_read(state_root: str | Path,
         else:
             ledger["status"] = "malformed_callback"
         return save_task_ledger(state_root, project_id, task_id, ledger)
-    ledger = _apply_executor_callback_message(ledger, dispatch, msg, captured_at=captured_at)
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    try:
+        ledger = _apply_executor_callback_message(ledger, dispatch, msg, captured_at=captured_at)
+    except StateStoreError as exc:
+        if task_workflow_version(ledger) != 2:
+            raise
+        ledger = _v2_executor_callback_route_error(ledger, exc)
+    return _finalize_v2_executor_callback(state_root, project_id, task_id, ledger, dispatch, msg)
 
 
 
@@ -4046,6 +4210,38 @@ def record_verifier_request_sent(state_root: str | Path,
 def _make_closeout(ledger: Mapping[str, Any],
                    verdict_fields: Mapping[str, Any],
                    captured_at: str) -> dict[str, Any]:
+    if task_workflow_version(ledger) == 2:
+        callback = _latest_executor_callback_observation(ledger)
+        callback_fields = callback.get("parsedFields") if isinstance(callback, Mapping) else {}
+        callback_fields = callback_fields if isinstance(callback_fields, Mapping) else {}
+        terminal = ledger.get("status") in TERMINAL_STATUSES
+        accepted = ledger.get("status") == "done" and verdict_fields.get("result") == "pass"
+        next_gate = "none" if accepted else ("rework" if ledger.get("status") == "dispatched" else "user direction")
+        closeout = {
+            "status": "accepted" if accepted else ledger.get("status"),
+            "capturedAt": captured_at,
+            "acceptedBy": "verifier",
+            "changed": callback_fields.get("summary", "executor callback"),
+            "verified": verdict_fields.get("evidenceChecked", ""),
+            "summary": verdict_fields.get("summary", ""),
+            "requiredChanges": verdict_fields.get("requiredChanges", ""),
+            "evidenceChecked": verdict_fields.get("evidenceChecked", ""),
+            "notDone": "stage/commit/push/PR/publish/release were not done",
+            "risks": verdict_fields.get("risks", ""),
+            "nextGate": next_gate,
+            "nextAction": next_gate,
+            "remainingTodos": "none" if accepted else next_gate,
+            "routingReceipt": build_v2_routing_receipt(ledger),
+            "compoundingDecision": "skipped",
+            "reason": "ordinary successful implementation/testing with no new reusable risk",
+            "watcherAction": "stop_and_delete_heartbeat" if terminal else "",
+        }
+        if terminal:
+            closeout.update({
+                "reportAction": "emit one plain language closeout report to the user",
+                "plainLanguageReport": "required",
+            })
+        return closeout
     accepted = ledger.get("status") == "done" and (
         verdict_fields.get("result") == "pass"
         or verdict_fields.get("status") == "accepted"
@@ -4123,7 +4319,11 @@ def _apply_verifier_verdict_message(ledger: dict[str, Any],
     if result == "pass":
         ledger["status"] = "done"
     elif result == "needs_rework":
-        if ledger["reworkCount"] >= ledger["maxRework"]:
+        if task_workflow_version(ledger) == 2:
+            ledger["status"], ledger["reworkCount"] = next_rework_dispatch(
+                ledger["reworkCount"], ledger["maxRework"],
+            )
+        elif ledger["reworkCount"] >= ledger["maxRework"]:
             ledger["status"] = "blocked"
         else:
             ledger["status"] = "needs_rework"
@@ -4178,7 +4378,20 @@ def capture_verifier_verdict_from_read(state_root: str | Path,
         msg,
         captured_at=captured_at,
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, "verifier")
+        saved = load_task_ledger(state_root, project_id, task_id)
+    if task_workflow_version(saved) == 2 and saved.get("status") in TERMINAL_STATUSES:
+        cleanup_terminal_manager_pool_task(
+            state_root,
+            project_id,
+            parent_thread_id=_required_str(saved.get("parentThreadId"), "parentThreadId"),
+            task_id=task_id,
+            cleaned_at=captured_at,
+        )
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 
 def _read_thread_messages_with_adapter(thread_adapter: Any,
@@ -4822,15 +5035,20 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
         return None
     if msg is None:
         return None
-    ledger = _apply_executor_callback_message(
-        ledger,
-        dispatch,
-        msg,
-        captured_at=captured_at,
-        receipt_source="manager-inbox/direct-send",
-        receipt_channel="manager-inbox",
-    )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    try:
+        ledger = _apply_executor_callback_message(
+            ledger,
+            dispatch,
+            msg,
+            captured_at=captured_at,
+            receipt_source="manager-inbox/direct-send",
+            receipt_channel="manager-inbox",
+        )
+    except StateStoreError as exc:
+        if task_workflow_version(ledger) != 2:
+            raise
+        ledger = _v2_executor_callback_route_error(ledger, exc)
+    return _finalize_v2_executor_callback(state_root, project_id, task_id, ledger, dispatch, msg)
 
 
 

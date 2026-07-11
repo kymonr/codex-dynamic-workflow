@@ -17,8 +17,13 @@ from team_router_state import (
     StateStoreError,
     TERMINAL_STATUSES,
     THREAD_PERMISSIONS,
+    cleanup_terminal_manager_pool_task,
+    load_task_ledger,
     new_v2_task_ledger,
+    next_rework_dispatch,
+    release_role_claim,
     save_task_ledger,
+    task_workflow_version,
 )
 
 
@@ -363,3 +368,398 @@ def prepare_v2_manager_task(state_root: str,
         resolved_plan,
         ledger=save_task_ledger(state_root, project_id, task_id, ledger),
     )
+
+
+def _v2_plan(ledger: Mapping[str, Any]) -> Mapping[str, Any]:
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if not isinstance(plan, Mapping):
+        raise StateStoreError("plan_invalid: resolved V2 plan is required")
+    return plan
+
+
+_V2_GATE_RANK = {"FAST": 0, "NORMAL": 1, "STRICT": 2, "PACKAGE": 3}
+
+
+def _v2_reclassification_gate(plan: Mapping[str, Any], evidence: Mapping[str, Any]) -> str:
+    current = str(plan.get("effectiveGateClass", "")).upper()
+    if current not in _V2_GATE_RANK:
+        raise StateStoreError("plan_invalid: effectiveGateClass")
+    requested = current
+    for field in ("requestedGateClass", "effectiveGateClass", "gateClass", "riskClass"):
+        value = str(evidence.get(field, "")).upper()
+        if value in _V2_GATE_RANK:
+            requested = max(requested, value, key=_V2_GATE_RANK.__getitem__)
+    risk_text = " ".join(str(evidence.get(field, "")) for field in ("risks", "riskBoundary", "notes")).lower()
+    if any(term in risk_text for term in ("package", "strict", "security", "production", "permission", "safety")):
+        requested = max(requested, "STRICT", key=_V2_GATE_RANK.__getitem__)
+    if evidence.get("requiresReviewer") or evidence.get("requiresIndependentReview"):
+        requested = max(requested, "STRICT", key=_V2_GATE_RANK.__getitem__)
+    return requested
+
+
+def _v2_reclassification_role_routing(plan: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    routing = plan.get("roleRouting") if isinstance(plan.get("roleRouting"), Mapping) else {}
+    requests: dict[str, dict[str, Any]] = {}
+    for role, resolved in routing.items():
+        if not isinstance(resolved, Mapping):
+            continue
+        request = {"executionClass": resolved.get("executionClass")}
+        if resolved.get("modelOverrideReason") is not None:
+            request.update({
+                "model": resolved.get("requestedModel"),
+                "thinking": resolved.get("requestedThinking"),
+                "modelOverrideReason": resolved.get("modelOverrideReason"),
+            })
+        requests[str(role)] = request
+    return requests
+
+
+def next_v2_route_after_evidence(ledger: Mapping[str, Any],
+                                 evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """Re-close a V2 route after evidence, without creating or messaging roles."""
+    if task_workflow_version(ledger) != 2:
+        raise StateStoreError("v2_route_reclassification_requires_v2")
+    if not isinstance(evidence, Mapping):
+        raise StateStoreError("evidence must be a mapping")
+    plan = _v2_plan(ledger)
+    for evidence_field, plan_field in (("scope", "scope"), ("permission", "permission"),
+                                       ("stopCondition", "stopCondition")):
+        if evidence_field in evidence and evidence[evidence_field] != plan.get(plan_field):
+            raise StateStoreError("authorization_mismatch: %s" % plan_field)
+    if evidence.get("externalGates"):
+        raise StateStoreError("authorization_mismatch: externalGates")
+    requested_gate = _v2_reclassification_gate(plan, evidence)
+    existing_roles = tuple(plan.get("routeRoles", ()))
+    replanned = resolve_v2_manager_plan(
+        objective=_text(ledger.get("objective"), "objective"),
+        scope=_text(plan.get("scope"), "scope"),
+        permission=_text(plan.get("permission"), "permission"),
+        stop_condition=_text(plan.get("stopCondition"), "stopCondition"),
+        requested_gate_class=requested_gate,
+        authorization_package=ledger.get("taskAuthorizationPackage"),
+        explicit_roles=existing_roles,
+        requested_role_routing=_v2_reclassification_role_routing(plan),
+        requires_parallelism=bool(plan.get("parallelAllowed")),
+        parallel_conflicts=tuple(plan.get("parallelConflicts", ())),
+        ledger_input={
+            "taskId": ledger.get("taskId"),
+            "parentThreadId": ledger.get("parentThreadId"),
+        },
+    )
+    replanned["requestedGateClass"] = plan.get("requestedGateClass")
+    replanned["gateReason"] = "%s; evidence raised effective gate to %s" % (
+        plan.get("gateReason", "requested %s" % plan.get("requestedGateClass")),
+        replanned["effectiveGateClass"],
+    )
+    updated = dict(ledger)
+    updated["plan"] = replanned
+    if isinstance(ledger.get("resolvedPlan"), Mapping):
+        updated["resolvedPlan"] = dict(replanned)
+    route = tuple(replanned["routeRoles"])
+    if "reviewer" in route:
+        updated["status"] = "reviewing"
+    elif "qa" in route:
+        updated["status"] = "awaiting_qa_review"
+    elif "verifier" in route:
+        updated["status"] = "verifying"
+    else:
+        updated["status"] = "manager_acceptance_pending"
+    observations = list(ledger.get("observations", ()))
+    observations.append({
+        "type": "v2_route_reclassified",
+        "role": "manager",
+        "parsedFields": {
+            "previousEffectiveGateClass": plan.get("effectiveGateClass"),
+            "effectiveGateClass": replanned["effectiveGateClass"],
+            "routeRoles": list(route),
+        },
+    })
+    updated["observations"] = observations
+    return updated
+
+
+def build_v2_routing_receipt(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Project recorded dispatch requests without claiming host billing facts."""
+    model_sources: list[Mapping[str, Any]] = []
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    model_sources.extend(item for item in dispatches if isinstance(item, Mapping))
+    plan = _v2_plan(ledger)
+    routing = plan.get("roleRouting") if isinstance(plan.get("roleRouting"), Mapping) else {}
+    model_sources.extend(item for item in routing.values() if isinstance(item, Mapping))
+    pending = ledger.get("pendingModelUpgrade")
+    if isinstance(pending, Mapping):
+        model_sources.append(pending)
+    for source in model_sources:
+        if (source.get("requestedModel"), source.get("requestedThinking")) == ("gpt-5.6-sol", "ultra"):
+            raise StateStoreError("model_forbidden: gpt-5.6-sol ultra")
+    roles: list[dict[str, Any]] = []
+    for dispatch in dispatches:
+        if not isinstance(dispatch, Mapping):
+            continue
+        role = dispatch.get("role")
+        if not isinstance(role, str) or not role:
+            continue
+        item: dict[str, Any] = {
+            "role": role,
+            "binding": dispatch.get("binding", "unknown"),
+            "dispatchAccepted": bool(dispatch.get("dispatchAccepted")),
+        }
+        for field in ("binding", "threadId", "requestedModel", "requestedThinking",
+                      "bootstrapModel", "bootstrapThinking", "creationAccepted",
+                      "dispatchAccepted", "modelOverrideReason", "upgradedFrom"):
+            if field in dispatch:
+                item[field] = dispatch[field]
+        item["reworkCount"] = ledger.get("reworkCount", 0)
+        roles.append(item)
+    return {"roles": roles, "solUltraDispatched": False}
+
+
+def _required_nonempty_strings(value: Any, field: str) -> list[str]:
+    if isinstance(value, str) or not isinstance(value, (list, tuple)) or not value:
+        raise StateStoreError("model_upgrade_invalid: %s is required" % field)
+    values = [_text(item, field) for item in value]
+    if not values:
+        raise StateStoreError("model_upgrade_invalid: %s is required" % field)
+    return values
+
+
+def _latest_v2_role_dispatch(ledger: Mapping[str, Any], role: str) -> Mapping[str, Any] | None:
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    for dispatch in reversed(dispatches):
+        if isinstance(dispatch, Mapping) and dispatch.get("role") == role:
+            return dispatch
+    return None
+
+
+def record_v2_model_upgrade(state_root: str,
+                            project_id: str,
+                            task_id: str,
+                            *,
+                            parent_thread_id: str,
+                            role: str,
+                            failed_request_id: str,
+                            execution_class: str,
+                            model: str | None = None,
+                            thinking: str | None = None,
+                            override_reason: str | None = None,
+                            completed_results: Any,
+                            read_files: Any,
+                            exact_failure: str,
+                            unresolved: Any,
+                            requested_at: str) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if task_workflow_version(ledger) != 2:
+        raise StateStoreError("model_upgrade_requires_v2")
+    if _text(parent_thread_id, "parentThreadId") != _text(ledger.get("parentThreadId"), "parentThreadId"):
+        raise StateStoreError("model_upgrade_identity_mismatch: parentThreadId")
+    role = _text(role, "role")
+    failed_request_id = _text(failed_request_id, "failedRequestId")
+    failed = _latest_v2_role_dispatch(ledger, role)
+    if failed is None or failed.get("requestId") != failed_request_id:
+        raise StateStoreError("model_upgrade_identity_mismatch: failedRequestId")
+    if failed.get("dispatchAccepted") is not False and not str(failed.get("failureReason", "")).strip():
+        raise StateStoreError("model_upgrade_identity_mismatch: latest request is not failed")
+    failed_model = _text(failed.get("requestedModel"), "failedRequest.requestedModel")
+    failed_thinking = _text(failed.get("requestedThinking"), "failedRequest.requestedThinking")
+    completed = _required_nonempty_strings(completed_results, "completedResults")
+    files = _required_nonempty_strings(read_files, "readFiles")
+    failure = _text(exact_failure, "exactFailure")
+    remaining = _required_nonempty_strings(unresolved, "unresolved")
+    resolved = resolve_role_model(
+        _text(execution_class, "executionClass"),
+        model=model,
+        thinking=thinking,
+        override_reason=override_reason,
+    )
+    if (resolved["requestedModel"], resolved["requestedThinking"]) == (failed_model, failed_thinking):
+        raise StateStoreError("model_upgrade_invalid: target model must differ from failed request")
+    plan = _v2_plan(ledger)
+    if role not in tuple(plan.get("routeRoles", ())):
+        raise StateStoreError("model_upgrade_identity_mismatch: role")
+    model_authorization = validate_model_routing_authorization(
+        ledger.get("taskAuthorizationPackage", {}).get("modelRoutingAuthorization")
+        if isinstance(ledger.get("taskAuthorizationPackage"), Mapping) else None,
+        route_roles=(role,),
+    )
+    if not _role_model_is_authorized(resolved, model_authorization):
+        raise StateStoreError("model_authorization_required")
+    if int(ledger.get("modelUpgradeCount", 0)) >= 1:
+        ledger["status"] = "blocked"
+        ledger["reason"] = "model_upgrade_limit"
+        ledger["modelUpgradeError"] = {"reason": "model_upgrade_limit", "requestedAt": _text(requested_at, "requestedAt")}
+        saved = save_task_ledger(state_root, project_id, task_id, ledger)
+        cleanup_terminal_manager_pool_task(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            task_id=task_id,
+            cleaned_at=requested_at,
+        )
+        return load_task_ledger(state_root, project_id, task_id)
+    pending = {
+        "parentThreadId": parent_thread_id,
+        "role": role,
+        "failedRequestId": failed_request_id,
+        "executionClass": resolved["executionClass"],
+        "requestedModel": resolved["requestedModel"],
+        "requestedThinking": resolved["requestedThinking"],
+        "upgradedFrom": failed_model,
+        "completedResults": completed,
+        "readFiles": files,
+        "exactFailure": failure,
+        "unresolved": remaining,
+        "requestedAt": _text(requested_at, "requestedAt"),
+    }
+    if isinstance(failed.get("threadId"), str) and failed.get("threadId"):
+        pending["preferredThreadId"] = failed["threadId"]
+    elif isinstance(ledger.get("preferredThreadId"), str) and ledger.get("preferredThreadId"):
+        pending["preferredThreadId"] = ledger["preferredThreadId"]
+    if "modelOverrideReason" in resolved:
+        pending["modelOverrideReason"] = resolved["modelOverrideReason"]
+    ledger["pendingModelUpgrade"] = pending
+    ledger["modelUpgradeCount"] = 1
+    ledger["status"] = "needs_rework"
+    ledger["modelUpgradePending"] = True
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _v2_final_executor_callback(ledger: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    observations = ledger.get("observations") if isinstance(ledger.get("observations"), list) else []
+    for observation in reversed(observations):
+        if not isinstance(observation, Mapping):
+            continue
+        if observation.get("type") != "callback_raw" or observation.get("role") != "executor":
+            continue
+        fields = observation.get("parsedFields")
+        if not isinstance(fields, Mapping):
+            continue
+        final = str(fields.get("final", "")).strip().lower() == "true"
+        if final and str(fields.get("status", "")).strip().lower() == "done":
+            return fields
+    return None
+
+
+def _release_v2_executor_claim(state_root: str, project_id: str,
+                               task_id: str, ledger: Mapping[str, Any]) -> None:
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    for dispatch in reversed(dispatches):
+        if not isinstance(dispatch, Mapping) or dispatch.get("role") != "executor":
+            continue
+        thread_id = dispatch.get("threadId")
+        request_id = dispatch.get("requestId")
+        if isinstance(thread_id, str) and thread_id and isinstance(request_id, str) and request_id:
+            release_role_claim(
+                state_root,
+                project_id,
+                parent_thread_id=_text(ledger.get("parentThreadId"), "parentThreadId"),
+                role="executor",
+                thread_id=thread_id,
+                task_id=task_id,
+                request_id=request_id,
+            )
+        return
+
+
+def make_manager_acceptance_closeout(ledger: Mapping[str, Any], *,
+                                     completed_at: str) -> dict[str, Any]:
+    acceptance = ledger.get("managerAcceptance")
+    if not isinstance(acceptance, Mapping):
+        raise StateStoreError("manager_acceptance_missing")
+    accepted = ledger.get("status") == "done" and acceptance.get("result") == "pass"
+    callback = _v2_final_executor_callback(ledger) or {}
+    next_gate = "none" if accepted else "user direction"
+    terminal = ledger.get("status") in TERMINAL_STATUSES
+    changed = callback.get("summary", "executor callback")
+    verified = acceptance.get("evidenceChecked", "")
+    closeout = {
+        "status": "accepted" if accepted else ledger.get("status"),
+        "capturedAt": _text(completed_at, "completedAt"),
+        "acceptedBy": "manager",
+        "changed": changed,
+        "verified": verified,
+        "summary": changed,
+        "evidenceChecked": verified,
+        "notDone": "stage/commit/push/PR/publish/release were not done",
+        "risks": acceptance.get("remainingRisks", ""),
+        "nextGate": next_gate,
+        "nextAction": next_gate,
+        "remainingTodos": "none" if accepted else next_gate,
+        "routingReceipt": build_v2_routing_receipt(ledger),
+        "compoundingDecision": "skipped",
+        "reason": acceptance.get("reason") or "ordinary successful implementation/testing with no new reusable risk",
+        "watcherAction": "stop_and_delete_heartbeat" if terminal else "",
+    }
+    if terminal:
+        closeout.update({
+            "reportAction": "emit one plain language closeout report to the user",
+            "plainLanguageReport": "required",
+        })
+    return closeout
+
+
+def record_manager_acceptance(state_root: str,
+                              project_id: str,
+                              task_id: str,
+                              *,
+                              result: str,
+                              accepted_at: str,
+                              callback_receipt: str,
+                              scope_checked: str,
+                              evidence_checked: str,
+                              risk_boundary_checked: str,
+                              remaining_risks: str,
+                              reason: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if task_workflow_version(ledger) != 2:
+        raise StateStoreError("manager_acceptance_requires_v2")
+    if ledger.get("status") != "manager_acceptance_pending":
+        raise StateStoreError("manager_acceptance_not_pending")
+    ledger = next_v2_route_after_evidence(ledger, _v2_final_executor_callback(ledger) or {})
+    if ledger.get("status") != "manager_acceptance_pending":
+        raise StateStoreError("manager_acceptance_not_allowed")
+    result = _text(result, "result")
+    if result not in {"pass", "needs_rework", "blocked"}:
+        raise StateStoreError("invalid manager acceptance result: %s" % result)
+    plan = _v2_plan(ledger)
+    route = tuple(plan.get("routeRoles", ()))
+    gate = str(plan.get("effectiveGateClass", "")).upper()
+    if result == "pass":
+        if gate not in {"FAST", "NORMAL"} or any(role in route for role in ("reviewer", "qa", "verifier")):
+            raise StateStoreError("manager_acceptance_not_allowed")
+        if _v2_final_executor_callback(ledger) is None:
+            raise StateStoreError("manager_acceptance_requires_final_executor_callback")
+    acceptance = {
+        "result": result,
+        "acceptedAt": _text(accepted_at, "acceptedAt"),
+        "callbackReceipt": _text(callback_receipt, "callbackReceipt"),
+        "scopeChecked": _text(scope_checked, "scopeChecked"),
+        "evidenceChecked": _text(evidence_checked, "evidenceChecked"),
+        "riskBoundaryChecked": _text(risk_boundary_checked, "riskBoundaryChecked"),
+        "remainingRisks": _text(remaining_risks, "remainingRisks"),
+    }
+    if reason is not None:
+        acceptance["reason"] = _text(reason, "reason")
+    ledger["managerAcceptance"] = acceptance
+    if result == "pass":
+        ledger["status"] = "done"
+    elif result == "needs_rework":
+        _release_v2_executor_claim(state_root, project_id, task_id, ledger)
+        ledger = load_task_ledger(state_root, project_id, task_id)
+        ledger["managerAcceptance"] = acceptance
+        ledger["status"], ledger["reworkCount"] = next_rework_dispatch(
+            ledger["reworkCount"], ledger["maxRework"],
+        )
+    else:
+        ledger["status"] = "blocked"
+    if ledger["status"] in TERMINAL_STATUSES:
+        ledger["closeout"] = make_manager_acceptance_closeout(ledger, completed_at=accepted_at)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if saved["status"] in TERMINAL_STATUSES:
+        cleanup_terminal_manager_pool_task(
+            state_root,
+            project_id,
+            parent_thread_id=_text(saved.get("parentThreadId"), "parentThreadId"),
+            task_id=task_id,
+            cleaned_at=accepted_at,
+        )
+    return load_task_ledger(state_root, project_id, task_id)

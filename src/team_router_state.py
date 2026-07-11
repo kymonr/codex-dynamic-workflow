@@ -426,7 +426,8 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                                     task_id: str,
                                     request_id: str,
                                     claimed_at: str,
-                                    parallel_allowed: bool = False) -> dict[str, Any]:
+                                    parallel_allowed: bool = False,
+                                    preferred_thread_id: str | None = None) -> dict[str, Any]:
     _validate_task_id(project_id)
     _validate_task_id(task_id)
     parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
@@ -437,6 +438,8 @@ def reserve_role_or_creation_intent(state_root: str | Path,
     claimed_at = _required_str(claimed_at, "claimedAt")
     if not isinstance(parallel_allowed, bool):
         raise StateStoreError("parallelAllowed must be a boolean")
+    if preferred_thread_id is not None:
+        preferred_thread_id = _required_str(preferred_thread_id, "preferredThreadId")
     try:
         with manager_pool_lock(
             state_root,
@@ -484,6 +487,8 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                 and record["threadId"]
                 and _role_record_is_reusable(record)
             ]
+            if preferred_thread_id is not None:
+                matching_records.sort(key=lambda record: record.get("threadId") != preferred_thread_id)
             for record in matching_records:
                 claim = record.get("claim")
                 if not isinstance(claim, Mapping):
