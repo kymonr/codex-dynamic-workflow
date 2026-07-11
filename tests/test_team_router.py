@@ -5560,6 +5560,18 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
 
 
 class TestTeamRouterJsonState(unittest.TestCase):
+    def test_registry_v2_preserves_legacy_roles_and_adds_manager_pools(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+
+            registry = team_router.load_registry(root, project_id)
+            project = registry["projects"][project_id]
+
+            self.assertEqual(registry["version"], 2)
+            self.assertEqual(project["roles"], {})
+            self.assertEqual(project["managerPools"], {})
+
     def test_registry_round_trip_normalizes_missing_fields(self):
         with workspace_temp_dir() as td:
             root = Path(td) / "state"
@@ -5581,11 +5593,12 @@ class TestTeamRouterJsonState(unittest.TestCase):
 
             registry = team_router.load_registry(root, project_id)
 
-            self.assertEqual(registry["version"], 1)
+            self.assertEqual(registry["version"], 2)
             self.assertEqual(registry["stateRoot"], str(root.resolve()))
             project = registry["projects"][project_id]
             self.assertEqual(project["projectId"], project_id)
             self.assertEqual(project["roles"]["manager"]["threadId"], "thread-1")
+            self.assertEqual(project["managerPools"], {})
 
             saved = team_router.save_registry(root, project_id, registry)
             self.assertEqual(saved, registry)
@@ -5602,7 +5615,8 @@ class TestTeamRouterJsonState(unittest.TestCase):
 
             ledger = team_router.load_task_ledger(root, project_id, task_id)
 
-            self.assertEqual(ledger["version"], 1)
+            self.assertEqual(ledger["version"], 2)
+            self.assertEqual(ledger["workflowVersion"], 1)
             self.assertEqual(ledger["taskId"], task_id)
             self.assertEqual(ledger["projectId"], project_id)
             self.assertEqual(ledger["stateRoot"], str(root.resolve()))
@@ -5619,6 +5633,83 @@ class TestTeamRouterJsonState(unittest.TestCase):
                 team_router.load_task_ledger(root, project_id, task_id)["status"],
                 "awaiting_callback",
             )
+
+    def test_missing_workflow_version_is_legacy_and_v2_is_explicit(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            legacy = team_router.new_task_ledger(
+                root,
+                project_id,
+                "legacy-task",
+                objective="legacy",
+                project_local_path=root,
+            )
+            self.assertEqual(team_router.task_workflow_version(legacy), 1)
+            self.assertEqual(legacy["workflowVersion"], 1)
+
+    def test_version_one_nonterminal_ledger_is_not_silently_upgraded(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "legacy-awaiting-plan"
+            ledger = team_router.new_task_ledger(
+                root,
+                project_id,
+                task_id,
+                objective="legacy",
+                project_local_path=root,
+            )
+            ledger["status"] = "awaiting_plan"
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+
+            reloaded = team_router.load_task_ledger(root, project_id, task_id)
+
+            self.assertEqual(team_router.task_workflow_version(reloaded), 1)
+            self.assertEqual(reloaded["status"], "awaiting_plan")
+
+    def test_new_v2_task_ledger_is_explicit_and_keeps_v1_constructor_unchanged(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            resolved_plan = {
+                "effectiveGateClass": "NORMAL",
+                "routeRoles": ["executor"],
+            }
+            authorization_package = {
+                "packageId": "auth-1",
+                "status": "active",
+            }
+
+            ledger = team_router.new_v2_task_ledger(
+                root,
+                project_id,
+                "v2-task",
+                objective="delegated v2 task",
+                project_local_path=root,
+                parent_thread_id="parent-1",
+                resolved_plan=resolved_plan,
+                task_authorization_package=authorization_package,
+                created_at="2026-07-11T20:00:00+08:00",
+            )
+
+            self.assertEqual(team_router.task_workflow_version(ledger), 2)
+            self.assertEqual(ledger["status"], "planned")
+            self.assertEqual(ledger["maxRework"], 1)
+            self.assertEqual(ledger["parentThreadId"], "parent-1")
+            self.assertEqual(ledger["plan"], resolved_plan)
+            self.assertEqual(ledger["taskAuthorizationPackage"], authorization_package)
+            self.assertIsNone(ledger["managerAcceptance"])
+            self.assertEqual(ledger["modelUpgradeCount"], 0)
+
+            legacy = team_router.new_task_ledger(
+                root,
+                project_id,
+                "legacy-task",
+                objective="legacy",
+                project_local_path=root,
+            )
+            self.assertEqual(team_router.task_workflow_version(legacy), 1)
 
     def test_missing_task_ledger_raises_state_store_error(self):
         with workspace_temp_dir() as td:

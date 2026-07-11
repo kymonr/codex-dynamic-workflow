@@ -16,8 +16,8 @@ class StateStoreError(ValueError):
     """Raised when registry or task ledger JSON cannot be read safely."""
 
 
-REGISTRY_VERSION = 1
-TASK_LEDGER_VERSION = 1
+REGISTRY_VERSION = 2
+TASK_LEDGER_VERSION = 2
 ROLE_NAMES = frozenset({"manager", "executor", "reviewer", "verifier", "architect", "qa"})
 LEGACY_CORE_ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
 V2_DELEGATED_BASE_ROLE_NAMES = frozenset({"executor"})
@@ -168,6 +168,13 @@ def _as_int(value: Any, default: int, field: str) -> int:
     return value
 
 
+def task_workflow_version(ledger: Mapping[str, Any]) -> int:
+    version = _as_int(ledger.get("workflowVersion"), 1, "ledger.workflowVersion")
+    if version not in {1, 2}:
+        raise StateStoreError("unsupported ledger.workflowVersion: %s" % version)
+    return version
+
+
 def _read_json_object(path: Path) -> dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as handle:
@@ -204,12 +211,19 @@ def _normalize_registry(data: Mapping[str, Any], state_root: str | Path,
     _validate_task_id(project_id)
     root = str(_resolve_persistent_state_root(state_root))
     registry = dict(data)
+    raw_version = _as_int(registry.get("version"), 1, "registry.version")
+    if raw_version not in {1, REGISTRY_VERSION}:
+        raise StateStoreError("unsupported registry.version: %s" % raw_version)
     projects = _as_mapping(registry.get("projects"), "registry.projects")
     project = _as_mapping(
         projects.get(project_id),
         "registry.projects.%s" % project_id,
     )
     roles = _as_mapping(project.get("roles"), "registry.projects.%s.roles" % project_id)
+    manager_pools = _as_mapping(
+        project.get("managerPools"),
+        "registry.projects.%s.managerPools" % project_id,
+    )
 
     registry["version"] = REGISTRY_VERSION
     registry["stateRoot"] = root
@@ -221,6 +235,7 @@ def _normalize_registry(data: Mapping[str, Any], state_root: str | Path,
     project.setdefault("hostId", "")
     project["projectId"] = project_id
     project["roles"] = roles
+    project["managerPools"] = manager_pools
     projects[project_id] = project
     registry["projects"] = projects
     return registry
@@ -247,6 +262,7 @@ def _normalize_task_ledger(data: Mapping[str, Any], state_root: str | Path,
     _validate_task_id(project_id)
     _validate_task_id(task_id)
     ledger = dict(data)
+    ledger["workflowVersion"] = task_workflow_version(ledger)
     ledger["version"] = TASK_LEDGER_VERSION
     ledger["taskId"] = task_id
     ledger["projectId"] = project_id
@@ -276,6 +292,24 @@ def _normalize_task_ledger(data: Mapping[str, Any], state_root: str | Path,
     ledger["verification"] = None if verification is None else _as_mapping(verification, "ledger.verification", default_empty=False)
     review_package = ledger.get("reviewPackage")
     ledger["reviewPackage"] = None if review_package is None else _as_mapping(review_package, "ledger.reviewPackage", default_empty=False)
+    authorization_package = ledger.get("taskAuthorizationPackage")
+    ledger["taskAuthorizationPackage"] = None if authorization_package is None else _as_mapping(
+        authorization_package,
+        "ledger.taskAuthorizationPackage",
+        default_empty=False,
+    )
+    manager_acceptance = ledger.get("managerAcceptance")
+    ledger["managerAcceptance"] = None if manager_acceptance is None else _as_mapping(
+        manager_acceptance,
+        "ledger.managerAcceptance",
+        default_empty=False,
+    )
+    resolved_plan = ledger.get("resolvedPlan")
+    ledger["resolvedPlan"] = None if resolved_plan is None else _as_mapping(
+        resolved_plan,
+        "ledger.resolvedPlan",
+        default_empty=False,
+    )
     ledger.setdefault("closeout", None)
     return ledger
 
@@ -305,6 +339,42 @@ def new_task_ledger(state_root: str | Path,
         "verification": None,
         "closeout": None,
     }, state_root, project_id, task_id)
+
+
+def new_v2_task_ledger(state_root: str | Path,
+                       project_id: str,
+                       task_id: str,
+                       *,
+                       objective: str,
+                       project_local_path: str | Path,
+                       parent_thread_id: str,
+                       resolved_plan: Mapping[str, Any],
+                       task_authorization_package: Mapping[str, Any],
+                       created_at: str,
+                       max_rework: int = 1) -> dict[str, Any]:
+    ledger = new_task_ledger(
+        state_root,
+        project_id,
+        task_id,
+        objective=objective,
+        project_local_path=project_local_path,
+        max_rework=max_rework,
+    )
+    ledger.update({
+        "workflowVersion": 2,
+        "parentThreadId": _required_str(parent_thread_id, "parentThreadId"),
+        "createdAt": _required_str(created_at, "createdAt"),
+        "status": "planned",
+        "plan": _as_mapping(resolved_plan, "resolvedPlan", default_empty=False),
+        "taskAuthorizationPackage": _as_mapping(
+            task_authorization_package,
+            "taskAuthorizationPackage",
+            default_empty=False,
+        ),
+        "managerAcceptance": None,
+        "modelUpgradeCount": 0,
+    })
+    return _normalize_task_ledger(ledger, state_root, project_id, task_id)
 
 
 def load_task_ledger(state_root: str | Path, project_id: str,
