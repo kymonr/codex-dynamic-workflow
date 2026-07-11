@@ -33,6 +33,10 @@ from team_router_policy import (
     explain_team_router_route,
     gate_class_requires_reviewer,
     reviewer_gate_required_for_ledger,
+    resolve_effective_gate,
+    resolve_role_model,
+    resolve_v2_execution_mode,
+    resolve_v2_route,
 )
 from team_router_protocol import (
     CONDITIONAL_REQUIRED_BY_MARKER,
@@ -124,6 +128,7 @@ from team_router_status import (
 from team_router_state import (
     CONDITIONAL_ROLE_NAMES,
     CORE_ROLE_NAMES,
+    LEGACY_CORE_ROLE_NAMES,
     RECOVERABLE_STATUSES,
     REGISTRY_VERSION,
     ROLE_ALIASES,
@@ -133,6 +138,8 @@ from team_router_state import (
     TASK_LEDGER_VERSION,
     TERMINAL_STATUSES,
     THREAD_PERMISSIONS,
+    V2_CONDITIONAL_ROLE_NAMES,
+    V2_DELEGATED_BASE_ROLE_NAMES,
     StateStoreError,
     _as_int,
     _as_list,
@@ -1058,6 +1065,13 @@ def protocol_contract_snapshot() -> dict[str, Any]:
     return {
         "parentSideRoles": PARENT_SIDE_ROLES,
         "coreRoleNames": sorted(CORE_ROLE_NAMES),
+        "workflowContracts": {
+            "v1": {"coreRoles": sorted(LEGACY_CORE_ROLE_NAMES)},
+            "v2": {
+                "baseRoles": sorted(V2_DELEGATED_BASE_ROLE_NAMES),
+                "conditionalRoles": sorted(V2_CONDITIONAL_ROLE_NAMES),
+            },
+        },
         "conditionalRoleNames": sorted(CONDITIONAL_ROLE_NAMES),
         "conditionalRolePolicy": {
             "fixedBuiltInRoles": sorted(CONDITIONAL_ROLE_NAMES),

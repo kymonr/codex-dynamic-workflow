@@ -19,7 +19,10 @@ class StateStoreError(ValueError):
 REGISTRY_VERSION = 1
 TASK_LEDGER_VERSION = 1
 ROLE_NAMES = frozenset({"manager", "executor", "reviewer", "verifier", "architect", "qa"})
-CORE_ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
+LEGACY_CORE_ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
+V2_DELEGATED_BASE_ROLE_NAMES = frozenset({"executor"})
+V2_CONDITIONAL_ROLE_NAMES = frozenset({"reviewer", "verifier", "architect", "qa"})
+CORE_ROLE_NAMES = LEGACY_CORE_ROLE_NAMES
 CONDITIONAL_ROLE_NAMES = frozenset({"reviewer", "architect", "qa"})
 ROLE_DISPLAY_NAMES = {
     "manager": "规划者",

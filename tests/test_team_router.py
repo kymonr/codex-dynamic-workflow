@@ -1262,6 +1262,128 @@ risks: none
         self.assertTrue(snapshot["conditionalRolePolicy"]["noCustomRoleRegistry"])
         self.assertEqual(snapshot["conditionalRolePolicy"]["runtimeSkillLoading"], "not supported")
 
+    def test_versioned_role_contract_keeps_legacy_manager_but_v2_does_not_create_it(self):
+        self.assertEqual(
+            team_router.LEGACY_CORE_ROLE_NAMES,
+            frozenset({"manager", "executor", "verifier"}),
+        )
+        self.assertEqual(team_router.V2_DELEGATED_BASE_ROLE_NAMES, frozenset({"executor"}))
+        self.assertNotIn("manager", team_router.V2_DELEGATED_BASE_ROLE_NAMES)
+        snapshot = team_router.protocol_contract_snapshot()
+        self.assertEqual(snapshot["workflowContracts"]["v1"]["coreRoles"], ["executor", "manager", "verifier"])
+        self.assertEqual(snapshot["workflowContracts"]["v2"]["baseRoles"], ["executor"])
+
+    def test_resolve_role_model_defaults_and_rejects_sol_ultra(self):
+        self.assertEqual(
+            team_router.resolve_role_model("mechanical"),
+            {
+                "executionClass": "mechanical",
+                "requestedModel": "gpt-5.6-luna",
+                "requestedThinking": "medium",
+            },
+        )
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_override_invalid"):
+            team_router.resolve_role_model("standard", model="gpt-5.5")
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_forbidden"):
+            team_router.resolve_role_model(
+                "high",
+                model="gpt-5.6-sol",
+                thinking="ultra",
+                override_reason="manual override",
+            )
+
+    def test_v2_manager_direct_is_decided_before_route_closure(self):
+        mode = team_router.resolve_v2_execution_mode(
+            "NORMAL",
+            explicit_roles=(),
+            requires_parallelism=False,
+            requires_independent_context=False,
+            requires_independent_review=False,
+            lightweight_verification_available=True,
+        )
+        self.assertEqual(mode, "manager_direct")
+        delegated_cases = (
+            {"explicit_roles": ("architect",)},
+            {"requires_parallelism": True},
+            {"requires_independent_context": True},
+            {"requires_independent_review": True},
+            {"lightweight_verification_available": False},
+        )
+        for overrides in delegated_cases:
+            with self.subTest(overrides=overrides):
+                arguments = {
+                    "explicit_roles": (),
+                    "requires_parallelism": False,
+                    "requires_independent_context": False,
+                    "requires_independent_review": False,
+                    "lightweight_verification_available": True,
+                }
+                arguments.update(overrides)
+                self.assertEqual(
+                    team_router.resolve_v2_execution_mode("NORMAL", **arguments),
+                    "delegated",
+                )
+        for gate in ("STRICT", "PACKAGE"):
+            with self.subTest(gate=gate):
+                self.assertEqual(team_router.resolve_v2_execution_mode(gate), "delegated")
+
+    def test_v2_local_package_permission_does_not_raise_risk_by_name(self):
+        ledger = {
+            "workflowVersion": 2,
+            "objective": "ordinary local docs update",
+            "permission": "local-package",
+        }
+        resolved = team_router.resolve_effective_gate(
+            "NORMAL",
+            ledger,
+            authorization={"workspaceWrite": True},
+        )
+        self.assertEqual(resolved["requestedGateClass"], "NORMAL")
+        self.assertEqual(resolved["effectiveGateClass"], "NORMAL")
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
+        with self.assertRaisesRegex(team_router.StateStoreError, "authorization_missing"):
+            team_router.resolve_effective_gate(
+                "NORMAL",
+                ledger,
+                authorization={"workspaceWrite": False},
+            )
+
+        strict = team_router.resolve_effective_gate(
+            "NORMAL",
+            {"workflowVersion": 2, "objective": "Team Router permission policy change"},
+            authorization={},
+        )
+        self.assertEqual(strict["effectiveGateClass"], "STRICT")
+        self.assertEqual(
+            team_router.resolve_effective_gate(
+                "STRICT",
+                {"workflowVersion": 2, "objective": "ordinary helper"},
+                authorization={},
+            )["effectiveGateClass"],
+            "STRICT",
+        )
+
+    def test_v2_route_closes_conditional_role_dependencies(self):
+        self.assertEqual(team_router.resolve_v2_route("NORMAL"), ("executor",))
+        self.assertEqual(
+            team_router.resolve_v2_route("STRICT"),
+            ("executor", "reviewer", "verifier"),
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", ("reviewer",)),
+            ("executor", "reviewer", "verifier"),
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", ("qa",)),
+            ("executor", "qa", "verifier"),
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", ("architect",)),
+            ("architect", "executor"),
+        )
+        with self.assertRaisesRegex(team_router.StateStoreError, "invalid v2 role"):
+            team_router.resolve_v2_route("NORMAL", ("manager",))
+
     def test_role_delivery_fields_cover_all_direct_return_roles(self):
         expected = {
             "executor": ("callbackDelivery", "callbackFallback"),
