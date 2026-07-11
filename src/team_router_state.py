@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager
+import hashlib
 import json
 import os
 import uuid
@@ -255,6 +257,726 @@ def save_registry(state_root: str | Path, project_id: str,
     normalized = _normalize_registry(registry, state_root, project_id)
     _atomic_write_json(registry_path(state_root, project_id), normalized)
     return normalized
+
+
+def manager_pool_lock_path(state_root: str | Path,
+                           project_id: str,
+                           parent_thread_id: str) -> Path:
+    _validate_task_id(project_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    parent_key = hashlib.sha256(parent_thread_id.encode("utf-8")).hexdigest()
+    return (
+        _resolve_persistent_state_root(state_root)
+        / "projects" / project_id / "manager-pools" / (parent_key + ".lock")
+    )
+
+
+@contextmanager
+def manager_pool_lock(state_root: str | Path,
+                      project_id: str,
+                      parent_thread_id: str,
+                      *,
+                      task_id: str,
+                      request_id: str,
+                      acquired_at: str):
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    request_id = _required_str(request_id, "requestId")
+    acquired_at = _required_str(acquired_at, "acquiredAt")
+    lock_path = manager_pool_lock_path(state_root, project_id, parent_thread_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({
+        "projectId": project_id,
+        "parentThreadId": parent_thread_id,
+        "taskId": task_id,
+        "requestId": request_id,
+        "pid": os.getpid(),
+        "acquiredAt": acquired_at,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        os.write(fd, payload)
+        yield
+    finally:
+        os.close(fd)
+        try:
+            if lock_path.read_bytes() == payload:
+                lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _manager_pool(registry: dict[str, Any], project_id: str,
+                  parent_thread_id: str) -> dict[str, Any]:
+    projects = _as_mapping(registry.get("projects"), "registry.projects")
+    project = _as_mapping(
+        projects.get(project_id),
+        "registry.projects.%s" % project_id,
+        default_empty=False,
+    )
+    manager_pools = _as_mapping(
+        project.get("managerPools"),
+        "registry.projects.%s.managerPools" % project_id,
+    )
+    pool = _as_mapping(
+        manager_pools.get(parent_thread_id),
+        "registry.projects.%s.managerPools.%s" % (project_id, parent_thread_id),
+    )
+    pool["roles"] = _as_mapping(pool.get("roles"), "managerPool.roles")
+    pool["creationIntents"] = _as_list(
+        pool.get("creationIntents"),
+        "managerPool.creationIntents",
+    )
+    manager_pools[parent_thread_id] = pool
+    project["managerPools"] = manager_pools
+    projects[project_id] = project
+    registry["projects"] = projects
+    return pool
+
+
+def _pool_role_records(pool: dict[str, Any], role: str) -> list[dict[str, Any]]:
+    _validate_v2_pool_role(role)
+    roles = _as_mapping(pool.get("roles"), "managerPool.roles")
+    records = _as_list(roles.get(role), "managerPool.roles.%s" % role)
+    normalized: list[dict[str, Any]] = []
+    for record in records:
+        normalized.append(_as_mapping(record, "managerPool.roles.%s[]" % role, default_empty=False))
+    roles[role] = normalized
+    pool["roles"] = roles
+    return normalized
+
+
+def _pool_creation_intents(pool: dict[str, Any]) -> list[dict[str, Any]]:
+    intents = _as_list(pool.get("creationIntents"), "managerPool.creationIntents")
+    normalized: list[dict[str, Any]] = []
+    for intent in intents:
+        normalized.append(_as_mapping(intent, "managerPool.creationIntents[]", default_empty=False))
+    pool["creationIntents"] = normalized
+    return normalized
+
+
+def _creation_intent_matches(intent: Mapping[str, Any], *, parent_thread_id: str,
+                             host_id: str, target_fingerprint: str, role: str,
+                             task_id: str | None = None,
+                             request_id: str | None = None) -> bool:
+    if (
+        intent.get("parentThreadId") != parent_thread_id
+        or intent.get("hostId") != host_id
+        or intent.get("targetFingerprint") != target_fingerprint
+        or intent.get("role") != role
+    ):
+        return False
+    return (
+        (task_id is None or intent.get("taskId") == task_id)
+        and (request_id is None or intent.get("requestId") == request_id)
+    )
+
+
+def _find_creation_intent(pool: dict[str, Any], *, parent_thread_id: str,
+                          role: str, request_id: str) -> dict[str, Any] | None:
+    for intent in _pool_creation_intents(pool):
+        if (
+            intent.get("parentThreadId") == parent_thread_id
+            and intent.get("role") == role
+            and intent.get("requestId") == request_id
+        ):
+            return intent
+    return None
+
+
+def _pool_busy(role: str, request_id: str) -> dict[str, Any]:
+    return {"outcome": "busy", "role": role, "requestId": request_id}
+
+
+def _role_record_is_reusable(record: Mapping[str, Any]) -> bool:
+    if record.get("archived") is True:
+        return False
+    for key in ("status", "state", "threadStatus", "availability"):
+        value = record.get(key)
+        if value is None:
+            continue
+        status = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+        if status in {"archived", "blocked", "broken", "invalid", "unavailable"}:
+            return False
+    claim = record.get("claim")
+    if claim is None:
+        return True
+    if not isinstance(claim, Mapping):
+        return False
+    return all(
+        isinstance(claim.get(field), str) and claim[field]
+        for field in ("taskId", "requestId", "claimedAt")
+    )
+
+
+def _validate_v2_pool_role(role: str) -> None:
+    _validate_role(role)
+    if role not in V2_DELEGATED_BASE_ROLE_NAMES | V2_CONDITIONAL_ROLE_NAMES:
+        raise StateStoreError("invalid V2 manager pool role: %s" % role)
+
+
+def reserve_role_or_creation_intent(state_root: str | Path,
+                                    project_id: str,
+                                    *,
+                                    parent_thread_id: str,
+                                    host_id: str,
+                                    target_fingerprint: str,
+                                    role: str,
+                                    task_id: str,
+                                    request_id: str,
+                                    claimed_at: str,
+                                    parallel_allowed: bool = False) -> dict[str, Any]:
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    host_id = _required_str(host_id, "hostId")
+    target_fingerprint = _required_str(target_fingerprint, "targetFingerprint")
+    _validate_v2_pool_role(role)
+    request_id = _required_str(request_id, "requestId")
+    claimed_at = _required_str(claimed_at, "claimedAt")
+    if not isinstance(parallel_allowed, bool):
+        raise StateStoreError("parallelAllowed must be a boolean")
+    try:
+        with manager_pool_lock(
+            state_root,
+            project_id,
+            parent_thread_id,
+            task_id=task_id,
+            request_id=request_id,
+            acquired_at=claimed_at,
+        ):
+            registry = load_registry(state_root, project_id)
+            pool = _manager_pool(registry, project_id, parent_thread_id)
+            records = _pool_role_records(pool, role)
+            intents = _pool_creation_intents(pool)
+
+            same_request = _find_creation_intent(
+                pool,
+                parent_thread_id=parent_thread_id,
+                role=role,
+                request_id=request_id,
+            )
+            if same_request is not None:
+                if _creation_intent_matches(
+                    same_request,
+                    parent_thread_id=parent_thread_id,
+                    host_id=host_id,
+                    target_fingerprint=target_fingerprint,
+                    role=role,
+                    task_id=task_id,
+                    request_id=request_id,
+                ):
+                    return {
+                        "outcome": "creation_intent",
+                        "role": role,
+                        "requestId": request_id,
+                        "creationIntent": dict(same_request),
+                        "existing": True,
+                    }
+                return _pool_busy(role, request_id)
+
+            matching_records = [
+                record for record in records
+                if record.get("hostId") == host_id
+                and record.get("targetFingerprint") == target_fingerprint
+                and isinstance(record.get("threadId"), str)
+                and record["threadId"]
+                and _role_record_is_reusable(record)
+            ]
+            for record in matching_records:
+                claim = record.get("claim")
+                if not isinstance(claim, Mapping):
+                    record["claim"] = {
+                        "taskId": task_id,
+                        "requestId": request_id,
+                        "claimedAt": claimed_at,
+                    }
+                    save_registry(state_root, project_id, registry)
+                    return {
+                        "outcome": "reused",
+                        "role": role,
+                        "threadId": record["threadId"],
+                        "roleRecord": dict(record),
+                    }
+                if claim.get("taskId") == task_id and claim.get("requestId") == request_id:
+                    return {
+                        "outcome": "reused",
+                        "role": role,
+                        "threadId": record["threadId"],
+                        "roleRecord": dict(record),
+                    }
+
+            matching_intents = [
+                intent for intent in intents
+                if _creation_intent_matches(
+                    intent,
+                    parent_thread_id=parent_thread_id,
+                    host_id=host_id,
+                    target_fingerprint=target_fingerprint,
+                    role=role,
+                )
+            ]
+            if matching_records and not parallel_allowed:
+                return _pool_busy(role, request_id)
+            if matching_intents and not parallel_allowed:
+                return _pool_busy(role, request_id)
+
+            intent = {
+                "parentThreadId": parent_thread_id,
+                "hostId": host_id,
+                "targetFingerprint": target_fingerprint,
+                "role": role,
+                "taskId": task_id,
+                "requestId": request_id,
+                "claimedAt": claimed_at,
+            }
+            intents.append(intent)
+            pool["creationIntents"] = intents
+            save_registry(state_root, project_id, registry)
+            return {
+                "outcome": "creation_intent",
+                "role": role,
+                "requestId": request_id,
+                "creationIntent": dict(intent),
+                "existing": False,
+            }
+    except FileExistsError:
+        return _pool_busy(role, request_id)
+
+
+def finalize_created_role(state_root: str | Path,
+                          project_id: str,
+                          *,
+                          parent_thread_id: str,
+                          role: str,
+                          request_id: str,
+                          thread_id: str,
+                          title: str,
+                          created_at: str) -> dict[str, Any]:
+    _validate_task_id(project_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    _validate_v2_pool_role(role)
+    request_id = _required_str(request_id, "requestId")
+    thread_id = _required_str(thread_id, "threadId")
+    title = _required_str(title, "title")
+    created_at = _required_str(created_at, "createdAt")
+    registry = load_registry(state_root, project_id)
+    intent = _find_creation_intent(
+        _manager_pool(registry, project_id, parent_thread_id),
+        parent_thread_id=parent_thread_id,
+        role=role,
+        request_id=request_id,
+    )
+    if intent is None:
+        return {"outcome": "missing_creation_intent", "role": role, "requestId": request_id}
+    task_id = _required_str(intent.get("taskId"), "creationIntent.taskId")
+    try:
+        with manager_pool_lock(
+            state_root,
+            project_id,
+            parent_thread_id,
+            task_id=task_id,
+            request_id=request_id,
+            acquired_at=created_at,
+        ):
+            registry = load_registry(state_root, project_id)
+            pool = _manager_pool(registry, project_id, parent_thread_id)
+            intent = _find_creation_intent(
+                pool,
+                parent_thread_id=parent_thread_id,
+                role=role,
+                request_id=request_id,
+            )
+            if intent is None:
+                return {"outcome": "missing_creation_intent", "role": role, "requestId": request_id}
+            records = _pool_role_records(pool, role)
+            for record in records:
+                if record.get("threadId") == thread_id:
+                    if record.get("creationRequestId") != request_id:
+                        return {"outcome": "conflict", "role": role, "requestId": request_id}
+                    _pool_creation_intents(pool).remove(intent)
+                    save_registry(state_root, project_id, registry)
+                    return {"outcome": "created", "role": role, "threadId": thread_id, "roleRecord": dict(record)}
+            claim = {
+                "taskId": _required_str(intent.get("taskId"), "creationIntent.taskId"),
+                "requestId": request_id,
+                "claimedAt": _required_str(intent.get("claimedAt"), "creationIntent.claimedAt"),
+            }
+            record = {
+                "threadId": thread_id,
+                "hostId": _required_str(intent.get("hostId"), "creationIntent.hostId"),
+                "targetFingerprint": _required_str(
+                    intent.get("targetFingerprint"), "creationIntent.targetFingerprint",
+                ),
+                "title": title,
+                "createdAt": created_at,
+                "lastObservedAt": created_at,
+                "creationRequestId": request_id,
+                "claim": claim,
+            }
+            records.append(record)
+            _pool_creation_intents(pool).remove(intent)
+            save_registry(state_root, project_id, registry)
+            return {"outcome": "created", "role": role, "threadId": thread_id, "roleRecord": dict(record)}
+    except FileExistsError:
+        return _pool_busy(role, request_id)
+
+
+def release_role_claim(state_root: str | Path,
+                       project_id: str,
+                       *,
+                       parent_thread_id: str,
+                       role: str,
+                       thread_id: str,
+                       task_id: str,
+                       request_id: str) -> dict[str, Any]:
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    _validate_v2_pool_role(role)
+    thread_id = _required_str(thread_id, "threadId")
+    request_id = _required_str(request_id, "requestId")
+    released_at = datetime.now(timezone.utc).isoformat()
+    try:
+        with manager_pool_lock(
+            state_root,
+            project_id,
+            parent_thread_id,
+            task_id=task_id,
+            request_id=request_id,
+            acquired_at=released_at,
+        ):
+            registry = load_registry(state_root, project_id)
+            pool = _manager_pool(registry, project_id, parent_thread_id)
+            released = False
+            for record in _pool_role_records(pool, role):
+                claim = record.get("claim")
+                if (
+                    record.get("threadId") == thread_id
+                    and isinstance(claim, Mapping)
+                    and claim.get("taskId") == task_id
+                    and claim.get("requestId") == request_id
+                ):
+                    record.pop("claim", None)
+                    released = True
+                    break
+            if not released:
+                return {"outcome": "not_claimed", "role": role, "threadId": thread_id}
+            ledger_file = task_path(state_root, project_id, task_id)
+            if ledger_file.exists():
+                ledger = load_task_ledger(state_root, project_id, task_id)
+                if ledger.get("status") in TERMINAL_STATUSES:
+                    _cleanup_terminal_pool_task(
+                        state_root,
+                        project_id,
+                        parent_thread_id,
+                        pool,
+                        task_id,
+                        ledger,
+                        released_at,
+                    )
+                else:
+                    ledger["preferredThreadId"] = thread_id
+                    save_task_ledger(state_root, project_id, task_id, ledger)
+            save_registry(state_root, project_id, registry)
+            return {"outcome": "released", "role": role, "threadId": thread_id}
+    except FileExistsError:
+        return _pool_busy(role, request_id)
+
+
+def _load_existing_task_ledger(state_root: str | Path, project_id: str,
+                               task_id: str) -> dict[str, Any] | None:
+    path = task_path(state_root, project_id, task_id)
+    return load_task_ledger(state_root, project_id, task_id) if path.exists() else None
+
+
+def _ledger_matches_pool_identity(ledger: Mapping[str, Any], *, project_id: str,
+                                  parent_thread_id: str, task_id: str) -> bool:
+    return (
+        task_workflow_version(ledger) == 2
+        and ledger.get("projectId") == project_id
+        and ledger.get("taskId") == task_id
+        and ledger.get("parentThreadId") == parent_thread_id
+    )
+
+
+def _ledger_has_creation_outcome_unknown(ledger: Mapping[str, Any]) -> bool:
+    candidates = [ledger]
+    for key in ("closeout", "failure", "toolError"):
+        value = ledger.get(key)
+        if isinstance(value, Mapping):
+            candidates.append(value)
+    return any(
+        candidate.get(key) == "creation_outcome_unknown"
+        for candidate in candidates
+        for key in ("reason", "failureReason", "creationOutcome")
+    )
+
+
+def _record_creation_outcome_unknown(ledger: dict[str, Any], *,
+                                     project_id: str, parent_thread_id: str,
+                                     intent: Mapping[str, Any],
+                                     recovered_at: str) -> bool:
+    request_id = _required_str(intent.get("requestId"), "creationIntent.requestId")
+    observations = _as_list(ledger.get("observations"), "ledger.observations")
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        fields = observation.get("parsedFields")
+        if (
+            observation.get("type") == "system_event"
+            and isinstance(fields, Mapping)
+            and fields.get("reason") == "creation_outcome_unknown"
+            and fields.get("requestId") == request_id
+        ):
+            return False
+    observations.append({
+        "type": "system_event",
+        "role": "system",
+        "threadId": parent_thread_id,
+        "capturedAt": recovered_at,
+        "content": "creation_outcome_unknown",
+        "parsedFields": {
+            "reason": "creation_outcome_unknown",
+            "projectId": project_id,
+            "parentThreadId": parent_thread_id,
+            "taskId": _required_str(intent.get("taskId"), "creationIntent.taskId"),
+            "requestId": request_id,
+            "role": _required_str(intent.get("role"), "creationIntent.role"),
+            "hostId": _required_str(intent.get("hostId"), "creationIntent.hostId"),
+            "targetFingerprint": _required_str(
+                intent.get("targetFingerprint"), "creationIntent.targetFingerprint",
+            ),
+        },
+    })
+    ledger["observations"] = observations
+    return True
+
+
+def _cleanup_terminal_pool_task(state_root: str | Path, project_id: str,
+                                parent_thread_id: str, pool: dict[str, Any],
+                                task_id: str, ledger: dict[str, Any],
+                                recovered_at: str) -> bool:
+    if (
+        not _ledger_matches_pool_identity(
+            ledger,
+            project_id=project_id,
+            parent_thread_id=parent_thread_id,
+            task_id=task_id,
+        )
+        or ledger.get("status") not in TERMINAL_STATUSES
+    ):
+        return False
+    changed = False
+    roles = _as_mapping(pool.get("roles"), "managerPool.roles")
+    for role, raw_records in roles.items():
+        records = _as_list(raw_records, "managerPool.roles.%s" % role)
+        normalized: list[dict[str, Any]] = []
+        for raw_record in records:
+            record = _as_mapping(raw_record, "managerPool.roles.%s[]" % role, default_empty=False)
+            claim = record.get("claim")
+            if isinstance(claim, Mapping) and claim.get("taskId") == task_id:
+                record.pop("claim", None)
+                changed = True
+            normalized.append(record)
+        roles[role] = normalized
+    pool["roles"] = roles
+
+    unknown = _ledger_has_creation_outcome_unknown(ledger)
+    kept_intents: list[dict[str, Any]] = []
+    observation_changed = False
+    for intent in _pool_creation_intents(pool):
+        if intent.get("taskId") != task_id:
+            kept_intents.append(intent)
+            continue
+        if unknown:
+            observation_changed = _record_creation_outcome_unknown(
+                ledger,
+                project_id=project_id,
+                parent_thread_id=parent_thread_id,
+                intent=intent,
+                recovered_at=recovered_at,
+            ) or observation_changed
+        changed = True
+    pool["creationIntents"] = kept_intents
+    if observation_changed:
+        save_task_ledger(state_root, project_id, task_id, ledger)
+    return changed
+
+
+def cleanup_terminal_manager_pool_task(state_root: str | Path,
+                                       project_id: str,
+                                       *,
+                                       parent_thread_id: str,
+                                       task_id: str,
+                                       cleaned_at: str) -> dict[str, Any]:
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    cleaned_at = _required_str(cleaned_at, "cleanedAt")
+    ledger = _load_existing_task_ledger(state_root, project_id, task_id)
+    if ledger is None:
+        return {"outcome": "missing_task_ledger", "taskId": task_id}
+    if not _ledger_matches_pool_identity(
+        ledger,
+        project_id=project_id,
+        parent_thread_id=parent_thread_id,
+        task_id=task_id,
+    ):
+        return {"outcome": "identity_mismatch", "taskId": task_id}
+    if ledger.get("status") not in TERMINAL_STATUSES:
+        return {"outcome": "not_terminal", "taskId": task_id}
+    try:
+        with manager_pool_lock(
+            state_root,
+            project_id,
+            parent_thread_id,
+            task_id=task_id,
+            request_id=task_id,
+            acquired_at=cleaned_at,
+        ):
+            ledger = load_task_ledger(state_root, project_id, task_id)
+            if not _ledger_matches_pool_identity(
+                ledger,
+                project_id=project_id,
+                parent_thread_id=parent_thread_id,
+                task_id=task_id,
+            ):
+                return {"outcome": "identity_mismatch", "taskId": task_id}
+            if ledger.get("status") not in TERMINAL_STATUSES:
+                return {"outcome": "not_terminal", "taskId": task_id}
+            registry = load_registry(state_root, project_id)
+            pool = _manager_pool(registry, project_id, parent_thread_id)
+            changed = _cleanup_terminal_pool_task(
+                state_root,
+                project_id,
+                parent_thread_id,
+                pool,
+                task_id,
+                ledger,
+                cleaned_at,
+            )
+            if changed:
+                save_registry(state_root, project_id, registry)
+            return {"outcome": "cleaned", "taskId": task_id, "changed": changed}
+    except FileExistsError:
+        return {"outcome": "busy", "taskId": task_id}
+
+
+def recover_manager_pool_lock(state_root: str | Path,
+                              project_id: str,
+                              parent_thread_id: str,
+                              *,
+                              task_id: str,
+                              request_id: str,
+                              recovered_at: str) -> bool:
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    request_id = _required_str(request_id, "requestId")
+    _required_str(recovered_at, "recoveredAt")
+    lock_path = manager_pool_lock_path(state_root, project_id, parent_thread_id)
+    try:
+        payload = lock_path.read_bytes()
+        data = json.loads(payload.decode("utf-8"))
+    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, Mapping):
+        return False
+    if (
+        data.get("projectId") != project_id
+        or data.get("parentThreadId") != parent_thread_id
+        or data.get("taskId") != task_id
+        or data.get("requestId") != request_id
+        or not isinstance(data.get("pid"), int)
+        or not isinstance(data.get("acquiredAt"), str)
+        or not data["acquiredAt"]
+    ):
+        return False
+    ledger = _load_existing_task_ledger(state_root, project_id, task_id)
+    if ledger is None or not _ledger_matches_pool_identity(
+        ledger,
+        project_id=project_id,
+        parent_thread_id=parent_thread_id,
+        task_id=task_id,
+    ) or ledger.get("status") not in TERMINAL_STATUSES:
+        return False
+    try:
+        if lock_path.read_bytes() != payload:
+            return False
+        lock_path.unlink()
+    except (FileNotFoundError, OSError):
+        return False
+    return True
+
+
+def recover_creation_intent(state_root: str | Path,
+                            project_id: str,
+                            *,
+                            parent_thread_id: str,
+                            role: str,
+                            request_id: str,
+                            recovered_at: str) -> dict[str, Any] | None:
+    _validate_task_id(project_id)
+    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
+    _validate_v2_pool_role(role)
+    request_id = _required_str(request_id, "requestId")
+    recovered_at = _required_str(recovered_at, "recoveredAt")
+    registry = load_registry(state_root, project_id)
+    intent = _find_creation_intent(
+        _manager_pool(registry, project_id, parent_thread_id),
+        parent_thread_id=parent_thread_id,
+        role=role,
+        request_id=request_id,
+    )
+    if intent is None:
+        return None
+    task_id = _required_str(intent.get("taskId"), "creationIntent.taskId")
+    try:
+        with manager_pool_lock(
+            state_root,
+            project_id,
+            parent_thread_id,
+            task_id=task_id,
+            request_id=request_id,
+            acquired_at=recovered_at,
+        ):
+            registry = load_registry(state_root, project_id)
+            pool = _manager_pool(registry, project_id, parent_thread_id)
+            intent = _find_creation_intent(
+                pool,
+                parent_thread_id=parent_thread_id,
+                role=role,
+                request_id=request_id,
+            )
+            if intent is None:
+                return None
+            ledger = _load_existing_task_ledger(state_root, project_id, task_id)
+            if ledger is None:
+                return {"outcome": "missing_task_ledger", "requestId": request_id}
+            if not _ledger_matches_pool_identity(
+                ledger,
+                project_id=project_id,
+                parent_thread_id=parent_thread_id,
+                task_id=task_id,
+            ):
+                return {"outcome": "identity_mismatch", "requestId": request_id}
+            if ledger.get("status") not in TERMINAL_STATUSES:
+                return dict(intent)
+            if _cleanup_terminal_pool_task(
+                state_root,
+                project_id,
+                parent_thread_id,
+                pool,
+                task_id,
+                ledger,
+                recovered_at,
+            ):
+                save_registry(state_root, project_id, registry)
+            return None
+    except FileExistsError:
+        return _pool_busy(role, request_id)
 
 
 def _normalize_task_ledger(data: Mapping[str, Any], state_root: str | Path,

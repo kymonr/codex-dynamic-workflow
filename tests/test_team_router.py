@@ -6268,6 +6268,218 @@ class TestTeamRouterJsonState(unittest.TestCase):
             )
 
 
+class TestTeamRouterV2RolePool(unittest.TestCase):
+    def setUp(self):
+        self.td = workspace_temp_dir()
+        self.root = Path(self.td.name) / "state"
+        self.project_id = "project-123"
+        self.base_claim = {
+            "parent_thread_id": "parent-a",
+            "host_id": "local",
+            "target_fingerprint": "target-a",
+            "role": "executor",
+            "claimed_at": "2026-07-11T20:00:00+08:00",
+        }
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _reserve(self, task_id, request_id, **changes):
+        claim = {**self.base_claim, "task_id": task_id, "request_id": request_id, **changes}
+        return team_router.reserve_role_or_creation_intent(self.root, self.project_id, **claim)
+
+    def _save_v2_task(self, task_id):
+        ledger = team_router.new_v2_task_ledger(
+            self.root,
+            self.project_id,
+            task_id,
+            objective="manage executor pool",
+            project_local_path=self.root,
+            parent_thread_id="parent-a",
+            resolved_plan={"routeRoles": ["executor"]},
+            task_authorization_package={"packageId": "auth-a"},
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        return team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+
+    def _finalize(self, request_id, thread_id="thread-executor-a"):
+        return team_router.finalize_created_role(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-a",
+            role="executor",
+            request_id=request_id,
+            thread_id=thread_id,
+            title="执行者-任务 A",
+            created_at="2026-07-11T20:00:01+08:00",
+        )
+
+    def _release(self, task_id, request_id, thread_id="thread-executor-a"):
+        return team_router.release_role_claim(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-a",
+            role="executor",
+            thread_id=thread_id,
+            task_id=task_id,
+            request_id=request_id,
+        )
+
+    def _make_idle(self, task_id="task-seed", request_id="req-seed", thread_id="thread-executor-a"):
+        self._reserve(task_id, request_id)
+        self._finalize(request_id, thread_id)
+        self._release(task_id, request_id, thread_id)
+
+    def test_v2_role_pool_reuses_only_same_host_target_parent_and_role(self):
+        first = self._reserve("task-a", "req-a")
+        duplicate = self._reserve("task-a", "req-a")
+        self.assertEqual(first["outcome"], "creation_intent")
+        self.assertTrue(duplicate["existing"])
+        self._finalize("req-a")
+        self.assertEqual(self._release("task-a", "req-a")["outcome"], "released")
+
+        reused = self._reserve("task-b", "req-b")
+        other_parent = self._reserve("task-c", "req-c", parent_thread_id="parent-b")
+        other_target = self._reserve("task-d", "req-d", target_fingerprint="target-b")
+        self.assertEqual((reused["outcome"], reused["threadId"]), ("reused", "thread-executor-a"))
+        self.assertEqual(other_parent["outcome"], "creation_intent")
+        self.assertEqual(other_target["outcome"], "creation_intent")
+
+    def test_role_claim_is_mutex_and_parallel_creation_is_explicit(self):
+        self._make_idle()
+        barrier, outcomes, errors = threading.Barrier(3), [], []
+
+        def reserve(task_id, request_id):
+            try:
+                barrier.wait()
+                outcomes.append(self._reserve(task_id, request_id))
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=reserve, args=("task-one", "req-one")),
+            threading.Thread(target=reserve, args=("task-two", "req-two")),
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual([item["outcome"] for item in outcomes].count("reused"), 1)
+        self.assertEqual([item["outcome"] for item in outcomes].count("busy"), 1)
+        self.assertEqual(
+            self._reserve("task-parallel", "req-parallel", parallel_allowed=True)["outcome"],
+            "creation_intent",
+        )
+        with team_router.manager_pool_lock(
+            self.root, self.project_id, "parent-a", task_id="task-held", request_id="req-held",
+            acquired_at="2026-07-11T20:00:02+08:00",
+        ):
+            self.assertEqual(self._reserve("task-locked", "req-locked")["outcome"], "busy")
+
+    def test_role_claim_release_keeps_preferred_thread_id(self):
+        task_id = "task-preferred"
+        self._save_v2_task(task_id)
+        self._reserve(task_id, "req-a")
+        self._finalize("req-a")
+        self.assertEqual(self._release(task_id, "req-a")["outcome"], "released")
+        self.assertEqual(
+            team_router.load_task_ledger(self.root, self.project_id, task_id)["preferredThreadId"],
+            "thread-executor-a",
+        )
+
+    def test_v2_role_pool_replaces_archived_or_corrupt_records(self):
+        with self.assertRaises(team_router.StateStoreError):
+            self._reserve("task-manager", "req-manager", role="manager")
+        self._make_idle(thread_id="thread-archived")
+        registry = team_router.load_registry(self.root, self.project_id)
+        project = registry["projects"][self.project_id]
+        project["managerPools"]["parent-a"]["roles"]["executor"][0]["archived"] = True
+        project["managerPools"]["parent-corrupt"] = {"roles": {"executor": [{
+            "threadId": "thread-corrupt", "hostId": "local", "targetFingerprint": "target-a", "claim": "bad",
+        }]}, "creationIntents": []}
+        team_router.save_registry(self.root, self.project_id, registry)
+
+        self.assertEqual(self._reserve("task-new", "req-new")["outcome"], "creation_intent")
+        self.assertEqual(
+            self._reserve("task-corrupt", "req-corrupt", parent_thread_id="parent-corrupt")["outcome"],
+            "creation_intent",
+        )
+
+    def _leak_lock(self, task_id, request_id):
+        path = team_router_state.manager_pool_lock_path(self.root, self.project_id, "parent-a")
+        payload = json.dumps({
+            "projectId": self.project_id, "parentThreadId": "parent-a", "taskId": task_id,
+            "requestId": request_id, "pid": os.getpid(), "acquiredAt": "2001-01-01T00:00:00+00:00",
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
+        return path
+
+    def test_creation_intent_recovery_keeps_unknown_identity_then_cleans_terminal_task(self):
+        task_id = "task-unknown"
+        self._save_v2_task(task_id)
+        self._reserve(task_id, "req-claimed")
+        self._finalize("req-claimed")
+        self._reserve(task_id, "req-unknown", parallel_allowed=True)
+        pending = team_router.recover_creation_intent(
+            self.root, self.project_id, parent_thread_id="parent-a", role="executor",
+            request_id="req-unknown", recovered_at="2026-07-11T20:00:02+08:00",
+        )
+        self.assertEqual(pending["requestId"], "req-unknown")
+
+        lock_path = self._leak_lock(task_id, "req-unknown")
+        self.assertFalse(team_router.recover_manager_pool_lock(
+            self.root, self.project_id, "parent-a", task_id=task_id, request_id="req-unknown",
+            recovered_at="2026-07-11T20:00:02+08:00",
+        ))
+        ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+        ledger.update(status="tool_error", reason="creation_outcome_unknown")
+        team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+        self.assertTrue(team_router.recover_manager_pool_lock(
+            self.root, self.project_id, "parent-a", task_id=task_id, request_id="req-unknown",
+            recovered_at="2026-07-11T20:00:03+08:00",
+        ))
+        self.assertFalse(lock_path.exists())
+        self.assertEqual(self._release(task_id, "req-claimed")["outcome"], "released")
+
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-a"]
+        self.assertEqual(pool["creationIntents"], [])
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+        self.assertIsNone(team_router.recover_creation_intent(
+            self.root, self.project_id, parent_thread_id="parent-a", role="executor",
+            request_id="req-unknown", recovered_at="2026-07-11T20:00:04+08:00",
+        ))
+        observations = team_router.load_task_ledger(self.root, self.project_id, task_id)["observations"]
+        self.assertTrue(any(
+            item.get("type") == "system_event"
+            and item.get("parsedFields", {}).get("reason") == "creation_outcome_unknown"
+            and item.get("parsedFields", {}).get("requestId") == "req-unknown"
+            for item in observations
+        ))
+
+    def test_role_claim_terminal_pool_cleanup_is_public_and_refuses_nonterminal_task(self):
+        task_id = "task-terminal"
+        self._save_v2_task(task_id)
+        self._reserve(task_id, "req-terminal")
+        cleanup = lambda stamp: team_router.cleanup_terminal_manager_pool_task(
+            self.root, self.project_id, parent_thread_id="parent-a", task_id=task_id, cleaned_at=stamp,
+        )
+        self.assertEqual(cleanup("2026-07-11T20:00:01+08:00")["outcome"], "not_terminal")
+        ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+        ledger["status"] = "done"
+        team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+        self.assertEqual(cleanup("2026-07-11T20:00:02+08:00")["outcome"], "cleaned")
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-a"]
+        self.assertEqual(pool["creationIntents"], [])
+
+
 class TestTeamRouterManagerIntegration(unittest.TestCase):
     def setUp(self):
         self.td = workspace_temp_dir()
