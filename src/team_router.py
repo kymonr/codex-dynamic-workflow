@@ -38,6 +38,12 @@ from team_router_policy import (
     resolve_v2_execution_mode,
     resolve_v2_route,
 )
+from team_router_v2 import (
+    make_task_authorization_package,
+    prepare_v2_manager_task,
+    resolve_v2_manager_plan,
+    v2_continuation_allowed,
+)
 from team_router_protocol import (
     CONDITIONAL_REQUIRED_BY_MARKER,
     FIELD_RE,

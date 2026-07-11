@@ -1384,6 +1384,424 @@ risks: none
         with self.assertRaisesRegex(team_router.StateStoreError, "invalid v2 role"):
             team_router.resolve_v2_route("NORMAL", ("manager",))
 
+    def test_completion_package_allows_in_scope_terse_continuation_only(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="完成 X",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        ledger = {
+            "taskId": "task-1",
+            "status": "planned",
+            "taskAuthorizationPackage": package,
+        }
+        request = {
+            "requested_task_id": "task-1",
+            "requested_scope": "src/x.py",
+            "requested_permission": "local-package",
+            "requested_stop_condition": "tests pass",
+        }
+
+        self.assertTrue(
+            team_router.v2_continuation_allowed(
+                ledger,
+                parent_thread_id="parent-1",
+                **request,
+            )
+        )
+        for name, overrides in (
+            ("parent", {"parent_thread_id": "parent-2"}),
+            ("task", {"requested_task_id": "task-2"}),
+            ("scope", {"requested_scope": "src/x.py src/y.py"}),
+            ("permission", {"requested_permission": "read-only"}),
+            ("stop", {"requested_stop_condition": "publish"}),
+            ("external", {"requested_external_gates": ("push",)}),
+        ):
+            with self.subTest(name=name):
+                arguments = {"parent_thread_id": "parent-1", **request}
+                arguments.update(overrides)
+                self.assertFalse(team_router.v2_continuation_allowed(ledger, **arguments))
+        terminal = dict(ledger, status="done")
+        self.assertFalse(
+            team_router.v2_continuation_allowed(
+                terminal,
+                parent_thread_id="parent-1",
+                **request,
+            )
+        )
+        self.assertFalse(
+            team_router.v2_continuation_allowed(
+                dict(ledger, parentThreadId="other-parent"),
+                parent_thread_id="parent-1",
+                **request,
+            )
+        )
+
+    def test_v2_plan_resolves_effective_gate_before_route_and_models(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="Team Router permission policy change",
+            scope="src/team_router_policy.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+
+        plan = team_router.resolve_v2_manager_plan(
+            objective="Team Router permission policy change",
+            scope="src/team_router_policy.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            requested_role_routing={
+                "executor": {"executionClass": "standard"},
+                "reviewer": {"executionClass": "high"},
+                "verifier": {"executionClass": "standard"},
+            },
+            requires_independent_review=True,
+        )
+
+        self.assertEqual(plan["effectiveGateClass"], "STRICT")
+        self.assertEqual(plan["taskId"], "task-1")
+        self.assertEqual(plan["parentThreadId"], "parent-1")
+        self.assertEqual(plan["routeRoles"], ("executor", "reviewer", "verifier"))
+        self.assertEqual(
+            plan["roleRouting"]["reviewer"]["requestedModel"],
+            "gpt-5.6-sol",
+        )
+
+    def test_prepare_v2_manager_direct_is_stateless(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-direct",
+            task_id="task-direct",
+            parent_thread_id="parent-direct",
+            objective="ordinary docs update",
+            scope="docs/x.md",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        requested_plan = {
+            "scope": "docs/x.md",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+        }
+        with workspace_temp_dir() as td, mock.patch("team_router_v2.new_v2_task_ledger") as new_ledger, mock.patch(
+            "team_router_v2.save_task_ledger"
+        ) as save_ledger:
+            result = team_router.prepare_v2_manager_task(
+                Path(td) / "state",
+                "project-1",
+                "task-direct",
+                objective="ordinary docs update",
+                project_local_path=td,
+                parent_thread_id="parent-direct",
+                requested_plan=requested_plan,
+                authorization_package=package,
+                created_at="2026-07-11T20:00:00+08:00",
+            )
+
+        self.assertEqual(result["executionMode"], "manager_direct")
+        self.assertIsNone(result["ledger"])
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
+    def test_prepare_v2_rejects_bare_manager_mode_before_state(self):
+        requested_plan = {
+            "scope": "docs/x.md",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+        }
+        with workspace_temp_dir() as td, mock.patch("team_router_v2.new_v2_task_ledger") as new_ledger, mock.patch(
+            "team_router_v2.save_task_ledger"
+        ) as save_ledger:
+            with self.assertRaisesRegex(team_router.StateStoreError, "authorization_missing"):
+                team_router.prepare_v2_manager_task(
+                    Path(td) / "state",
+                    "project-1",
+                    "task-direct",
+                    objective="ordinary docs update",
+                    project_local_path=td,
+                    parent_thread_id="parent-direct",
+                    requested_plan=requested_plan,
+                    authorization_package=None,
+                    created_at="2026-07-11T20:00:00+08:00",
+                )
+
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
+    def test_prepare_v2_rejects_foreign_package_before_state(self):
+        model_authorization = {
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+            "authorizedBy": "explicit_cost_aware_entry",
+        }
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "explicitRoles": ("executor",),
+            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+        }
+        for name, actual_task_id, actual_parent_thread_id in (
+            ("task", "task-actual", "parent-package"),
+            ("parent", "task-package", "parent-actual"),
+        ):
+            with self.subTest(name=name), workspace_temp_dir() as td, mock.patch(
+                "team_router_v2.new_v2_task_ledger"
+            ) as new_ledger, mock.patch("team_router_v2.save_task_ledger") as save_ledger:
+                package = team_router.make_task_authorization_package(
+                    package_id="auth-foreign",
+                    task_id="task-package",
+                    parent_thread_id="parent-package",
+                    objective="delegated task",
+                    scope="src/x.py",
+                    permission="local-package",
+                    stop_condition="focused tests pass",
+                    created_at="2026-07-11T20:00:00+08:00",
+                    model_routing_authorization=model_authorization,
+                )
+                with self.assertRaisesRegex(team_router.StateStoreError, "authorization_mismatch"):
+                    team_router.prepare_v2_manager_task(
+                        Path(td) / "state",
+                        "project-1",
+                        actual_task_id,
+                        objective="delegated task",
+                        project_local_path=td,
+                        parent_thread_id=actual_parent_thread_id,
+                        requested_plan=requested_plan,
+                        authorization_package=package,
+                        created_at="2026-07-11T20:00:00+08:00",
+                    )
+                new_ledger.assert_not_called()
+                save_ledger.assert_not_called()
+
+    def test_prepare_v2_delegated_requires_model_authorization_before_state(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "explicitRoles": ("executor",),
+            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+        }
+        with workspace_temp_dir() as td, mock.patch("team_router_v2.new_v2_task_ledger") as new_ledger, mock.patch(
+            "team_router_v2.save_task_ledger"
+        ) as save_ledger:
+            with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+                team_router.prepare_v2_manager_task(
+                    Path(td) / "state",
+                    "project-1",
+                    "task-1",
+                    objective="delegated task",
+                    project_local_path=td,
+                    parent_thread_id="parent-1",
+                    requested_plan=requested_plan,
+                    authorization_package=package,
+                    created_at="2026-07-11T20:00:00+08:00",
+                )
+
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
+    def test_prepare_v2_delegated_saves_one_planned_ledger(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "explicitRoles": ("executor",),
+            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+        }
+        with workspace_temp_dir() as td, mock.patch(
+            "team_router_v2.save_task_ledger",
+            wraps=team_router_state.save_task_ledger,
+        ) as save_ledger:
+            result = team_router.prepare_v2_manager_task(
+                Path(td) / "state",
+                "project-1",
+                "task-1",
+                objective="delegated task",
+                project_local_path=td,
+                parent_thread_id="parent-1",
+                requested_plan=requested_plan,
+                authorization_package=package,
+                created_at="2026-07-11T20:00:00+08:00",
+            )
+
+        self.assertEqual(result["executionMode"], "delegated")
+        self.assertEqual(result["ledger"]["status"], "planned")
+        self.assertEqual(result["ledger"]["taskAuthorizationPackage"], package)
+        save_ledger.assert_called_once()
+
+    def test_v2_delegated_plan_requires_model_authorization_and_complete_route(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="ordinary delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        common = {
+            "objective": "ordinary delegated task",
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stop_condition": "focused tests pass",
+            "requested_gate_class": "NORMAL",
+            "explicit_roles": ("executor",),
+            "requested_role_routing": {"executor": {"executionClass": "standard"}},
+        }
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+            team_router.resolve_v2_manager_plan(authorization_package=package, **common)
+
+        package["modelRoutingAuthorization"] = {
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+            "authorizedBy": "explicit_cost_aware_entry",
+        }
+        strict = dict(common, requested_gate_class="STRICT", explicit_roles=())
+        strict["requested_role_routing"] = {
+            "executor": {"executionClass": "standard"},
+            "reviewer": {"executionClass": "high"},
+        }
+        with self.assertRaisesRegex(team_router.StateStoreError, "plan_invalid: missing roleRouting.verifier"):
+            team_router.resolve_v2_manager_plan(authorization_package=package, **strict)
+        package["modelRoutingAuthorization"]["authorizedBy"] = "arbitrary_marker"
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+            team_router.resolve_v2_manager_plan(authorization_package=package, **common)
+
+    def test_v2_plan_retains_parallel_conflicts_for_audit(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="ordinary delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+        common = {
+            "objective": "ordinary delegated task",
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stop_condition": "focused tests pass",
+            "requested_gate_class": "NORMAL",
+            "authorization_package": package,
+            "requested_role_routing": {"executor": {"executionClass": "standard"}},
+            "requires_parallelism": True,
+        }
+        allowed = team_router.resolve_v2_manager_plan(parallel_conflicts=(), **common)
+        blocked = team_router.resolve_v2_manager_plan(
+            parallel_conflicts=("shared-write",),
+            **common,
+        )
+
+        self.assertTrue(allowed["parallelAllowed"])
+        self.assertFalse(blocked["parallelAllowed"])
+        self.assertEqual(blocked["parallelConflicts"], ("shared-write",))
+
+    def test_v2_plan_accepts_complete_per_request_model_override(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [],
+                "authorizedBy": "complete_per_request_override",
+            },
+        )
+        plan = team_router.resolve_v2_manager_plan(
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            explicit_roles=("executor",),
+            requested_role_routing={
+                "executor": {
+                    "executionClass": "standard",
+                    "model": "gpt-5.6-sol",
+                    "thinking": "high",
+                    "modelOverrideReason": "user explicitly requested high-risk analysis",
+                },
+            },
+        )
+
+        self.assertEqual(plan["roleRouting"]["executor"]["requestedModel"], "gpt-5.6-sol")
+        self.assertEqual(plan["roleRouting"]["executor"]["requestedThinking"], "high")
+
     def test_role_delivery_fields_cover_all_direct_return_roles(self):
         expected = {
             "executor": ("callbackDelivery", "callbackFallback"),
