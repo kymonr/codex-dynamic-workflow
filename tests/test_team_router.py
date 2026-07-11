@@ -1486,6 +1486,43 @@ risks: none
             "gpt-5.6-sol",
         )
 
+    def test_v2_plan_classifies_scope_before_direct_branch(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-scope",
+            task_id="task-scope",
+            parent_thread_id="parent-scope",
+            objective="ordinary maintenance",
+            scope="src/team_router.py; permission boundary",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+
+        plan = team_router.resolve_v2_manager_plan(
+            objective="ordinary maintenance",
+            scope="src/team_router.py; permission boundary",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            requested_role_routing={
+                "executor": {"executionClass": "standard"},
+                "reviewer": {"executionClass": "high"},
+                "verifier": {"executionClass": "standard"},
+            },
+        )
+
+        self.assertEqual(plan["effectiveGateClass"], "STRICT")
+        self.assertEqual(plan["executionMode"], "delegated")
+
     def test_prepare_v2_manager_direct_is_stateless(self):
         package = team_router.make_task_authorization_package(
             package_id="auth-direct",

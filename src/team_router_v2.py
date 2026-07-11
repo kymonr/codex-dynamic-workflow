@@ -172,6 +172,13 @@ def resolve_v2_manager_plan(*,
                             ledger_input: Mapping[str, Any] | None = None) -> dict[str, Any]:
     ledger = dict(ledger_input or {})
     ledger.update({"objective": objective, "permission": permission, "workflowVersion": 2})
+    plan_input = ledger.get("plan")
+    plan = dict(plan_input) if isinstance(plan_input, Mapping) else {}
+    fields_input = plan.get("fields")
+    fields = dict(fields_input) if isinstance(fields_input, Mapping) else {}
+    fields["scope"] = scope
+    plan["fields"] = fields
+    ledger["plan"] = plan
     authorization = validate_v2_authorization(
         authorization_package=authorization_package,
         ledger_input=ledger,
