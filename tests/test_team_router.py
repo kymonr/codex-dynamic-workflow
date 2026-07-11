@@ -15041,6 +15041,53 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("不支持 `workspace-write`", text)
 
+    def test_skill_doc_documents_cost_aware_v2_routing_contract(self):
+        skill = self._skill_path().read_text(encoding="utf-8")
+        contract = self._skill_contract_text()
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        runbook = (
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        ).read_text(encoding="utf-8")
+        module_map = (ROOT / "docs" / "team-router" / "module-map.md").read_text(
+            encoding="utf-8"
+        )
+
+        for needle in (
+            "Version 2 Manager direct is decided before ledger, title, heartbeat, or thread operations.",
+            "A standard Manager entry does not select a concrete role model.",
+            "Explicit cost-aware model entry authorizes Luna Medium, Terra Medium, and Sol High role routing.",
+            "Visible Codex role threads only; never fall back to native spawn_agent.",
+            "Luna Medium / Terra Medium / Sol High",
+            "Sol Ultra is forbidden for role dispatch.",
+            "FAST/NORMAL delegated work ends with Manager acceptance; STRICT/PACKAGE requires Reviewer then Verifier.",
+        ):
+            self.assertIn(needle, skill)
+
+        for needle in (
+            "Version 2 has no child Manager role; the parent Manager owns the plan.",
+            "Bare Manager Mode is proposal-only.",
+            "creation_outcome_unknown",
+            "never automatically call create_thread again",
+            "canonical JSON",
+            "parallelAllowed",
+            "Terra Medium is normal execution",
+            "Sol High is complex review or the single evidence-preserving upgrade",
+            "one automatic model upgrade",
+            "hard stop after the second attempt",
+            "routingReceipt",
+            "requestedModel is not actualModel or billing evidence",
+            "repo/global mismatch before sync is expected",
+            "Task 10 is a separate explicit global-sync gate",
+            "Version 1 compatibility",
+        ):
+            self.assertIn(needle, contract)
+
+        for text in (readme, runbook):
+            self.assertIn("你作为管理者，完成 <目标>", text)
+            self.assertIn("按 Luna Medium、Terra Medium、Sol High 成本感知路由完成 <目标>", text)
+        self.assertIn("team_router_v2.py", module_map)
+        self.assertIn("manager-owned role pools", module_map)
+
     def test_workbench_tracks_current_task_without_stale_diff_surface(self):
         text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
 

@@ -7,7 +7,13 @@ Use this for real Manager Mode operation when the user wants Team Router but not
 Start only when the user clearly asks for a manager role, for example:
 
 ```text
-你作为管理者，使用 Team Router 管这个任务。
+你作为管理者，完成 <目标>
+```
+
+That standard entry allows Manager direct or a plan proposal; it does not select a concrete role model. For visible-role routing, require the explicit opt-in:
+
+```text
+你作为管理者，按 Luna Medium、Terra Medium、Sol High 成本感知路由完成 <目标>
 ```
 
 ## Default Short Protocol
@@ -15,14 +21,12 @@ Start only when the user clearly asks for a manager role, for example:
 Use this shape first:
 
 ```text
-你作为管理者，使用 Team Router 管这个任务。
-默认短协议 + md path。
-长上下文写入 taskBriefPath / executorReportPath / reviewPackagePath。
-按权限分 gate：read-only / dispatch-only / local-package / external-release。
-需要实现时派 executor；过程、协议、共享风险变化先 reviewer，最终 verifier。
-角色完成优先 direct-return 到调度者；self-thread marker 只是 fallback。
-commit、push、PR、merge、deploy、global sync 都单独授权。
-出问题才展开 references。
+先解析 authorization -> effective gate -> route closure。
+Manager direct 在 ledger、标题、heartbeat、线程操作前返回，且不写状态。
+派工前确认显式模型授权；Luna Medium / Terra Medium / Sol High 只是该授权下的默认路由。
+Role 仅用可见 Codex thread，并显式传 model + thinking；Sol Ultra 和 native spawn_agent fallback 都禁止。
+FAST/NORMAL: direct 或 Executor -> Manager acceptance；STRICT/PACKAGE: Executor -> Reviewer -> Verifier。
+commit、push、PR、merge、deploy、global sync 都单独授权；Task 10 global sync 另开 gate。
 ```
 
 ## Manager Defaults
@@ -32,6 +36,8 @@ commit、push、PR、merge、deploy、global sync 都单独授权。
 - Use reviewer/verifier direct-return as the normal closeout path when a parent thread id is available.
 - Treat `local-package` as executor-only workspace write permission.
 - Keep `commit`, `push`, `PR`, `merge`, `deploy`, and `global sync` outside the package unless the user explicitly opens that gate.
+- Reuse only the same manager-owned pool identity (`parentThreadId`, host, target fingerprint, role). A creation intent with an unknown outcome is terminal; do not automatically retry create.
+- Version 1 compatibility only: a legacy nonterminal ledger keeps its child Manager flow; never convert it in place.
 
 ## Do Not Inline By Default
 

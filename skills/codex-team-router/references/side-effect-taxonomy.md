@@ -18,6 +18,8 @@ Routing actions: create or reuse role threads when required, send `TEAM_ROUTER_D
 
 Allowed only after an explicit current-turn request to create or dispatch visible roles. Before any `create_thread`, message send, registry, or ledger write, the objective, scope, permission boundary, and stop condition must be known. Planning, review, design acceptance, and terse replies may prepare dispatch metadata but do not execute `DISPATCH_ONLY`. `DISPATCH_ONLY` is not equivalent to the manager implementing changes.
 
+For Version 2, decide Manager direct before this gate: a direct route creates no ledger, title, heartbeat, or thread state. A delegated route must also have explicit model-routing authorization before any `DISPATCH_ONLY` side effect; plain Manager wording cannot supply it.
+
 ### LOCAL_CLOSEOUT
 
 After verifier pass and an explicit user request to commit, manager may run local status/diff, stage only accepted files, and create a local commit.
@@ -29,6 +31,8 @@ After verifier pass and an explicit user request to commit, manager may run loca
 Mutating project work: modifying project files, running formatters that write, generating fixtures, changing runtime, docs, or tests.
 
 In active Manager Mode, `WORKSPACE_WRITE` is delegated to executor when the manager dispatch explicitly grants an authorized `local-package` scope and required reviewer/verifier gates apply. The executor may write only within the explicit scope/files/paths in that delegation. Manager/dispatcher direct file edits are opt-in: they require an explicit current-turn instruction that the manager should do that exact file-changing action. Commit, PR, publish, and release must first be presented as gated actions and wait for explicit authorization.
+
+`local-package` does not automatically mean STRICT/PACKAGE or create Reviewer/Verifier. Version 2 first applies risk classification and route closure: FAST/NORMAL delegated work may use Manager acceptance; STRICT/PACKAGE and explicit Reviewer/QA keep the independent review/verification route.
 
 Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an authorized executor package, or proceed only when the user explicitly says in the current turn that the manager should do that exact work.
 

@@ -2,6 +2,10 @@
 
 This reference is part of the Team Router contract. `SKILL.md` is the short entrypoint; keep architect and QA policy details here.
 
+## Version 2 Route Closure
+
+The parent Manager owns the Version 2 plan and is never a child role. `architect` and `qa` are explicit visible roles only: Architect precedes Executor; QA precedes Verifier. Selecting Reviewer or QA closes the route with Verifier. FAST/NORMAL delegated work otherwise ends at Manager acceptance, while STRICT/PACKAGE is Executor -> Reviewer -> Verifier. Version 1 keeps its legacy child Manager contract unchanged.
+
 ## Architect
 
 `architect` is a formal conditional visible role for architecture-sensitive work before executor dispatch. Trigger it for architecture design, cross-module contracts, shared protocol/state-machine/direct-return behavior, migration or compatibility risk, dependency-boundary uncertainty, high-risk refactors, and durable maintainability risks.
@@ -16,7 +20,7 @@ The QA role uses the prompt profile `qa-default`. QA findings are verifier input
 
 ## Boundaries
 
-CORE_ROLE_NAMES remains unchanged: `manager`, `executor`, and `verifier`. `architect` and `qa` are conditional visible roles, not default task-creation roles.
+Version 1 compatibility: CORE_ROLE_NAMES remains unchanged: `manager`, `executor`, and `verifier`. In Version 2 the delegated base role is Executor and `architect` and `qa` are conditional visible roles, not default task-creation roles.
 
 There is no runtime skill loading. `skillProfileUsed` records the prompt profile that was requested; it does not load skills, expand permission, or grant authority.
 

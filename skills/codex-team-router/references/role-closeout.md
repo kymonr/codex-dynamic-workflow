@@ -2,6 +2,12 @@
 
 This reference is part of the Team Router contract. `SKILL.md` is the short entrypoint; keep closeout policy details here.
 
+## Version 2 Routing Receipt And Acceptance
+
+FAST/NORMAL delegated Executor work closes only through structured Manager acceptance; STRICT/PACKAGE closes through Verifier. Both closeouts include the same `routingReceipt`: dispatch-order role, `binding`, optional thread id, `requestedModel`, `requestedThinking`, create/bootstrap and dispatch acceptance when attempted, override reason, `upgradedFrom`, rework count, and `solUltraDispatched: false`.
+
+`requestedModel` is not `actualModel` or billing evidence. The Runtime has no actual-model, token, price, or cost source, so the receipt must never claim those facts. Automatic budgets are one automatic model upgrade and one automatic rework per task; preserve the failed delta on the first attempt and enforce a hard stop after the second attempt fails or the budget is exhausted.
+
 ## Manager commit closeout policy
 
 When the user only talks to manager, manager owns commit workflow. After verifier pass and an explicit user request to commit, manager may perform local `git status` / `git diff`, stage 已验收文件, and commit as a closeout operation.
