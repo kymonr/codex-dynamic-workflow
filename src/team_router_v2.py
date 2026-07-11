@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from team_router_policy import (
@@ -639,6 +640,29 @@ def _v2_final_executor_callback(ledger: Mapping[str, Any]) -> Mapping[str, Any] 
     return None
 
 
+def _apply_v2_closeout_receipt(closeout: dict[str, Any],
+                               receipt: Mapping[str, Any] | None) -> None:
+    if not isinstance(receipt, Mapping):
+        return
+    source = str(receipt.get("source", "")).strip()
+    channel = str(receipt.get("channel", "")).strip()
+    if source:
+        closeout["receiptSource"] = source
+    if channel:
+        closeout["receiptChannel"] = channel
+    role_thread_id = receipt.get("roleThreadId")
+    if role_thread_id:
+        closeout["receiptRoleThreadId"] = str(role_thread_id)
+    return_thread_id = receipt.get("returnThreadId")
+    if return_thread_id:
+        closeout["returnThreadId"] = str(return_thread_id)
+    if source == "self-thread-fallback/read_thread" or channel == "read_thread":
+        closeout["deliveryStatus"] = "fallback_only"
+        closeout["deliveryDegraded"] = True
+    elif source == "manager-inbox/direct-send" or channel == "manager-inbox":
+        closeout["deliveryStatus"] = "direct_send"
+
+
 def _release_v2_executor_claim(state_root: str, project_id: str,
                                task_id: str, ledger: Mapping[str, Any]) -> None:
     dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
@@ -689,6 +713,10 @@ def make_manager_acceptance_closeout(ledger: Mapping[str, Any], *,
         "reason": acceptance.get("reason") or "ordinary successful implementation/testing with no new reusable risk",
         "watcherAction": "stop_and_delete_heartbeat" if terminal else "",
     }
+    _apply_v2_closeout_receipt(
+        closeout,
+        ledger.get("callbackReceipt") if isinstance(ledger.get("callbackReceipt"), Mapping) else None,
+    )
     if terminal:
         closeout.update({
             "reportAction": "emit one plain language closeout report to the user",
@@ -763,3 +791,44 @@ def record_manager_acceptance(state_root: str,
             cleaned_at=accepted_at,
         )
     return load_task_ledger(state_root, project_id, task_id)
+
+
+def run_v2_team_task_with_adapter(state_root: str | Path,
+                                  project_id: str,
+                                  task_id: str,
+                                  *,
+                                  objective: str,
+                                  project_local_path: str | Path,
+                                  thread_adapter: Any,
+                                  permission: str,
+                                  observed_at: str,
+                                  target: Mapping[str, Any],
+                                  target_fingerprint: str | None,
+                                  host_id: str,
+                                  parent_thread_id: str,
+                                  manager_plan: Mapping[str, Any] | None,
+                                  task_authorization_package: Mapping[str, Any] | None,
+                                  turn_limit: int | None = None,
+                                  confirm_rework: bool = False,
+                                  return_thread_id: str | None = None) -> dict[str, Any]:
+    """Expose the facade runner without importing the facade during module load."""
+    from team_router import run_v2_team_task_with_adapter as run
+    return run(
+        state_root,
+        project_id,
+        task_id,
+        objective=objective,
+        project_local_path=project_local_path,
+        thread_adapter=thread_adapter,
+        permission=permission,
+        observed_at=observed_at,
+        target=target,
+        target_fingerprint=target_fingerprint,
+        host_id=host_id,
+        parent_thread_id=parent_thread_id,
+        manager_plan=manager_plan,
+        task_authorization_package=task_authorization_package,
+        turn_limit=turn_limit,
+        confirm_rework=confirm_rework,
+        return_thread_id=return_thread_id,
+    )

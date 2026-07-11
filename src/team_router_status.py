@@ -142,6 +142,10 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
             lines.append("receiptRoleThreadId: %s" % closeout.get("receiptRoleThreadId", ""))
         if closeout.get("returnThreadId"):
             lines.append("returnThreadId: %s" % closeout.get("returnThreadId", ""))
+    if closeout.get("deliveryStatus"):
+        lines.append("deliveryStatus: %s" % closeout.get("deliveryStatus", ""))
+    if closeout.get("deliveryDegraded"):
+        lines.append("delivery: degraded")
     lines.extend((
         "compoundingDecision: %s" % compounding_decision,
         "reason: %s" % compounding_reason,
