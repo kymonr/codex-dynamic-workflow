@@ -1405,11 +1405,13 @@ risks: none
         )
         ledger = {
             "taskId": "task-1",
+            "objective": "完成 X",
             "status": "planned",
             "taskAuthorizationPackage": package,
         }
         request = {
             "requested_task_id": "task-1",
+            "requested_objective": "完成 X",
             "requested_scope": "src/x.py",
             "requested_permission": "local-package",
             "requested_stop_condition": "tests pass",
@@ -1425,6 +1427,7 @@ risks: none
         for name, overrides in (
             ("parent", {"parent_thread_id": "parent-2"}),
             ("task", {"requested_task_id": "task-2"}),
+            ("objective", {"requested_objective": "完成 Y"}),
             ("scope", {"requested_scope": "src/x.py src/y.py"}),
             ("permission", {"requested_permission": "read-only"}),
             ("stop", {"requested_stop_condition": "publish"}),
@@ -17524,16 +17527,17 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             )
             team_router.save_task_ledger(root, project_id, task_id, ledger)
 
-            def invoke(*, parent=parent_thread_id, supplied_plan=plan):
+            def invoke(*, parent=parent_thread_id, supplied_plan=plan, supplied_objective=objective):
                 with mock.patch("team_router.assess_live_orchestration_readiness", side_effect=AssertionError("readiness")):
                     return team_router.orchestrate_team_task_with_adapter(
-                        root, project_id, task_id, objective=objective, project_local_path=root,
+                        root, project_id, task_id, objective=supplied_objective, project_local_path=root,
                         thread_adapter=object(), permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
                         parent_thread_id=parent, heartbeat_scheduler=object(), manager_plan=supplied_plan,
                         task_authorization_package=package,
                     )
 
             self.assertEqual(invoke(parent="other-parent")["action"], "authorization_mismatch")
+            self.assertEqual(invoke(supplied_objective="expanded delegated task")["action"], "authorization_mismatch")
             self.assertEqual(invoke(supplied_plan={**plan, "scope": "src/expanded.py"})["action"], "authorization_mismatch")
             self.assertEqual(invoke(supplied_plan={**plan, "externalGates": ("commit",)})["action"], "authorization_mismatch")
             terminal = team_router.load_task_ledger(root, project_id, task_id)

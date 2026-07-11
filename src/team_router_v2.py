@@ -143,6 +143,7 @@ def v2_continuation_allowed(ledger: Mapping[str, Any],
                             *,
                             parent_thread_id: str,
                             requested_task_id: str,
+                            requested_objective: str,
                             requested_scope: str,
                             requested_permission: str,
                             requested_stop_condition: str,
@@ -158,6 +159,7 @@ def v2_continuation_allowed(ledger: Mapping[str, Any],
         ledger.get("taskId") == requested_task_id == package.get("taskId")
         and ("parentThreadId" not in ledger or ledger.get("parentThreadId") == parent_thread_id)
         and package.get("parentThreadId") == parent_thread_id
+        and ledger.get("objective") == requested_objective == package.get("objective")
         and package.get("scope") == requested_scope
         and package.get("permission") == requested_permission
         and package.get("stopCondition") == requested_stop_condition
