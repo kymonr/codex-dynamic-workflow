@@ -294,6 +294,11 @@ def resolve_v2_manager_plan(*,
         route_roles=route_roles,
     )
     requests = requested_role_routing if isinstance(requested_role_routing, Mapping) else {}
+    candidate_routing = {
+        str(role): dict(request)
+        for role, request in requests.items()
+        if isinstance(request, Mapping)
+    }
     resolved_routing = {}
     for role in route_roles:
         request = requests.get(role)
@@ -315,6 +320,7 @@ def resolve_v2_manager_plan(*,
         plan,
         routeRoles=route_roles,
         roleRouting=resolved_routing,
+        candidateRoleRouting=candidate_routing,
         modelRoutingAuthorization=dict(authorization_package["modelRoutingAuthorization"]),
     )
 
@@ -401,19 +407,21 @@ def _v2_reclassification_gate(plan: Mapping[str, Any], evidence: Mapping[str, An
 
 
 def _v2_reclassification_role_routing(plan: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    candidates = plan.get("candidateRoleRouting") if isinstance(plan.get("candidateRoleRouting"), Mapping) else {}
     routing = plan.get("roleRouting") if isinstance(plan.get("roleRouting"), Mapping) else {}
     requests: dict[str, dict[str, Any]] = {}
-    for role, resolved in routing.items():
-        if not isinstance(resolved, Mapping):
-            continue
-        request = {"executionClass": resolved.get("executionClass")}
-        if resolved.get("modelOverrideReason") is not None:
-            request.update({
-                "model": resolved.get("requestedModel"),
-                "thinking": resolved.get("requestedThinking"),
-                "modelOverrideReason": resolved.get("modelOverrideReason"),
-            })
-        requests[str(role)] = request
+    for source in (candidates, routing):
+        for role, resolved in source.items():
+            if not isinstance(resolved, Mapping):
+                continue
+            request = {"executionClass": resolved.get("executionClass")}
+            if resolved.get("modelOverrideReason") is not None:
+                request.update({
+                    "model": resolved.get("requestedModel") or resolved.get("model"),
+                    "thinking": resolved.get("requestedThinking") or resolved.get("thinking"),
+                    "modelOverrideReason": resolved.get("modelOverrideReason"),
+                })
+            requests[str(role)] = request
     return requests
 
 
@@ -479,6 +487,51 @@ def next_v2_route_after_evidence(ledger: Mapping[str, Any],
     })
     updated["observations"] = observations
     return updated
+
+
+def resume_v2_manager_routing(state_root: str | Path,
+                              project_id: str,
+                              task_id: str,
+                              *,
+                              objective: str,
+                              parent_thread_id: str,
+                              manager_plan: Mapping[str, Any],
+                              authorization_package: Mapping[str, Any]) -> dict[str, Any]:
+    """Resume only a callback-paused V2 route with explicit STRICT candidates."""
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if ledger.get("status") != "manager_routing_pending":
+        raise StateStoreError("manager_routing_resume_requires_manager_routing_pending")
+    plan = _v2_plan(ledger)
+    if not isinstance(manager_plan, Mapping):
+        raise StateStoreError("plan_invalid: managerPlan must be a mapping")
+    if _text(objective, "objective") != _text(ledger.get("objective"), "objective"):
+        raise StateStoreError("authorization_mismatch: objective")
+    if _text(parent_thread_id, "parentThreadId") != _text(ledger.get("parentThreadId"), "parentThreadId"):
+        raise StateStoreError("authorization_mismatch: parentThreadId")
+    package = ledger.get("taskAuthorizationPackage")
+    if not isinstance(package, Mapping) or dict(authorization_package) != dict(package):
+        raise StateStoreError("authorization_mismatch: taskAuthorizationPackage")
+    for field in ("scope", "permission", "stopCondition"):
+        if manager_plan.get(field) != plan.get(field):
+            raise StateStoreError("authorization_mismatch: %s" % field)
+    if manager_plan.get("externalGates"):
+        raise StateStoreError("authorization_mismatch: externalGates")
+    if str(manager_plan.get("requestedGateClass", "")).upper() != "STRICT":
+        raise StateStoreError("plan_invalid: manager routing resume requires STRICT")
+    explicit = manager_plan.get("requestedRoleRouting")
+    if not isinstance(explicit, Mapping):
+        raise StateStoreError("plan_invalid: requestedRoleRouting is required")
+    candidates = plan.get("candidateRoleRouting") if isinstance(plan.get("candidateRoleRouting"), Mapping) else {}
+    merged = {str(role): dict(request) for role, request in candidates.items() if isinstance(request, Mapping)}
+    merged.update({str(role): dict(request) for role, request in explicit.items() if isinstance(request, Mapping)})
+    staged_plan = dict(plan, candidateRoleRouting=merged)
+    staged = dict(ledger, plan=staged_plan)
+    if isinstance(ledger.get("resolvedPlan"), Mapping):
+        staged["resolvedPlan"] = dict(staged_plan)
+    resumed = next_v2_route_after_evidence(staged, {"requestedGateClass": "STRICT"})
+    resumed["status"] = "planned"
+    resumed.pop("routingError", None)
+    return save_task_ledger(state_root, project_id, task_id, resumed)
 
 
 def build_v2_routing_receipt(ledger: Mapping[str, Any]) -> dict[str, Any]:

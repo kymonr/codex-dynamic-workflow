@@ -6366,7 +6366,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
             **request,
         )
 
-    def _reserve_intent(self, task_id="task-1", request_id="request-1"):
+    def _reserve_intent(self, task_id="task-1", request_id="request-1", *, parallel_allowed=False):
         fingerprint = team_router.target_fingerprint_for(self.target, "local")
         team_router.reserve_role_or_creation_intent(
             self.root,
@@ -6378,6 +6378,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
             task_id=task_id,
             request_id=request_id,
             claimed_at="2026-07-11T20:00:00+08:00",
+            parallel_allowed=parallel_allowed,
         )
         return fingerprint
 
@@ -6577,6 +6578,27 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
         self.assertFalse(ledger["dispatches"][-1]["creationAccepted"])
         self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertEqual(pool["creationIntents"], [])
+
+    def test_create_timeout_recovers_server_created_thread_without_retrying_create(self):
+        class TimeoutAfterCreateAdapter(FakeThreadAdapter):
+            def create_thread(self, **kwargs):
+                created = super().create_thread(**kwargs)
+                self.messages[created["threadId"]].append({"text": kwargs["prompt"]})
+                raise TimeoutError("create_thread timed out")
+
+            def list_threads(self, **kwargs):
+                return {"threads": [{"threadId": thread_id} for thread_id in self.messages]}
+
+        adapter = TimeoutAfterCreateAdapter()
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual((result["outcome"], result["threadId"]), ("sent", "thread-executor"))
+        self.assertEqual(len(adapter.created), 1)
+        self.assertEqual(len(adapter.sent), 1)
         pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
         self.assertEqual(pool["creationIntents"], [])
 
@@ -6828,9 +6850,9 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         for name, candidates, messages in cases:
             with self.subTest(name=name):
                 task_id, request_id = "task-%s" % name, "request-%s" % name
-                self._save_task(task_id)
+                self._save_task(task_id, parallel_allowed=True)
                 adapter = RecoveryAdapter(candidates, messages)
-                self._reserve_intent(task_id, request_id)
+                self._reserve_intent(task_id, request_id, parallel_allowed=True)
 
                 result = team_router.resolve_or_create_v2_role_with_adapter(
                     adapter,
@@ -6846,10 +6868,12 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
                     requested_at="2026-07-11T20:00:01+08:00",
                 )
 
-                self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "creation_outcome_unknown"))
+                self.assertEqual((result["outcome"], result["reason"]), ("creation_outcome_unknown", "creation_outcome_unknown"))
                 self.assertEqual(adapter.created, [])
                 ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
-                self.assertEqual(ledger["status"], "tool_error")
+                self.assertEqual(ledger["status"], "creation_outcome_unknown")
+                pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+                self.assertIn(request_id, [item["requestId"] for item in pool["creationIntents"]])
                 self.assertTrue(any(
                     item.get("parsedFields", {}).get("reason") == "creation_outcome_unknown"
                     for item in ledger["observations"]
@@ -7042,32 +7066,12 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
         pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
         self.assertNotIn("claim", pool["roles"]["executor"][0])
 
-    def test_v2_callback_risk_escalation_requires_closed_routing_before_acceptance(self):
+    def test_v2_callback_risk_escalation_without_candidates_waits_for_manager_routing(self):
         ledger = self._save_awaiting_acceptance()
-        before = json.dumps(ledger["plan"], sort_keys=True)
+        updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
 
-        with self.assertRaisesRegex(team_router.StateStoreError, "plan_invalid: missing roleRouting.reviewer"):
-            team_router.next_v2_route_after_evidence(ledger, {"requestedGateClass": "STRICT"})
-        self.assertEqual(json.dumps(ledger["plan"], sort_keys=True), before)
-
-        ledger["plan"] = dict(ledger["plan"])
-        ledger["plan"]["roleRouting"] = {
-            **ledger["plan"]["roleRouting"],
-            "reviewer": {"executionClass": "high", "requestedModel": "gpt-5.6-sol", "requestedThinking": "high"},
-            "verifier": {"executionClass": "mechanical", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium"},
-        }
-        routed = team_router.next_v2_route_after_evidence(
-            ledger,
-            {"requestedGateClass": "STRICT", "risks": "new protocol risk"},
-        )
-
-        self.assertEqual(routed["status"], "reviewing")
-        self.assertEqual(routed["plan"]["requestedGateClass"], "NORMAL")
-        self.assertEqual(routed["plan"]["effectiveGateClass"], "STRICT")
-        self.assertEqual(tuple(routed["plan"]["routeRoles"]), ("executor", "reviewer", "verifier"))
-        observation = routed["observations"][-1]
-        self.assertEqual(observation["parsedFields"]["previousEffectiveGateClass"], "NORMAL")
-        self.assertEqual(observation["parsedFields"]["effectiveGateClass"], "STRICT")
+        self.assertEqual(updated["status"], "manager_routing_pending")
+        self.assertEqual(updated["routingError"]["reason"], "plan_invalid")
 
     def test_v2_executor_callback_enters_manager_acceptance(self):
         updated = self._capture_executor_callback(self._save_awaiting_acceptance(), risks="none")
@@ -7075,11 +7079,11 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
         self.assertEqual(updated["status"], "manager_acceptance_pending")
         self.assertEqual(updated["observations"][-1]["type"], "v2_route_reclassified")
 
-    def test_v2_executor_callback_risk_escalation_bypasses_manager_acceptance(self):
+    def test_v2_executor_callback_risk_escalation_uses_preserved_candidate_routing(self):
         ledger = self._save_awaiting_acceptance()
         ledger["plan"] = dict(ledger["plan"])
-        ledger["plan"]["roleRouting"] = {
-            **ledger["plan"]["roleRouting"],
+        ledger["plan"]["candidateRoleRouting"] = {
+            "executor": {"executionClass": "standard"},
             "reviewer": {"executionClass": "high", "requestedModel": "gpt-5.6-sol", "requestedThinking": "high"},
             "verifier": {"executionClass": "mechanical", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium"},
         }
@@ -7088,7 +7092,7 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
         self.assertEqual(updated["status"], "reviewing")
         self.assertEqual(tuple(updated["plan"]["routeRoles"]), ("executor", "reviewer", "verifier"))
 
-    def test_v2_callback_route_error_releases_final_executor_claim(self):
+    def test_v2_callback_missing_routing_releases_final_executor_claim_without_terminal_block(self):
         ledger = self._save_awaiting_acceptance()
         team_router.reserve_role_or_creation_intent(
             self.root,
@@ -7114,7 +7118,7 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
 
         updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
 
-        self.assertEqual(updated["status"], "blocked")
+        self.assertEqual(updated["status"], "manager_routing_pending")
         self.assertEqual(updated["routingError"]["reason"], "plan_invalid")
         pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
         self.assertNotIn("claim", pool["roles"]["executor"][0])
@@ -17291,6 +17295,84 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             )
 
             self.assertEqual(accepted["status"], "manager_acceptance_pending")
+
+    def test_v2_manager_resume_routes_pending_strict_callback_to_reviewer_then_verifier(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-resume", "target": {"type": "project", "projectId": "project-v2-resume"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-resume", "ctr-v2-resume", "parent-v2-resume"
+            objective, target = "resume a strict callback route", {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-resume", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/protocol.py only", permission="local-package",
+                stop_condition="focused tests pass", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            normal_plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                "explicitRoles": ("executor",), "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            }
+            resume_plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "STRICT",
+                "requestedRoleRouting": {
+                    "reviewer": {"executionClass": "high"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
+            }
+            adapter = V2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root, "thread_adapter": adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": target, "parent_thread_id": parent_thread_id, "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            first = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, manager_plan=normal_plan, task_authorization_package=package, **common,
+            )
+            executor = first["ledger"]["dispatches"][-1]
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-executor-direct", "sentAt": "2026-07-12T10:01:00+08:00", "sourceThreadId": executor["threadId"],
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
+                    "role: Executor\nstatus: done\nfinal: true\nsummary: executor done\nevidence: focused test OK\n"
+                    "risks: strict protocol risk\nnext: manager"
+                ) % (task_id, parent_thread_id, executor["threadId"]),
+            })
+            pending = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual(pending["status"], "manager_routing_pending")
+            with self.assertRaisesRegex(team_router.StateStoreError, "missing roleRouting.reviewer"):
+                team_router.resume_v2_manager_routing(
+                    root, project_id, task_id, objective=objective, parent_thread_id=parent_thread_id,
+                    manager_plan={**resume_plan, "requestedRoleRouting": {}}, authorization_package=package,
+                )
+            self.assertEqual(team_router.load_task_ledger(root, project_id, task_id)["status"], "manager_routing_pending")
+            self.assertEqual(len(adapter.sent), 1)
+
+            resumed = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, manager_plan=resume_plan, task_authorization_package=package, **common,
+            )
+            self.assertEqual((resumed["action"], resumed["status"]), ("sent_v2_reviewer", "reviewing"))
+            reviewer = resumed["ledger"]["dispatches"][-1]
+            self.assertNotIn("routingError", resumed["ledger"])
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-reviewer-direct", "sentAt": "2026-07-12T10:02:00+08:00", "sourceThreadId": reviewer["threadId"],
+                "text": (
+                    "TEAM_ROUTER_REVIEW taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Reviewer\n"
+                    "result: pass\nsummary: reviewer pass\nfindings: none\nrequiredChanges: none\n"
+                    "evidenceChecked: focused test OK\nrisks: none"
+                ) % (task_id, parent_thread_id, reviewer["threadId"]),
+            })
+            verifier = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual((verifier["action"], verifier["status"]), ("sent_v2_verifier", "verifying"))
 
     def test_v2_route_matrix_strict_dispatches_reviewer_then_verifier(self):
         class V2Adapter(FakeThreadAdapter):

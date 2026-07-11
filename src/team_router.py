@@ -50,6 +50,7 @@ from team_router_v2 import (
     prepare_v2_manager_task,
     record_manager_acceptance,
     record_v2_model_upgrade,
+    resume_v2_manager_routing,
     resolve_v2_manager_plan,
     target_fingerprint_for,
     v2_continuation_allowed,
@@ -1486,6 +1487,43 @@ def _v2_adapter_failure_reason(exc: Exception) -> str:
     return "model_unavailable" if any(word in text for word in ("model", "thinking", "reasoning")) else "thread_tool_error"
 
 
+def _v2_create_outcome_is_uncertain(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return isinstance(exc, TimeoutError) or any(term in text for term in (
+        "timeout", "timed out", "connection reset", "connection aborted",
+    ))
+
+
+def _v2_creation_outcome_unknown(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 *,
+                                 parent_thread_id: str,
+                                 role: str,
+                                 request_id: str,
+                                 host_id: str,
+                                 target_fingerprint: str,
+                                 requested_at: str,
+                                 detail: str,
+                                 requested_model: str | None = None,
+                                 requested_thinking: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    ledger["status"] = "creation_outcome_unknown"
+    ledger["creationOutcome"] = {"reason": "creation_outcome_unknown", "detail": detail, "capturedAt": requested_at}
+    ledger["dispatches"].append(_v2_dispatch_entry(
+        task_id=task_id, role=role, request_id=request_id, thread_id=None,
+        host_id=host_id, target_fingerprint=target_fingerprint,
+        requested_model=requested_model, requested_thinking=requested_thinking,
+        requested_at=requested_at, creation_accepted=None, dispatch_accepted=False,
+        binding="new", failure_reason="creation_outcome_unknown",
+    ))
+    ledger["observations"].append(make_observation(
+        "system_event", "manager", "creation-intent:%s" % request_id, requested_at, detail,
+        {"reason": "creation_outcome_unknown", "requestId": request_id},
+    ))
+    return {"outcome": "creation_outcome_unknown", "reason": "creation_outcome_unknown", "ledger": save_task_ledger(state_root, project_id, task_id, ledger)}
+
+
 def _v2_binding_outcome(outcome: str) -> str:
     return "new" if outcome in {"created", "recovered"} else outcome
 
@@ -1846,19 +1884,14 @@ def recover_v2_creation_intent_with_adapter(thread_adapter: Any,
     except Exception as exc:
         return fail(_v2_adapter_failure_reason(exc), exc)
     if len(verified) != 1:
-        failure = fail(
-            "creation_outcome_unknown",
-            StateStoreError("verified bootstrap candidates: %d" % len(verified)),
+        return _v2_creation_outcome_unknown(
+            state_root, project_id, task_id,
+            parent_thread_id=parent_thread_id, role=role, request_id=request_id,
+            host_id=host_id, target_fingerprint=target_fingerprint,
+            requested_at=observed_at,
+            detail="verified bootstrap candidates: %d" % len(verified),
+            requested_model=requested_model, requested_thinking=requested_thinking,
         )
-        recover_creation_intent(
-            state_root,
-            project_id,
-            parent_thread_id=parent_thread_id,
-            role=role,
-            request_id=request_id,
-            recovered_at=observed_at,
-        )
-        return failure
     thread_id = verified[0]
     try:
         finalized = finalize_created_role(
@@ -1994,6 +2027,24 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
             model=BOOTSTRAP_MODEL,
             thinking=BOOTSTRAP_THINKING,
         )
+    except Exception as exc:
+        if _v2_create_outcome_is_uncertain(exc):
+            return recover_v2_creation_intent_with_adapter(
+                thread_adapter, state_root, project_id,
+                parent_thread_id=parent_thread_id, host_id=host_id,
+                target_fingerprint=fingerprint, role=role, task_id=task_id,
+                request_id=request_id, title=title, observed_at=requested_at,
+                requested_model=requested_model, requested_thinking=requested_thinking,
+            )
+        return _v2_terminal_tool_error(
+            state_root, project_id, task_id,
+            parent_thread_id=parent_thread_id, role=role, request_id=request_id,
+            host_id=host_id, target_fingerprint=fingerprint, requested_at=requested_at,
+            reason=_v2_adapter_failure_reason(exc), error=exc,
+            requested_model=requested_model, requested_thinking=requested_thinking,
+            binding="new", creation_accepted=False,
+        )
+    try:
         thread_id = _thread_id_from_create_result(created, role)
         finalized = finalize_created_role(
             state_root,
@@ -3326,8 +3377,9 @@ def _finalize_v2_executor_callback(state_root: str | Path,
 
 
 def _v2_executor_callback_route_error(ledger: dict[str, Any], error: StateStoreError) -> dict[str, Any]:
-    ledger["status"] = "blocked"
-    ledger["routingError"] = {"reason": str(error).split(":", 1)[0], "detail": str(error)}
+    detail = str(error)
+    ledger["status"] = "manager_routing_pending" if detail.startswith("plan_invalid: missing roleRouting.") else "blocked"
+    ledger["routingError"] = {"reason": detail.split(":", 1)[0], "detail": detail}
     return _clear_waiting_read_state(ledger)
 
 
@@ -6410,6 +6462,17 @@ def run_v2_team_task_with_adapter(state_root: str | Path,
     plan = ledger.get("resolvedPlan") or ledger.get("plan")
     if not isinstance(plan, Mapping):
         raise StateStoreError("plan_invalid: resolved V2 plan is required")
+    if ledger.get("status") == "manager_routing_pending" and manager_plan is not None:
+        ledger = resume_v2_manager_routing(
+            state_root,
+            project_id,
+            task_id,
+            objective=objective,
+            parent_thread_id=parent_thread_id,
+            manager_plan=manager_plan,
+            authorization_package=task_authorization_package,
+        )
+        plan = ledger.get("resolvedPlan") or ledger.get("plan")
     if permission != plan.get("permission"):
         raise StateStoreError("authorization_mismatch: permission")
     runtime_target = dict(target)
