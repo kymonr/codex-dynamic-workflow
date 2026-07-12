@@ -53,6 +53,7 @@ from team_router_v2 import (
     resume_v2_manager_routing,
     resolve_v2_manager_plan,
     target_fingerprint_for,
+    validate_v2_authorization,
     v2_continuation_allowed,
 )
 from team_router_protocol import (
@@ -6265,15 +6266,47 @@ def _v2_role_prompt(task_id: str,
                     *,
                     objective: str,
                     role_thread_id: str,
+                    authorization_package: Mapping[str, Any],
                     return_thread_id: str | None = None) -> str:
     marker = _v2_role_marker(role)
     role_name = ROLE_ALIASES[role]
+    scope = _required_str(plan.get("scope"), "resolvedPlan.scope")
+    permission = _required_str(plan.get("permission"), "resolvedPlan.permission")
+    stop_condition = _required_str(plan.get("stopCondition"), "resolvedPlan.stopCondition")
+    parent_thread_id = _required_str(plan.get("parentThreadId"), "resolvedPlan.parentThreadId")
+    package_id = _required_str(
+        plan.get("taskAuthorizationPackageId"),
+        "resolvedPlan.taskAuthorizationPackageId",
+    )
+    if _required_str(plan.get("taskId"), "resolvedPlan.taskId") != task_id:
+        raise StateStoreError("authorization_mismatch: taskId")
+    if _required_str(plan.get("objective"), "resolvedPlan.objective") != objective:
+        raise StateStoreError("authorization_mismatch: objective")
+    validate_v2_authorization(
+        authorization_package=authorization_package,
+        ledger_input={
+            "taskId": task_id,
+            "parentThreadId": parent_thread_id,
+            "objective": objective,
+        },
+        scope=scope,
+        permission=permission,
+        stop_condition=stop_condition,
+    )
+    if authorization_package.get("packageId") != package_id:
+        raise StateStoreError("authorization_mismatch: packageId")
     lines = [
         "TEAM_ROUTER_V2_DISPATCH taskId=%s" % task_id,
         "role: %s" % role_name,
-        "permission: %s" % _required_str(plan.get("permission"), "resolvedPlan.permission"),
-        "scope: %s" % _required_str(plan.get("scope"), "resolvedPlan.scope"),
-        "stopCondition: %s" % _required_str(plan.get("stopCondition"), "resolvedPlan.stopCondition"),
+        "authorizationPackageId: %s" % package_id,
+        "authorizationStatus: authorized",
+        "authorizationSource: taskAuthorizationPackage",
+        "executionDirective: start_immediately",
+        "commitAuthorization: false",
+        "externalGates: none",
+        "permission: %s" % permission,
+        "scope: %s" % scope,
+        "stopCondition: %s" % stop_condition,
         "objective: %s" % _required_str(objective, "objective"),
         "callbackMarker: %s taskId=%s" % (marker, task_id),
         "action: perform the assigned %s work within scope and return the required marker" % role_name,
@@ -6548,6 +6581,7 @@ def run_v2_team_task_with_adapter(state_root: str | Path,
             plan,
             objective=objective,
             role_thread_id=thread_id,
+            authorization_package=ledger.get("taskAuthorizationPackage"),
             return_thread_id=return_thread_id,
         ),
         requested_model=_required_str(role_request.get("requestedModel"), "roleRouting.requestedModel"),

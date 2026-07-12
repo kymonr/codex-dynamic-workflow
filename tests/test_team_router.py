@@ -16985,6 +16985,84 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "history/current turn normally",
         ):
             self.assertNotIn(stale, text)
+
+
+class TestV2DelegatedAuthorizationReceipt(unittest.TestCase):
+    def _authorization(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-delegated-receipt",
+            task_id="ctr-20260712-auth-receipt",
+            parent_thread_id="parent-thread",
+            objective="修复授权传递",
+            scope="src/team_router.py and focused tests",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-12T08:00:00+08:00",
+        )
+        plan = {
+            "taskAuthorizationPackageId": package["packageId"],
+            "taskId": package["taskId"],
+            "parentThreadId": package["parentThreadId"],
+            "objective": package["objective"],
+            "scope": package["scope"],
+            "permission": package["permission"],
+            "stopCondition": package["stopCondition"],
+        }
+        return package, plan
+
+    def test_v2_role_prompt_carries_validated_authorization_receipt(self):
+        package, plan = self._authorization()
+        for role in ("architect", "executor", "reviewer", "qa", "verifier"):
+            with self.subTest(role=role):
+                prompt = team_router._v2_role_prompt(
+                    package["taskId"],
+                    role,
+                    plan,
+                    objective=package["objective"],
+                    role_thread_id="%s-thread" % role,
+                    return_thread_id=package["parentThreadId"],
+                    authorization_package=package,
+                )
+                for line in (
+                    "authorizationPackageId: auth-delegated-receipt",
+                    "authorizationStatus: authorized",
+                    "authorizationSource: taskAuthorizationPackage",
+                    "executionDirective: start_immediately",
+                    "commitAuthorization: false",
+                    "externalGates: none",
+                ):
+                    self.assertIn(line, prompt)
+        reference = (
+            ROOT / "skills" / "codex-team-router" / "references" / "role-handoff-and-review-package.md"
+        ).read_text(encoding="utf-8")
+        for text in (
+            "## Delegated Authorization Receipt",
+            "runtime revalidates the active `taskAuthorizationPackage`",
+            "A bare `authorizationStatus: authorized`",
+            "This receipt is Version 2 only",
+        ):
+            self.assertIn(text, reference)
+
+    def test_v2_role_prompt_rejects_mismatched_or_inactive_receipt(self):
+        package, plan = self._authorization()
+        cases = (
+            ("package", {**package, "packageId": "other-package"}, "authorization_mismatch: packageId"),
+            ("scope", {**package, "scope": "src/other.py"}, "authorization_mismatch: scope"),
+            ("inactive", {**package, "status": "closed"}, "authorization_missing"),
+        )
+        for name, supplied, error in cases:
+            with self.subTest(name=name), self.assertRaisesRegex(team_router.StateStoreError, error):
+                team_router._v2_role_prompt(
+                    package["taskId"],
+                    "executor",
+                    plan,
+                    objective=package["objective"],
+                    role_thread_id="executor-thread",
+                    return_thread_id=package["parentThreadId"],
+                    authorization_package=supplied,
+                )
+
+
 class TestCompactReviewerVerifierReturns(unittest.TestCase):
     def test_v1_and_v2_reviewer_verifier_prompts_require_compact_parent_return(self):
         task_id = "ctr-20260712-compact-return"
@@ -16992,6 +17070,25 @@ class TestCompactReviewerVerifierReturns(unittest.TestCase):
             "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\n"
             "summary: done\nevidence: tests: 1 OK\nrisks: none\nnext: reviewer"
         ) % task_id
+        authorization = team_router.make_task_authorization_package(
+            package_id="auth-compact-return",
+            task_id=task_id,
+            parent_thread_id="parent-thread",
+            objective="compact reviewer verifier return",
+            scope="src only",
+            permission="read-only",
+            stop_condition="tests pass",
+            created_at="2026-07-12T08:00:00+08:00",
+        )
+        v2_plan = {
+            "taskAuthorizationPackageId": authorization["packageId"],
+            "taskId": authorization["taskId"],
+            "parentThreadId": authorization["parentThreadId"],
+            "objective": authorization["objective"],
+            "permission": authorization["permission"],
+            "scope": authorization["scope"],
+            "stopCondition": authorization["stopCondition"],
+        }
         prompts = (
             team_router.make_reviewer_request_message(
                 task_id, callback, "read-only", "src only", "parent-thread", role_thread_id="reviewer-thread",
@@ -17000,12 +17097,14 @@ class TestCompactReviewerVerifierReturns(unittest.TestCase):
                 task_id, callback, "read-only", "src only", "parent-thread", role_thread_id="verifier-thread",
             ),
             team_router._v2_role_prompt(
-                task_id, "reviewer", {"permission": "read-only", "scope": "src only", "stopCondition": "tests pass"},
-                objective="review", role_thread_id="reviewer-thread", return_thread_id="parent-thread",
+                task_id, "reviewer", v2_plan,
+                objective=authorization["objective"], role_thread_id="reviewer-thread",
+                authorization_package=authorization, return_thread_id="parent-thread",
             ),
             team_router._v2_role_prompt(
-                task_id, "verifier", {"permission": "read-only", "scope": "src only", "stopCondition": "tests pass"},
-                objective="verify", role_thread_id="verifier-thread", return_thread_id="parent-thread",
+                task_id, "verifier", v2_plan,
+                objective=authorization["objective"], role_thread_id="verifier-thread",
+                authorization_package=authorization, return_thread_id="parent-thread",
             ),
         )
 
