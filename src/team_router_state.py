@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
-import hashlib
 import json
 import os
 import uuid
@@ -19,6 +18,7 @@ class StateStoreError(ValueError):
 
 
 REGISTRY_VERSION = 2
+PROJECT_ROLE_POOL_KEY = "__project__"
 TASK_LEDGER_VERSION = 2
 ROLE_NAMES = frozenset({"manager", "executor", "reviewer", "verifier", "architect", "qa"})
 LEGACY_CORE_ROLE_NAMES = frozenset({"manager", "executor", "verifier"})
@@ -263,11 +263,10 @@ def manager_pool_lock_path(state_root: str | Path,
                            project_id: str,
                            parent_thread_id: str) -> Path:
     _validate_task_id(project_id)
-    parent_thread_id = _required_str(parent_thread_id, "parentThreadId")
-    parent_key = hashlib.sha256(parent_thread_id.encode("utf-8")).hexdigest()
+    _required_str(parent_thread_id, "parentThreadId")
     return (
         _resolve_persistent_state_root(state_root)
-        / "projects" / project_id / "manager-pools" / (parent_key + ".lock")
+        / "projects" / project_id / "manager-pools" / "project.lock"
     )
 
 
@@ -319,16 +318,23 @@ def _manager_pool(registry: dict[str, Any], project_id: str,
         project.get("managerPools"),
         "registry.projects.%s.managerPools" % project_id,
     )
-    pool = _as_mapping(
-        manager_pools.get(parent_thread_id),
-        "registry.projects.%s.managerPools.%s" % (project_id, parent_thread_id),
-    )
+    pool = _as_mapping(manager_pools.get(PROJECT_ROLE_POOL_KEY), "managerPool")
+    if PROJECT_ROLE_POOL_KEY not in manager_pools:
+        roles: dict[str, list[Any]] = {}
+        intents: list[Any] = []
+        for legacy_pool in manager_pools.values():
+            legacy = _as_mapping(legacy_pool, "legacyManagerPool", default_empty=False)
+            for role, records in _as_mapping(legacy.get("roles"), "legacyManagerPool.roles").items():
+                roles.setdefault(role, []).extend(_as_list(records, "legacyManagerPool.roles.%s" % role))
+            intents.extend(_as_list(legacy.get("creationIntents"), "legacyManagerPool.creationIntents"))
+        pool = {"roles": roles, "creationIntents": intents}
+        manager_pools = {PROJECT_ROLE_POOL_KEY: pool}
     pool["roles"] = _as_mapping(pool.get("roles"), "managerPool.roles")
     pool["creationIntents"] = _as_list(
         pool.get("creationIntents"),
         "managerPool.creationIntents",
     )
-    manager_pools[parent_thread_id] = pool
+    manager_pools[PROJECT_ROLE_POOL_KEY] = pool
     project["managerPools"] = manager_pools
     projects[project_id] = project
     registry["projects"] = projects
@@ -514,17 +520,15 @@ def reserve_role_or_creation_intent(state_root: str | Path,
 
             matching_intents = [
                 intent for intent in intents
-                if _creation_intent_matches(
-                    intent,
-                    parent_thread_id=parent_thread_id,
-                    host_id=host_id,
-                    target_fingerprint=target_fingerprint,
-                    role=role,
-                )
+                if intent.get("hostId") == host_id
+                and intent.get("targetFingerprint") == target_fingerprint
+                and intent.get("role") == role
             ]
             if matching_records and not parallel_allowed:
                 return _pool_busy(role, request_id)
             if matching_intents and not parallel_allowed:
+                return _pool_busy(role, request_id)
+            if len(matching_records) + len(matching_intents) >= 2:
                 return _pool_busy(role, request_id)
 
             intent = {
@@ -535,6 +539,7 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                 "taskId": task_id,
                 "requestId": request_id,
                 "claimedAt": claimed_at,
+                "temporary": bool(matching_records or matching_intents),
             }
             intents.append(intent)
             pool["creationIntents"] = intents
@@ -619,6 +624,7 @@ def finalize_created_role(state_root: str | Path,
                 "lastObservedAt": created_at,
                 "creationRequestId": request_id,
                 "claim": claim,
+                "temporary": intent.get("temporary") is True,
             }
             records.append(record)
             _pool_creation_intents(pool).remove(intent)
