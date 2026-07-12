@@ -27,6 +27,20 @@ def _message_text(message: Mapping[str, Any]) -> str:
 
 def _direct_return_record(ledger: Mapping[str, Any],
                           role: str) -> Mapping[str, Any] | None:
+    if ledger.get("workflowVersion") == 2:
+        dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+        for record in reversed(dispatches):
+            if not isinstance(record, Mapping) or record.get("role") != role:
+                continue
+            if not record.get("returnThreadId"):
+                return None
+            if not any(
+                record.get(field) == "direct-send"
+                for field in ("callbackDelivery", "reviewDelivery", "architectReviewDelivery", "qaReviewDelivery", "verdictDelivery")
+            ):
+                return None
+            return record
+        return None
     if role == "executor":
         dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
         record = dispatches[-1] if dispatches and isinstance(dispatches[-1], Mapping) else None

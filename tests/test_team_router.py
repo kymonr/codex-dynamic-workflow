@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -59,6 +60,7 @@ import team_router
 import team_router_state
 import team_router_policy
 import team_router_protocol
+import team_router_v2
 import team_router_watcher_runtime
 
 
@@ -68,10 +70,14 @@ class FakeThreadAdapter:
         self.sent = []
         self.renamed = []
         self.messages = {}
+        self.create_error = None
+        self.send_error = None
         self._thread_count = 0
         self._message_count = 0
 
     def create_thread(self, **kwargs):
+        if self.create_error is not None:
+            raise self.create_error
         prompt = kwargs["prompt"]
         role = "role"
         for line in prompt.splitlines():
@@ -92,6 +98,8 @@ class FakeThreadAdapter:
         return record
 
     def send_message_to_thread(self, **kwargs):
+        if self.send_error is not None:
+            raise self.send_error
         self._message_count += 1
         message_id = "msg-%02d" % self._message_count
         sent_at = "2026-06-22T20:%02d:00+08:00" % self._message_count
@@ -1261,6 +1269,586 @@ risks: none
         self.assertTrue(snapshot["roleThreads"]["qa"]["conditional"])
         self.assertTrue(snapshot["conditionalRolePolicy"]["noCustomRoleRegistry"])
         self.assertEqual(snapshot["conditionalRolePolicy"]["runtimeSkillLoading"], "not supported")
+
+    def test_versioned_role_contract_keeps_legacy_manager_but_v2_does_not_create_it(self):
+        self.assertEqual(
+            team_router.LEGACY_CORE_ROLE_NAMES,
+            frozenset({"manager", "executor", "verifier"}),
+        )
+        self.assertEqual(team_router.V2_DELEGATED_BASE_ROLE_NAMES, frozenset({"executor"}))
+        self.assertNotIn("manager", team_router.V2_DELEGATED_BASE_ROLE_NAMES)
+        snapshot = team_router.protocol_contract_snapshot()
+        self.assertEqual(snapshot["workflowContracts"]["v1"]["coreRoles"], ["executor", "manager", "verifier"])
+        self.assertEqual(snapshot["workflowContracts"]["v2"]["baseRoles"], ["executor"])
+
+    def test_resolve_role_model_defaults_and_rejects_sol_ultra(self):
+        self.assertEqual(
+            team_router.resolve_role_model("mechanical"),
+            {
+                "executionClass": "mechanical",
+                "requestedModel": "gpt-5.6-luna",
+                "requestedThinking": "medium",
+            },
+        )
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_override_invalid"):
+            team_router.resolve_role_model("standard", model="gpt-5.5")
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_forbidden"):
+            team_router.resolve_role_model(
+                "high",
+                model="gpt-5.6-sol",
+                thinking="ultra",
+                override_reason="manual override",
+            )
+
+    def test_v2_manager_direct_is_decided_before_route_closure(self):
+        mode = team_router.resolve_v2_execution_mode(
+            "NORMAL",
+            explicit_roles=(),
+            requires_parallelism=False,
+            requires_independent_context=False,
+            requires_independent_review=False,
+            lightweight_verification_available=True,
+        )
+        self.assertEqual(mode, "manager_direct")
+        delegated_cases = (
+            {"explicit_roles": ("architect",)},
+            {"requires_parallelism": True},
+            {"requires_independent_context": True},
+            {"requires_independent_review": True},
+            {"lightweight_verification_available": False},
+        )
+        for overrides in delegated_cases:
+            with self.subTest(overrides=overrides):
+                arguments = {
+                    "explicit_roles": (),
+                    "requires_parallelism": False,
+                    "requires_independent_context": False,
+                    "requires_independent_review": False,
+                    "lightweight_verification_available": True,
+                }
+                arguments.update(overrides)
+                self.assertEqual(
+                    team_router.resolve_v2_execution_mode("NORMAL", **arguments),
+                    "delegated",
+                )
+        for gate in ("STRICT", "PACKAGE"):
+            with self.subTest(gate=gate):
+                self.assertEqual(team_router.resolve_v2_execution_mode(gate), "delegated")
+
+    def test_v2_local_package_permission_does_not_raise_risk_by_name(self):
+        ledger = {
+            "workflowVersion": 2,
+            "objective": "ordinary local docs update",
+            "permission": "local-package",
+        }
+        resolved = team_router.resolve_effective_gate(
+            "NORMAL",
+            ledger,
+            authorization={"workspaceWrite": True},
+        )
+        self.assertEqual(resolved["requestedGateClass"], "NORMAL")
+        self.assertEqual(resolved["effectiveGateClass"], "NORMAL")
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
+        with self.assertRaisesRegex(team_router.StateStoreError, "authorization_missing"):
+            team_router.resolve_effective_gate(
+                "NORMAL",
+                ledger,
+                authorization={"workspaceWrite": False},
+            )
+
+        strict = team_router.resolve_effective_gate(
+            "NORMAL",
+            {"workflowVersion": 2, "objective": "Team Router permission policy change"},
+            authorization={},
+        )
+        self.assertEqual(strict["effectiveGateClass"], "STRICT")
+        self.assertEqual(
+            team_router.resolve_effective_gate(
+                "STRICT",
+                {"workflowVersion": 2, "objective": "ordinary helper"},
+                authorization={},
+            )["effectiveGateClass"],
+            "STRICT",
+        )
+
+    def test_v2_route_closes_conditional_role_dependencies(self):
+        self.assertEqual(team_router.resolve_v2_route("NORMAL"), ("executor",))
+        self.assertEqual(
+            team_router.resolve_v2_route("STRICT"),
+            ("executor", "reviewer", "verifier"),
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", ("reviewer",)),
+            ("executor", "reviewer", "verifier"),
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", ("qa",)),
+            ("executor", "qa", "verifier"),
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", ("architect",)),
+            ("architect", "executor"),
+        )
+        with self.assertRaisesRegex(team_router.StateStoreError, "invalid v2 role"):
+            team_router.resolve_v2_route("NORMAL", ("manager",))
+
+    def test_completion_package_allows_in_scope_terse_continuation_only(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="完成 X",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        ledger = {
+            "taskId": "task-1",
+            "objective": "完成 X",
+            "status": "planned",
+            "taskAuthorizationPackage": package,
+        }
+        request = {
+            "requested_task_id": "task-1",
+            "requested_objective": "完成 X",
+            "requested_scope": "src/x.py",
+            "requested_permission": "local-package",
+            "requested_stop_condition": "tests pass",
+        }
+
+        self.assertTrue(
+            team_router.v2_continuation_allowed(
+                ledger,
+                parent_thread_id="parent-1",
+                **request,
+            )
+        )
+        for name, overrides in (
+            ("parent", {"parent_thread_id": "parent-2"}),
+            ("task", {"requested_task_id": "task-2"}),
+            ("objective", {"requested_objective": "完成 Y"}),
+            ("scope", {"requested_scope": "src/x.py src/y.py"}),
+            ("permission", {"requested_permission": "read-only"}),
+            ("stop", {"requested_stop_condition": "publish"}),
+            ("external", {"requested_external_gates": ("push",)}),
+        ):
+            with self.subTest(name=name):
+                arguments = {"parent_thread_id": "parent-1", **request}
+                arguments.update(overrides)
+                self.assertFalse(team_router.v2_continuation_allowed(ledger, **arguments))
+        terminal = dict(ledger, status="done")
+        self.assertFalse(
+            team_router.v2_continuation_allowed(
+                terminal,
+                parent_thread_id="parent-1",
+                **request,
+            )
+        )
+        self.assertFalse(
+            team_router.v2_continuation_allowed(
+                dict(ledger, parentThreadId="other-parent"),
+                parent_thread_id="parent-1",
+                **request,
+            )
+        )
+
+    def test_v2_plan_resolves_effective_gate_before_route_and_models(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="Team Router permission policy change",
+            scope="src/team_router_policy.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+
+        plan = team_router.resolve_v2_manager_plan(
+            objective="Team Router permission policy change",
+            scope="src/team_router_policy.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            requested_role_routing={
+                "executor": {"executionClass": "standard"},
+                "reviewer": {"executionClass": "high"},
+                "verifier": {"executionClass": "standard"},
+            },
+            requires_independent_review=True,
+        )
+
+        self.assertEqual(plan["effectiveGateClass"], "STRICT")
+        self.assertEqual(plan["taskId"], "task-1")
+        self.assertEqual(plan["parentThreadId"], "parent-1")
+        self.assertEqual(plan["routeRoles"], ("executor", "reviewer", "verifier"))
+        self.assertEqual(
+            plan["roleRouting"]["reviewer"]["requestedModel"],
+            "gpt-5.6-sol",
+        )
+
+    def test_v2_plan_classifies_scope_before_direct_branch(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-scope",
+            task_id="task-scope",
+            parent_thread_id="parent-scope",
+            objective="ordinary maintenance",
+            scope="src/team_router.py; permission boundary",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+
+        plan = team_router.resolve_v2_manager_plan(
+            objective="ordinary maintenance",
+            scope="src/team_router.py; permission boundary",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            requested_role_routing={
+                "executor": {"executionClass": "standard"},
+                "reviewer": {"executionClass": "high"},
+                "verifier": {"executionClass": "standard"},
+            },
+        )
+
+        self.assertEqual(plan["effectiveGateClass"], "STRICT")
+        self.assertEqual(plan["executionMode"], "delegated")
+
+    def test_prepare_v2_manager_direct_is_stateless(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-direct",
+            task_id="task-direct",
+            parent_thread_id="parent-direct",
+            objective="ordinary docs update",
+            scope="docs/x.md",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        requested_plan = {
+            "scope": "docs/x.md",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+        }
+        with workspace_temp_dir() as td, mock.patch("team_router_v2.new_v2_task_ledger") as new_ledger, mock.patch(
+            "team_router_v2.save_task_ledger"
+        ) as save_ledger:
+            result = team_router.prepare_v2_manager_task(
+                Path(td) / "state",
+                "project-1",
+                "task-direct",
+                objective="ordinary docs update",
+                project_local_path=td,
+                parent_thread_id="parent-direct",
+                requested_plan=requested_plan,
+                authorization_package=package,
+                created_at="2026-07-11T20:00:00+08:00",
+            )
+
+        self.assertEqual(result["executionMode"], "manager_direct")
+        self.assertIsNone(result["ledger"])
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
+    def test_prepare_v2_rejects_bare_manager_mode_before_state(self):
+        requested_plan = {
+            "scope": "docs/x.md",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+        }
+        with workspace_temp_dir() as td, mock.patch("team_router_v2.new_v2_task_ledger") as new_ledger, mock.patch(
+            "team_router_v2.save_task_ledger"
+        ) as save_ledger:
+            with self.assertRaisesRegex(team_router.StateStoreError, "authorization_missing"):
+                team_router.prepare_v2_manager_task(
+                    Path(td) / "state",
+                    "project-1",
+                    "task-direct",
+                    objective="ordinary docs update",
+                    project_local_path=td,
+                    parent_thread_id="parent-direct",
+                    requested_plan=requested_plan,
+                    authorization_package=None,
+                    created_at="2026-07-11T20:00:00+08:00",
+                )
+
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
+    def test_prepare_v2_rejects_foreign_package_before_state(self):
+        model_authorization = {
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+            "authorizedBy": "explicit_cost_aware_entry",
+        }
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "explicitRoles": ("executor",),
+            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+        }
+        for name, actual_task_id, actual_parent_thread_id in (
+            ("task", "task-actual", "parent-package"),
+            ("parent", "task-package", "parent-actual"),
+        ):
+            with self.subTest(name=name), workspace_temp_dir() as td, mock.patch(
+                "team_router_v2.new_v2_task_ledger"
+            ) as new_ledger, mock.patch("team_router_v2.save_task_ledger") as save_ledger:
+                package = team_router.make_task_authorization_package(
+                    package_id="auth-foreign",
+                    task_id="task-package",
+                    parent_thread_id="parent-package",
+                    objective="delegated task",
+                    scope="src/x.py",
+                    permission="local-package",
+                    stop_condition="focused tests pass",
+                    created_at="2026-07-11T20:00:00+08:00",
+                    model_routing_authorization=model_authorization,
+                )
+                with self.assertRaisesRegex(team_router.StateStoreError, "authorization_mismatch"):
+                    team_router.prepare_v2_manager_task(
+                        Path(td) / "state",
+                        "project-1",
+                        actual_task_id,
+                        objective="delegated task",
+                        project_local_path=td,
+                        parent_thread_id=actual_parent_thread_id,
+                        requested_plan=requested_plan,
+                        authorization_package=package,
+                        created_at="2026-07-11T20:00:00+08:00",
+                    )
+                new_ledger.assert_not_called()
+                save_ledger.assert_not_called()
+
+    def test_prepare_v2_delegated_requires_model_authorization_before_state(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "explicitRoles": ("executor",),
+            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+        }
+        with workspace_temp_dir() as td, mock.patch("team_router_v2.new_v2_task_ledger") as new_ledger, mock.patch(
+            "team_router_v2.save_task_ledger"
+        ) as save_ledger:
+            with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+                team_router.prepare_v2_manager_task(
+                    Path(td) / "state",
+                    "project-1",
+                    "task-1",
+                    objective="delegated task",
+                    project_local_path=td,
+                    parent_thread_id="parent-1",
+                    requested_plan=requested_plan,
+                    authorization_package=package,
+                    created_at="2026-07-11T20:00:00+08:00",
+                )
+
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
+    def test_prepare_v2_delegated_saves_one_planned_ledger(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "explicitRoles": ("executor",),
+            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+        }
+        with workspace_temp_dir() as td, mock.patch(
+            "team_router_v2.save_task_ledger",
+            wraps=team_router_state.save_task_ledger,
+        ) as save_ledger:
+            result = team_router.prepare_v2_manager_task(
+                Path(td) / "state",
+                "project-1",
+                "task-1",
+                objective="delegated task",
+                project_local_path=td,
+                parent_thread_id="parent-1",
+                requested_plan=requested_plan,
+                authorization_package=package,
+                created_at="2026-07-11T20:00:00+08:00",
+            )
+
+        self.assertEqual(result["executionMode"], "delegated")
+        self.assertEqual(result["ledger"]["status"], "planned")
+        self.assertEqual(result["ledger"]["taskAuthorizationPackage"], package)
+        save_ledger.assert_called_once()
+
+    def test_v2_delegated_plan_requires_model_authorization_and_complete_route(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="ordinary delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        common = {
+            "objective": "ordinary delegated task",
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stop_condition": "focused tests pass",
+            "requested_gate_class": "NORMAL",
+            "explicit_roles": ("executor",),
+            "requested_role_routing": {"executor": {"executionClass": "standard"}},
+        }
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+            team_router.resolve_v2_manager_plan(authorization_package=package, **common)
+
+        package["modelRoutingAuthorization"] = {
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+            "authorizedBy": "explicit_cost_aware_entry",
+        }
+        strict = dict(common, requested_gate_class="STRICT", explicit_roles=())
+        strict["requested_role_routing"] = {
+            "executor": {"executionClass": "standard"},
+            "reviewer": {"executionClass": "high"},
+        }
+        with self.assertRaisesRegex(team_router.StateStoreError, "plan_invalid: missing roleRouting.verifier"):
+            team_router.resolve_v2_manager_plan(authorization_package=package, **strict)
+        package["modelRoutingAuthorization"]["authorizedBy"] = "arbitrary_marker"
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+            team_router.resolve_v2_manager_plan(authorization_package=package, **common)
+
+    def test_v2_plan_retains_parallel_conflicts_for_audit(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="ordinary delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+        common = {
+            "objective": "ordinary delegated task",
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stop_condition": "focused tests pass",
+            "requested_gate_class": "NORMAL",
+            "authorization_package": package,
+            "requested_role_routing": {"executor": {"executionClass": "standard"}},
+            "requires_parallelism": True,
+        }
+        allowed = team_router.resolve_v2_manager_plan(parallel_conflicts=(), **common)
+        blocked = team_router.resolve_v2_manager_plan(
+            parallel_conflicts=("shared-write",),
+            **common,
+        )
+
+        self.assertTrue(allowed["parallelAllowed"])
+        self.assertFalse(blocked["parallelAllowed"])
+        self.assertEqual(blocked["parallelConflicts"], ("shared-write",))
+
+    def test_v2_plan_accepts_complete_per_request_model_override(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-1",
+            task_id="task-1",
+            parent_thread_id="parent-1",
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [],
+                "authorizedBy": "complete_per_request_override",
+            },
+        )
+        plan = team_router.resolve_v2_manager_plan(
+            objective="delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            explicit_roles=("executor",),
+            requested_role_routing={
+                "executor": {
+                    "executionClass": "standard",
+                    "model": "gpt-5.6-sol",
+                    "thinking": "high",
+                    "modelOverrideReason": "user explicitly requested high-risk analysis",
+                },
+            },
+        )
+
+        self.assertEqual(plan["roleRouting"]["executor"]["requestedModel"], "gpt-5.6-sol")
+        self.assertEqual(plan["roleRouting"]["executor"]["requestedThinking"], "high")
 
     def test_role_delivery_fields_cover_all_direct_return_roles(self):
         expected = {
@@ -5438,6 +6026,18 @@ class TestTeamRouterRegistryAndReadWindow(unittest.TestCase):
 
 
 class TestTeamRouterJsonState(unittest.TestCase):
+    def test_registry_v2_preserves_legacy_roles_and_adds_manager_pools(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+
+            registry = team_router.load_registry(root, project_id)
+            project = registry["projects"][project_id]
+
+            self.assertEqual(registry["version"], 2)
+            self.assertEqual(project["roles"], {})
+            self.assertEqual(project["managerPools"], {})
+
     def test_registry_round_trip_normalizes_missing_fields(self):
         with workspace_temp_dir() as td:
             root = Path(td) / "state"
@@ -5459,11 +6059,12 @@ class TestTeamRouterJsonState(unittest.TestCase):
 
             registry = team_router.load_registry(root, project_id)
 
-            self.assertEqual(registry["version"], 1)
+            self.assertEqual(registry["version"], 2)
             self.assertEqual(registry["stateRoot"], str(root.resolve()))
             project = registry["projects"][project_id]
             self.assertEqual(project["projectId"], project_id)
             self.assertEqual(project["roles"]["manager"]["threadId"], "thread-1")
+            self.assertEqual(project["managerPools"], {})
 
             saved = team_router.save_registry(root, project_id, registry)
             self.assertEqual(saved, registry)
@@ -5480,7 +6081,8 @@ class TestTeamRouterJsonState(unittest.TestCase):
 
             ledger = team_router.load_task_ledger(root, project_id, task_id)
 
-            self.assertEqual(ledger["version"], 1)
+            self.assertEqual(ledger["version"], 2)
+            self.assertEqual(ledger["workflowVersion"], 1)
             self.assertEqual(ledger["taskId"], task_id)
             self.assertEqual(ledger["projectId"], project_id)
             self.assertEqual(ledger["stateRoot"], str(root.resolve()))
@@ -5497,6 +6099,83 @@ class TestTeamRouterJsonState(unittest.TestCase):
                 team_router.load_task_ledger(root, project_id, task_id)["status"],
                 "awaiting_callback",
             )
+
+    def test_missing_workflow_version_is_legacy_and_v2_is_explicit(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            legacy = team_router.new_task_ledger(
+                root,
+                project_id,
+                "legacy-task",
+                objective="legacy",
+                project_local_path=root,
+            )
+            self.assertEqual(team_router.task_workflow_version(legacy), 1)
+            self.assertEqual(legacy["workflowVersion"], 1)
+
+    def test_version_one_nonterminal_ledger_is_not_silently_upgraded(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            task_id = "legacy-awaiting-plan"
+            ledger = team_router.new_task_ledger(
+                root,
+                project_id,
+                task_id,
+                objective="legacy",
+                project_local_path=root,
+            )
+            ledger["status"] = "awaiting_plan"
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+
+            reloaded = team_router.load_task_ledger(root, project_id, task_id)
+
+            self.assertEqual(team_router.task_workflow_version(reloaded), 1)
+            self.assertEqual(reloaded["status"], "awaiting_plan")
+
+    def test_new_v2_task_ledger_is_explicit_and_keeps_v1_constructor_unchanged(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-123"
+            resolved_plan = {
+                "effectiveGateClass": "NORMAL",
+                "routeRoles": ["executor"],
+            }
+            authorization_package = {
+                "packageId": "auth-1",
+                "status": "active",
+            }
+
+            ledger = team_router.new_v2_task_ledger(
+                root,
+                project_id,
+                "v2-task",
+                objective="delegated v2 task",
+                project_local_path=root,
+                parent_thread_id="parent-1",
+                resolved_plan=resolved_plan,
+                task_authorization_package=authorization_package,
+                created_at="2026-07-11T20:00:00+08:00",
+            )
+
+            self.assertEqual(team_router.task_workflow_version(ledger), 2)
+            self.assertEqual(ledger["status"], "planned")
+            self.assertEqual(ledger["maxRework"], 1)
+            self.assertEqual(ledger["parentThreadId"], "parent-1")
+            self.assertEqual(ledger["plan"], resolved_plan)
+            self.assertEqual(ledger["taskAuthorizationPackage"], authorization_package)
+            self.assertIsNone(ledger["managerAcceptance"])
+            self.assertEqual(ledger["modelUpgradeCount"], 0)
+
+            legacy = team_router.new_task_ledger(
+                root,
+                project_id,
+                "legacy-task",
+                objective="legacy",
+                project_local_path=root,
+            )
+            self.assertEqual(team_router.task_workflow_version(legacy), 1)
 
     def test_missing_task_ledger_raises_state_store_error(self):
         with workspace_temp_dir() as td:
@@ -5635,6 +6314,1200 @@ class TestTeamRouterJsonState(unittest.TestCase):
                 reloaded["projects"][project_id]["roles"]["manager"]["threadId"],
                 "thread-1",
             )
+
+
+class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
+    def setUp(self):
+        self.td = workspace_temp_dir()
+        self.root = Path(self.td.name) / "state"
+        self.project_id = "project-1"
+        self.target = {
+            "type": "project",
+            "projectId": self.project_id,
+            "environment": {"type": "local"},
+        }
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _save_task(self, task_id="task-1", *, parallel_allowed=False):
+        ledger = team_router.new_v2_task_ledger(
+            self.root,
+            self.project_id,
+            task_id,
+            objective="成本感知路由",
+            project_local_path=self.root,
+            parent_thread_id="parent-1",
+            resolved_plan={"routeRoles": ["executor"], "parallelAllowed": parallel_allowed},
+            task_authorization_package={"packageId": "auth-1"},
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        return team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+
+    def _send(self, adapter, *, task_id="task-1", request_id="request-1", **changes):
+        request = {
+            "parent_thread_id": "parent-1",
+            "host_id": "local",
+            "target": self.target,
+            "role": "executor",
+            "task_id": task_id,
+            "request_id": request_id,
+            "title": "执行者-成本感知路由",
+            "prompt": "实现已确认的成本感知路由任务",
+            "requested_model": "gpt-5.6-terra",
+            "requested_thinking": "medium",
+            "requested_at": "2026-07-11T20:00:00+08:00",
+        }
+        request.update(changes)
+        return team_router.send_v2_role_request_with_adapter(
+            adapter,
+            self.root,
+            self.project_id,
+            **request,
+        )
+
+    def _reserve_intent(self, task_id="task-1", request_id="request-1", *, parallel_allowed=False):
+        fingerprint = team_router.target_fingerprint_for(self.target, "local")
+        team_router.reserve_role_or_creation_intent(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            host_id="local",
+            target_fingerprint=fingerprint,
+            role="executor",
+            task_id=task_id,
+            request_id=request_id,
+            claimed_at="2026-07-11T20:00:00+08:00",
+            parallel_allowed=parallel_allowed,
+        )
+        return fingerprint
+
+    def test_v2_executor_uses_luna_bootstrap_then_terra_dispatch_accepted(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        result = self._send(adapter)
+
+        self.assertEqual(result["outcome"], "sent")
+        self.assertEqual(adapter.created[0]["kwargs"]["model"], "gpt-5.6-luna")
+        self.assertEqual(adapter.created[0]["kwargs"]["thinking"], "medium")
+        self.assertIn("requestId: request-1", adapter.created[0]["kwargs"]["prompt"])
+        self.assertNotIn("hostId", adapter.created[0]["kwargs"])
+        self.assertEqual(adapter.sent[0]["kwargs"]["model"], "gpt-5.6-terra")
+        self.assertEqual(adapter.sent[0]["kwargs"]["thinking"], "medium")
+        self.assertNotIn("hostId", adapter.sent[0]["kwargs"])
+        self.assertNotIn("hostId", adapter.renamed[0])
+
+    def test_v2_send_failure_closes_claim_without_awaiting_callback(self):
+        adapter = FakeThreadAdapter()
+        adapter.send_error = RuntimeError("model rejected")
+        self._save_task()
+        result = self._send(adapter)
+
+        self.assertEqual(result["outcome"], "tool_error")
+        self.assertEqual(result["reason"], "model_unavailable")
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertEqual(ledger["status"], "tool_error")
+        self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_creation_intent_recovery_binds_one_verified_bootstrap_identity_without_create(self):
+        class RecoveryAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.read_calls = []
+
+            def list_threads(self, **kwargs):
+                self.listed = dict(kwargs)
+                return {"threads": [{"threadId": "thread-recovered"}]}
+
+            def read_thread(self, **kwargs):
+                self.read_calls.append(dict(kwargs))
+                return super().read_thread(**kwargs)
+
+        adapter = RecoveryAdapter()
+        self._save_task()
+        fingerprint = self._reserve_intent()
+        adapter.messages["thread-recovered"] = [{
+            "text": team_router.make_v2_role_bootstrap_prompt(
+                request_id="request-1",
+                project_id=self.project_id,
+                parent_thread_id="parent-1",
+                role="executor",
+            ),
+        }]
+
+        result = team_router.recover_v2_creation_intent_with_adapter(
+            adapter,
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            host_id="local",
+            target_fingerprint=fingerprint,
+            role="executor",
+            task_id="task-1",
+            request_id="request-1",
+            title="执行者-成本感知路由",
+            observed_at="2026-07-11T20:00:01+08:00",
+        )
+
+        self.assertEqual((result["outcome"], result["threadId"]), ("recovered", "thread-recovered"))
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.listed, {"query": "request-1"})
+        self.assertEqual(adapter.read_calls, [{"threadId": "thread-recovered", "hostId": "local"}])
+        self.assertEqual(adapter.renamed[-1], {
+            "threadId": "thread-recovered",
+            "title": "执行者-成本感知路由",
+        })
+
+    def test_target_fingerprint_for_is_canonical_and_mismatch_fails_before_pool_mutation(self):
+        equivalent = {
+            "environment": {"type": "local"},
+            "projectId": self.project_id,
+            "type": "project",
+        }
+        fingerprint = team_router.target_fingerprint_for(self.target, "local")
+        self.assertEqual(fingerprint, team_router.target_fingerprint_for(equivalent, "local"))
+        self.assertNotEqual(fingerprint, team_router.target_fingerprint_for(self.target, "remote"))
+        self.assertNotEqual(
+            fingerprint,
+            team_router.target_fingerprint_for({**self.target, "projectId": "project-2"}, "local"),
+        )
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.target_fingerprint_for({}, "local")
+        with self.assertRaises(team_router.StateStoreError):
+            team_router.target_fingerprint_for(self.target, "")
+
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        with self.assertRaisesRegex(team_router.StateStoreError, "target_fingerprint_mismatch"):
+            self._send(adapter, target_fingerprint="wrong")
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "planned")
+
+    def test_v2_reused_executor_refreshes_title_and_sends_explicit_model(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        first = self._send(adapter)
+        thread_id = first["threadId"]
+        team_router.release_role_claim(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            role="executor",
+            thread_id=thread_id,
+            task_id="task-1",
+            request_id="request-1",
+        )
+        self._save_task("task-2")
+
+        reused = self._send(
+            adapter,
+            task_id="task-2",
+            request_id="request-2",
+            title="执行者-复用任务",
+            requested_model="gpt-5.6-luna",
+            requested_thinking="medium",
+        )
+
+        self.assertEqual((reused["outcome"], reused["binding"], reused["threadId"]), ("sent", "reused", thread_id))
+        self.assertEqual(len(adapter.created), 1)
+        self.assertEqual(adapter.sent[-1]["kwargs"]["model"], "gpt-5.6-luna")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["thinking"], "medium")
+        self.assertEqual(adapter.renamed[-1], {"threadId": thread_id, "title": "执行者-复用任务"})
+        self.assertEqual(
+            team_router.load_task_ledger(self.root, self.project_id, "task-2")["dispatches"][-1]["binding"],
+            "reused",
+        )
+
+    def test_v2_parallel_allowed_reaches_role_reservation(self):
+        class ParallelAdapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.role_counts = {}
+
+            def create_thread(self, **kwargs):
+                result = super().create_thread(**kwargs)
+                thread_id = result["threadId"]
+                count = self.role_counts.get(thread_id, 0) + 1
+                self.role_counts[thread_id] = count
+                if count > 1:
+                    unique_id = "%s-%s" % (thread_id, count)
+                    self.messages[unique_id] = self.messages.pop(thread_id)
+                    result["threadId"] = unique_id
+                return result
+
+        adapter = ParallelAdapter()
+        self._save_task("task-1")
+        self._send(adapter, task_id="task-1", request_id="request-1")
+        self._save_task("task-2", parallel_allowed=False)
+        blocked = self._send(adapter, task_id="task-2", request_id="request-2", parallel_allowed=True)
+        self._save_task("task-3", parallel_allowed=True)
+        parallel = self._send(adapter, task_id="task-3", request_id="request-3", parallel_allowed=True)
+        self._save_task("task-4", parallel_allowed=True)
+        inherited = self._send(adapter, task_id="task-4", request_id="request-4")
+
+        self.assertEqual(blocked["outcome"], "busy")
+        self.assertEqual((parallel["outcome"], parallel["binding"]), ("sent", "new"))
+        self.assertEqual((inherited["outcome"], inherited["binding"]), ("sent", "new"))
+        self.assertEqual(len(adapter.created), 3)
+        self.assertNotEqual(adapter.created[0]["result"]["threadId"], adapter.created[1]["result"]["threadId"])
+
+    def test_v2_non_executor_dispatch_uses_its_own_waiting_state(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+
+        result = self._send(
+            adapter,
+            role="verifier",
+            title="验证者-成本感知路由",
+        )
+
+        self.assertEqual(result["outcome"], "sent")
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "verifying")
+
+    def test_dynamic_model_create_failure_records_rejected_creation_and_cleans_intent(self):
+        adapter = FakeThreadAdapter()
+        adapter.create_error = RuntimeError("model rejected")
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "model_unavailable"))
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertFalse(ledger["dispatches"][-1]["creationAccepted"])
+        self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertEqual(pool["creationIntents"], [])
+
+    def test_create_timeout_recovers_server_created_thread_without_retrying_create(self):
+        class TimeoutAfterCreateAdapter(FakeThreadAdapter):
+            def create_thread(self, **kwargs):
+                created = super().create_thread(**kwargs)
+                self.messages[created["threadId"]].append({"text": kwargs["prompt"]})
+                raise TimeoutError("create_thread timed out")
+
+            def list_threads(self, **kwargs):
+                return {"threads": [{"threadId": thread_id} for thread_id in self.messages]}
+
+        adapter = TimeoutAfterCreateAdapter()
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual((result["outcome"], result["threadId"]), ("sent", "thread-executor"))
+        self.assertEqual(len(adapter.created), 1)
+        self.assertEqual(len(adapter.sent), 1)
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertEqual(pool["creationIntents"], [])
+
+    def test_v2_model_upgrade_is_once_only_and_receipt_is_requested_only(self):
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "explicit_cost_aware_entry",
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+        }
+        ledger.update({
+            "status": "tool_error",
+            "dispatches": [{
+                "role": "executor",
+                "requestId": "request-1",
+                "threadId": "thread-executor",
+                "binding": "reused",
+                "requestedModel": "gpt-5.6-terra",
+                "requestedThinking": "medium",
+                "dispatchAccepted": False,
+                "failureReason": "callback failure",
+            }],
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+
+        upgraded = team_router.record_v2_model_upgrade(
+            self.root,
+            self.project_id,
+            "task-1",
+            parent_thread_id="parent-1",
+            role="executor",
+            failed_request_id="request-1",
+            execution_class="high",
+            completed_results=["parsed existing registry"],
+            read_files=["src/team_router_state.py"],
+            exact_failure="Terra callback could not resolve the concurrency invariant",
+            unresolved=["prove claim release ordering"],
+            requested_at="2026-07-11T21:05:00+08:00",
+        )
+
+        self.assertEqual(upgraded["modelUpgradeCount"], 1)
+        self.assertEqual(upgraded["status"], "needs_rework")
+        self.assertEqual(upgraded["pendingModelUpgrade"]["requestedModel"], "gpt-5.6-sol")
+        self.assertEqual(upgraded["pendingModelUpgrade"]["upgradedFrom"], "gpt-5.6-terra")
+        receipt = team_router.build_v2_routing_receipt(upgraded)
+        self.assertEqual(receipt["roles"][0]["requestedModel"], "gpt-5.6-terra")
+        self.assertFalse(receipt["solUltraDispatched"])
+        self.assertNotIn("actualModel", str(receipt))
+        self.assertNotIn("cost", str(receipt).lower())
+        self.assertNotIn("token", str(receipt).lower())
+
+        blocked = team_router.record_v2_model_upgrade(
+            self.root,
+            self.project_id,
+            "task-1",
+            parent_thread_id="parent-1",
+            role="executor",
+            failed_request_id="request-1",
+            execution_class="high",
+            completed_results=["parsed existing registry"],
+            read_files=["src/team_router_state.py"],
+            exact_failure="same failure",
+            unresolved=["same unresolved work"],
+            requested_at="2026-07-11T21:06:00+08:00",
+        )
+        self.assertEqual((blocked["status"], blocked["reason"]), ("blocked", "model_upgrade_limit"))
+
+    def test_v2_pending_model_upgrade_consumes_once_and_prefers_failed_thread(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "explicit_cost_aware_entry",
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+        }
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        first = self._send(adapter)
+        team_router.release_role_claim(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            role="executor",
+            thread_id=first["threadId"],
+            task_id="task-1",
+            request_id="request-1",
+        )
+        failed = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        failed["status"] = "tool_error"
+        failed["dispatches"][-1]["failureReason"] = "callback failure"
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", failed)
+        team_router.record_v2_model_upgrade(
+            self.root,
+            self.project_id,
+            "task-1",
+            parent_thread_id="parent-1",
+            role="executor",
+            failed_request_id="request-1",
+            execution_class="high",
+            completed_results=["parsed registry"],
+            read_files=["src/team_router_state.py"],
+            exact_failure="Terra could not prove the invariant",
+            unresolved=["prove claim release ordering"],
+            requested_at="2026-07-11T21:05:00+08:00",
+        )
+
+        consumed = self._send(
+            adapter,
+            request_id="request-2",
+            requested_model="gpt-5.6-terra",
+            requested_thinking="medium",
+        )
+
+        self.assertEqual((consumed["outcome"], consumed["threadId"]), ("sent", first["threadId"]))
+        self.assertEqual(adapter.sent[-1]["kwargs"]["model"], "gpt-5.6-sol")
+        self.assertEqual(adapter.sent[-1]["kwargs"]["thinking"], "high")
+        saved = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertEqual(saved["dispatches"][-1]["upgradedFrom"], "gpt-5.6-terra")
+        self.assertNotIn("pendingModelUpgrade", saved)
+        self.assertEqual(saved["modelUpgradeCount"], 1)
+
+    def test_v2_model_upgrade_rejects_success_or_sol_ultra_before_save(self):
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "explicit_cost_aware_entry",
+            "allowedDefaults": [
+                "gpt-5.6-luna:medium",
+                "gpt-5.6-terra:medium",
+                "gpt-5.6-sol:high",
+            ],
+        }
+        ledger["dispatches"] = [{
+            "role": "executor", "requestId": "request-1", "threadId": "thread-executor",
+            "requestedModel": "gpt-5.6-terra", "requestedThinking": "medium", "dispatchAccepted": True,
+        }]
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        kwargs = {
+            "parent_thread_id": "parent-1", "role": "executor", "failed_request_id": "request-1",
+            "execution_class": "high", "completed_results": ["parsed registry"],
+            "read_files": ["src/team_router_state.py"], "exact_failure": "could not prove invariant",
+            "unresolved": ["claim ordering"], "requested_at": "2026-07-11T21:05:00+08:00",
+        }
+        with self.assertRaisesRegex(team_router.StateStoreError, "latest request is not failed"):
+            team_router.record_v2_model_upgrade(self.root, self.project_id, "task-1", **kwargs)
+
+        failed = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        failed["dispatches"][-1].update(dispatchAccepted=False, failureReason="callback failure")
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", failed)
+        before = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_forbidden"):
+            team_router.record_v2_model_upgrade(
+                self.root,
+                self.project_id,
+                "task-1",
+                model="gpt-5.6-sol",
+                thinking="ultra",
+                override_reason="forbidden",
+                **kwargs,
+            )
+        after = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+        self.assertEqual(after, before)
+
+    def test_v2_resolved_model_override_reason_reaches_routing_receipt(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._save_task()
+        ledger["plan"] = {
+            **ledger["plan"],
+            "roleRouting": {
+                "executor": {
+                    "executionClass": "standard",
+                    "requestedModel": "gpt-5.6-terra",
+                    "requestedThinking": "medium",
+                    "modelOverrideReason": "fixed host regression reproduction",
+                },
+            },
+        }
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+
+        self._send(adapter)
+        receipt = team_router.build_v2_routing_receipt(
+            team_router.load_task_ledger(self.root, self.project_id, "task-1"),
+        )
+
+        self.assertEqual(receipt["roles"][-1]["modelOverrideReason"], "fixed host regression reproduction")
+
+    def test_v2_title_failure_releases_new_role_claim(self):
+        class TitleFailureAdapter(FakeThreadAdapter):
+            def set_thread_title(self, **kwargs):
+                raise RuntimeError("title transport unavailable")
+
+        adapter = TitleFailureAdapter()
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "thread_tool_error"))
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "tool_error")
+
+    def test_sol_ultra_is_forbidden_before_adapter_dispatch(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+
+        result = self._send(
+            adapter,
+            requested_model=" gpt-5.6-sol ",
+            requested_thinking=" ultra ",
+        )
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "model_forbidden"))
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
+        self.assertEqual(ledger["dispatches"][-1]["requestedModel"], "gpt-5.6-sol")
+
+    def test_creation_intent_recovery_zero_multiple_or_mismatched_candidates_never_create(self):
+        class RecoveryAdapter(FakeThreadAdapter):
+            def __init__(self, candidates, messages):
+                super().__init__()
+                self.candidates = candidates
+                self.messages.update(messages)
+
+            def list_threads(self, **kwargs):
+                return {"threads": [{"threadId": thread_id} for thread_id in self.candidates]}
+
+        valid = lambda request_id: team_router.make_v2_role_bootstrap_prompt(
+            request_id=request_id,
+            project_id=self.project_id,
+            parent_thread_id="parent-1",
+            role="executor",
+        )
+        cases = (
+            ("zero", (), {}),
+            ("multiple", ("thread-a", "thread-b"), {
+                "thread-a": [{"text": valid("request-multiple")}],
+                "thread-b": [{"text": valid("request-multiple")}],
+            }),
+            ("mismatch", ("thread-wrong",), {
+                "thread-wrong": [{"text": valid("request-other")}],
+            }),
+        )
+        for name, candidates, messages in cases:
+            with self.subTest(name=name):
+                task_id, request_id = "task-%s" % name, "request-%s" % name
+                self._save_task(task_id, parallel_allowed=True)
+                adapter = RecoveryAdapter(candidates, messages)
+                self._reserve_intent(task_id, request_id, parallel_allowed=True)
+
+                result = team_router.resolve_or_create_v2_role_with_adapter(
+                    adapter,
+                    self.root,
+                    self.project_id,
+                    parent_thread_id="parent-1",
+                    host_id="local",
+                    target=self.target,
+                    role="executor",
+                    task_id=task_id,
+                    request_id=request_id,
+                    title="执行者-恢复测试",
+                    requested_at="2026-07-11T20:00:01+08:00",
+                )
+
+                self.assertEqual((result["outcome"], result["reason"]), ("creation_outcome_unknown", "creation_outcome_unknown"))
+                self.assertEqual(adapter.created, [])
+                ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+                self.assertEqual(ledger["status"], "creation_outcome_unknown")
+                pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+                self.assertIn(request_id, [item["requestId"] for item in pool["creationIntents"]])
+                self.assertTrue(any(
+                    item.get("parsedFields", {}).get("reason") == "creation_outcome_unknown"
+                    for item in ledger["observations"]
+                ))
+
+    def test_creation_intent_recovery_missing_thread_tools_fails_closed_without_create(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        self._reserve_intent()
+
+        result = team_router.resolve_or_create_v2_role_with_adapter(
+            adapter,
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-1",
+            host_id="local",
+            target=self.target,
+            role="executor",
+            task_id="task-1",
+            request_id="request-1",
+            title="执行者-恢复测试",
+            requested_at="2026-07-11T20:00:01+08:00",
+        )
+
+        self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "thread_tool_error"))
+        self.assertEqual(adapter.created, [])
+
+    def test_v2_dispatch_has_no_native_spawn_agent_fallback(self):
+        source = Path(team_router.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("spawn_agent", source)
+
+
+class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
+    def setUp(self):
+        self.td = workspace_temp_dir()
+        self.root = Path(self.td.name) / "state"
+        self.project_id = "project-v2-acceptance"
+        self.task_id = "task-v2-acceptance"
+        self.parent_thread_id = "parent-v2-acceptance"
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _save_awaiting_acceptance(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-v2-acceptance",
+            task_id=self.task_id,
+            parent_thread_id=self.parent_thread_id,
+            objective="implement a narrow local fix",
+            scope="src/example.py only",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T21:00:00+08:00",
+            model_routing_authorization={
+                "authorizedBy": "explicit_cost_aware_entry",
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+            },
+        )
+        plan = team_router.resolve_v2_manager_plan(
+            objective=package["objective"],
+            scope=package["scope"],
+            permission=package["permission"],
+            stop_condition=package["stopCondition"],
+            requested_gate_class="NORMAL",
+            authorization_package=package,
+            explicit_roles=("executor",),
+            requested_role_routing={"executor": {"executionClass": "standard"}},
+            ledger_input={"taskId": self.task_id, "parentThreadId": self.parent_thread_id},
+        )
+        ledger = team_router.new_v2_task_ledger(
+            self.root,
+            self.project_id,
+            self.task_id,
+            objective=package["objective"],
+            project_local_path=self.root,
+            parent_thread_id=self.parent_thread_id,
+            resolved_plan=plan,
+            task_authorization_package=package,
+            created_at="2026-07-11T21:00:00+08:00",
+        )
+        ledger.update({
+            "status": "manager_acceptance_pending",
+            "dispatches": [{
+                "role": "executor",
+                "requestId": "request-1",
+                "threadId": "thread-executor",
+                "binding": "reused",
+                "requestedModel": "gpt-5.6-terra",
+                "requestedThinking": "medium",
+                "dispatchAccepted": True,
+            }],
+            "observations": [{
+                "type": "callback_raw",
+                "role": "executor",
+                "threadId": "thread-executor",
+                "parsedFields": {"status": "done", "final": "true", "summary": "focused test passed"},
+            }],
+        })
+        return team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+
+    def _capture_executor_callback(self, ledger, *, risks):
+        ledger = dict(ledger)
+        dispatch = dict(ledger["dispatches"][-1])
+        dispatch.update({
+            "messageId": "msg-executor-dispatch",
+            "sentAt": "2026-07-11T21:00:30+08:00",
+            "searchAnchor": {"messageId": "msg-executor-dispatch", "sentAt": "2026-07-11T21:00:30+08:00"},
+        })
+        ledger["dispatches"] = [dispatch]
+        ledger["status"] = "awaiting_callback"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        return team_router.capture_executor_callback_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-executor-dispatch", "sentAt": "2026-07-11T21:00:30+08:00", "text": "dispatch"},
+                {"messageId": "msg-executor-callback", "sentAt": "2026-07-11T21:00:45+08:00", "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: focused fix done\n"
+                    "evidence: 1 focused test OK\nrisks: %s\nnext: manager"
+                ) % (self.task_id, risks)},
+            ],
+            captured_at="2026-07-11T21:01:00+08:00",
+        )
+
+    def test_v2_normal_executor_callback_manager_acceptance_can_finish(self):
+        self._save_awaiting_acceptance()
+
+        accepted = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="pass",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="none",
+        )
+
+        self.assertEqual(accepted["status"], "done")
+        self.assertEqual(accepted["managerAcceptance"]["result"], "pass")
+        self.assertEqual(accepted["closeout"]["acceptedBy"], "manager")
+        self.assertEqual(accepted["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+
+    def test_v2_manager_acceptance_rework_releases_executor_claim(self):
+        self._save_awaiting_acceptance()
+        team_router.reserve_role_or_creation_intent(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            host_id="local",
+            target_fingerprint="target-v2-acceptance",
+            role="executor",
+            task_id=self.task_id,
+            request_id="request-1",
+            claimed_at="2026-07-11T21:00:00+08:00",
+        )
+        team_router.finalize_created_role(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            role="executor",
+            request_id="request-1",
+            thread_id="thread-executor",
+            title="执行者-局部修复",
+            created_at="2026-07-11T21:00:01+08:00",
+        )
+
+        rework = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="needs_rework",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="one narrow follow-up",
+        )
+
+        self.assertEqual((rework["status"], rework["reworkCount"]), ("dispatched", 1))
+        self.assertEqual(rework["preferredThreadId"], "thread-executor")
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_callback_risk_escalation_without_candidates_waits_for_manager_routing(self):
+        ledger = self._save_awaiting_acceptance()
+        updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
+
+        self.assertEqual(updated["status"], "manager_routing_pending")
+        self.assertEqual(updated["routingError"]["reason"], "plan_invalid")
+
+    def test_v2_executor_callback_enters_manager_acceptance(self):
+        updated = self._capture_executor_callback(self._save_awaiting_acceptance(), risks="none")
+
+        self.assertEqual(updated["status"], "manager_acceptance_pending")
+        self.assertEqual(updated["observations"][-1]["type"], "v2_route_reclassified")
+
+    def test_v2_executor_callback_risk_escalation_uses_preserved_candidate_routing(self):
+        ledger = self._save_awaiting_acceptance()
+        ledger["plan"] = dict(ledger["plan"])
+        ledger["plan"]["candidateRoleRouting"] = {
+            "executor": {"executionClass": "standard"},
+            "reviewer": {"executionClass": "high", "requestedModel": "gpt-5.6-sol", "requestedThinking": "high"},
+            "verifier": {"executionClass": "mechanical", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium"},
+        }
+        updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
+
+        self.assertEqual(updated["status"], "reviewing")
+        self.assertEqual(tuple(updated["plan"]["routeRoles"]), ("executor", "reviewer", "verifier"))
+
+    def test_v2_callback_missing_routing_releases_final_executor_claim_without_terminal_block(self):
+        ledger = self._save_awaiting_acceptance()
+        team_router.reserve_role_or_creation_intent(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            host_id="local",
+            target_fingerprint="target-v2-acceptance",
+            role="executor",
+            task_id=self.task_id,
+            request_id="request-1",
+            claimed_at="2026-07-11T21:00:00+08:00",
+        )
+        team_router.finalize_created_role(
+            self.root,
+            self.project_id,
+            parent_thread_id=self.parent_thread_id,
+            role="executor",
+            request_id="request-1",
+            thread_id="thread-executor",
+            title="执行者-局部修复",
+            created_at="2026-07-11T21:00:01+08:00",
+        )
+
+        updated = self._capture_executor_callback(ledger, risks="strict protocol risk")
+
+        self.assertEqual(updated["status"], "manager_routing_pending")
+        self.assertEqual(updated["routingError"]["reason"], "plan_invalid")
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_closeout_parity_manager_and_verifier_share_receipt_and_format_pool_only(self):
+        self._save_awaiting_acceptance()
+        manager_done = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="pass",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="none",
+        )
+
+        verifier = self._save_awaiting_acceptance()
+        verifier.update({
+            "status": "verifying",
+            "verification": {"request": {
+                "role": "verifier", "threadId": "thread-verifier", "messageId": "msg-verify",
+                "sentAt": "2026-07-11T21:02:00+08:00",
+                "searchAnchor": {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00"},
+                "expectedCallback": "TEAM_ROUTER_VERDICT taskId=%s" % self.task_id,
+            }},
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, verifier)
+        verifier_done = team_router.capture_verifier_verdict_from_read(
+            self.root,
+            self.project_id,
+            self.task_id,
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-07-11T21:03:00+08:00", "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\nsummary: verifier pass\n"
+                    "requiredChanges: none\nevidenceChecked: 1 focused test OK\nrisks: none"
+                ) % self.task_id},
+            ],
+            captured_at="2026-07-11T21:04:00+08:00",
+        )
+
+        self.assertEqual(manager_done["closeout"]["routingReceipt"], verifier_done["closeout"]["routingReceipt"])
+        self.assertEqual(verifier_done["closeout"]["acceptedBy"], "verifier")
+        self.assertEqual(verifier_done["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+        registry = {
+            "projects": {
+                self.project_id: {
+                    "roles": {"manager": {"threadId": "legacy-manager"}},
+                    "managerPools": {
+                        self.parent_thread_id: {"roles": {"executor": [{"threadId": "thread-executor"}] }},
+                        "other-parent": {"roles": {"executor": [{"threadId": "other-thread"}] }},
+                    },
+                },
+            },
+        }
+        rendered = team_router.format_closeout_for_user(verifier_done, registry)
+        self.assertIn("executor: thread-executor", rendered)
+        self.assertNotIn("other-thread", rendered)
+        self.assertIn("acceptedBy: verifier", rendered)
+        self.assertIn("routingReceipt:", rendered)
+
+        legacy = {
+            "projectId": self.project_id,
+            "taskId": "legacy-task",
+            "status": "done",
+            "closeout": {"summary": "legacy", "evidenceChecked": "tests", "risks": "none", "nextAction": "none"},
+        }
+        legacy_rendered = team_router.format_closeout_for_user(legacy, registry)
+        self.assertNotIn("acceptedBy:", legacy_rendered)
+        self.assertNotIn("routingReceipt:", legacy_rendered)
+
+    def test_v2_blocked_manager_closeout_stops_heartbeat(self):
+        self._save_awaiting_acceptance()
+        blocked = team_router.record_manager_acceptance(
+            self.root,
+            self.project_id,
+            self.task_id,
+            result="blocked",
+            accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send",
+            scope_checked="src/example.py",
+            evidence_checked="1 focused test OK",
+            risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="blocked by host",
+        )
+        self.assertEqual((blocked["status"], blocked["closeout"]["watcherAction"]), ("blocked", "stop_and_delete_heartbeat"))
+
+    def test_v2_second_automatic_rework_blocks_and_stops_heartbeat(self):
+        self._save_awaiting_acceptance()
+        first = team_router.record_manager_acceptance(
+            self.root, self.project_id, self.task_id,
+            result="needs_rework", accepted_at="2026-07-11T21:01:00+08:00",
+            callback_receipt="direct-send", scope_checked="src/example.py",
+            evidence_checked="1 focused test OK", risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="one narrow follow-up",
+        )
+        first["status"] = "manager_acceptance_pending"
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, first)
+
+        blocked = team_router.record_manager_acceptance(
+            self.root, self.project_id, self.task_id,
+            result="needs_rework", accepted_at="2026-07-11T21:02:00+08:00",
+            callback_receipt="direct-send", scope_checked="src/example.py",
+            evidence_checked="1 focused test OK", risk_boundary_checked="FAST/NORMAL",
+            remaining_risks="still unresolved",
+        )
+
+        self.assertEqual((blocked["status"], blocked["reworkCount"]), ("blocked", 1))
+        self.assertEqual(blocked["closeout"]["watcherAction"], "stop_and_delete_heartbeat")
+
+    def test_v2_verifier_rework_releases_final_verifier_claim(self):
+        ledger = self._save_awaiting_acceptance()
+        ledger.update({
+            "status": "verifying",
+            "dispatches": [
+                *ledger["dispatches"],
+                {
+                    "role": "verifier", "requestId": "verifier-request-1", "threadId": "thread-verifier",
+                    "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium", "dispatchAccepted": True,
+                },
+            ],
+            "verification": {"request": {
+                "role": "verifier", "threadId": "thread-verifier", "messageId": "msg-verify",
+                "sentAt": "2026-07-11T21:02:00+08:00",
+                "searchAnchor": {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00"},
+            }},
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        team_router.reserve_role_or_creation_intent(
+            self.root, self.project_id,
+            parent_thread_id=self.parent_thread_id, host_id="local", target_fingerprint="target-v2-acceptance",
+            role="verifier", task_id=self.task_id, request_id="verifier-request-1",
+            claimed_at="2026-07-11T21:00:00+08:00",
+        )
+        team_router.finalize_created_role(
+            self.root, self.project_id, parent_thread_id=self.parent_thread_id, role="verifier",
+            request_id="verifier-request-1", thread_id="thread-verifier", title="验证者-局部修复",
+            created_at="2026-07-11T21:00:01+08:00",
+        )
+
+        rework = team_router.capture_verifier_verdict_from_read(
+            self.root, self.project_id, self.task_id,
+            [
+                {"messageId": "msg-verify", "sentAt": "2026-07-11T21:02:00+08:00", "text": "verify"},
+                {"messageId": "msg-verdict", "sentAt": "2026-07-11T21:03:00+08:00", "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nresult: needs_rework\nsummary: narrow fix needed\n"
+                    "requiredChanges: add assertion\nevidenceChecked: focused test\nrisks: none"
+                ) % self.task_id},
+            ],
+            captured_at="2026-07-11T21:04:00+08:00",
+        )
+
+        self.assertEqual((rework["status"], rework["reworkCount"], rework["preferredThreadId"]), ("dispatched", 1, "thread-verifier"))
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        self.assertNotIn("claim", pool["roles"]["verifier"][0])
+
+
+class TestTeamRouterV2RolePool(unittest.TestCase):
+    def setUp(self):
+        self.td = workspace_temp_dir()
+        self.root = Path(self.td.name) / "state"
+        self.project_id = "project-123"
+        self.base_claim = {
+            "parent_thread_id": "parent-a",
+            "host_id": "local",
+            "target_fingerprint": "target-a",
+            "role": "executor",
+            "claimed_at": "2026-07-11T20:00:00+08:00",
+        }
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _reserve(self, task_id, request_id, **changes):
+        claim = {**self.base_claim, "task_id": task_id, "request_id": request_id, **changes}
+        return team_router.reserve_role_or_creation_intent(self.root, self.project_id, **claim)
+
+    def _save_v2_task(self, task_id):
+        ledger = team_router.new_v2_task_ledger(
+            self.root,
+            self.project_id,
+            task_id,
+            objective="manage executor pool",
+            project_local_path=self.root,
+            parent_thread_id="parent-a",
+            resolved_plan={"routeRoles": ["executor"]},
+            task_authorization_package={"packageId": "auth-a"},
+            created_at="2026-07-11T20:00:00+08:00",
+        )
+        return team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+
+    def _finalize(self, request_id, thread_id="thread-executor-a"):
+        return team_router.finalize_created_role(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-a",
+            role="executor",
+            request_id=request_id,
+            thread_id=thread_id,
+            title="执行者-任务 A",
+            created_at="2026-07-11T20:00:01+08:00",
+        )
+
+    def _release(self, task_id, request_id, thread_id="thread-executor-a"):
+        return team_router.release_role_claim(
+            self.root,
+            self.project_id,
+            parent_thread_id="parent-a",
+            role="executor",
+            thread_id=thread_id,
+            task_id=task_id,
+            request_id=request_id,
+        )
+
+    def _make_idle(self, task_id="task-seed", request_id="req-seed", thread_id="thread-executor-a"):
+        self._reserve(task_id, request_id)
+        self._finalize(request_id, thread_id)
+        self._release(task_id, request_id, thread_id)
+
+    def test_v2_role_pool_reuses_only_same_host_target_parent_and_role(self):
+        first = self._reserve("task-a", "req-a")
+        duplicate = self._reserve("task-a", "req-a")
+        self.assertEqual(first["outcome"], "creation_intent")
+        self.assertTrue(duplicate["existing"])
+        self._finalize("req-a")
+        self.assertEqual(self._release("task-a", "req-a")["outcome"], "released")
+
+        reused = self._reserve("task-b", "req-b")
+        other_parent = self._reserve("task-c", "req-c", parent_thread_id="parent-b")
+        other_target = self._reserve("task-d", "req-d", target_fingerprint="target-b")
+        self.assertEqual((reused["outcome"], reused["threadId"]), ("reused", "thread-executor-a"))
+        self.assertEqual(other_parent["outcome"], "creation_intent")
+        self.assertEqual(other_target["outcome"], "creation_intent")
+
+    def test_role_claim_is_mutex_and_parallel_creation_is_explicit(self):
+        self._make_idle()
+        barrier, outcomes, errors = threading.Barrier(3), [], []
+
+        def reserve(task_id, request_id):
+            try:
+                barrier.wait()
+                outcomes.append(self._reserve(task_id, request_id))
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=reserve, args=("task-one", "req-one")),
+            threading.Thread(target=reserve, args=("task-two", "req-two")),
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual([item["outcome"] for item in outcomes].count("reused"), 1)
+        self.assertEqual([item["outcome"] for item in outcomes].count("busy"), 1)
+        self.assertEqual(
+            self._reserve("task-parallel", "req-parallel", parallel_allowed=True)["outcome"],
+            "creation_intent",
+        )
+        with team_router.manager_pool_lock(
+            self.root, self.project_id, "parent-a", task_id="task-held", request_id="req-held",
+            acquired_at="2026-07-11T20:00:02+08:00",
+        ):
+            self.assertEqual(self._reserve("task-locked", "req-locked")["outcome"], "busy")
+
+    def test_role_claim_release_keeps_preferred_thread_id(self):
+        task_id = "task-preferred"
+        self._save_v2_task(task_id)
+        self._reserve(task_id, "req-a")
+        self._finalize("req-a")
+        self.assertEqual(self._release(task_id, "req-a")["outcome"], "released")
+        self.assertEqual(
+            team_router.load_task_ledger(self.root, self.project_id, task_id)["preferredThreadId"],
+            "thread-executor-a",
+        )
+
+    def test_v2_role_pool_prefers_requested_idle_thread_when_two_records_exist(self):
+        self._reserve("task-a", "req-a")
+        self._finalize("req-a", "thread-executor-a")
+        self.assertEqual(
+            self._reserve("task-b", "req-b", parallel_allowed=True)["outcome"],
+            "creation_intent",
+        )
+        self._finalize("req-b", "thread-executor-b")
+        self.assertEqual(self._release("task-b", "req-b", "thread-executor-b")["outcome"], "released")
+        self.assertEqual(self._release("task-a", "req-a", "thread-executor-a")["outcome"], "released")
+
+        preferred = self._reserve(
+            "task-c",
+            "req-c",
+            preferred_thread_id="thread-executor-b",
+        )
+
+        self.assertEqual((preferred["outcome"], preferred["threadId"]), ("reused", "thread-executor-b"))
+
+    def test_v2_role_pool_replaces_archived_or_corrupt_records(self):
+        with self.assertRaises(team_router.StateStoreError):
+            self._reserve("task-manager", "req-manager", role="manager")
+        self._make_idle(thread_id="thread-archived")
+        registry = team_router.load_registry(self.root, self.project_id)
+        project = registry["projects"][self.project_id]
+        project["managerPools"]["parent-a"]["roles"]["executor"][0]["archived"] = True
+        project["managerPools"]["parent-corrupt"] = {"roles": {"executor": [{
+            "threadId": "thread-corrupt", "hostId": "local", "targetFingerprint": "target-a", "claim": "bad",
+        }]}, "creationIntents": []}
+        team_router.save_registry(self.root, self.project_id, registry)
+
+        self.assertEqual(self._reserve("task-new", "req-new")["outcome"], "creation_intent")
+        self.assertEqual(
+            self._reserve("task-corrupt", "req-corrupt", parent_thread_id="parent-corrupt")["outcome"],
+            "creation_intent",
+        )
+
+    def _leak_lock(self, task_id, request_id):
+        path = team_router_state.manager_pool_lock_path(self.root, self.project_id, "parent-a")
+        payload = json.dumps({
+            "projectId": self.project_id, "parentThreadId": "parent-a", "taskId": task_id,
+            "requestId": request_id, "pid": os.getpid(), "acquiredAt": "2001-01-01T00:00:00+00:00",
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
+        return path
+
+    def test_creation_intent_recovery_keeps_unknown_identity_then_cleans_terminal_task(self):
+        task_id = "task-unknown"
+        self._save_v2_task(task_id)
+        self._reserve(task_id, "req-claimed")
+        self._finalize("req-claimed")
+        self._reserve(task_id, "req-unknown", parallel_allowed=True)
+        pending = team_router.recover_creation_intent(
+            self.root, self.project_id, parent_thread_id="parent-a", role="executor",
+            request_id="req-unknown", recovered_at="2026-07-11T20:00:02+08:00",
+        )
+        self.assertEqual(pending["requestId"], "req-unknown")
+
+        lock_path = self._leak_lock(task_id, "req-unknown")
+        self.assertFalse(team_router.recover_manager_pool_lock(
+            self.root, self.project_id, "parent-a", task_id=task_id, request_id="req-unknown",
+            recovered_at="2026-07-11T20:00:02+08:00",
+        ))
+        ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+        ledger.update(status="tool_error", reason="creation_outcome_unknown")
+        team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+        self.assertTrue(team_router.recover_manager_pool_lock(
+            self.root, self.project_id, "parent-a", task_id=task_id, request_id="req-unknown",
+            recovered_at="2026-07-11T20:00:03+08:00",
+        ))
+        self.assertFalse(lock_path.exists())
+        self.assertEqual(self._release(task_id, "req-claimed")["outcome"], "released")
+
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-a"]
+        self.assertEqual(pool["creationIntents"], [])
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+        self.assertIsNone(team_router.recover_creation_intent(
+            self.root, self.project_id, parent_thread_id="parent-a", role="executor",
+            request_id="req-unknown", recovered_at="2026-07-11T20:00:04+08:00",
+        ))
+        observations = team_router.load_task_ledger(self.root, self.project_id, task_id)["observations"]
+        self.assertTrue(any(
+            item.get("type") == "system_event"
+            and item.get("parsedFields", {}).get("reason") == "creation_outcome_unknown"
+            and item.get("parsedFields", {}).get("requestId") == "req-unknown"
+            for item in observations
+        ))
+
+    def test_role_claim_terminal_pool_cleanup_is_public_and_refuses_nonterminal_task(self):
+        task_id = "task-terminal"
+        self._save_v2_task(task_id)
+        self._reserve(task_id, "req-terminal")
+        cleanup = lambda stamp: team_router.cleanup_terminal_manager_pool_task(
+            self.root, self.project_id, parent_thread_id="parent-a", task_id=task_id, cleaned_at=stamp,
+        )
+        self.assertEqual(cleanup("2026-07-11T20:00:01+08:00")["outcome"], "not_terminal")
+        ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+        ledger["status"] = "done"
+        team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+        self.assertEqual(cleanup("2026-07-11T20:00:02+08:00")["outcome"], "cleaned")
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-a"]
+        self.assertEqual(pool["creationIntents"], [])
 
 
 class TestTeamRouterManagerIntegration(unittest.TestCase):
@@ -13175,6 +15048,53 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("不支持 `workspace-write`", text)
 
+    def test_skill_doc_documents_cost_aware_v2_routing_contract(self):
+        skill = self._skill_path().read_text(encoding="utf-8")
+        contract = self._skill_contract_text()
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        runbook = (
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        ).read_text(encoding="utf-8")
+        module_map = (ROOT / "docs" / "team-router" / "module-map.md").read_text(
+            encoding="utf-8"
+        )
+
+        for needle in (
+            "Version 2 Manager direct is decided before ledger, title, heartbeat, or thread operations.",
+            "A standard Manager entry does not select a concrete role model.",
+            "Explicit cost-aware model entry authorizes Luna Medium, Terra Medium, and Sol High role routing.",
+            "Visible Codex role threads only; never fall back to native spawn_agent.",
+            "Luna Medium / Terra Medium / Sol High",
+            "Sol Ultra is forbidden for role dispatch.",
+            "FAST/NORMAL delegated work ends with Manager acceptance; STRICT/PACKAGE requires Reviewer then Verifier.",
+        ):
+            self.assertIn(needle, skill)
+
+        for needle in (
+            "Version 2 has no child Manager role; the parent Manager owns the plan.",
+            "Bare Manager Mode is proposal-only.",
+            "creation_outcome_unknown",
+            "never automatically call create_thread again",
+            "canonical JSON",
+            "parallelAllowed",
+            "Terra Medium is normal execution",
+            "Sol High is complex review or the single evidence-preserving upgrade",
+            "one automatic model upgrade",
+            "hard stop after the second attempt",
+            "routingReceipt",
+            "requestedModel is not actualModel or billing evidence",
+            "repo/global mismatch before sync is expected",
+            "Task 10 is a separate explicit global-sync gate",
+            "Version 1 compatibility",
+        ):
+            self.assertIn(needle, contract)
+
+        for text in (readme, runbook):
+            self.assertIn("你作为管理者，完成 <目标>", text)
+            self.assertIn("按 Luna Medium、Terra Medium、Sol High 成本感知路由完成 <目标>", text)
+        self.assertIn("team_router_v2.py", module_map)
+        self.assertIn("manager-owned role pools", module_map)
+
     def test_workbench_tracks_current_task_without_stale_diff_surface(self):
         text = (ROOT / "docs" / "workbench.md").read_text(encoding="utf-8")
 
@@ -15065,5 +16985,1355 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "history/current turn normally",
         ):
             self.assertNotIn(stale, text)
+
+
+class TestV2DelegatedAuthorizationReceipt(unittest.TestCase):
+    def _authorization(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-delegated-receipt",
+            task_id="ctr-20260712-auth-receipt",
+            parent_thread_id="parent-thread",
+            objective="修复授权传递",
+            scope="src/team_router.py and focused tests",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-12T08:00:00+08:00",
+        )
+        plan = {
+            "taskAuthorizationPackageId": package["packageId"],
+            "taskId": package["taskId"],
+            "parentThreadId": package["parentThreadId"],
+            "objective": package["objective"],
+            "scope": package["scope"],
+            "permission": package["permission"],
+            "stopCondition": package["stopCondition"],
+        }
+        return package, plan
+
+    def test_v2_role_prompt_carries_validated_authorization_receipt(self):
+        package, plan = self._authorization()
+        for role in ("architect", "executor", "reviewer", "qa", "verifier"):
+            with self.subTest(role=role):
+                prompt = team_router._v2_role_prompt(
+                    package["taskId"],
+                    role,
+                    plan,
+                    objective=package["objective"],
+                    role_thread_id="%s-thread" % role,
+                    return_thread_id=package["parentThreadId"],
+                    authorization_package=package,
+                )
+                for line in (
+                    "authorizationPackageId: auth-delegated-receipt",
+                    "authorizationStatus: authorized",
+                    "authorizationSource: taskAuthorizationPackage",
+                    "executionDirective: start_immediately",
+                    "commitAuthorization: false",
+                    "externalGates: none",
+                ):
+                    self.assertIn(line, prompt)
+        reference = (
+            ROOT / "skills" / "codex-team-router" / "references" / "role-handoff-and-review-package.md"
+        ).read_text(encoding="utf-8")
+        for text in (
+            "## Delegated Authorization Receipt",
+            "runtime revalidates the active `taskAuthorizationPackage`",
+            "A bare `authorizationStatus: authorized`",
+            "This receipt is Version 2 only",
+        ):
+            self.assertIn(text, reference)
+
+    def test_v2_role_prompt_rejects_mismatched_or_inactive_receipt(self):
+        package, plan = self._authorization()
+        cases = (
+            ("package", {**package, "packageId": "other-package"}, "authorization_mismatch: packageId"),
+            ("scope", {**package, "scope": "src/other.py"}, "authorization_mismatch: scope"),
+            ("inactive", {**package, "status": "closed"}, "authorization_missing"),
+        )
+        for name, supplied, error in cases:
+            with self.subTest(name=name), self.assertRaisesRegex(team_router.StateStoreError, error):
+                team_router._v2_role_prompt(
+                    package["taskId"],
+                    "executor",
+                    plan,
+                    objective=package["objective"],
+                    role_thread_id="executor-thread",
+                    return_thread_id=package["parentThreadId"],
+                    authorization_package=supplied,
+                )
+
+
+class TestCompactReviewerVerifierReturns(unittest.TestCase):
+    def test_v1_and_v2_reviewer_verifier_prompts_require_compact_parent_return(self):
+        task_id = "ctr-20260712-compact-return"
+        callback = (
+            "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\n"
+            "summary: done\nevidence: tests: 1 OK\nrisks: none\nnext: reviewer"
+        ) % task_id
+        authorization = team_router.make_task_authorization_package(
+            package_id="auth-compact-return",
+            task_id=task_id,
+            parent_thread_id="parent-thread",
+            objective="compact reviewer verifier return",
+            scope="src only",
+            permission="read-only",
+            stop_condition="tests pass",
+            created_at="2026-07-12T08:00:00+08:00",
+        )
+        v2_plan = {
+            "taskAuthorizationPackageId": authorization["packageId"],
+            "taskId": authorization["taskId"],
+            "parentThreadId": authorization["parentThreadId"],
+            "objective": authorization["objective"],
+            "permission": authorization["permission"],
+            "scope": authorization["scope"],
+            "stopCondition": authorization["stopCondition"],
+        }
+        prompts = (
+            team_router.make_reviewer_request_message(
+                task_id, callback, "read-only", "src only", "parent-thread", role_thread_id="reviewer-thread",
+            ),
+            team_router.make_verifier_request_message(
+                task_id, callback, "read-only", "src only", "parent-thread", role_thread_id="verifier-thread",
+            ),
+            team_router._v2_role_prompt(
+                task_id, "reviewer", v2_plan,
+                objective=authorization["objective"], role_thread_id="reviewer-thread",
+                authorization_package=authorization, return_thread_id="parent-thread",
+            ),
+            team_router._v2_role_prompt(
+                task_id, "verifier", v2_plan,
+                objective=authorization["objective"], role_thread_id="verifier-thread",
+                authorization_package=authorization, return_thread_id="parent-thread",
+            ),
+        )
+
+        for prompt in prompts:
+            self.assertIn("compactReturn: <=12 lines/<1200B; same direct/fallback", prompt)
+        self.assertIn("compactReviewerBody: findings=findingCounts/topBlockers; requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath", prompts[2])
+        self.assertIn("compactVerifierBody: requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath", prompts[3])
+        reviewer_body = "\n".join((
+            "TEAM_ROUTER_REVIEW taskId=%s" % task_id,
+            "sourceThreadId: parent-thread", "sourceRoleThreadId: reviewer-thread", "role: Reviewer",
+            "result: needs_rework", "summary: 需修复", "findings: findingCounts=P1:1; topBlockers=边界",
+            "requiredChanges: nextGate=executor; 补测试", "evidenceChecked: detailThreadId=reviewer-thread; detailAnchor=msg-detail",
+            "risks: none",
+        ))
+        verifier_body = "\n".join((
+            "TEAM_ROUTER_VERDICT taskId=%s" % task_id,
+            "sourceThreadId: parent-thread", "sourceRoleThreadId: verifier-thread", "role: Verifier",
+            "result: blocked", "summary: 等待修复", "requiredChanges: nextGate=executor; 补测试",
+            "evidenceChecked: detailThreadId=verifier-thread; detailAnchor=msg-detail", "risks: none",
+        ))
+        for parser, body in ((team_router.parse_review, reviewer_body), (team_router.parse_verdict, verifier_body)):
+            direct_body, fallback_body = body, "\n".join(body.splitlines())
+            self.assertEqual(parser(direct_body, task_id).raw, direct_body)
+            self.assertEqual(parser(fallback_body, task_id).raw, fallback_body)
+            self.assertLessEqual(len(direct_body.splitlines()), 12)
+            self.assertLessEqual(len(direct_body.encode("utf-8")), 1200)
+            self.assertEqual(direct_body, fallback_body)
+        reference = (ROOT / "skills" / "codex-team-router" / "references" / "role-handoff-and-review-package.md").read_text(encoding="utf-8")
+        self.assertIn("at most 12 lines and 1200 UTF-8 bytes", reference)
+        self.assertIn("Never direct-send that detail to Manager", reference)
+        self.assertIn("`detailAnchor` identifies that role-thread detail message", reference)
+
+
+class TestTeamRouterV2FacadePreflight(unittest.TestCase):
+    def _direct_authorization(self, *, task_id, parent_thread_id, objective):
+        return team_router.make_task_authorization_package(
+            package_id="auth-%s" % task_id,
+            task_id=task_id,
+            parent_thread_id=parent_thread_id,
+            objective=objective,
+            scope="docs/README.md only",
+            permission="read-only",
+            stop_condition="focused check passes",
+            created_at="2026-07-12T10:00:00+08:00",
+        )
+
+    def _direct_plan(self):
+        return {
+            "scope": "docs/README.md only",
+            "permission": "read-only",
+            "stopCondition": "focused check passes",
+            "requestedGateClass": "NORMAL",
+        }
+
+    def test_v2_public_runner_keeps_explicit_keyword_only_signature(self):
+        signature = inspect.signature(team_router_v2.run_v2_team_task_with_adapter)
+        self.assertEqual(
+            list(signature.parameters),
+            [
+                "state_root", "project_id", "task_id", "objective", "project_local_path",
+                "thread_adapter", "permission", "observed_at", "target", "target_fingerprint",
+                "host_id", "parent_thread_id", "manager_plan", "task_authorization_package",
+                "turn_limit", "confirm_rework", "return_thread_id",
+            ],
+        )
+        self.assertEqual(signature.parameters["objective"].kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_orchestrator_uses_v1_for_existing_legacy_ledger_even_with_manager_direct_plan(self):
+        class LegacyAdapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{
+                    "projectId": "project-v1-facade",
+                    "target": {"type": "project", "projectId": "project-v1-facade"},
+                }]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-v1-facade"
+            task_id = "ctr-20260712-100000-v1"
+            parent_thread_id = "parent-v1-facade"
+            objective = "legacy manager plan remains active"
+            legacy = team_router.new_task_ledger(
+                root,
+                project_id,
+                task_id,
+                objective=objective,
+                project_local_path=root,
+            )
+            legacy["status"] = "roles_ready"
+            team_router.save_task_ledger(root, project_id, task_id, legacy)
+            registry = team_router.load_registry(root, project_id)
+            registry["projects"][project_id]["roles"] = {
+                "manager": {"threadId": "legacy-manager"},
+            }
+            team_router.save_registry(root, project_id, registry)
+            adapter = LegacyAdapter()
+
+            update = team_router.orchestrate_team_task_with_adapter(
+                root,
+                project_id,
+                task_id,
+                objective=objective,
+                project_local_path=root,
+                thread_adapter=adapter,
+                permission="read-only",
+                observed_at="2026-07-12T10:00:00+08:00",
+                parent_thread_id=parent_thread_id,
+                heartbeat_scheduler=FakeHeartbeatScheduler(),
+                manager_plan=self._direct_plan(),
+                task_authorization_package=self._direct_authorization(
+                    task_id=task_id,
+                    parent_thread_id=parent_thread_id,
+                    objective=objective,
+                ),
+            )
+
+            self.assertEqual(update["action"], "sent_manager_plan_request")
+            self.assertEqual(adapter.sent[0]["kwargs"]["threadId"], "legacy-manager")
+            self.assertIn("TEAM_ROUTER_PLAN_REQUEST", adapter.sent[0]["kwargs"]["prompt"])
+
+    def test_orchestrator_returns_v2_manager_direct_before_any_live_side_effect(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            task_id = "ctr-20260712-100000-direct"
+            parent_thread_id = "parent-v2-direct"
+            objective = "summarize one local document"
+            authorization = self._direct_authorization(
+                task_id=task_id,
+                parent_thread_id=parent_thread_id,
+                objective=objective,
+            )
+
+            with mock.patch(
+                "team_router.assess_live_orchestration_readiness",
+                side_effect=AssertionError("readiness must not run"),
+            ), mock.patch(
+                "team_router.parent_entry_guard",
+                side_effect=AssertionError("parent title guard must not run"),
+            ), mock.patch(
+                "team_router.resolve_project_target_with_adapter",
+                side_effect=AssertionError("target lookup must not run"),
+            ), mock.patch(
+                "team_router.prepare_v2_manager_task",
+                side_effect=AssertionError("state creation must not run"),
+            ):
+                update = team_router.orchestrate_team_task_with_adapter(
+                    root,
+                    "project-v2-direct",
+                    task_id,
+                    objective=objective,
+                    project_local_path=root,
+                    thread_adapter=object(),
+                    permission="read-only",
+                    observed_at="2026-07-12T10:00:00+08:00",
+                    parent_thread_id=parent_thread_id,
+                    heartbeat_scheduler=object(),
+                    manager_plan=self._direct_plan(),
+                    task_authorization_package=authorization,
+                )
+
+            self.assertEqual((update["action"], update["status"]), ("manager_direct", "manager_direct"))
+            self.assertIsNone(update["ledger"])
+            self.assertEqual(update["resolvedPlan"]["executionMode"], "manager_direct")
+
+    def test_plain_delegated_plan_requires_model_authorization_before_live_side_effects(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            task_id = "ctr-20260712-100000-missing-model"
+            parent_thread_id = "parent-v2-missing-model"
+            objective = "delegate one narrow local task"
+            authorization = self._direct_authorization(
+                task_id=task_id,
+                parent_thread_id=parent_thread_id,
+                objective=objective,
+            )
+            plan = {
+                **self._direct_plan(),
+                "explicitRoles": ("executor",),
+                "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            }
+
+            with mock.patch("team_router.assess_live_orchestration_readiness", side_effect=AssertionError("readiness")), mock.patch(
+                "team_router.resolve_project_target_with_adapter", side_effect=AssertionError("target")
+            ), mock.patch("team_router.prepare_v2_manager_task", side_effect=AssertionError("state")):
+                update = team_router.orchestrate_team_task_with_adapter(
+                    root, "project-v2-missing-model", task_id, objective=objective, project_local_path=root,
+                    thread_adapter=object(), permission="read-only", observed_at="2026-07-12T10:00:00+08:00",
+                    parent_thread_id=parent_thread_id, heartbeat_scheduler=object(),
+                    manager_plan=plan, task_authorization_package=authorization,
+                )
+
+            self.assertEqual((update["action"], update["status"]), ("model_authorization_required", "model_authorization_required"))
+
+    def test_orchestrator_dispatches_authorized_v2_executor_with_explicit_model(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{
+                    "projectId": "project-v2-facade",
+                    "target": {"type": "project", "projectId": "project-v2-facade"},
+                }]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-v2-facade"
+            task_id = "ctr-20260712-100000-delegated"
+            parent_thread_id = "parent-v2-facade"
+            objective = "implement one narrow local change"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-delegated",
+                task_id=task_id,
+                parent_thread_id=parent_thread_id,
+                objective=objective,
+                scope="src/example.py only",
+                permission="local-package",
+                stop_condition="focused test passes",
+                created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={
+                    "authorizedBy": "explicit_cost_aware_entry",
+                    "allowedDefaults": [
+                        "gpt-5.6-luna:medium",
+                        "gpt-5.6-terra:medium",
+                        "gpt-5.6-sol:high",
+                    ],
+                },
+            )
+            manager_plan = {
+                "scope": package["scope"],
+                "permission": package["permission"],
+                "stopCondition": package["stopCondition"],
+                "requestedGateClass": "NORMAL",
+                "explicitRoles": ("executor",),
+                "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            }
+            target = {"type": "project", "projectId": project_id}
+            adapter = V2Adapter()
+            scheduler = FakeHeartbeatScheduler()
+
+            update = team_router.orchestrate_team_task_with_adapter(
+                root,
+                project_id,
+                task_id,
+                objective=objective,
+                project_local_path=root,
+                thread_adapter=adapter,
+                permission="local-package",
+                observed_at="2026-07-12T10:00:00+08:00",
+                target=target,
+                parent_thread_id=parent_thread_id,
+                heartbeat_scheduler=scheduler,
+                manager_plan=manager_plan,
+                task_authorization_package=package,
+            )
+
+            self.assertEqual((update["action"], update["status"]), ("sent_v2_executor", "awaiting_callback"))
+            self.assertEqual(update["ledger"]["workflowVersion"], 2)
+            self.assertEqual(adapter.renamed[0], {
+                "threadId": parent_thread_id,
+                "title": "管理者-Team Router %s" % objective,
+            })
+            self.assertEqual(adapter.created[0]["kwargs"]["target"], target)
+            self.assertEqual(
+                (adapter.created[0]["kwargs"]["model"], adapter.created[0]["kwargs"]["thinking"]),
+                ("gpt-5.6-luna", "medium"),
+            )
+            self.assertEqual(
+                (adapter.sent[0]["kwargs"]["model"], adapter.sent[0]["kwargs"]["thinking"]),
+                ("gpt-5.6-terra", "medium"),
+            )
+            self.assertEqual(
+                update["targetFingerprint"],
+                team_router.target_fingerprint_for(target, "local"),
+            )
+            self.assertEqual(len(scheduler.scheduled), 1)
+
+    def test_v2_route_matrix_normal_direct_return_enters_manager_acceptance(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{
+                    "projectId": "project-v2-return",
+                    "target": {"type": "project", "projectId": "project-v2-return"},
+                }]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-v2-return"
+            task_id = "ctr-20260712-100000-return"
+            parent_thread_id = "parent-v2-return"
+            objective = "make one narrow local change"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-return", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={
+                    "authorizedBy": "explicit_cost_aware_entry",
+                    "allowedDefaults": ["gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high"],
+                },
+            )
+            update = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, objective=objective, project_local_path=root,
+                thread_adapter=V2Adapter(), permission="local-package",
+                observed_at="2026-07-12T10:00:00+08:00",
+                target={"type": "project", "projectId": project_id},
+                parent_thread_id=parent_thread_id, heartbeat_scheduler=FakeHeartbeatScheduler(),
+                manager_plan={
+                    "scope": package["scope"], "permission": package["permission"],
+                    "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                    "explicitRoles": ("executor",),
+                    "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                },
+                task_authorization_package=package,
+            )
+            dispatch = update["ledger"]["dispatches"][-1]
+            self.assertEqual(dispatch["expectedCallback"], "TEAM_ROUTER_CALLBACK taskId=%s" % task_id)
+            self.assertEqual(dispatch["callbackDelivery"], "direct-send")
+            self.assertEqual(dispatch["returnThreadId"], parent_thread_id)
+
+            accepted = team_router._capture_executor_callback_from_manager_inbox(
+                root,
+                project_id,
+                task_id,
+                [{
+                    "messageId": "msg-direct-callback",
+                    "sentAt": "2026-07-12T10:01:00+08:00",
+                    "sourceThreadId": dispatch["threadId"],
+                    "text": (
+                        "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\n"
+                        "sourceRoleThreadId: %s\nrole: Executor\nstatus: done\nfinal: true\n"
+                        "summary: focused change complete\nevidence: focused test OK\nrisks: none\nnext: manager"
+                    ) % (task_id, parent_thread_id, dispatch["threadId"]),
+                }],
+                captured_at="2026-07-12T10:02:00+08:00",
+            )
+
+            self.assertEqual(accepted["status"], "manager_acceptance_pending")
+
+    def test_v2_manager_resume_routes_pending_strict_callback_to_reviewer_then_verifier(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-resume", "target": {"type": "project", "projectId": "project-v2-resume"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-resume", "ctr-v2-resume", "parent-v2-resume"
+            objective, target = "resume a strict callback route", {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-resume", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/protocol.py only", permission="local-package",
+                stop_condition="focused tests pass", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            normal_plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                "explicitRoles": ("executor",), "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            }
+            resume_plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "STRICT",
+                "requestedRoleRouting": {
+                    "reviewer": {"executionClass": "high"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
+            }
+            adapter = V2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root, "thread_adapter": adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": target, "parent_thread_id": parent_thread_id, "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            first = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, manager_plan=normal_plan, task_authorization_package=package, **common,
+            )
+            executor = first["ledger"]["dispatches"][-1]
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-executor-direct", "sentAt": "2026-07-12T10:01:00+08:00", "sourceThreadId": executor["threadId"],
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
+                    "role: Executor\nstatus: done\nfinal: true\nsummary: executor done\nevidence: focused test OK\n"
+                    "risks: strict protocol risk\nnext: manager"
+                ) % (task_id, parent_thread_id, executor["threadId"]),
+            })
+            pending = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual(pending["status"], "manager_routing_pending")
+            with self.assertRaisesRegex(team_router.StateStoreError, "missing roleRouting.reviewer"):
+                team_router.resume_v2_manager_routing(
+                    root, project_id, task_id, objective=objective, parent_thread_id=parent_thread_id,
+                    manager_plan={**resume_plan, "requestedRoleRouting": {}}, authorization_package=package,
+                )
+            self.assertEqual(team_router.load_task_ledger(root, project_id, task_id)["status"], "manager_routing_pending")
+            self.assertEqual(len(adapter.sent), 1)
+
+            resumed = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, manager_plan=resume_plan, task_authorization_package=package, **common,
+            )
+            self.assertEqual((resumed["action"], resumed["status"]), ("sent_v2_reviewer", "reviewing"))
+            reviewer = resumed["ledger"]["dispatches"][-1]
+            self.assertNotIn("routingError", resumed["ledger"])
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-reviewer-direct", "sentAt": "2026-07-12T10:02:00+08:00", "sourceThreadId": reviewer["threadId"],
+                "text": (
+                    "TEAM_ROUTER_REVIEW taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Reviewer\n"
+                    "result: pass\nsummary: reviewer pass\nfindings: none\nrequiredChanges: none\n"
+                    "evidenceChecked: focused test OK\nrisks: none"
+                ) % (task_id, parent_thread_id, reviewer["threadId"]),
+            })
+            verifier = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual((verifier["action"], verifier["status"]), ("sent_v2_verifier", "verifying"))
+
+    def test_v2_route_matrix_strict_dispatches_reviewer_then_verifier(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{
+                    "projectId": "project-v2-strict",
+                    "target": {"type": "project", "projectId": "project-v2-strict"},
+                }]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-v2-strict"
+            task_id = "ctr-20260712-100000-strict"
+            parent_thread_id = "parent-v2-strict"
+            objective = "review a strict protocol change"
+            target = {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-strict", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/protocol.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={
+                    "authorizedBy": "explicit_cost_aware_entry",
+                    "allowedDefaults": ["gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high"],
+                },
+            )
+            plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "STRICT",
+                "requestedRoleRouting": {
+                    "executor": {"executionClass": "standard"},
+                    "reviewer": {"executionClass": "high"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
+            }
+            adapter = V2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root, "thread_adapter": adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": target, "parent_thread_id": parent_thread_id,
+                "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            first = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, manager_plan=plan,
+                task_authorization_package=package, **common,
+            )
+            executor = first["ledger"]["dispatches"][-1]
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-executor-direct", "sentAt": "2026-07-12T10:01:00+08:00",
+                "sourceThreadId": executor["threadId"],
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
+                    "role: Executor\nstatus: done\nfinal: true\nsummary: executor done\n"
+                    "evidence: focused test OK\nrisks: none\nnext: reviewer"
+                ) % (task_id, parent_thread_id, executor["threadId"]),
+            })
+            second = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual((second["action"], second["status"]), ("sent_v2_reviewer", "reviewing"))
+            reviewer = second["ledger"]["dispatches"][-1]
+            self.assertEqual(
+                (adapter.sent[-1]["kwargs"]["model"], adapter.sent[-1]["kwargs"]["thinking"]),
+                ("gpt-5.6-sol", "high"),
+            )
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-reviewer-direct", "sentAt": "2026-07-12T10:02:00+08:00",
+                "sourceThreadId": reviewer["threadId"],
+                "text": (
+                    "TEAM_ROUTER_REVIEW taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
+                    "role: Reviewer\nresult: pass\nsummary: reviewer pass\nfindings: none\n"
+                    "requiredChanges: none\nevidenceChecked: focused test OK\nrisks: none"
+                ) % (task_id, parent_thread_id, reviewer["threadId"]),
+            })
+            third = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual((third["action"], third["status"]), ("sent_v2_verifier", "verifying"))
+            verifier = third["ledger"]["dispatches"][-1]
+            self.assertEqual(
+                (adapter.sent[-1]["kwargs"]["model"], adapter.sent[-1]["kwargs"]["thinking"]),
+                ("gpt-5.6-luna", "medium"),
+            )
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-verifier-direct", "sentAt": "2026-07-12T10:03:00+08:00",
+                "sourceThreadId": verifier["threadId"],
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
+                    "role: Verifier\nresult: pass\nsummary: verifier pass\nrequiredChanges: none\n"
+                    "evidenceChecked: focused test OK\nrisks: none"
+                ) % (task_id, parent_thread_id, verifier["threadId"]),
+            })
+            complete = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+
+            self.assertEqual((complete["action"], complete["status"]), ("v2_terminal_closeout", "done"))
+            self.assertEqual(len(adapter.sent), 3)
+
+    def test_v2_route_matrix_architect_and_qa_preserves_all_required_roles(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-full", "target": {"type": "project", "projectId": "project-v2-full"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-full", "ctr-20260712-100000-full", "parent-v2-full"
+            objective, target = "complete an independently reviewed protocol change", {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-full", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/protocol.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "STRICT",
+                "explicitRoles": ("architect", "qa"),
+                "requestedRoleRouting": {
+                    "architect": {"executionClass": "high"}, "executor": {"executionClass": "standard"},
+                    "reviewer": {"executionClass": "high"}, "qa": {"executionClass": "standard"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
+            }
+            adapter = V2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root, "thread_adapter": adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": target, "parent_thread_id": parent_thread_id,
+                "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+
+            def reply(record, marker, body, message_id):
+                adapter.messages.setdefault(parent_thread_id, []).append({
+                    "messageId": message_id, "sentAt": "2026-07-12T10:01:00+08:00",
+                    "sourceThreadId": record["threadId"],
+                    "text": "%s taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: %s\n%s" % (
+                        marker, task_id, parent_thread_id, record["threadId"],
+                        team_router.ROLE_ALIASES[record["role"]], body,
+                    ),
+                })
+
+            first = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, manager_plan=plan, task_authorization_package=package, **common)
+            reply(first["ledger"]["dispatches"][-1], "TEAM_ROUTER_ARCHITECT_REVIEW", "result: pass\nsummary: architecture pass\nfindings: none\nrequiredChanges: none\nevidenceChecked: design checked\nrisks: none\nskillProfileUsed: architect-default\narchitectureImpact: none\ncompatibilityNotes: compatible\nalternatives: none\nmigrationRisks: none", "architect")
+            second = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual(second["action"], "sent_v2_executor")
+            reply(second["ledger"]["dispatches"][-1], "TEAM_ROUTER_CALLBACK", "status: done\nfinal: true\nsummary: executor pass\nevidence: focused test OK\nrisks: none\nnext: reviewer", "executor")
+            third = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual(third["action"], "sent_v2_reviewer")
+            reply(third["ledger"]["dispatches"][-1], "TEAM_ROUTER_REVIEW", "result: pass\nsummary: reviewer pass\nfindings: none\nrequiredChanges: none\nevidenceChecked: review checked\nrisks: none", "reviewer")
+            fourth = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual((fourth["action"], fourth["status"]), ("sent_v2_qa", "awaiting_qa_review"))
+            reply(fourth["ledger"]["dispatches"][-1], "TEAM_ROUTER_QA_REVIEW", "result: pass\nsummary: QA pass\nfindings: none\nrequiredChanges: none\nevidenceChecked: QA checked\nrisks: none\nskillProfileUsed: qa-default\ncoverageGaps: none\nverificationPlan: focused check\nregressionRisks: none", "qa")
+            fifth = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+            self.assertEqual((fifth["action"], fifth["status"]), ("sent_v2_verifier", "verifying"))
+            reply(fifth["ledger"]["dispatches"][-1], "TEAM_ROUTER_VERDICT", "result: pass\nsummary: verifier pass\nrequiredChanges: none\nevidenceChecked: verifier checked\nrisks: none", "verifier")
+            complete = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+
+            self.assertEqual(complete["status"], "done")
+            self.assertEqual([item["kwargs"]["model"] for item in adapter.sent], [
+                "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+            ])
+
+    def test_v2_target_fingerprint_mismatch_prevents_title_pool_and_thread_creation(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": []}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            task_id, parent_thread_id, objective = "ctr-20260712-100000-fingerprint", "parent-v2-fingerprint", "change one local file"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-fingerprint", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            adapter, scheduler = V2Adapter(), FakeHeartbeatScheduler()
+            update = team_router.orchestrate_team_task_with_adapter(
+                root, "project-v2-fingerprint", task_id, objective=objective, project_local_path=root,
+                thread_adapter=adapter, permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
+                target={"type": "project", "projectId": "project-v2-fingerprint"},
+                target_fingerprint="not-the-canonical-fingerprint", host_id="local",
+                parent_thread_id=parent_thread_id, heartbeat_scheduler=scheduler,
+                manager_plan={
+                    "scope": package["scope"], "permission": package["permission"],
+                    "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                    "explicitRoles": ("executor",),
+                    "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                },
+                task_authorization_package=package,
+            )
+
+            self.assertEqual((update["action"], update["status"]), ("target_fingerprint_invalid", "tool_error"))
+            self.assertEqual((adapter.renamed, adapter.created, adapter.sent, scheduler.scheduled), ([], [], [], []))
+            self.assertFalse(team_router.task_path(root, "project-v2-fingerprint", task_id).exists())
+
+    def test_sticky_continuation_rejects_parent_scope_external_gate_and_terminal_before_live_calls(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-sticky", "ctr-20260712-100000-sticky", "parent-v2-sticky"
+            objective = "continue one narrow delegated task"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-sticky", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                "explicitRoles": ("executor",),
+                "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            }
+            resolved = team_router.resolve_v2_manager_plan(
+                objective=objective, scope=package["scope"], permission=package["permission"],
+                stop_condition=package["stopCondition"], requested_gate_class="NORMAL",
+                authorization_package=package, explicit_roles=("executor",),
+                requested_role_routing=plan["requestedRoleRouting"],
+                ledger_input={"taskId": task_id, "parentThreadId": parent_thread_id},
+            )
+            ledger = team_router.new_v2_task_ledger(
+                root, project_id, task_id, objective=objective, project_local_path=root,
+                parent_thread_id=parent_thread_id, resolved_plan=resolved,
+                task_authorization_package=package, created_at="2026-07-12T10:00:00+08:00",
+            )
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+
+            def invoke(*, parent=parent_thread_id, supplied_plan=plan, supplied_objective=objective):
+                with mock.patch("team_router.assess_live_orchestration_readiness", side_effect=AssertionError("readiness")):
+                    return team_router.orchestrate_team_task_with_adapter(
+                        root, project_id, task_id, objective=supplied_objective, project_local_path=root,
+                        thread_adapter=object(), permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
+                        parent_thread_id=parent, heartbeat_scheduler=object(), manager_plan=supplied_plan,
+                        task_authorization_package=package,
+                    )
+
+            self.assertEqual(invoke(parent="other-parent")["action"], "authorization_mismatch")
+            self.assertEqual(invoke(supplied_objective="expanded delegated task")["action"], "authorization_mismatch")
+            self.assertEqual(invoke(supplied_plan={**plan, "scope": "src/expanded.py"})["action"], "authorization_mismatch")
+            self.assertEqual(invoke(supplied_plan={**plan, "externalGates": ("commit",)})["action"], "authorization_mismatch")
+            terminal = team_router.load_task_ledger(root, project_id, task_id)
+            terminal["status"] = "done"
+            team_router.save_task_ledger(root, project_id, task_id, terminal)
+            self.assertEqual(invoke()["action"], "authorization_expired")
+
+    def test_manager_acceptance_is_parent_local_and_never_schedules_role_polling(self):
+        update = {
+            "status": "manager_acceptance_pending",
+            "watcher": {
+                "role": "executor", "threadId": "thread-executor",
+                "firstCheckAt": "2026-07-12T10:00:30+08:00",
+                "nextAllowedReadAt": "2026-07-12T10:05:00+08:00", "lastReadAt": None,
+            },
+        }
+
+        payload = team_router_watcher_runtime.build_watcher_heartbeat_payload(
+            update,
+            state_root="C:/tmp/team-router-manager-acceptance", project_id="project-v2-acceptance",
+            task_id="ctr-20260712-100000-acceptance", permission="local-package",
+        )
+
+        self.assertIsNone(payload)
+
+    def test_v2_self_thread_fallback_uses_dispatch_thread_without_legacy_role_registry(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-fallback", "target": {"type": "project", "projectId": "project-v2-fallback"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-fallback", "ctr-20260712-100000-fallback", "parent-v2-fallback"
+            objective, target = "finish one local task", {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-fallback", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            adapter = V2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root, "thread_adapter": adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": target, "parent_thread_id": parent_thread_id,
+                "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            first = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, manager_plan={
+                    "scope": package["scope"], "permission": package["permission"],
+                    "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                    "explicitRoles": ("executor",),
+                    "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                }, task_authorization_package=package, **common,
+            )
+            executor = first["ledger"]["dispatches"][-1]
+            adapter.append_reply(
+                executor["threadId"],
+                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Executor\nstatus: done\nfinal: true\nsummary: fallback pass\nevidence: focused test OK\nrisks: none\nnext: manager" % (task_id, parent_thread_id, executor["threadId"]),
+                message_id="msg-self-thread", sent_at="2026-07-12T10:01:00+08:00",
+            )
+            registry = team_router.load_registry(root, project_id)
+            self.assertEqual(registry["projects"][project_id]["roles"], {})
+
+            second = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
+
+            self.assertEqual((second["action"], second["status"]), ("manager_acceptance_pending", "manager_acceptance_pending"))
+            accepted = team_router.record_manager_acceptance(
+                root,
+                project_id,
+                task_id,
+                result="pass",
+                accepted_at="2026-07-12T10:02:00+08:00",
+                callback_receipt="manager checked fallback receipt",
+                scope_checked="scope unchanged",
+                evidence_checked="focused test OK",
+                risk_boundary_checked="NORMAL",
+                remaining_risks="none",
+            )
+
+            self.assertEqual(accepted["closeout"]["receiptSource"], "self-thread-fallback/read_thread")
+            self.assertEqual(accepted["closeout"]["receiptChannel"], "read_thread")
+            self.assertEqual(accepted["closeout"]["receiptRoleThreadId"], executor["threadId"])
+            self.assertEqual(accepted["closeout"]["returnThreadId"], parent_thread_id)
+            self.assertEqual(accepted["closeout"]["deliveryStatus"], "fallback_only")
+            self.assertTrue(accepted["closeout"]["deliveryDegraded"])
+            closeout = team_router.format_closeout_for_user(
+                accepted,
+                team_router.load_registry(root, project_id),
+            )
+            self.assertIn("deliveryStatus: fallback_only", closeout)
+            self.assertIn("delivery: degraded", closeout)
+
+    def test_v2_verifier_fallback_closeout_preserves_delivery_provenance(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-verifier-closeout", "ctr-20260712-100000-verifier-closeout", "parent-v2-verifier-closeout"
+            objective = "verify a fallback closeout"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-verifier-closeout", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            plan = team_router.resolve_v2_manager_plan(
+                objective=objective, scope=package["scope"], permission=package["permission"],
+                stop_condition=package["stopCondition"], requested_gate_class="STRICT",
+                authorization_package=package,
+                requested_role_routing={
+                    "executor": {"executionClass": "standard"},
+                    "reviewer": {"executionClass": "high"},
+                    "verifier": {"executionClass": "mechanical"},
+                }, ledger_input={"taskId": task_id, "parentThreadId": parent_thread_id},
+            )
+            ledger = team_router.new_v2_task_ledger(
+                root, project_id, task_id, objective=objective, project_local_path=root,
+                parent_thread_id=parent_thread_id, resolved_plan=plan,
+                task_authorization_package=package, created_at="2026-07-12T10:00:00+08:00",
+            )
+            receipt = {
+                "source": "self-thread-fallback/read_thread",
+                "channel": "read_thread",
+                "roleThreadId": "thread-v2-verifier",
+                "returnThreadId": parent_thread_id,
+                "orchestratorThreadId": parent_thread_id,
+            }
+            ledger.update({
+                "status": "done",
+                "verification": {"verdict": {"receipt": receipt}},
+                "observations": [{
+                    "type": "callback_raw", "role": "executor",
+                    "parsedFields": {"status": "done", "final": "true", "summary": "executor completed"},
+                }],
+            })
+
+            closeout = team_router._make_closeout(
+                ledger,
+                {"result": "pass", "summary": "verifier passed", "requiredChanges": "none", "evidenceChecked": "focused test OK", "risks": "none"},
+                "2026-07-12T10:02:00+08:00",
+            )
+
+            self.assertEqual(closeout["receiptSource"], "self-thread-fallback/read_thread")
+            self.assertEqual(closeout["receiptChannel"], "read_thread")
+            self.assertEqual(closeout["receiptRoleThreadId"], "thread-v2-verifier")
+            self.assertEqual(closeout["returnThreadId"], parent_thread_id)
+            self.assertEqual(closeout["deliveryStatus"], "fallback_only")
+            self.assertTrue(closeout["deliveryDegraded"])
+
+    def test_v2_watcher_heartbeat_uses_manager_pool_dispatch_and_stops_at_manager_acceptance(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-watch", "target": {"type": "project", "projectId": "project-v2-watch"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-watch", "ctr-20260712-100000-watch", "parent-v2-watch"
+            objective, target = "finish one watched local task", {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-watch", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            adapter = V2Adapter()
+            first = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, objective=objective, project_local_path=root,
+                thread_adapter=adapter, permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
+                target=target, parent_thread_id=parent_thread_id, heartbeat_scheduler=FakeHeartbeatScheduler(),
+                manager_plan={
+                    "scope": package["scope"], "permission": package["permission"],
+                    "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                    "explicitRoles": ("executor",),
+                    "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                }, task_authorization_package=package,
+            )
+            executor = first["ledger"]["dispatches"][-1]
+            adapter.append_reply(
+                executor["threadId"],
+                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Executor\nstatus: done\nfinal: true\nsummary: watcher fallback pass\nevidence: focused test OK\nrisks: none\nnext: manager" % (task_id, parent_thread_id, executor["threadId"]),
+                message_id="msg-watch-fallback", sent_at="2026-07-12T10:01:00+08:00",
+            )
+            self.assertEqual(team_router.load_registry(root, project_id)["projects"][project_id]["roles"], {})
+            scheduler = FakeHeartbeatScheduler()
+
+            update = team_router.watch_team_task_with_adapter(
+                root, project_id, task_id, thread_adapter=adapter, permission="local-package",
+                observed_at="2026-07-12T10:01:30+08:00", heartbeat_scheduler=scheduler,
+            )
+
+            self.assertEqual((update["action"], update["status"]), ("manager_acceptance_pending", "manager_acceptance_pending"))
+            self.assertIsNone(update["nextWakeup"])
+            self.assertEqual(scheduler.scheduled, [])
+
+    def test_v2_watcher_cadence_stays_gated_while_direct_facade_checks_immediately(self):
+        class CountingV2Adapter(FakeThreadAdapter):
+            def __init__(self):
+                super().__init__()
+                self.read_count = 0
+
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-cadence", "target": {"type": "project", "projectId": "project-v2-cadence"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+            def send_message_to_thread(self, **kwargs):
+                result = super().send_message_to_thread(**kwargs)
+                sent_at = "2026-07-12T10:00:00+08:00"
+                self.messages[kwargs["threadId"]][-1]["sentAt"] = sent_at
+                result["message"]["createdAt"] = sent_at
+                return result
+
+            def read_thread(self, **kwargs):
+                self.read_count += 1
+                return super().read_thread(**kwargs)
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-cadence", "ctr-20260712-100000-cadence", "parent-v2-cadence"
+            objective, target = "check one explicit callback", {"type": "project", "projectId": project_id}
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-cadence", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            plan = {
+                "scope": package["scope"], "permission": package["permission"],
+                "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                "explicitRoles": ("executor",),
+                "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            }
+            adapter = CountingV2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root, "thread_adapter": adapter,
+                "permission": "local-package", "target": target, "parent_thread_id": parent_thread_id,
+                "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            first = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, observed_at="2026-07-12T10:00:00+08:00",
+                manager_plan=plan, task_authorization_package=package, **common,
+            )
+            executor = first["ledger"]["dispatches"][-1]
+            self.assertEqual(first["ledger"]["readDiscipline"]["nextAllowedReadAt"], "2026-07-12T10:05:00+08:00")
+            decision = team_router._watcher_read_allowed(
+                first["ledger"], observed_at="2026-07-12T10:00:10+08:00", read_reason="scheduled watcher heartbeat",
+            )
+            self.assertFalse(decision["allowed"], decision)
+            adapter.messages[parent_thread_id] = [{
+                "messageId": "msg-cadence-direct", "sentAt": "2026-07-12T10:00:05+08:00",
+                "sourceThreadId": executor["threadId"],
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
+                    "role: Executor\nstatus: done\nfinal: true\nsummary: direct check pass\n"
+                    "evidence: focused test OK\nrisks: none\nnext: manager"
+                ) % (task_id, parent_thread_id, executor["threadId"]),
+            }]
+
+            early = team_router.watch_team_task_with_adapter(
+                root, project_id, task_id, thread_adapter=adapter, permission="local-package",
+                observed_at="2026-07-12T10:00:10+08:00", heartbeat_scheduler=FakeHeartbeatScheduler(),
+            )
+
+            self.assertEqual(early["action"], "watch_read_suppressed", early)
+            self.assertEqual(adapter.read_count, 0)
+            direct = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, observed_at="2026-07-12T10:00:10+08:00", **common,
+            )
+            self.assertEqual((direct["action"], direct["status"]), ("manager_acceptance_pending", "manager_acceptance_pending"))
+            self.assertGreater(adapter.read_count, 0)
+
+    def test_v2_route_matrix_explicit_architect_and_qa_singleton_paths(self):
+        class V2Adapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": []}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+        def make_package(*, task_id, parent_thread_id, objective):
+            return team_router.make_task_authorization_package(
+                package_id="auth-%s" % task_id, task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+
+        def direct_reply(adapter, *, task_id, parent_thread_id, dispatch, marker, fields, message_id):
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": message_id, "sentAt": "2026-07-12T10:01:00+08:00",
+                "sourceThreadId": dispatch["threadId"],
+                "text": "%s taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: %s\n%s" % (
+                    marker, task_id, parent_thread_id, dispatch["threadId"],
+                    team_router.ROLE_ALIASES[dispatch["role"]], fields,
+                ),
+            })
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            architect_project, architect_task, architect_parent = "project-v2-architect", "ctr-20260712-100000-architect", "parent-v2-architect"
+            architect_objective = "apply one explicit architecture review"
+            architect_package = make_package(
+                task_id=architect_task, parent_thread_id=architect_parent, objective=architect_objective,
+            )
+            architect_adapter = V2Adapter()
+            architect_common = {
+                "objective": architect_objective, "project_local_path": root, "thread_adapter": architect_adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": {"type": "project", "projectId": architect_project},
+                "parent_thread_id": architect_parent, "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            architect_plan = {
+                "scope": architect_package["scope"], "permission": architect_package["permission"],
+                "stopCondition": architect_package["stopCondition"], "requestedGateClass": "NORMAL",
+                "explicitRoles": ("architect",),
+                "requestedRoleRouting": {
+                    "architect": {"executionClass": "high"}, "executor": {"executionClass": "standard"},
+                },
+            }
+            architect_first = team_router.orchestrate_team_task_with_adapter(
+                root, architect_project, architect_task, manager_plan=architect_plan,
+                task_authorization_package=architect_package, **architect_common,
+            )
+            self.assertEqual((architect_first["action"], architect_first["status"]), ("sent_v2_architect", "awaiting_architect_review"))
+            direct_reply(
+                architect_adapter, task_id=architect_task, parent_thread_id=architect_parent,
+                dispatch=architect_first["ledger"]["dispatches"][-1], marker="TEAM_ROUTER_ARCHITECT_REVIEW",
+                fields="result: pass\nsummary: architecture pass\nfindings: none\nrequiredChanges: none\nevidenceChecked: design checked\nrisks: none\nskillProfileUsed: architect-default\narchitectureImpact: none\ncompatibilityNotes: compatible\nalternatives: none\nmigrationRisks: none",
+                message_id="msg-architect-singleton",
+            )
+            architect_second = team_router.orchestrate_team_task_with_adapter(
+                root, architect_project, architect_task, **architect_common,
+            )
+            self.assertEqual((architect_second["action"], architect_second["status"]), ("sent_v2_executor", "awaiting_callback"))
+            direct_reply(
+                architect_adapter, task_id=architect_task, parent_thread_id=architect_parent,
+                dispatch=architect_second["ledger"]["dispatches"][-1], marker="TEAM_ROUTER_CALLBACK",
+                fields="status: done\nfinal: true\nsummary: executor pass\nevidence: focused test OK\nrisks: none\nnext: manager",
+                message_id="msg-architect-executor",
+            )
+            architect_third = team_router.orchestrate_team_task_with_adapter(
+                root, architect_project, architect_task, **architect_common,
+            )
+            self.assertEqual((architect_third["action"], architect_third["status"]), ("manager_acceptance_pending", "manager_acceptance_pending"))
+            self.assertEqual([item["role"] for item in architect_third["ledger"]["dispatches"]], ["architect", "executor"])
+
+            qa_project, qa_task, qa_parent = "project-v2-qa", "ctr-20260712-100000-qa", "parent-v2-qa"
+            qa_objective = "apply one explicit QA review"
+            qa_package = make_package(task_id=qa_task, parent_thread_id=qa_parent, objective=qa_objective)
+            qa_adapter = V2Adapter()
+            qa_common = {
+                "objective": qa_objective, "project_local_path": root, "thread_adapter": qa_adapter,
+                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": {"type": "project", "projectId": qa_project},
+                "parent_thread_id": qa_parent, "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
+            qa_plan = {
+                "scope": qa_package["scope"], "permission": qa_package["permission"],
+                "stopCondition": qa_package["stopCondition"], "requestedGateClass": "NORMAL",
+                "explicitRoles": ("qa",),
+                "requestedRoleRouting": {
+                    "executor": {"executionClass": "standard"}, "qa": {"executionClass": "standard"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
+            }
+            qa_first = team_router.orchestrate_team_task_with_adapter(
+                root, qa_project, qa_task, manager_plan=qa_plan, task_authorization_package=qa_package, **qa_common,
+            )
+            self.assertEqual((qa_first["action"], qa_first["status"]), ("sent_v2_executor", "awaiting_callback"))
+            direct_reply(
+                qa_adapter, task_id=qa_task, parent_thread_id=qa_parent,
+                dispatch=qa_first["ledger"]["dispatches"][-1], marker="TEAM_ROUTER_CALLBACK",
+                fields="status: done\nfinal: true\nsummary: executor pass\nevidence: focused test OK\nrisks: none\nnext: QA",
+                message_id="msg-qa-executor",
+            )
+            qa_second = team_router.orchestrate_team_task_with_adapter(root, qa_project, qa_task, **qa_common)
+            self.assertEqual((qa_second["action"], qa_second["status"]), ("sent_v2_qa", "awaiting_qa_review"))
+            direct_reply(
+                qa_adapter, task_id=qa_task, parent_thread_id=qa_parent,
+                dispatch=qa_second["ledger"]["dispatches"][-1], marker="TEAM_ROUTER_QA_REVIEW",
+                fields="result: pass\nsummary: QA pass\nfindings: none\nrequiredChanges: none\nevidenceChecked: QA checked\nrisks: none\nskillProfileUsed: qa-default\ncoverageGaps: none\nverificationPlan: focused test\nregressionRisks: none",
+                message_id="msg-qa-singleton",
+            )
+            qa_third = team_router.orchestrate_team_task_with_adapter(root, qa_project, qa_task, **qa_common)
+            self.assertEqual((qa_third["action"], qa_third["status"]), ("sent_v2_verifier", "verifying"))
+            direct_reply(
+                qa_adapter, task_id=qa_task, parent_thread_id=qa_parent,
+                dispatch=qa_third["ledger"]["dispatches"][-1], marker="TEAM_ROUTER_VERDICT",
+                fields="result: pass\nsummary: verifier pass\nrequiredChanges: none\nevidenceChecked: focused test OK\nrisks: none",
+                message_id="msg-qa-verifier",
+            )
+            qa_complete = team_router.orchestrate_team_task_with_adapter(root, qa_project, qa_task, **qa_common)
+            self.assertEqual((qa_complete["action"], qa_complete["status"]), ("v2_terminal_closeout", "done"))
+            self.assertEqual([item["role"] for item in qa_complete["ledger"]["dispatches"]], ["executor", "qa", "verifier"])
+
+    def test_v2_parallel_allowed_reaches_facade_reservation_and_shared_write_conflict_blocks_it(self):
+        class ParallelAdapter(FakeThreadAdapter):
+            def list_projects(self, **kwargs):
+                return {"projects": [{"projectId": "project-v2-parallel", "target": {"type": "project", "projectId": "project-v2-parallel"}}]}
+
+            def list_threads(self, **kwargs):
+                return {"threads": []}
+
+            def create_thread(self, **kwargs):
+                record = super().create_thread(**kwargs)
+                old_thread_id = record["threadId"]
+                thread_id = "%s-%d" % (old_thread_id, len(self.created))
+                self.messages[thread_id] = self.messages.pop(old_thread_id)
+                result = {**record, "threadId": thread_id}
+                self.created[-1]["result"] = result
+                return result
+
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, parent_thread_id = "project-v2-parallel", "parent-v2-parallel"
+            objective, target = "run independent local checks", {"type": "project", "projectId": project_id}
+            adapter = ParallelAdapter()
+
+            def run(task_id, *, conflicts=()):
+                package = team_router.make_task_authorization_package(
+                    package_id="auth-%s" % task_id, task_id=task_id, parent_thread_id=parent_thread_id,
+                    objective=objective, scope="src/example.py only", permission="local-package",
+                    stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                    model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                        "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                    ]},
+                )
+                return team_router.orchestrate_team_task_with_adapter(
+                    root, project_id, task_id, objective=objective, project_local_path=root,
+                    thread_adapter=adapter, permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
+                    target=target, parent_thread_id=parent_thread_id, heartbeat_scheduler=FakeHeartbeatScheduler(),
+                    manager_plan={
+                        "scope": package["scope"], "permission": package["permission"],
+                        "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
+                        "requiresParallelism": True, "parallelConflicts": conflicts,
+                        "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                    }, task_authorization_package=package,
+                )
+
+            first = run("ctr-20260712-100000-parallel-a")
+            second = run("ctr-20260712-100000-parallel-b")
+            blocked = run("ctr-20260712-100000-parallel-c", conflicts=("shared-write",))
+            pool = team_router.load_registry(root, project_id)["projects"][project_id]["managerPools"][parent_thread_id]
+
+            self.assertTrue(first["ledger"]["plan"]["parallelAllowed"])
+            self.assertTrue(second["ledger"]["plan"]["parallelAllowed"])
+            self.assertEqual(len(pool["roles"]["executor"]), 2)
+            self.assertEqual((blocked["action"], blocked["ledger"]["plan"]["parallelAllowed"]), ("v2_busy", False))
+            self.assertEqual(len(adapter.created), 2)
+
+    def test_v2_reviewer_rework_consumes_the_single_global_budget(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-rework", "ctr-20260712-100000-rework", "parent-v2-rework"
+            objective = "review one strict local change"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-rework", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective=objective, scope="src/example.py only", permission="local-package",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
+                    "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
+                ]},
+            )
+            plan = team_router.resolve_v2_manager_plan(
+                objective=objective, scope=package["scope"], permission=package["permission"],
+                stop_condition=package["stopCondition"], requested_gate_class="STRICT",
+                authorization_package=package,
+                requested_role_routing={
+                    "executor": {"executionClass": "standard"}, "reviewer": {"executionClass": "high"},
+                    "verifier": {"executionClass": "mechanical"},
+                }, ledger_input={"taskId": task_id, "parentThreadId": parent_thread_id},
+            )
+            ledger = team_router.new_v2_task_ledger(
+                root, project_id, task_id, objective=objective, project_local_path=root,
+                parent_thread_id=parent_thread_id, resolved_plan=plan,
+                task_authorization_package=package, created_at="2026-07-12T10:00:00+08:00",
+            )
+            ledger.update({
+                "status": "reviewing",
+                "review": {"request": {"role": "reviewer", "threadId": "thread-reviewer"}},
+            })
+            message = team_router.parse_review(
+                "TEAM_ROUTER_REVIEW taskId=%s\nresult: needs_rework\nsummary: fix required\n"
+                "findings: one issue\nrequiredChanges: add a check\nevidenceChecked: focused test\nrisks: none" % task_id,
+                task_id,
+            )
+
+            first = team_router._apply_reviewer_review_message(
+                ledger, dict(ledger["review"]), ledger["review"]["request"], message,
+                captured_at="2026-07-12T10:01:00+08:00",
+            )
+            second_input = dict(first)
+            second_input["status"] = "reviewing"
+            second = team_router._apply_reviewer_review_message(
+                second_input, dict(second_input["review"]), second_input["review"]["request"], message,
+                captured_at="2026-07-12T10:02:00+08:00",
+            )
+
+            self.assertEqual((first["status"], first["reworkCount"]), ("dispatched", 1))
+            self.assertEqual((second["status"], second["reworkCount"]), ("blocked", 1))
+
+    def test_v2_executor_self_thread_fallback_rejects_missing_direct_return_identity(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = "project-v2-malformed", "ctr-20260712-100000-malformed", "parent-v2-malformed"
+            package = team_router.make_task_authorization_package(
+                package_id="auth-v2-malformed", task_id=task_id, parent_thread_id=parent_thread_id,
+                objective="validate a fallback callback", scope="src/example.py only", permission="read-only",
+                stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
+            )
+            ledger = team_router.new_v2_task_ledger(
+                root, project_id, task_id, objective=package["objective"], project_local_path=root,
+                parent_thread_id=parent_thread_id,
+                resolved_plan={
+                    "scope": package["scope"], "permission": package["permission"],
+                    "stopCondition": package["stopCondition"], "routeRoles": ["executor"],
+                    "roleRouting": {"executor": {"executionClass": "standard", "requestedModel": "gpt-5.6-terra", "requestedThinking": "medium"}},
+                }, task_authorization_package=package, created_at="2026-07-12T10:00:00+08:00",
+            )
+            ledger.update({
+                "status": "awaiting_callback",
+                "dispatches": [{
+                    "role": "executor", "threadId": "thread-executor", "roleThreadId": "thread-executor",
+                    "returnThreadId": parent_thread_id, "callbackDelivery": "direct-send",
+                    "messageId": "msg-dispatch", "sentAt": "2026-07-12T10:00:00+08:00",
+                    "searchAnchor": {"messageId": "msg-dispatch", "sentAt": "2026-07-12T10:00:00+08:00"},
+                    "fallbackSearchAnchor": {"messageId": "msg-dispatch", "sentAt": "2026-07-12T10:00:00+08:00"},
+                }],
+            })
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+
+            captured = team_router.capture_executor_callback_from_read(
+                root, project_id, task_id,
+                [
+                    {"messageId": "msg-dispatch", "sentAt": "2026-07-12T10:00:00+08:00", "text": "dispatch"},
+                    {"messageId": "msg-fallback", "sentAt": "2026-07-12T10:01:00+08:00", "text": (
+                        "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\nsummary: missing identity\n"
+                        "evidence: focused test\nrisks: none\nnext: manager"
+                    ) % task_id},
+                ], captured_at="2026-07-12T10:02:00+08:00",
+            )
+
+            self.assertEqual(captured["status"], "malformed_callback")
+            self.assertTrue(captured["malformedDirectReturns"])
+
+
 if __name__ == "__main__":
     unittest.main()

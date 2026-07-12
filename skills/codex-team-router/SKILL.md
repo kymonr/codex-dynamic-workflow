@@ -23,6 +23,8 @@ Manager Mode is sticky for the current task and continues an already-active Mana
 
 Manager intake separates read-only, dispatch, workspace write, local closeout, and external release gates; ambiguous follow-ups never skip the next gate. Skill/rule/process writes route executor -> reviewer -> verifier when applicable. Superpowers grants no manager write authority. `local-package` is executor-only.
 
+Version 2 Manager direct is decided before ledger, title, heartbeat, or thread operations. A standard Manager entry does not select a concrete role model. Explicit cost-aware model entry authorizes Luna Medium, Terra Medium, and Sol High role routing. Bare Manager Mode is proposal-only. See `references/manager-mode.md` for the entry/continuation contract.
+
 Daily Manager shortcut: `references/manager-quick-card.md`.
 
 ## Live Boundary
@@ -37,15 +39,17 @@ Adapter orchestration requires callable thread tools, `parent_thread_id`, `set_t
 
 Reuse existing roles for the same task/task family; rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception.
 
+Luna Medium / Terra Medium / Sol High map to `gpt-5.6-luna + medium`, `gpt-5.6-terra + medium`, and `gpt-5.6-sol + high`. Sol Ultra is forbidden for role dispatch.
+
 ## Direct Return
 
 Roles direct-send the protocol block to `returnThreadId`, then emit the same self-thread marker fallback. Validate `taskId`, `sourceThreadId`, `role`, and `sourceRoleThreadId`; malformed returns cannot advance scope. See `references/direct-return.md`.
 
-Team Router dispatch uses Codex desktop thread roles, not collaboration subagents.
+Visible Codex role threads only; never fall back to native spawn_agent. Team Router dispatch uses Codex desktop thread roles, not collaboration subagents.
 
 ## Gates
 
-FAST/NORMAL use executor -> verifier; STRICT/PACKAGE use executor -> reviewer -> verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
+FAST/NORMAL delegated work ends with Manager acceptance; STRICT/PACKAGE requires Reviewer then Verifier. Explicit Reviewer/QA also requires Verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
 
 ## Lifecycle Gates
 

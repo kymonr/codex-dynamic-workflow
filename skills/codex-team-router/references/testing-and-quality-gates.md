@@ -21,6 +21,14 @@ Required reference files:
 - `manual-orchestration.md`
 - `testing-and-quality-gates.md`
 
+## Version 2 Documentation Contract
+
+Docs tests must lock the parent-owned V2 plan, no child Manager creation, Manager direct before side effects, standard-entry versus explicit cost-aware model authorization, visible-thread-only dispatch, Luna/Terra/Sol defaults, and the Sol Ultra prohibition. They must also lock manager-owned pool reuse, canonical target/host fingerprinting, `parallelAllowed` propagation, bounded creation-intent recovery, one model-upgrade and one rework budget, and Manager-acceptance versus Reviewer/Verifier closure.
+
+The routing receipt is a projection of requested dispatches. It may contain `routingReceipt`, `requestedModel`, `requestedThinking`, bootstrap/create/send acceptance, binding, upgrade, and rework fields; it must not contain `actualModel`, price, token, or cost claims. `requestedModel is not actualModel or billing evidence`.
+
+Before the separate global sync, repo/global mismatch before sync is expected. `team_router_skill_sync_check.py --check` must report only repo-skill paths as `status: mismatch`; Task 10 is a separate explicit global-sync gate and is never part of a repository commit or Task 9 verification.
+
 Tests must fail if the entrypoint grows past the 8KB cap, if required references are removed, if a project-local `AGENTS.md` is introduced without explicit authorization, or if key rules disappear from the combined SKILL.md plus references contract, including that protocol-block `sourceThreadId` must match `returnThreadId`. Tests must also lock the no-tools degradation rule: when required thread tools are not exposed in the current host, status must be `tool_error` / `manual orchestration only`, and copy-paste executor/reviewer/verifier prompts are handoff text rather than live Team Router dispatch evidence. Readiness tests must cover missing callable adapter, missing `parent_thread_id`, missing callable `set_thread_title`, and missing callable heartbeat scheduler without pretending Codex app model-side tools are Python callables.
 
 `protocol_contract_snapshot()` is the code-side center of truth for role/state/marker contracts and policy snapshots. It must expose `sideEffectTaxonomy`, `roleCloseoutPolicy`, `roleHandoffReviewPackagePolicy`, and `agentAssistPolicy` so docs/tests do not drift from the implementation contract. Snapshot tests must lock the explicit path-field contract (`taskBriefPath`, `executorReportPath`, `reviewPackagePath`), gate-based package expectations, external-material safety boundary, Team Router project-context visible role defaults, and third-party skill intake boundary. Docs contract tests must also lock the active role return wording: `direct-send + self-thread-marker fallback`, `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)`, `protocol direct-send is allowed and is not a workspace/file write`, `sourceRoleThreadId`, `role`, `taskId`, `two-step bootstrap`, `same protocol block body`, `deliveryStatus: fallback_only`, `deliveryError`, `protocol-block sourceThreadId must match returnThreadId`, `sourceRoleThreadId must match roleThreadId / role thread record`, `bounded result-collection read/check`, `continuous polling is not the default`, `inProgress is not polling permission`, and `CONTROL after bounded wait/read is not permission for immediate continuous read_thread polling`.
@@ -48,6 +56,8 @@ The fixture `tests/fixtures/team_router/three_role_visible_smoke_scenarios.json`
 - `verifier-blocked-closeout`: verifier returns `blocked`; parent emits `Team Router Closeout` with remaining work.
 
 ## Expected User Output
+
+Version 2 Manager-acceptance and Verifier closeouts add `acceptedBy` and the same `routingReceipt`; a receipt reports requested routing rather than actual billing. Version 1 compatibility retains the fixed verifier output below.
 
 For a passing verifier result, the parent thread must display the helper output, not a rewritten summary:
 

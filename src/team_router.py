@@ -33,6 +33,28 @@ from team_router_policy import (
     explain_team_router_route,
     gate_class_requires_reviewer,
     reviewer_gate_required_for_ledger,
+    resolve_effective_gate,
+    resolve_role_model,
+    resolve_v2_execution_mode,
+    resolve_v2_route,
+)
+from team_router_v2 import (
+    BOOTSTRAP_MODEL,
+    BOOTSTRAP_THINKING,
+    _role_thread_bootstrap_short_field,
+    build_v2_routing_receipt,
+    make_task_authorization_package,
+    make_manager_acceptance_closeout,
+    make_v2_role_bootstrap_prompt,
+    next_v2_route_after_evidence,
+    prepare_v2_manager_task,
+    record_manager_acceptance,
+    record_v2_model_upgrade,
+    resume_v2_manager_routing,
+    resolve_v2_manager_plan,
+    target_fingerprint_for,
+    validate_v2_authorization,
+    v2_continuation_allowed,
 )
 from team_router_protocol import (
     CONDITIONAL_REQUIRED_BY_MARKER,
@@ -124,6 +146,7 @@ from team_router_status import (
 from team_router_state import (
     CONDITIONAL_ROLE_NAMES,
     CORE_ROLE_NAMES,
+    LEGACY_CORE_ROLE_NAMES,
     RECOVERABLE_STATUSES,
     REGISTRY_VERSION,
     ROLE_ALIASES,
@@ -133,6 +156,8 @@ from team_router_state import (
     TASK_LEDGER_VERSION,
     TERMINAL_STATUSES,
     THREAD_PERMISSIONS,
+    V2_CONDITIONAL_ROLE_NAMES,
+    V2_DELEGATED_BASE_ROLE_NAMES,
     StateStoreError,
     _as_int,
     _as_list,
@@ -157,17 +182,26 @@ from team_router_state import (
     _resolve_persistent_state_root,
     _validate_permission,
     _validate_role,
+    cleanup_terminal_manager_pool_task,
     create_task_id,
     create_team_task,
+    finalize_created_role,
     load_registry,
     load_task_ledger,
+    manager_pool_lock,
     manual_recovery_target,
     new_task_ledger,
+    new_v2_task_ledger,
     next_rework_dispatch,
     registry_path,
+    recover_creation_intent,
+    recover_manager_pool_lock,
+    release_role_claim,
+    reserve_role_or_creation_intent,
     resolve_state_root,
     save_registry,
     save_task_ledger,
+    task_workflow_version,
     task_path,
     update_registry_roles,
 )
@@ -1058,6 +1092,13 @@ def protocol_contract_snapshot() -> dict[str, Any]:
     return {
         "parentSideRoles": PARENT_SIDE_ROLES,
         "coreRoleNames": sorted(CORE_ROLE_NAMES),
+        "workflowContracts": {
+            "v1": {"coreRoles": sorted(LEGACY_CORE_ROLE_NAMES)},
+            "v2": {
+                "baseRoles": sorted(V2_DELEGATED_BASE_ROLE_NAMES),
+                "conditionalRoles": sorted(V2_CONDITIONAL_ROLE_NAMES),
+            },
+        },
         "conditionalRoleNames": sorted(CONDITIONAL_ROLE_NAMES),
         "conditionalRolePolicy": {
             "fixedBuiltInRoles": sorted(CONDITIONAL_ROLE_NAMES),
@@ -1129,32 +1170,6 @@ def make_role_thread_prompt(project_id: str, role: str, objective: str) -> str:
         *ROLE_THREAD_PATH_HANDOFF_PROMPT_LINES,
         ROLE_HUMAN_LANGUAGE_RULE,
     ))
-
-
-def _role_thread_bootstrap_short_field(value: str, field: str, *,
-                                       allowed: set[str] | None = None,
-                                       max_chars: int = 160) -> str:
-    text = _required_str(value, field).strip()
-    if not text:
-        raise StateStoreError("%s must not be blank" % field)
-    if "\r" in text or "\n" in text:
-        raise StateStoreError("%s must be a single-line short field" % field)
-    if len(text) > max_chars:
-        raise StateStoreError("%s is too long for package bootstrap metadata" % field)
-    evidence_markers = (
-        "TEAM_ROUTER_REVIEW",
-        "TEAM_ROUTER_VERDICT",
-        "TEAM_ROUTER_CALLBACK",
-        "evidenceChecked:",
-        "findings:",
-        "requiredChanges:",
-        "<codex_delegation>",
-    )
-    if any(marker in text for marker in evidence_markers):
-        raise StateStoreError("%s must be short metadata, not protocol evidence" % field)
-    if allowed is not None and text not in allowed:
-        raise StateStoreError("%s has unsupported value: %s" % (field, text))
-    return text
 
 
 def make_role_thread_package_bootstrap_message(task_id: str,
@@ -1241,6 +1256,11 @@ def role_thread_title(project_id: str, role: str, task_title: str | None = None)
 def parent_thread_title(task_title: str) -> str:
     visible_task_title = _task_title_from_objective(task_title)
     return "调度者-Team Router %s" % visible_task_title
+
+
+def v2_parent_thread_title(task_title: str) -> str:
+    visible_task_title = _task_title_from_objective(task_title)
+    return "管理者-Team Router %s" % visible_task_title
 
 
 def _role_thread_title_matches(project_id: str,
@@ -1434,6 +1454,788 @@ def _normalize_adapter_role_title(thread_adapter: Any,
         record = dict(record)
         record["title"] = expected_title
     return record
+
+
+def _v2_target_fingerprint(target: Mapping[str, Any], host_id: str,
+                           supplied: str | None) -> str:
+    fingerprint = target_fingerprint_for(target, host_id)
+    if supplied is not None and _required_str(supplied, "targetFingerprint") != fingerprint:
+        raise StateStoreError("target_fingerprint_mismatch")
+    return fingerprint
+
+
+def _v2_parallel_allowed_for_task(state_root: str | Path, project_id: str,
+                                  task_id: str, requested: bool | None) -> bool:
+    if requested is not None and not isinstance(requested, bool):
+        raise StateStoreError("parallelAllowed must be a boolean")
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if not isinstance(plan, Mapping):
+        return False
+    planned = bool(plan.get("parallelAllowed")) and not bool(plan.get("parallelConflicts"))
+    return planned if requested is None else requested and planned
+
+
+def _v2_text(value: Any, field: str) -> str:
+    value = _required_str(value, field).strip()
+    if not value:
+        raise StateStoreError("%s must be a non-empty string" % field)
+    return value
+
+
+def _v2_adapter_failure_reason(exc: Exception) -> str:
+    text = str(exc).lower()
+    return "model_unavailable" if any(word in text for word in ("model", "thinking", "reasoning")) else "thread_tool_error"
+
+
+def _v2_create_outcome_is_uncertain(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return isinstance(exc, TimeoutError) or any(term in text for term in (
+        "timeout", "timed out", "connection reset", "connection aborted",
+    ))
+
+
+def _v2_creation_outcome_unknown(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 *,
+                                 parent_thread_id: str,
+                                 role: str,
+                                 request_id: str,
+                                 host_id: str,
+                                 target_fingerprint: str,
+                                 requested_at: str,
+                                 detail: str,
+                                 requested_model: str | None = None,
+                                 requested_thinking: str | None = None) -> dict[str, Any]:
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    ledger["status"] = "creation_outcome_unknown"
+    ledger["creationOutcome"] = {"reason": "creation_outcome_unknown", "detail": detail, "capturedAt": requested_at}
+    ledger["dispatches"].append(_v2_dispatch_entry(
+        task_id=task_id, role=role, request_id=request_id, thread_id=None,
+        host_id=host_id, target_fingerprint=target_fingerprint,
+        requested_model=requested_model, requested_thinking=requested_thinking,
+        requested_at=requested_at, creation_accepted=None, dispatch_accepted=False,
+        binding="new", failure_reason="creation_outcome_unknown",
+    ))
+    ledger["observations"].append(make_observation(
+        "system_event", "manager", "creation-intent:%s" % request_id, requested_at, detail,
+        {"reason": "creation_outcome_unknown", "requestId": request_id},
+    ))
+    return {"outcome": "creation_outcome_unknown", "reason": "creation_outcome_unknown", "ledger": save_task_ledger(state_root, project_id, task_id, ledger)}
+
+
+def _v2_binding_outcome(outcome: str) -> str:
+    return "new" if outcome in {"created", "recovered"} else outcome
+
+
+def _v2_waiting_status(role: str) -> str:
+    try:
+        return {
+            "architect": "awaiting_architect_review",
+            "executor": "awaiting_callback",
+            "reviewer": "reviewing",
+            "qa": "awaiting_qa_review",
+            "verifier": "verifying",
+        }[role]
+    except KeyError as exc:
+        raise StateStoreError("invalid V2 manager pool role: %s" % role) from exc
+
+
+def _v2_dispatch_entry(*,
+                       task_id: str,
+                       role: str,
+                       request_id: str,
+                       thread_id: str | None,
+                       host_id: str,
+                       target_fingerprint: str,
+                       requested_model: str | None,
+                       requested_thinking: str | None,
+                       requested_at: str,
+                       creation_accepted: bool | None,
+                       dispatch_accepted: bool,
+                       binding: str | None = None,
+                       model_override_reason: str | None = None,
+                       upgraded_from: str | None = None,
+                       carry_forward: Mapping[str, Any] | None = None,
+                       message_id: str | None = None,
+                       sent_at: str | None = None,
+                       return_thread_id: str | None = None,
+                       failure_reason: str | None = None) -> dict[str, Any]:
+    entry = {
+        "role": role,
+        "requestId": request_id,
+        "hostId": host_id,
+        "targetFingerprint": target_fingerprint,
+        "dispatchAccepted": dispatch_accepted,
+    }
+    if thread_id is not None:
+        entry["threadId"] = thread_id
+        entry["sourceRoleThreadId"] = thread_id
+    if requested_model is not None:
+        entry["requestedModel"] = requested_model
+        entry["requestedThinking"] = requested_thinking
+    if creation_accepted is not None:
+        entry.update({
+            "bootstrapModel": BOOTSTRAP_MODEL,
+            "bootstrapThinking": BOOTSTRAP_THINKING,
+            "creationAccepted": creation_accepted,
+        })
+    if binding is not None:
+        entry["binding"] = binding
+    if model_override_reason is not None:
+        entry["modelOverrideReason"] = model_override_reason
+    if upgraded_from is not None:
+        entry["upgradedFrom"] = upgraded_from
+    if carry_forward is not None:
+        entry["carryForward"] = dict(carry_forward)
+    if sent_at is not None:
+        entry["messageId"] = message_id
+        entry["sentAt"] = sent_at
+        entry["searchAnchor"] = _search_anchor(message_id, sent_at)
+        if return_thread_id is not None:
+            required_return_thread_id = _required_str(return_thread_id, "returnThreadId")
+            delivery_key, fallback_key = ROLE_DELIVERY_FIELDS[role]
+            entry.update({
+                "returnThreadId": required_return_thread_id,
+                "orchestratorThreadId": required_return_thread_id,
+                "roleThreadId": _required_str(thread_id, "roleThreadId"),
+                "expectedCallback": "%s taskId=%s" % (_v2_role_marker(role), task_id),
+                delivery_key: "direct-send",
+                fallback_key: "self-thread-marker",
+                "fallbackSearchAnchor": dict(entry["searchAnchor"]),
+                "returnSearchAnchor": {"messageId": None, "sentAt": sent_at},
+            })
+    else:
+        entry["requestedAt"] = requested_at
+    if failure_reason is not None:
+        entry["failureReason"] = failure_reason
+    return entry
+
+
+def _v2_terminal_tool_error(state_root: str | Path,
+                            project_id: str,
+                            task_id: str,
+                            *,
+                            parent_thread_id: str,
+                            role: str,
+                            request_id: str,
+                            host_id: str,
+                            target_fingerprint: str,
+                            requested_at: str,
+                            reason: str,
+                            error: Exception | None = None,
+                            thread_id: str | None = None,
+                            requested_model: str | None = None,
+                            requested_thinking: str | None = None,
+                            creation_accepted: bool | None = None,
+                            binding: str | None = None,
+                            model_override_reason: str | None = None,
+                            return_thread_id: str | None = None) -> dict[str, Any]:
+    if thread_id is not None:
+        release_role_claim(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            thread_id=thread_id,
+            task_id=task_id,
+            request_id=request_id,
+        )
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    ledger["dispatches"].append(_v2_dispatch_entry(
+        task_id=task_id,
+        role=role,
+        request_id=request_id,
+        thread_id=thread_id,
+        host_id=host_id,
+        target_fingerprint=target_fingerprint,
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+        requested_at=requested_at,
+        creation_accepted=creation_accepted,
+        dispatch_accepted=False,
+        binding=binding,
+        model_override_reason=model_override_reason,
+        return_thread_id=return_thread_id,
+        failure_reason=reason,
+    ))
+    ledger["status"] = "tool_error"
+    ledger["toolError"] = {
+        "reason": reason,
+        "detail": str(error) if error is not None else reason,
+        "capturedAt": requested_at,
+    }
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    cleanup_terminal_manager_pool_task(
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        task_id=task_id,
+        cleaned_at=requested_at,
+    )
+    result = {"outcome": "tool_error", "reason": reason, "ledger": saved}
+    if thread_id is not None:
+        result["threadId"] = thread_id
+    return result
+
+
+def _record_v2_role_dispatch(state_root: str | Path,
+                             project_id: str,
+                             task_id: str,
+                             *,
+                             role: str,
+                             request_id: str,
+                             thread_id: str,
+                             host_id: str,
+                             target_fingerprint: str,
+                             requested_model: str,
+                             requested_thinking: str,
+                             requested_at: str,
+                             creation_accepted: bool | None,
+                             binding: str,
+                             send_result: Any,
+                             model_override_reason: str | None = None,
+                             upgrade: Mapping[str, Any] | None = None,
+                             return_thread_id: str | None = None) -> dict[str, Any]:
+    anchor = thread_send_anchor(send_result, fallback_sent_at=requested_at)
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    dispatch = _v2_dispatch_entry(
+        task_id=task_id,
+        role=role,
+        request_id=request_id,
+        thread_id=thread_id,
+        host_id=host_id,
+        target_fingerprint=target_fingerprint,
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+        requested_at=requested_at,
+        creation_accepted=creation_accepted,
+        dispatch_accepted=True,
+        binding=binding,
+        model_override_reason=model_override_reason,
+        upgraded_from=upgrade.get("upgradedFrom") if isinstance(upgrade, Mapping) else None,
+        carry_forward={
+            field: upgrade[field]
+            for field in ("completedResults", "readFiles", "exactFailure", "unresolved")
+            if isinstance(upgrade, Mapping) and field in upgrade
+        } if isinstance(upgrade, Mapping) else None,
+        message_id=anchor["messageId"],
+        sent_at=anchor["sentAt"],
+        return_thread_id=return_thread_id,
+    )
+    ledger["dispatches"].append(dispatch)
+    request_field = {
+        "architect": "architectureReview",
+        "reviewer": "review",
+        "qa": "qaReview",
+        "verifier": "verification",
+    }.get(role)
+    if request_field is not None:
+        role_request = dict(ledger.get(request_field) or {})
+        role_request["request"] = dict(dispatch)
+        ledger[request_field] = role_request
+    if isinstance(upgrade, Mapping):
+        ledger.pop("pendingModelUpgrade", None)
+        ledger.pop("modelUpgradePending", None)
+    ledger["status"] = _v2_waiting_status(role)
+    ledger["roleThreadStatus"] = "running"
+    ledger["readDiscipline"] = next_role_read_policy(ledger, observed_at=anchor["sentAt"])
+    ledger = _refresh_watcher_ledger(ledger)
+    return save_task_ledger(state_root, project_id, task_id, ledger)
+
+
+def _v2_pending_model_upgrade(ledger: Mapping[str, Any], role: str) -> Mapping[str, Any] | None:
+    pending = ledger.get("pendingModelUpgrade")
+    if not isinstance(pending, Mapping) or pending.get("role") != role:
+        return None
+    if pending.get("parentThreadId") != ledger.get("parentThreadId"):
+        raise StateStoreError("model_upgrade_identity_mismatch: parentThreadId")
+    for field in ("requestedModel", "requestedThinking", "upgradedFrom", "completedResults", "readFiles", "exactFailure", "unresolved"):
+        value = pending.get(field)
+        if field in {"completedResults", "readFiles", "unresolved"}:
+            if isinstance(value, str) or not isinstance(value, (list, tuple)) or not value:
+                raise StateStoreError("model_upgrade_invalid: %s is required" % field)
+        elif not isinstance(value, str) or not value:
+            raise StateStoreError("model_upgrade_invalid: %s is required" % field)
+    return pending
+
+
+def _v2_upgrade_prompt(prompt: str, upgrade: Mapping[str, Any] | None) -> str:
+    prompt = _v2_text(prompt, "prompt")
+    if not isinstance(upgrade, Mapping):
+        return prompt
+    return "\n".join((
+        prompt,
+        "",
+        "modelUpgrade: true",
+        "completedResults: %s" % json.dumps(upgrade["completedResults"], ensure_ascii=False),
+        "readFiles: %s" % json.dumps(upgrade["readFiles"], ensure_ascii=False),
+        "exactFailure: %s" % upgrade["exactFailure"],
+        "unresolved: %s" % json.dumps(upgrade["unresolved"], ensure_ascii=False),
+    ))
+
+
+def _v2_bootstrap_identity_matches(text: str, *, request_id: str,
+                                   project_id: str, parent_thread_id: str,
+                                   role: str) -> bool:
+    if not isinstance(text, str):
+        return False
+    expected = {
+        "requestId": request_id,
+        "projectId": project_id,
+        "parentThreadId": parent_thread_id,
+        "role": role,
+    }
+    values = {field: [] for field in expected}
+    marker_count = 0
+    for line in text.splitlines():
+        if line.strip() == "TEAM_ROUTER_ROLE_BOOTSTRAP":
+            marker_count += 1
+        for field in expected:
+            match = re.fullmatch(r"\s*%s\s*:\s*(.*?)\s*" % re.escape(field), line)
+            if match:
+                values[field].append(match.group(1))
+    return marker_count == 1 and all(values[field] == [value] for field, value in expected.items())
+
+
+def recover_v2_creation_intent_with_adapter(thread_adapter: Any,
+                                            state_root: str | Path,
+                                            project_id: str,
+                                            *,
+                                            parent_thread_id: str,
+                                            host_id: str,
+                                            target_fingerprint: str,
+                                            role: str,
+                                            task_id: str,
+                                            request_id: str,
+                                            title: str,
+                                            observed_at: str,
+                                            requested_model: str | None = None,
+                                            requested_thinking: str | None = None) -> dict[str, Any]:
+    host_id = _v2_text(host_id, "hostId")
+    target_fingerprint = _v2_text(target_fingerprint, "targetFingerprint")
+    title = _v2_text(title, "title")
+    observed_at = _v2_text(observed_at, "observedAt")
+
+    def fail(reason: str, error: Exception, *, thread_id: str | None = None,
+             creation_accepted: bool | None = None) -> dict[str, Any]:
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=target_fingerprint,
+            requested_at=observed_at,
+            reason=reason,
+            error=error,
+            thread_id=thread_id,
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            creation_accepted=creation_accepted,
+            binding="new",
+        )
+
+    intent = recover_creation_intent(
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        role=role,
+        request_id=request_id,
+        recovered_at=observed_at,
+    )
+    if intent is None or intent.get("outcome") == "busy":
+        return {"outcome": "missing_creation_intent", "role": role, "requestId": request_id} if intent is None else intent
+    if "outcome" in intent:
+        return intent
+    matches_intent = (
+        intent.get("taskId") == task_id
+        and intent.get("hostId") == host_id
+        and intent.get("targetFingerprint") == target_fingerprint
+        and intent.get("role") == role
+        and intent.get("requestId") == request_id
+        and intent.get("parentThreadId") == parent_thread_id
+    )
+    if not matches_intent:
+        return fail("creation_outcome_unknown", StateStoreError("creation intent identity mismatch"))
+    try:
+        listed = _adapter_call(thread_adapter, "list_threads", query=request_id)
+        thread_ids: list[str] = []
+        for item in _thread_list_items(listed):
+            thread_id, _ = _listed_thread_id_and_title(item)
+            if thread_id is not None and thread_id not in thread_ids:
+                thread_ids.append(thread_id)
+        verified: list[str] = []
+        for thread_id in thread_ids:
+            read = _adapter_call(thread_adapter, "read_thread", threadId=thread_id, hostId=host_id)
+            if any(
+                _v2_bootstrap_identity_matches(
+                    message.get("text", ""),
+                    request_id=request_id,
+                    project_id=project_id,
+                    parent_thread_id=parent_thread_id,
+                    role=role,
+                )
+                for message in normalize_thread_read_messages(read)
+            ):
+                verified.append(thread_id)
+    except Exception as exc:
+        return fail(_v2_adapter_failure_reason(exc), exc)
+    if len(verified) != 1:
+        return _v2_creation_outcome_unknown(
+            state_root, project_id, task_id,
+            parent_thread_id=parent_thread_id, role=role, request_id=request_id,
+            host_id=host_id, target_fingerprint=target_fingerprint,
+            requested_at=observed_at,
+            detail="verified bootstrap candidates: %d" % len(verified),
+            requested_model=requested_model, requested_thinking=requested_thinking,
+        )
+    thread_id = verified[0]
+    try:
+        finalized = finalize_created_role(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            thread_id=thread_id,
+            title=title,
+            created_at=observed_at,
+        )
+        if finalized["outcome"] != "created":
+            raise StateStoreError("role creation finalization failed: %s" % finalized["outcome"])
+        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
+    except Exception as exc:
+        return fail(
+            _v2_adapter_failure_reason(exc),
+            exc,
+            thread_id=thread_id,
+            creation_accepted=True,
+        )
+    return dict(finalized, outcome="recovered", targetFingerprint=target_fingerprint, creationAccepted=True)
+
+
+def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
+                                           state_root: str | Path,
+                                           project_id: str,
+                                           *,
+                                           parent_thread_id: str,
+                                           host_id: str,
+                                           target: Mapping[str, Any],
+                                           role: str,
+                                           task_id: str,
+                                           request_id: str,
+                                           title: str,
+                                           requested_at: str,
+                                           target_fingerprint: str | None = None,
+                                           parallel_allowed: bool | None = None,
+                                           preferred_thread_id: str | None = None,
+                                           requested_model: str | None = None,
+                                           requested_thinking: str | None = None) -> dict[str, Any]:
+    host_id = _v2_text(host_id, "hostId")
+    title = _v2_text(title, "title")
+    requested_at = _v2_text(requested_at, "requestedAt")
+    fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
+    parallel_allowed = _v2_parallel_allowed_for_task(
+        state_root,
+        project_id,
+        task_id,
+        parallel_allowed,
+    )
+    reservation = reserve_role_or_creation_intent(
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        host_id=host_id,
+        target_fingerprint=fingerprint,
+        role=role,
+        task_id=task_id,
+        request_id=request_id,
+        claimed_at=requested_at,
+        parallel_allowed=parallel_allowed,
+        preferred_thread_id=preferred_thread_id,
+    )
+    if reservation["outcome"] == "reused":
+        role_record = reservation.get("roleRecord")
+        resumed_creation = (
+            isinstance(role_record, Mapping)
+            and role_record.get("creationRequestId") == request_id
+        )
+        binding_outcome = "created" if resumed_creation else "reused"
+        try:
+            _adapter_call(
+                thread_adapter,
+                "set_thread_title",
+                threadId=reservation["threadId"],
+                title=title,
+            )
+        except Exception as exc:
+            return _v2_terminal_tool_error(
+                state_root,
+                project_id,
+                task_id,
+                parent_thread_id=parent_thread_id,
+                role=role,
+                request_id=request_id,
+                host_id=host_id,
+                target_fingerprint=fingerprint,
+                requested_at=requested_at,
+                reason=_v2_adapter_failure_reason(exc),
+                error=exc,
+                thread_id=reservation["threadId"],
+                requested_model=requested_model,
+                requested_thinking=requested_thinking,
+                binding=_v2_binding_outcome(binding_outcome),
+            )
+        return dict(
+            reservation,
+            outcome=binding_outcome,
+            targetFingerprint=fingerprint,
+            creationAccepted=True if resumed_creation else None,
+        )
+    if reservation["outcome"] != "creation_intent":
+        return dict(reservation, targetFingerprint=fingerprint)
+    if reservation.get("existing"):
+        return recover_v2_creation_intent_with_adapter(
+            thread_adapter,
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            role=role,
+            task_id=task_id,
+            request_id=request_id,
+            title=title,
+            observed_at=requested_at,
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+        )
+    try:
+        created = _adapter_call(
+            thread_adapter,
+            "create_thread",
+            prompt=make_v2_role_bootstrap_prompt(
+                request_id=request_id,
+                project_id=project_id,
+                parent_thread_id=parent_thread_id,
+                role=role,
+            ),
+            target=dict(target),
+            model=BOOTSTRAP_MODEL,
+            thinking=BOOTSTRAP_THINKING,
+        )
+    except Exception as exc:
+        if _v2_create_outcome_is_uncertain(exc):
+            return recover_v2_creation_intent_with_adapter(
+                thread_adapter, state_root, project_id,
+                parent_thread_id=parent_thread_id, host_id=host_id,
+                target_fingerprint=fingerprint, role=role, task_id=task_id,
+                request_id=request_id, title=title, observed_at=requested_at,
+                requested_model=requested_model, requested_thinking=requested_thinking,
+            )
+        return _v2_terminal_tool_error(
+            state_root, project_id, task_id,
+            parent_thread_id=parent_thread_id, role=role, request_id=request_id,
+            host_id=host_id, target_fingerprint=fingerprint, requested_at=requested_at,
+            reason=_v2_adapter_failure_reason(exc), error=exc,
+            requested_model=requested_model, requested_thinking=requested_thinking,
+            binding="new", creation_accepted=False,
+        )
+    try:
+        thread_id = _thread_id_from_create_result(created, role)
+        finalized = finalize_created_role(
+            state_root,
+            project_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            thread_id=thread_id,
+            title=title,
+            created_at=requested_at,
+        )
+        if finalized["outcome"] != "created":
+            raise StateStoreError("role creation finalization failed: %s" % finalized["outcome"])
+        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
+    except Exception as exc:
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            requested_at=requested_at,
+            reason=_v2_adapter_failure_reason(exc),
+            error=exc,
+            thread_id=locals().get("thread_id"),
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            binding="new",
+            creation_accepted=False if "thread_id" not in locals() else True,
+        )
+    return dict(finalized, targetFingerprint=fingerprint, creationAccepted=True)
+
+
+def send_v2_role_request_with_adapter(thread_adapter: Any,
+                                      state_root: str | Path,
+                                      project_id: str,
+                                      *,
+                                      parent_thread_id: str,
+                                      host_id: str,
+                                      target: Mapping[str, Any],
+                                      role: str,
+                                      task_id: str,
+                                      request_id: str,
+                                      title: str,
+                                      prompt: Any,
+                                      requested_model: str,
+                                      requested_thinking: str,
+                                      requested_at: str,
+                                      target_fingerprint: str | None = None,
+                                      parallel_allowed: bool | None = None,
+                                      preferred_thread_id: str | None = None,
+                                      return_thread_id: str | None = None) -> dict[str, Any]:
+    requested_model = _v2_text(requested_model, "requestedModel")
+    requested_thinking = _v2_text(requested_thinking, "requestedThinking")
+    host_id = _v2_text(host_id, "hostId")
+    requested_at = _v2_text(requested_at, "requestedAt")
+    fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
+    if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            requested_at=requested_at,
+            reason="model_forbidden",
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            return_thread_id=return_thread_id,
+        )
+    ledger = load_task_ledger(state_root, project_id, task_id)
+    if _required_str(ledger.get("parentThreadId"), "parentThreadId") != _required_str(parent_thread_id, "parentThreadId"):
+        raise StateStoreError("model_upgrade_identity_mismatch: parentThreadId")
+    upgrade = _v2_pending_model_upgrade(ledger, role)
+    model_override_reason = None
+    if upgrade is not None:
+        requested_model = _v2_text(upgrade.get("requestedModel"), "pendingModelUpgrade.requestedModel")
+        requested_thinking = _v2_text(upgrade.get("requestedThinking"), "pendingModelUpgrade.requestedThinking")
+        model_override_reason = upgrade.get("modelOverrideReason")
+        preferred_thread_id = upgrade.get("preferredThreadId") or preferred_thread_id
+        if ledger.get("status") in TERMINAL_STATUSES:
+            ledger["status"] = "needs_rework"
+            ledger["modelUpgradePending"] = True
+            save_task_ledger(state_root, project_id, task_id, ledger)
+    if model_override_reason is None:
+        plan = ledger.get("resolvedPlan") or ledger.get("plan")
+        routing = plan.get("roleRouting") if isinstance(plan, Mapping) else None
+        role_request = routing.get(role) if isinstance(routing, Mapping) else None
+        if isinstance(role_request, Mapping) and isinstance(role_request.get("modelOverrideReason"), str):
+            model_override_reason = role_request["modelOverrideReason"]
+    if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=fingerprint,
+            requested_at=requested_at,
+            reason="model_forbidden",
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            return_thread_id=return_thread_id,
+        )
+    binding = resolve_or_create_v2_role_with_adapter(
+        thread_adapter,
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        host_id=host_id,
+        target=target,
+        target_fingerprint=fingerprint,
+        role=role,
+        task_id=task_id,
+        request_id=request_id,
+        title=title,
+        requested_at=requested_at,
+        parallel_allowed=parallel_allowed,
+        preferred_thread_id=preferred_thread_id,
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+    )
+    if binding["outcome"] not in {"created", "reused", "recovered"}:
+        return binding
+    thread_id = binding["threadId"]
+    try:
+        dispatch_prompt = prompt(thread_id) if callable(prompt) else prompt
+        dispatch_prompt = _v2_text(dispatch_prompt, "prompt")
+        sent = _adapter_call(
+            thread_adapter,
+            "send_message_to_thread",
+            threadId=thread_id,
+            prompt=_v2_upgrade_prompt(dispatch_prompt, upgrade),
+            model=requested_model,
+            thinking=requested_thinking,
+        )
+    except Exception as exc:
+        return _v2_terminal_tool_error(
+            state_root,
+            project_id,
+            task_id,
+            parent_thread_id=parent_thread_id,
+            role=role,
+            request_id=request_id,
+            host_id=host_id,
+            target_fingerprint=binding["targetFingerprint"],
+            requested_at=requested_at,
+            reason=_v2_adapter_failure_reason(exc),
+            error=exc,
+            thread_id=thread_id,
+            requested_model=requested_model,
+            requested_thinking=requested_thinking,
+            creation_accepted=binding.get("creationAccepted"),
+            binding=_v2_binding_outcome(binding["outcome"]),
+            model_override_reason=model_override_reason,
+            return_thread_id=return_thread_id,
+        )
+    saved = _record_v2_role_dispatch(
+        state_root,
+        project_id,
+        task_id,
+        role=role,
+        request_id=request_id,
+        thread_id=thread_id,
+        host_id=host_id,
+        target_fingerprint=binding["targetFingerprint"],
+        requested_model=requested_model,
+        requested_thinking=requested_thinking,
+        requested_at=requested_at,
+        creation_accepted=binding.get("creationAccepted"),
+        binding=_v2_binding_outcome(binding["outcome"]),
+        model_override_reason=model_override_reason,
+        upgrade=upgrade,
+        send_result=sent,
+        return_thread_id=return_thread_id,
+    )
+    return {
+        "outcome": "sent",
+        "threadId": thread_id,
+        "binding": _v2_binding_outcome(binding["outcome"]),
+        "ledger": saved,
+    }
 
 
 UNAVAILABLE_ROLE_STATUSES = {"archived", "blocked", "broken", "invalid", "unavailable"}
@@ -2540,11 +3342,70 @@ def _apply_executor_callback_message(ledger: dict[str, Any],
         observation["receipt"] = dict(receipt)
         ledger["observations"].append(observation)
     ledger["callbackReceipt"] = dict(receipt)
+    if task_workflow_version(ledger) == 2:
+        ledger = next_v2_route_after_evidence(ledger, msg.fields)
+        return _clear_waiting_read_state(ledger)
     gate_class = classify_team_router_gate(ledger)
     ledger["gateClass"] = gate_class
     ledger["status"] = "reviewing" if gate_class_requires_reviewer(gate_class) else "verifying"
     ledger = _clear_waiting_read_state(ledger)
     return ledger
+
+
+def _finalize_v2_executor_callback(state_root: str | Path,
+                                   project_id: str,
+                                   task_id: str,
+                                   ledger: dict[str, Any],
+                                   dispatch: Mapping[str, Any],
+                                   msg: ProtocolMessage) -> dict[str, Any]:
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) != 2 or str(msg.fields.get("final", "")).lower() != "true":
+        return saved
+    thread_id = dispatch.get("threadId")
+    request_id = dispatch.get("requestId")
+    if not (isinstance(thread_id, str) and thread_id and isinstance(request_id, str) and request_id):
+        return saved
+    release_role_claim(
+        state_root,
+        project_id,
+        parent_thread_id=_required_str(saved.get("parentThreadId"), "parentThreadId"),
+        role="executor",
+        thread_id=thread_id,
+        task_id=task_id,
+        request_id=request_id,
+    )
+    return load_task_ledger(state_root, project_id, task_id)
+
+
+def _v2_executor_callback_route_error(ledger: dict[str, Any], error: StateStoreError) -> dict[str, Any]:
+    detail = str(error)
+    ledger["status"] = "manager_routing_pending" if detail.startswith("plan_invalid: missing roleRouting.") else "blocked"
+    ledger["routingError"] = {"reason": detail.split(":", 1)[0], "detail": detail}
+    return _clear_waiting_read_state(ledger)
+
+
+def _release_v2_final_role_claim(state_root: str | Path,
+                                 project_id: str,
+                                 task_id: str,
+                                 ledger: Mapping[str, Any],
+                                 role: str) -> None:
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    for dispatch in reversed(dispatches):
+        if not isinstance(dispatch, Mapping) or dispatch.get("role") != role:
+            continue
+        thread_id = dispatch.get("threadId")
+        request_id = dispatch.get("requestId")
+        if isinstance(thread_id, str) and thread_id and isinstance(request_id, str) and request_id:
+            release_role_claim(
+                state_root,
+                project_id,
+                parent_thread_id=_required_str(ledger.get("parentThreadId"), "parentThreadId"),
+                role=role,
+                thread_id=thread_id,
+                task_id=task_id,
+                request_id=request_id,
+            )
+        return
 
 
 def capture_executor_callback_from_read(state_root: str | Path,
@@ -2579,8 +3440,47 @@ def capture_executor_callback_from_read(state_root: str | Path,
         else:
             ledger["status"] = "malformed_callback"
         return save_task_ledger(state_root, project_id, task_id, ledger)
-    ledger = _apply_executor_callback_message(ledger, dispatch, msg, captured_at=captured_at)
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    if (
+        task_workflow_version(ledger) == 2
+        and isinstance(dispatch.get("returnThreadId"), str)
+        and dispatch["returnThreadId"]
+        and dispatch.get("callbackDelivery") == "direct-send"
+    ):
+        fallback_message = messages_after_anchor[-1] if messages_after_anchor and isinstance(messages_after_anchor[-1], Mapping) else None
+        malformed = _validate_self_thread_fallback_receipt(
+            msg,
+            fallback_message,
+            task_id=task_id,
+            expected_role="executor",
+            expected_role_thread_id=_required_str(dispatch.get("roleThreadId") or dispatch.get("threadId"), "executorDispatch.roleThreadId"),
+            expected_return_thread_id=_optional_nonempty_str(dispatch.get("returnThreadId")),
+        )
+        if malformed is not None:
+            ledger = _record_malformed_direct_return(
+                ledger,
+                task_id=task_id,
+                role="executor",
+                record=dispatch,
+                captured_at=captured_at,
+                malformed=malformed,
+            )
+            ledger["status"] = "malformed_callback"
+            saved = save_task_ledger(state_root, project_id, task_id, ledger)
+            cleanup_terminal_manager_pool_task(
+                state_root,
+                project_id,
+                parent_thread_id=_required_str(saved.get("parentThreadId"), "parentThreadId"),
+                task_id=task_id,
+                cleaned_at=captured_at,
+            )
+            return load_task_ledger(state_root, project_id, task_id)
+    try:
+        ledger = _apply_executor_callback_message(ledger, dispatch, msg, captured_at=captured_at)
+    except StateStoreError as exc:
+        if task_workflow_version(ledger) != 2:
+            raise
+        ledger = _v2_executor_callback_route_error(ledger, exc)
+    return _finalize_v2_executor_callback(state_root, project_id, task_id, ledger, dispatch, msg)
 
 
 
@@ -2858,6 +3758,8 @@ def make_reviewer_request_message(task_id: str,
         ))
     else:
         lines.extend(_self_thread_only_prompt_lines())
+    if not path_handoff_enabled:
+        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
     if compact_read_only_enabled:
         lines.extend(_compact_callback_summary_prompt_lines(callback_block, task_id))
     else:
@@ -2968,13 +3870,23 @@ def _apply_reviewer_review_message(ledger: dict[str, Any],
     ledger["review"] = review
     result = msg.fields["result"]
     if result == "pass":
-        ledger["status"] = "verifying"
+        if task_workflow_version(ledger) == 2:
+            plan = ledger.get("resolvedPlan") or ledger.get("plan")
+            route = tuple(plan.get("routeRoles", ())) if isinstance(plan, Mapping) else ()
+            ledger["status"] = "awaiting_qa_review" if "qa" in route else "verifying"
+        else:
+            ledger["status"] = "verifying"
         ledger["closeout"] = None
     elif result == "needs_rework":
         rework_count = _as_int(ledger.get("reworkCount"), 0, "ledger.reworkCount")
         max_rework = _as_int(ledger.get("maxRework"), 3, "ledger.maxRework")
-        if rework_count >= max_rework:
+        if task_workflow_version(ledger) == 2:
+            ledger["status"], ledger["reworkCount"] = next_rework_dispatch(rework_count, max_rework)
+        elif rework_count >= max_rework:
             ledger["status"] = "blocked"
+        else:
+            ledger["status"] = "needs_rework"
+        if ledger["status"] == "blocked":
             ledger["closeout"] = {
                 "status": "blocked",
                 "capturedAt": captured_at,
@@ -2988,7 +3900,6 @@ def _apply_reviewer_review_message(ledger: dict[str, Any],
                 "reason": "blocked verifier closeout did not identify a new reusable process lesson",
             }
         else:
-            ledger["status"] = "needs_rework"
             ledger["closeout"] = None
     else:
         ledger["status"] = "blocked"
@@ -3048,7 +3959,11 @@ def capture_reviewer_review_from_read(state_root: str | Path,
         msg,
         captured_at=captured_at,
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, "reviewer")
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 def _role_review_blocked_closeout(msg: ProtocolMessage, *, captured_at: str, reason: str) -> dict[str, Any]:
     return {
@@ -3225,7 +4140,11 @@ def _capture_role_review_from_read(state_root: str | Path,
         receipt_source="self-thread-fallback/read_thread",
         receipt_channel="read_thread",
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, role)
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 
 def capture_architect_review_from_read(state_root: str | Path,
@@ -3318,6 +4237,8 @@ def make_verifier_request_message(task_id: str,
         ))
     else:
         lines.extend(_self_thread_only_prompt_lines())
+    if not path_handoff_enabled:
+        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=path_handoff_enabled)
     if path_handoff_enabled:
         lines.extend(("", "verify: scope,permission,packageEvidenceBoundary,reviewer-requiredChanges"))
@@ -3441,9 +4362,68 @@ def record_verifier_request_sent(state_root: str | Path,
     return save_task_ledger(state_root, project_id, task_id, ledger)
 
 
+def _apply_v2_closeout_receipt(closeout: dict[str, Any],
+                               receipt: Mapping[str, Any] | None) -> None:
+    if not isinstance(receipt, Mapping):
+        return
+    source = str(receipt.get("source", "")).strip()
+    channel = str(receipt.get("channel", "")).strip()
+    if source:
+        closeout["receiptSource"] = source
+    if channel:
+        closeout["receiptChannel"] = channel
+    role_thread_id = receipt.get("roleThreadId")
+    if role_thread_id:
+        closeout["receiptRoleThreadId"] = str(role_thread_id)
+    return_thread_id = receipt.get("returnThreadId")
+    if return_thread_id:
+        closeout["returnThreadId"] = str(return_thread_id)
+    if source == "self-thread-fallback/read_thread" or channel == "read_thread":
+        closeout["deliveryStatus"] = "fallback_only"
+        closeout["deliveryDegraded"] = True
+    elif source == "manager-inbox/direct-send" or channel == "manager-inbox":
+        closeout["deliveryStatus"] = "direct_send"
+
+
 def _make_closeout(ledger: Mapping[str, Any],
                    verdict_fields: Mapping[str, Any],
                    captured_at: str) -> dict[str, Any]:
+    if task_workflow_version(ledger) == 2:
+        callback = _latest_executor_callback_observation(ledger)
+        callback_fields = callback.get("parsedFields") if isinstance(callback, Mapping) else {}
+        callback_fields = callback_fields if isinstance(callback_fields, Mapping) else {}
+        terminal = ledger.get("status") in TERMINAL_STATUSES
+        accepted = ledger.get("status") == "done" and verdict_fields.get("result") == "pass"
+        next_gate = "none" if accepted else ("rework" if ledger.get("status") == "dispatched" else "user direction")
+        closeout = {
+            "status": "accepted" if accepted else ledger.get("status"),
+            "capturedAt": captured_at,
+            "acceptedBy": "verifier",
+            "changed": callback_fields.get("summary", "executor callback"),
+            "verified": verdict_fields.get("evidenceChecked", ""),
+            "summary": verdict_fields.get("summary", ""),
+            "requiredChanges": verdict_fields.get("requiredChanges", ""),
+            "evidenceChecked": verdict_fields.get("evidenceChecked", ""),
+            "notDone": "stage/commit/push/PR/publish/release were not done",
+            "risks": verdict_fields.get("risks", ""),
+            "nextGate": next_gate,
+            "nextAction": next_gate,
+            "remainingTodos": "none" if accepted else next_gate,
+            "routingReceipt": build_v2_routing_receipt(ledger),
+            "compoundingDecision": "skipped",
+            "reason": "ordinary successful implementation/testing with no new reusable risk",
+            "watcherAction": "stop_and_delete_heartbeat" if terminal else "",
+        }
+        verification = ledger.get("verification") if isinstance(ledger.get("verification"), Mapping) else None
+        verdict = verification.get("verdict") if isinstance(verification, Mapping) else None
+        receipt = verdict.get("receipt") if isinstance(verdict, Mapping) else None
+        _apply_v2_closeout_receipt(closeout, receipt)
+        if terminal:
+            closeout.update({
+                "reportAction": "emit one plain language closeout report to the user",
+                "plainLanguageReport": "required",
+            })
+        return closeout
     accepted = ledger.get("status") == "done" and (
         verdict_fields.get("result") == "pass"
         or verdict_fields.get("status") == "accepted"
@@ -3521,7 +4501,11 @@ def _apply_verifier_verdict_message(ledger: dict[str, Any],
     if result == "pass":
         ledger["status"] = "done"
     elif result == "needs_rework":
-        if ledger["reworkCount"] >= ledger["maxRework"]:
+        if task_workflow_version(ledger) == 2:
+            ledger["status"], ledger["reworkCount"] = next_rework_dispatch(
+                ledger["reworkCount"], ledger["maxRework"],
+            )
+        elif ledger["reworkCount"] >= ledger["maxRework"]:
             ledger["status"] = "blocked"
         else:
             ledger["status"] = "needs_rework"
@@ -3576,7 +4560,20 @@ def capture_verifier_verdict_from_read(state_root: str | Path,
         msg,
         captured_at=captured_at,
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, "verifier")
+        saved = load_task_ledger(state_root, project_id, task_id)
+    if task_workflow_version(saved) == 2 and saved.get("status") in TERMINAL_STATUSES:
+        cleanup_terminal_manager_pool_task(
+            state_root,
+            project_id,
+            parent_thread_id=_required_str(saved.get("parentThreadId"), "parentThreadId"),
+            task_id=task_id,
+            cleaned_at=captured_at,
+        )
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 
 def _read_thread_messages_with_adapter(thread_adapter: Any,
@@ -4220,15 +5217,20 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
         return None
     if msg is None:
         return None
-    ledger = _apply_executor_callback_message(
-        ledger,
-        dispatch,
-        msg,
-        captured_at=captured_at,
-        receipt_source="manager-inbox/direct-send",
-        receipt_channel="manager-inbox",
-    )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    try:
+        ledger = _apply_executor_callback_message(
+            ledger,
+            dispatch,
+            msg,
+            captured_at=captured_at,
+            receipt_source="manager-inbox/direct-send",
+            receipt_channel="manager-inbox",
+        )
+    except StateStoreError as exc:
+        if task_workflow_version(ledger) != 2:
+            raise
+        ledger = _v2_executor_callback_route_error(ledger, exc)
+    return _finalize_v2_executor_callback(state_root, project_id, task_id, ledger, dispatch, msg)
 
 
 
@@ -4283,7 +5285,11 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
         receipt_source="manager-inbox/direct-send",
         receipt_channel="manager-inbox",
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, "reviewer")
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 def _capture_role_review_from_manager_inbox(state_root: str | Path,
                                             project_id: str,
@@ -4343,7 +5349,11 @@ def _capture_role_review_from_manager_inbox(state_root: str | Path,
         receipt_source="manager-inbox/direct-send",
         receipt_channel="manager-inbox",
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, role)
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 
 def _capture_architect_review_from_manager_inbox(state_root: str | Path,
@@ -4434,7 +5444,11 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
         receipt_source="manager-inbox/direct-send",
         receipt_channel="manager-inbox",
     )
-    return save_task_ledger(state_root, project_id, task_id, ledger)
+    saved = save_task_ledger(state_root, project_id, task_id, ledger)
+    if task_workflow_version(saved) == 2:
+        _release_v2_final_role_claim(state_root, project_id, task_id, saved, "verifier")
+        return load_task_ledger(state_root, project_id, task_id)
+    return saved
 
 
 def _ledger_has_reviewer_request(ledger: Mapping[str, Any]) -> bool:
@@ -4729,6 +5743,49 @@ def watch_team_task_with_adapter(state_root: str | Path,
         )
 
     ledger = load_task_ledger(state_root, project_id, task_id)
+    if task_workflow_version(ledger) == 2:
+        if ledger.get("status") == "manager_acceptance_pending":
+            return finish(_watch_task_update(
+                "watch_manager_acceptance_pending", state_root, project_id, ledger, observed_at=observed_at,
+            ))
+        read_decision = _watcher_read_allowed(ledger, observed_at=observed_at, read_reason=read_reason)
+        if not read_decision["allowed"]:
+            update = _watch_task_update("watch_read_suppressed", state_root, project_id, ledger, observed_at=observed_at)
+            update["readDecision"] = read_decision
+            return finish(update)
+        target = ledger.get("runtimeTarget")
+        host_id = ledger.get("runtimeHostId")
+        fingerprint = ledger.get("runtimeTargetFingerprint")
+        if not isinstance(target, Mapping) or not isinstance(host_id, str) or not isinstance(fingerprint, str):
+            return finish({
+                "action": "watch_v2_runtime_target_missing",
+                "status": "tool_error",
+                "ledger": ledger,
+                "userOutput": "Team Router tool_error: V2 watcher requires its persisted target identity.",
+            })
+        update = run_v2_team_task_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            objective=_required_str(ledger.get("objective"), "objective"),
+            project_local_path=_required_str(ledger.get("projectLocalPath"), "projectLocalPath"),
+            thread_adapter=thread_adapter,
+            permission=permission,
+            observed_at=observed_at,
+            target=target,
+            target_fingerprint=fingerprint,
+            host_id=host_id,
+            parent_thread_id=_required_str(ledger.get("parentThreadId"), "parentThreadId"),
+            manager_plan=None,
+            task_authorization_package=None,
+            turn_limit=turn_limit,
+            return_thread_id=return_thread_id or ledger.get("parentThreadId"),
+        )
+        update["nextWakeup"] = _watch_next_wakeup(update.get("ledger", ledger))
+        update["automationBoundary"] = (
+            "host watcher may perform one bounded V2 observation and the next authorized role dispatch; it must not use legacy role registry bindings"
+        )
+        return finish(update)
     read_decision = _watcher_read_allowed(ledger, observed_at=observed_at, read_reason=read_reason)
     if not read_decision["allowed"]:
         update = _watch_task_update("watch_read_suppressed", state_root, project_id, ledger, observed_at=observed_at)
@@ -5190,6 +6247,434 @@ def run_team_task_with_adapter(state_root: str | Path,
         return _adapter_task_update("no_action", state_root, project_id, ledger)
 
 
+def _v2_role_marker(role: str) -> str:
+    try:
+        return {
+            "architect": "TEAM_ROUTER_ARCHITECT_REVIEW",
+            "executor": "TEAM_ROUTER_CALLBACK",
+            "reviewer": "TEAM_ROUTER_REVIEW",
+            "qa": "TEAM_ROUTER_QA_REVIEW",
+            "verifier": "TEAM_ROUTER_VERDICT",
+        }[role]
+    except KeyError as exc:
+        raise StateStoreError("invalid V2 role: %s" % role) from exc
+
+
+def _v2_role_prompt(task_id: str,
+                    role: str,
+                    plan: Mapping[str, Any],
+                    *,
+                    objective: str,
+                    role_thread_id: str,
+                    authorization_package: Mapping[str, Any],
+                    return_thread_id: str | None = None) -> str:
+    marker = _v2_role_marker(role)
+    role_name = ROLE_ALIASES[role]
+    scope = _required_str(plan.get("scope"), "resolvedPlan.scope")
+    permission = _required_str(plan.get("permission"), "resolvedPlan.permission")
+    stop_condition = _required_str(plan.get("stopCondition"), "resolvedPlan.stopCondition")
+    parent_thread_id = _required_str(plan.get("parentThreadId"), "resolvedPlan.parentThreadId")
+    package_id = _required_str(
+        plan.get("taskAuthorizationPackageId"),
+        "resolvedPlan.taskAuthorizationPackageId",
+    )
+    if _required_str(plan.get("taskId"), "resolvedPlan.taskId") != task_id:
+        raise StateStoreError("authorization_mismatch: taskId")
+    if _required_str(plan.get("objective"), "resolvedPlan.objective") != objective:
+        raise StateStoreError("authorization_mismatch: objective")
+    validate_v2_authorization(
+        authorization_package=authorization_package,
+        ledger_input={
+            "taskId": task_id,
+            "parentThreadId": parent_thread_id,
+            "objective": objective,
+        },
+        scope=scope,
+        permission=permission,
+        stop_condition=stop_condition,
+    )
+    if authorization_package.get("packageId") != package_id:
+        raise StateStoreError("authorization_mismatch: packageId")
+    lines = [
+        "TEAM_ROUTER_V2_DISPATCH taskId=%s" % task_id,
+        "role: %s" % role_name,
+        "authorizationPackageId: %s" % package_id,
+        "authorizationStatus: authorized",
+        "authorizationSource: taskAuthorizationPackage",
+        "executionDirective: start_immediately",
+        "commitAuthorization: false",
+        "externalGates: none",
+        "permission: %s" % permission,
+        "scope: %s" % scope,
+        "stopCondition: %s" % stop_condition,
+        "objective: %s" % _required_str(objective, "objective"),
+        "callbackMarker: %s taskId=%s" % (marker, task_id),
+        "action: perform the assigned %s work within scope and return the required marker" % role_name,
+    ]
+    if return_thread_id is not None:
+        return_thread_id = _required_str(return_thread_id, "returnThreadId")
+        delivery_key, fallback_key = ROLE_DELIVERY_FIELDS[role]
+        lines.extend((
+            "sourceThreadId: %s" % return_thread_id,
+            "returnThreadId: %s" % return_thread_id,
+            "orchestratorThreadId: %s" % return_thread_id,
+            "sourceRoleThreadId: %s" % _required_str(role_thread_id, "roleThreadId"),
+            "roleThreadId: %s" % _required_str(role_thread_id, "roleThreadId"),
+            "%s: direct-send" % delivery_key,
+            "%s: self-thread-marker" % fallback_key,
+            "directReturnPolicy: first call send_message_to_thread(threadId=<returnThreadId>, prompt=<full final marker>), then keep that same marker in this role thread as fallback",
+        ))
+    if role == "executor":
+        lines.extend((
+            "completionFields: status, final, summary, evidence, risks, next",
+            "final: true only when this role has completed its assigned work",
+        ))
+    elif role == "verifier":
+        lines.append("completionFields: result, summary, requiredChanges, evidenceChecked, risks")
+    else:
+        lines.append("completionFields: result, summary, findings, requiredChanges, evidenceChecked, risks")
+    if role in {"reviewer", "verifier"}:
+        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; pass=counts only; detail never direct-send")
+        if role == "reviewer":
+            lines.append("compactReviewerBody: findings=findingCounts/topBlockers; requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath")
+        else:
+            lines.append("compactVerifierBody: requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath")
+    return "\n".join(lines)
+
+
+def _v2_role_to_dispatch(ledger: Mapping[str, Any]) -> str | None:
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if not isinstance(plan, Mapping):
+        raise StateStoreError("plan_invalid: resolved V2 plan is required")
+    route = tuple(plan.get("routeRoles", ()))
+    status = ledger.get("status")
+    if status == "planned":
+        sent = {
+            item.get("role")
+            for item in ledger.get("dispatches", ())
+            if isinstance(item, Mapping) and item.get("dispatchAccepted")
+        }
+        return next((role for role in route if role not in sent), None)
+    if status in {"dispatched", "needs_rework"}:
+        return "executor" if "executor" in route else (route[0] if route else None)
+    return {
+        "reviewing": "reviewer",
+        "awaiting_qa_review": "qa",
+        "verifying": "verifier",
+    }.get(status)
+
+
+def _v2_waiting_role(ledger: Mapping[str, Any]) -> str | None:
+    return {
+        "awaiting_architect_review": "architect",
+        "awaiting_callback": "executor",
+        "reviewing": "reviewer",
+        "awaiting_qa_review": "qa",
+        "verifying": "verifier",
+    }.get(ledger.get("status"))
+
+
+def _latest_v2_role_dispatch(ledger: Mapping[str, Any], role: str) -> Mapping[str, Any] | None:
+    dispatches = ledger.get("dispatches") if isinstance(ledger.get("dispatches"), list) else []
+    for dispatch in reversed(dispatches):
+        if isinstance(dispatch, Mapping) and dispatch.get("role") == role and dispatch.get("dispatchAccepted"):
+            return dispatch
+    return None
+
+
+def _capture_v2_role_reply_with_adapter(state_root: str | Path,
+                                        project_id: str,
+                                        task_id: str,
+                                        ledger: Mapping[str, Any],
+                                        *,
+                                        thread_adapter: Any,
+                                        role: str,
+                                        captured_at: str,
+                                        turn_limit: int | None) -> dict[str, Any] | None:
+    record = _latest_v2_role_dispatch(ledger, role)
+    if record is None:
+        raise StateStoreError("missing V2 %s dispatch for task: %s" % (role, task_id))
+    direct_capture = {
+        "architect": _capture_architect_review_from_manager_inbox,
+        "executor": _capture_executor_callback_from_manager_inbox,
+        "reviewer": _capture_reviewer_review_from_manager_inbox,
+        "qa": _capture_qa_review_from_manager_inbox,
+        "verifier": _capture_verifier_verdict_from_manager_inbox,
+    }[role]
+    fallback_capture = {
+        "architect": capture_architect_review_from_read,
+        "executor": capture_executor_callback_from_read,
+        "reviewer": capture_reviewer_review_from_read,
+        "qa": capture_qa_review_from_read,
+        "verifier": capture_verifier_verdict_from_read,
+    }[role]
+    if _direct_return_record(ledger, role) is not None:
+        messages = _manager_direct_return_messages_with_adapter(
+            thread_adapter,
+            record,
+            turn_limit=turn_limit,
+        )
+        captured = direct_capture(
+            state_root,
+            project_id,
+            task_id,
+            messages,
+            captured_at=captured_at,
+        )
+        if captured is not None:
+            return captured
+    messages = _read_thread_messages_with_adapter(
+        thread_adapter,
+        _required_str(record.get("threadId"), "V2 dispatch.threadId"),
+        turn_limit=turn_limit,
+    )
+    return fallback_capture(
+        state_root,
+        project_id,
+        task_id,
+        messages,
+        captured_at=captured_at,
+    )
+
+
+def run_v2_team_task_with_adapter(state_root: str | Path,
+                                  project_id: str,
+                                  task_id: str,
+                                  *,
+                                  objective: str,
+                                  project_local_path: str | Path,
+                                  thread_adapter: Any,
+                                  permission: str,
+                                  observed_at: str,
+                                  target: Mapping[str, Any],
+                                  target_fingerprint: str | None,
+                                  host_id: str,
+                                  parent_thread_id: str,
+                                  manager_plan: Mapping[str, Any] | None,
+                                  task_authorization_package: Mapping[str, Any] | None,
+                                  turn_limit: int | None = None,
+                                  confirm_rework: bool = False,
+                                  return_thread_id: str | None = None) -> dict[str, Any]:
+    """Advance one V2 role step; legacy tasks stay in run_team_task_with_adapter.
+
+    Direct facade calls are explicit current user/Manager checks and may read a
+    waiting role immediately. Scheduled/background callers must enter through
+    watch_team_task_with_adapter(), which applies _watcher_read_allowed() first.
+    """
+    del confirm_rework
+    fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
+    if task_path(state_root, project_id, task_id).exists():
+        ledger = load_task_ledger(state_root, project_id, task_id)
+        if task_workflow_version(ledger) != 2:
+            raise StateStoreError("run_v2_requires_workflowVersion_2")
+        continuation_reason = _v2_continuation_reason(
+            ledger,
+            task_id=task_id,
+            objective=objective,
+            parent_thread_id=parent_thread_id,
+            manager_plan=manager_plan,
+            task_authorization_package=task_authorization_package,
+        )
+        if continuation_reason is not None:
+            raise StateStoreError(continuation_reason)
+    else:
+        if manager_plan is None or task_authorization_package is None:
+            raise StateStoreError("authorization_missing: taskAuthorizationPackage is required")
+        if permission != manager_plan.get("permission"):
+            raise StateStoreError("authorization_mismatch: permission")
+        prepared = prepare_v2_manager_task(
+            str(state_root),
+            project_id,
+            task_id,
+            objective=objective,
+            project_local_path=str(project_local_path),
+            parent_thread_id=parent_thread_id,
+            requested_plan=manager_plan,
+            authorization_package=task_authorization_package,
+            created_at=observed_at,
+        )
+        if prepared["executionMode"] == "manager_direct":
+            return {
+                "action": "manager_direct",
+                "status": "manager_direct",
+                "ledger": None,
+                "resolvedPlan": prepared,
+                "targetFingerprint": fingerprint,
+            }
+        ledger = prepared["ledger"]
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if not isinstance(plan, Mapping):
+        raise StateStoreError("plan_invalid: resolved V2 plan is required")
+    if ledger.get("status") == "manager_routing_pending" and manager_plan is not None:
+        ledger = resume_v2_manager_routing(
+            state_root,
+            project_id,
+            task_id,
+            objective=objective,
+            parent_thread_id=parent_thread_id,
+            manager_plan=manager_plan,
+            authorization_package=task_authorization_package,
+        )
+        plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if permission != plan.get("permission"):
+        raise StateStoreError("authorization_mismatch: permission")
+    runtime_target = dict(target)
+    if (
+        ledger.get("runtimeTarget") != runtime_target
+        or ledger.get("runtimeHostId") != host_id
+        or ledger.get("runtimeTargetFingerprint") != fingerprint
+    ):
+        ledger = dict(ledger)
+        ledger["runtimeTarget"] = runtime_target
+        ledger["runtimeHostId"] = host_id
+        ledger["runtimeTargetFingerprint"] = fingerprint
+        ledger = save_task_ledger(state_root, project_id, task_id, ledger)
+    waiting_role = _v2_waiting_role(ledger)
+    if waiting_role is not None:
+        captured = _capture_v2_role_reply_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            ledger,
+            thread_adapter=thread_adapter,
+            role=waiting_role,
+            captured_at=observed_at,
+            turn_limit=turn_limit,
+        )
+        ledger = captured or load_task_ledger(state_root, project_id, task_id)
+        if ledger.get("status") == "manager_acceptance_pending":
+            update = _adapter_task_update("manager_acceptance_pending", state_root, project_id, ledger)
+            update["targetFingerprint"] = fingerprint
+            return update
+        if ledger.get("status") in TERMINAL_STATUSES:
+            update = _adapter_task_update("v2_terminal_closeout", state_root, project_id, ledger, observed_at=observed_at)
+            update["targetFingerprint"] = fingerprint
+            return update
+        if _v2_waiting_role(ledger) == waiting_role:
+            update = _adapter_task_update("v2_awaiting_%s" % waiting_role, state_root, project_id, ledger, observed_at=observed_at)
+            update["targetFingerprint"] = fingerprint
+            return update
+    role = _v2_role_to_dispatch(ledger)
+    if role is None:
+        update = _adapter_task_update("v2_no_action", state_root, project_id, ledger, observed_at=observed_at)
+        update["targetFingerprint"] = fingerprint
+        return update
+    routing = plan.get("roleRouting") if isinstance(plan.get("roleRouting"), Mapping) else {}
+    role_request = routing.get(role) if isinstance(routing, Mapping) else None
+    if not isinstance(role_request, Mapping):
+        raise StateStoreError("plan_invalid: missing roleRouting.%s" % role)
+    result = send_v2_role_request_with_adapter(
+        thread_adapter,
+        state_root,
+        project_id,
+        parent_thread_id=parent_thread_id,
+        host_id=host_id,
+        target=target,
+        target_fingerprint=fingerprint,
+        role=role,
+        task_id=task_id,
+        request_id=create_task_id(),
+        title=role_thread_title(project_id, role, objective),
+        prompt=lambda thread_id: _v2_role_prompt(
+            task_id,
+            role,
+            plan,
+            objective=objective,
+            role_thread_id=thread_id,
+            authorization_package=ledger.get("taskAuthorizationPackage"),
+            return_thread_id=return_thread_id,
+        ),
+        requested_model=_required_str(role_request.get("requestedModel"), "roleRouting.requestedModel"),
+        requested_thinking=_required_str(role_request.get("requestedThinking"), "roleRouting.requestedThinking"),
+        requested_at=observed_at,
+        parallel_allowed=bool(plan.get("parallelAllowed")),
+        return_thread_id=return_thread_id,
+    )
+    latest = result.get("ledger") if isinstance(result, Mapping) else None
+    if not isinstance(latest, Mapping):
+        latest = load_task_ledger(state_root, project_id, task_id)
+    action = "sent_v2_%s" % role if result.get("outcome") == "sent" else "v2_%s" % result.get("outcome", "no_action")
+    update = _adapter_task_update(action, state_root, project_id, latest, observed_at=observed_at)
+    update["targetFingerprint"] = fingerprint
+    return update
+
+
+def _resolve_v2_orchestration_plan(*,
+                                  task_id: str,
+                                  parent_thread_id: str | None,
+                                  objective: str,
+                                  manager_plan: Mapping[str, Any],
+                                  task_authorization_package: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(manager_plan, Mapping):
+        raise StateStoreError("plan_invalid: managerPlan must be a mapping")
+    package = task_authorization_package
+    package_parent = package.get("parentThreadId") if isinstance(package, Mapping) else None
+    resolved_parent_thread_id = parent_thread_id or package_parent
+    return resolve_v2_manager_plan(
+        objective=objective,
+        scope=manager_plan.get("scope"),
+        permission=manager_plan.get("permission"),
+        stop_condition=manager_plan.get("stopCondition"),
+        requested_gate_class=manager_plan.get("requestedGateClass"),
+        authorization_package=package,
+        explicit_roles=tuple(manager_plan.get("explicitRoles", ())),
+        requested_role_routing=manager_plan.get("requestedRoleRouting"),
+        requires_parallelism=bool(manager_plan.get("requiresParallelism", False)),
+        parallel_conflicts=tuple(manager_plan.get("parallelConflicts", ())),
+        requires_independent_context=bool(manager_plan.get("requiresIndependentContext", False)),
+        requires_independent_review=bool(manager_plan.get("requiresIndependentReview", False)),
+        lightweight_verification_available=bool(manager_plan.get("lightweightVerificationAvailable", True)),
+        ledger_input={
+            "taskId": task_id,
+            "parentThreadId": resolved_parent_thread_id,
+        },
+    )
+
+
+def _v2_external_gates(manager_plan: Mapping[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(manager_plan, Mapping):
+        return ()
+    value = manager_plan.get("externalGates", ())
+    if isinstance(value, str):
+        return (value,) if value.strip() else ()
+    if isinstance(value, (list, tuple, frozenset)):
+        return tuple(str(item) for item in value if str(item).strip())
+    return ("invalid",) if value else ()
+
+
+def _v2_continuation_reason(ledger: Mapping[str, Any],
+                            *,
+                            task_id: str,
+                            objective: str,
+                            parent_thread_id: str | None,
+                            manager_plan: Mapping[str, Any] | None,
+                            task_authorization_package: Mapping[str, Any] | None) -> str | None:
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    if not isinstance(plan, Mapping):
+        return "authorization_mismatch"
+    requested = manager_plan if isinstance(manager_plan, Mapping) else plan
+    package = ledger.get("taskAuthorizationPackage")
+    if task_authorization_package is not None:
+        if not isinstance(package, Mapping) or not isinstance(task_authorization_package, Mapping):
+            return "authorization_mismatch"
+        for field in ("packageId", "taskId", "parentThreadId", "scope", "permission", "stopCondition"):
+            if task_authorization_package.get(field) != package.get(field):
+                return "authorization_mismatch"
+    allowed = v2_continuation_allowed(
+        ledger,
+        parent_thread_id=parent_thread_id or "",
+        requested_task_id=task_id,
+        requested_objective=objective,
+        requested_scope=requested.get("scope"),
+        requested_permission=requested.get("permission"),
+        requested_stop_condition=requested.get("stopCondition"),
+        requested_external_gates=_v2_external_gates(manager_plan),
+    )
+    if allowed:
+        return None
+    return "authorization_expired" if ledger.get("status") in TERMINAL_STATUSES else "authorization_mismatch"
+
+
 def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        project_id: str,
                                        task_id: str,
@@ -5207,7 +6692,91 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                                        return_thread_id: str | None = None,
                                        parent_thread_id: str | None = None,
                                        heartbeat_scheduler: Any = None,
-                                       host_context: LiveOrchestrationHostContext | None = None) -> dict[str, Any]:
+                                       host_context: LiveOrchestrationHostContext | None = None,
+                                       manager_plan: Mapping[str, Any] | None = None,
+                                       task_authorization_package: Mapping[str, Any] | None = None,
+                                       host_id: str = "local",
+                                       target_fingerprint: str | None = None) -> dict[str, Any]:
+    """Run an explicit current user/Manager orchestration turn.
+
+    This facade is not a polling entrypoint: it may perform an immediate
+    direct-return check. A host scheduler/background task must use
+    watch_team_task_with_adapter(), which enforces watcher read cadence before
+    it delegates back into the V2 runner.
+    """
+    existing_ledger = (
+        load_task_ledger(state_root, project_id, task_id)
+        if task_path(state_root, project_id, task_id).exists()
+        else None
+    )
+    candidate_parent_thread_id = parent_thread_id
+    if candidate_parent_thread_id is None and host_context is not None:
+        candidate_parent_thread_id = host_context.parent_thread_id
+    v2_ledger = (
+        existing_ledger
+        if isinstance(existing_ledger, Mapping) and task_workflow_version(existing_ledger) == 2
+        else None
+    )
+    v2_requested = v2_ledger is not None or (
+        manager_plan is not None and not (
+            isinstance(existing_ledger, Mapping) and task_workflow_version(existing_ledger) == 1
+        )
+    )
+    resolved_v2_plan: Mapping[str, Any] | None = None
+    if v2_ledger is not None:
+        reason = _v2_continuation_reason(
+            v2_ledger,
+            task_id=task_id,
+            objective=objective,
+            parent_thread_id=candidate_parent_thread_id,
+            manager_plan=manager_plan,
+            task_authorization_package=task_authorization_package,
+        )
+        if reason is not None:
+            return {"action": reason, "status": reason, "reason": reason, "ledger": None}
+        resolved_v2_plan = v2_ledger.get("resolvedPlan") or v2_ledger.get("plan")
+    elif v2_requested:
+        try:
+            resolved_v2_plan = _resolve_v2_orchestration_plan(
+                task_id=task_id,
+                parent_thread_id=candidate_parent_thread_id,
+                objective=objective,
+                manager_plan=manager_plan,
+                task_authorization_package=task_authorization_package,
+            )
+        except StateStoreError as exc:
+            if str(exc) == "model_authorization_required":
+                return {
+                    "action": "model_authorization_required",
+                    "status": "model_authorization_required",
+                    "reason": str(exc),
+                    "ledger": None,
+                }
+            if str(exc).startswith("authorization_missing:"):
+                return {
+                    "action": "authorization_missing",
+                    "status": "authorization_missing",
+                    "reason": str(exc),
+                    "ledger": None,
+                }
+            raise
+        if resolved_v2_plan["executionMode"] == "manager_direct":
+            return {
+                "action": "manager_direct",
+                "status": "manager_direct",
+                "ledger": None,
+                "resolvedPlan": resolved_v2_plan,
+            }
+    if v2_requested and isinstance(resolved_v2_plan, Mapping):
+        if permission != resolved_v2_plan.get("permission"):
+            return {
+                "action": "authorization_mismatch",
+                "status": "authorization_mismatch",
+                "reason": "authorization_mismatch: permission",
+                "ledger": None,
+            }
+        if v2_ledger is not None and v2_ledger.get("status") == "manager_acceptance_pending":
+            return _adapter_task_update("manager_acceptance_pending", state_root, project_id, v2_ledger)
     if host_context is not None:
         _raise_if_host_context_conflict("thread_adapter", thread_adapter, host_context.thread_adapter)
         _raise_if_host_context_conflict("parent_thread_id", parent_thread_id, host_context.parent_thread_id)
@@ -5256,7 +6825,7 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
     capabilities.update(entry["capabilities"])
     capabilities["heartbeat_scheduler"] = readiness["capabilities"].get("heartbeat_scheduler", False)
     task_title = _task_title_from_objective(objective)
-    if not task_path(state_root, project_id, task_id).exists():
+    if not v2_requested and not task_path(state_root, project_id, task_id).exists():
         _adapter_call(
             thread_adapter,
             "set_thread_title",
@@ -5269,21 +6838,60 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
         if target is not None
         else resolve_project_target_with_adapter(thread_adapter, project_id=project_lookup_id)
     )
-    update = run_team_task_with_adapter(
-        state_root,
-        project_id,
-        task_id,
-        objective=objective,
-        project_local_path=project_local_path,
-        thread_adapter=thread_adapter,
-        permission=permission,
-        observed_at=observed_at,
-        target=project_target,
-        max_rework=max_rework,
-        turn_limit=turn_limit,
-        confirm_rework=confirm_rework,
-        return_thread_id=return_thread_id,
-    )
+    if v2_requested:
+        try:
+            fingerprint = _v2_target_fingerprint(project_target, host_id, target_fingerprint)
+        except StateStoreError as exc:
+            return {
+                "action": "target_fingerprint_invalid",
+                "status": "tool_error",
+                "reason": str(exc),
+                "capabilities": capabilities,
+                "codexProjectId": project_lookup_id,
+                "projectTarget": project_target,
+            }
+        if v2_ledger is None:
+            _adapter_call(
+                thread_adapter,
+                "set_thread_title",
+                threadId=_required_str(parent_thread_id, "parentThreadId"),
+                title=v2_parent_thread_title(task_title),
+            )
+        update = run_v2_team_task_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            objective=objective,
+            project_local_path=project_local_path,
+            thread_adapter=thread_adapter,
+            permission=permission,
+            observed_at=observed_at,
+            target=project_target,
+            target_fingerprint=fingerprint,
+            host_id=host_id,
+            parent_thread_id=_required_str(parent_thread_id, "parentThreadId"),
+            manager_plan=manager_plan,
+            task_authorization_package=task_authorization_package,
+            turn_limit=turn_limit,
+            confirm_rework=confirm_rework,
+            return_thread_id=return_thread_id or parent_thread_id,
+        )
+    else:
+        update = run_team_task_with_adapter(
+            state_root,
+            project_id,
+            task_id,
+            objective=objective,
+            project_local_path=project_local_path,
+            thread_adapter=thread_adapter,
+            permission=permission,
+            observed_at=observed_at,
+            target=project_target,
+            max_rework=max_rework,
+            turn_limit=turn_limit,
+            confirm_rework=confirm_rework,
+            return_thread_id=return_thread_id,
+        )
     update["capabilities"] = capabilities
     update["codexProjectId"] = project_lookup_id
     update["projectTarget"] = project_target
@@ -5294,7 +6902,7 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
         project_id=project_id,
         task_id=task_id,
         permission=permission,
-        return_thread_id=return_thread_id,
+        return_thread_id=(return_thread_id or parent_thread_id) if v2_requested else return_thread_id,
     )
 
 

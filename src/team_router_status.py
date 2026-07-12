@@ -13,6 +13,7 @@ from team_router_state import (
     TERMINAL_STATUSES,
     _project_roles_from_registry,
     _required_str,
+    task_workflow_version,
 )
 
 
@@ -21,7 +22,22 @@ WatcherBuilder = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
 DEFAULT_CLOSEOUT_COMPOUNDING_REASON = "ordinary successful implementation/testing with no new reusable risk"
 
 
-def role_thread_lines(registry: Mapping[str, Any], project_id: str) -> list[str]:
+def role_thread_lines(registry: Mapping[str, Any], project_id: str, *,
+                      parent_thread_id: str | None = None) -> list[str]:
+    if parent_thread_id is not None:
+        projects = registry.get("projects") if isinstance(registry.get("projects"), Mapping) else {}
+        project = projects.get(project_id) if isinstance(projects.get(project_id), Mapping) else {}
+        pools = project.get("managerPools") if isinstance(project.get("managerPools"), Mapping) else {}
+        pool = pools.get(parent_thread_id) if isinstance(pools.get(parent_thread_id), Mapping) else {}
+        pool_roles = pool.get("roles") if isinstance(pool.get("roles"), Mapping) else {}
+        lines = []
+        for role in ("executor", "reviewer", "verifier", "architect", "qa"):
+            records = pool_roles.get(role) if isinstance(pool_roles.get(role), list) else []
+            thread_ids = [str(record.get("threadId")) for record in records
+                          if isinstance(record, Mapping) and record.get("threadId")]
+            if thread_ids:
+                lines.append("%s: %s" % (role, ", ".join(thread_ids)))
+        return lines or ["<none>"]
     roles = _project_roles_from_registry(registry, project_id)
     lines = []
     for role in ("manager", "executor", "reviewer", "verifier"):
@@ -87,6 +103,7 @@ def manager_polling_status_lines(ledger: Mapping[str, Any]) -> list[str]:
 def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, Any]) -> str:
     project_id = _required_str(ledger.get("projectId"), "ledger.projectId")
     closeout = ledger.get("closeout") if isinstance(ledger.get("closeout"), Mapping) else {}
+    is_v2 = task_workflow_version(ledger) == 2
     compounding_decision, compounding_reason = closeout_compounding_fields(closeout)
     lines = [
         "Team Router Closeout",
@@ -94,7 +111,20 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
         "status: %s" % ledger.get("status"),
         "threads:",
     ]
-    lines.extend("  " + line for line in role_thread_lines(registry, project_id))
+    lines.extend("  " + line for line in role_thread_lines(
+        registry,
+        project_id,
+        parent_thread_id=ledger.get("parentThreadId") if is_v2 else None,
+    ))
+    if is_v2:
+        lines.extend((
+            "acceptedBy: %s" % closeout.get("acceptedBy", ""),
+            "changed: %s" % closeout.get("changed", ""),
+            "verified: %s" % closeout.get("verified", ""),
+            "notDone: %s" % closeout.get("notDone", ""),
+            "nextGate: %s" % closeout.get("nextGate", ""),
+            "routingReceipt: %s" % json.dumps(closeout.get("routingReceipt", {}), ensure_ascii=False, sort_keys=True),
+        ))
     lines.extend((
         "summary: %s" % closeout.get("summary", ""),
         "evidenceChecked: %s" % closeout.get("evidenceChecked", ""),
@@ -112,6 +142,10 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
             lines.append("receiptRoleThreadId: %s" % closeout.get("receiptRoleThreadId", ""))
         if closeout.get("returnThreadId"):
             lines.append("returnThreadId: %s" % closeout.get("returnThreadId", ""))
+    if closeout.get("deliveryStatus"):
+        lines.append("deliveryStatus: %s" % closeout.get("deliveryStatus", ""))
+    if closeout.get("deliveryDegraded"):
+        lines.append("delivery: degraded")
     lines.extend((
         "compoundingDecision: %s" % compounding_decision,
         "reason: %s" % compounding_reason,
@@ -120,8 +154,9 @@ def format_closeout_for_user(ledger: Mapping[str, Any], registry: Mapping[str, A
         lines.extend((
             "heartbeatAction: %s" % closeout.get("watcherAction", ""),
             "plainLanguageReport: %s" % closeout.get("plainLanguageReport", ""),
-            "notDone: %s" % closeout.get("notDone", ""),
         ))
+        if not is_v2:
+            lines.append("notDone: %s" % closeout.get("notDone", ""))
     return "\n".join(lines)
 
 
@@ -146,7 +181,11 @@ def format_handoff_for_user(ledger: Mapping[str, Any], registry: Mapping[str, An
         "stateRoot: %s" % ledger.get("stateRoot"),
         "threads:",
     ]
-    lines.extend("  " + line for line in role_thread_lines(registry, project_id))
+    lines.extend("  " + line for line in role_thread_lines(
+        registry,
+        project_id,
+        parent_thread_id=ledger.get("parentThreadId") if task_workflow_version(ledger) == 2 else None,
+    ))
     lines.append("read_thread anchors:")
     anchors = anchor_lines(ledger)
     lines.extend("  " + line for line in (anchors or ["<none>"]))

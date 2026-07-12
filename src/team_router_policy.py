@@ -5,6 +5,88 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from team_router_protocol import ProtocolError
+from team_router_state import (
+    StateStoreError,
+    V2_CONDITIONAL_ROLE_NAMES,
+    V2_DELEGATED_BASE_ROLE_NAMES,
+)
+
+
+DEFAULT_ROLE_MODELS = {
+    "mechanical": ("gpt-5.6-luna", "medium"),
+    "standard": ("gpt-5.6-terra", "medium"),
+    "high": ("gpt-5.6-sol", "high"),
+}
+FORBIDDEN_ROLE_MODEL_COMBINATIONS = frozenset({("gpt-5.6-sol", "ultra")})
+
+
+def resolve_role_model(execution_class: str,
+                       *,
+                       model: str | None = None,
+                       thinking: str | None = None,
+                       override_reason: str | None = None) -> dict[str, Any]:
+    if execution_class not in DEFAULT_ROLE_MODELS:
+        raise StateStoreError("invalid executionClass: %s" % execution_class)
+    supplied = (model is not None, thinking is not None, override_reason is not None)
+    if any(supplied) and not all(supplied):
+        raise StateStoreError(
+            "model_override_invalid: model, thinking, and modelOverrideReason are required together"
+        )
+    requested_model, requested_thinking = DEFAULT_ROLE_MODELS[execution_class]
+    result = {"executionClass": execution_class}
+    if all(supplied):
+        if not all(isinstance(value, str) and value.strip() for value in (model, thinking, override_reason)):
+            raise StateStoreError("model_override_invalid: override fields must be non-empty strings")
+        requested_model = model.strip()
+        requested_thinking = thinking.strip()
+        result["modelOverrideReason"] = override_reason.strip()
+    if (requested_model, requested_thinking) in FORBIDDEN_ROLE_MODEL_COMBINATIONS:
+        raise StateStoreError("model_forbidden: gpt-5.6-sol ultra")
+    result.update({
+        "requestedModel": requested_model,
+        "requestedThinking": requested_thinking,
+    })
+    return result
+
+
+def resolve_v2_execution_mode(effective_gate_class: str,
+                              *,
+                              explicit_roles: tuple[str, ...] = (),
+                              requires_parallelism: bool = False,
+                              requires_independent_context: bool = False,
+                              requires_independent_review: bool = False,
+                              lightweight_verification_available: bool = True) -> str:
+    gate = str(effective_gate_class or "").upper()
+    if gate not in GATE_CLASSES:
+        raise StateStoreError("invalid effectiveGateClass: %s" % effective_gate_class)
+    direct = (
+        gate in {"FAST", "NORMAL"}
+        and not explicit_roles
+        and not requires_parallelism
+        and not requires_independent_context
+        and not requires_independent_review
+        and lightweight_verification_available
+    )
+    return "manager_direct" if direct else "delegated"
+
+
+def resolve_v2_route(effective_gate_class: str,
+                     explicit_roles: tuple[str, ...] = ()) -> tuple[str, ...]:
+    gate = str(effective_gate_class or "").upper()
+    if gate not in GATE_CLASSES:
+        raise StateStoreError("invalid effectiveGateClass: %s" % effective_gate_class)
+    valid_roles = V2_DELEGATED_BASE_ROLE_NAMES | V2_CONDITIONAL_ROLE_NAMES
+    roles = set(explicit_roles)
+    invalid = sorted(roles.difference(valid_roles))
+    if invalid:
+        raise StateStoreError("invalid v2 role: %s" % ", ".join(invalid))
+    roles.update(V2_DELEGATED_BASE_ROLE_NAMES)
+    if gate in {"STRICT", "PACKAGE"}:
+        roles.update({"reviewer", "verifier"})
+    if "reviewer" in roles or "qa" in roles:
+        roles.add("verifier")
+    order = ("architect", "executor", "reviewer", "qa", "verifier")
+    return tuple(role for role in order if role in roles)
 
 
 REVIEWER_GATE_REQUIRED_TERMS = (
@@ -81,6 +163,7 @@ QA_GATE_TERMS = (
 )
 
 GATE_CLASSES = ("FAST", "NORMAL", "STRICT", "PACKAGE")
+_GATE_RANK = {gate: index for index, gate in enumerate(GATE_CLASSES)}
 FAST_GATE_TERMS = (
     "bom",
     "encoding",
@@ -97,6 +180,40 @@ PACKAGE_GATE_TERMS = (
     "same task family",
     "discipline hardening",
 )
+
+
+def resolve_effective_gate(requested_gate_class: str,
+                           ledger: Mapping[str, Any],
+                           *,
+                           authorization: Mapping[str, Any]) -> dict[str, Any]:
+    requested = str(requested_gate_class or "").upper()
+    if requested not in GATE_CLASSES:
+        raise StateStoreError("invalid requestedGateClass: %s" % requested_gate_class)
+    if not isinstance(authorization, Mapping):
+        raise StateStoreError("authorization must be a mapping")
+    if str(ledger.get("permission") or "").strip().lower() == "local-package":
+        if authorization.get("workspaceWrite") is not True:
+            raise StateStoreError("authorization_missing: local-package requires workspaceWrite")
+
+    risk_ledger = dict(ledger)
+    risk_ledger.pop("permission", None)
+    plan = ledger.get("plan")
+    if isinstance(plan, Mapping):
+        risk_plan = dict(plan)
+        fields = plan.get("fields")
+        if isinstance(fields, Mapping):
+            risk_fields = dict(fields)
+            risk_fields.pop("acknowledgedPermission", None)
+            risk_fields.pop("permission", None)
+            risk_plan["fields"] = risk_fields
+        risk_ledger["plan"] = risk_plan
+    risk_floor = classify_team_router_gate(risk_ledger)
+    effective = max((requested, risk_floor), key=_GATE_RANK.__getitem__)
+    return {
+        "requestedGateClass": requested,
+        "effectiveGateClass": effective,
+        "gateReason": "requested %s; risk floor %s" % (requested, risk_floor),
+    }
 
 
 def _reviewer_gate_plan_fields(ledger: Mapping[str, Any]) -> Mapping[str, Any]:

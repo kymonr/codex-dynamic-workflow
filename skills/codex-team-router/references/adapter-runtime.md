@@ -12,11 +12,17 @@ list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> 
 
 Use exactly one role-thread creation path per task. Do not mix the adapter-created and pre-created paths.
 
+## Version 2 Cost-Aware Adapter Path
+
+`orchestrate_team_task_with_adapter()` selects Version 2 only for a new or explicit V2 parent plan; an existing Version 1 ledger always remains Version 1. The parent Manager resolves authorization -> effective gate -> route closure before readiness, title, heartbeat, registry, ledger, or thread operations. Manager direct returns with no ledger or role. A delegated route lacking `modelRoutingAuthorization` returns `model_authorization_required` at that same boundary.
+
+For authorized delegation, resolve the structured target and calculate `targetFingerprint` from canonical JSON `{"hostId": hostId, "target": target}` before manager-pool state. The manager pool reserves/reuses only the matching parent/host/fingerprint/role identity, carries `parallelAllowed` to the reserve helper, writes a creation intent under its lock, then calls `create_thread` outside that lock. New threads use Luna Medium bootstrap; formal `send_message_to_thread` includes the role's explicit model and thinking. A recovery may bind one uniquely verified bootstrap identity only; zero or multiple candidates terminally record `creation_outcome_unknown` and never auto-create a duplicate.
+
 ## Recommended Adapter Runner
 
-Use `assess_live_orchestration_readiness()` and `parent_entry_guard()` at the parent boundary before choosing the adapter-created path. If callable thread tools are unavailable, `parent_thread_id` is missing, callable `set_thread_title` is missing, the host heartbeat scheduler is absent or is not callable / lacks a callable schedule method, or the adapter object only contains model-side tool descriptors, do not continue the adapter runner; continue only with the manual/pre-created path and existing `manager` / `executor` / `verifier` role bindings, plus an existing reviewer only when conditional reviewer review is required. The readiness helper is a pure contract check; it reports missing host contracts and must not fabricate callable adapter, parent thread id, title tool, or heartbeat scheduler support.
+Use `assess_live_orchestration_readiness()` and `parent_entry_guard()` at the parent boundary before choosing the adapter-created path. If callable thread tools are unavailable, `parent_thread_id` is missing, callable `set_thread_title` is missing, the host heartbeat scheduler is absent or is not callable / lacks a callable schedule method, or the adapter object only contains model-side tool descriptors, do not continue the adapter runner. The readiness helper is a pure contract check; it reports missing host contracts and must not fabricate callable adapter, parent thread id, title tool, or heartbeat scheduler support. Version 1 compatibility: manual/pre-created continuation uses existing `manager` / `executor` / `verifier` role bindings, plus reviewer only when conditional review is required.
 
-Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables and an explicit current parent thread id as `parent_thread_id`. Before child-role dispatch, the helper requires callable `set_thread_title` and uses `parent_thread_id` to rename the parent/current conversation to `调度者-Team Router <task label>`; if that id is unavailable, return `tool_error` / blocked instead of silently continuing. The helper probes required thread tools, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, normalizes role titles with `set_thread_title`, starts a missing task, sends or reads the next required manager/executor/reviewer/verifier step, and returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`. It is not the entrypoint for pre-created role threads when the host lacks callable tools.
+Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables and an explicit current parent thread id as `parent_thread_id`. For V2, it performs preflight before readiness/title/heartbeat; only authorized delegated work renames the parent to `管理者-Team Router <task label>`, resolves the current project target with `list_projects`, discovers/reuses role threads with `list_threads`, and normalizes role titles with `set_thread_title`. Version 1 compatibility renames the parent to `调度者-Team Router <task label>` and sends the child Manager plan request. It returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`. It is not the entrypoint for pre-created role threads when the host lacks callable tools.
 
 Use a filesystem-safe Team Router `project_id` for local state, such as `codex-dynamic-workflow`. If Codex desktop `list_projects` returns a path-like project id such as `D:\codex\codex-dynamic-workflow`, pass it as `codex_project_id` so target lookup uses the real Codex id while registry and ledger paths stay safe.
 
@@ -31,12 +37,14 @@ Use this path when the parent host can provide adapter callables whose functions
 1. Probe the required tools and run `list_projects`; choose the current `projectId` and a project `target` with a local or worktree environment.
 2. Resolve `stateRoot` and load the project registry.
 3. Prefer `orchestrate_team_task_with_adapter(..., parent_thread_id=<current parent thread id>)` for normal parent orchestration; do not dispatch child roles if the current parent thread id is unavailable.
-4. Use `start_team_task_with_adapter()` only when you need the lower-level start primitive. It reuses registry role bindings, calls `create_thread` only for missing manager/executor/verifier core roles; create or reuse reviewer only when the conditional reviewer gate applies, then writes the registry role bindings and task ledger.
+4. Use `start_team_task_with_adapter()` only when you need the lower-level Version 1 start primitive. It reuses registry role bindings, calls `create_thread` only for missing manager/executor/verifier core roles; create or reuse reviewer only when the conditional reviewer gate applies, then writes the registry role bindings and task ledger. V2 uses the manager-owned pool and `run_v2_team_task_with_adapter()` instead.
 5. Do not pre-call `create_thread` for role threads before calling `start_team_task_with_adapter()`.
 
 ### Adapter continuation
 
 Use this continuation when the parent host can pass Codex thread tool callables into Python.
+
+Version 1 compatibility continuation:
 
 1. Send the manager plan request with `send_manager_plan_request_with_adapter()`. This records the send anchor for later `read_thread` recovery.
 2. Call `read_thread` for the manager thread through `read_manager_plan_with_adapter()`. Do not dispatch if the plan is blocked, malformed, unreachable, or asks for escalation.
@@ -50,7 +58,7 @@ Use this continuation when the parent host can pass Codex thread tool callables 
 
 The implementation keeps the parent-side orchestration flow deterministic and local. Thread tools are an adapter layer: they send messages and pass plain send/read results back into helper functions. The helper layer performs registry role persistence, task ledger updates, protocol parsing, and recovery anchor selection. The 规划者 (Manager) thread does not own ledger or registry state.
 
-Registry role persistence uses `update_registry_roles()` and `create_team_task()` to record the `manager`, `executor`, and `verifier` thread ids under the project registry before task dispatch. Task creation writes `tasks/<taskId>.json` immediately and moves the ledger to `roles_ready`.
+Version 1 compatibility registry persistence uses `update_registry_roles()` and `create_team_task()` to record the `manager`, `executor`, and `verifier` thread ids under the project registry before task dispatch. Task creation writes `tasks/<taskId>.json` immediately and moves the ledger to `roles_ready`. V2 state uses `projects[projectId].managerPools[parentThreadId]`, delayed task-ledger creation only for delegated work, and no child Manager binding.
 
 The ledger stores read recovery anchors in three places:
 
@@ -84,10 +92,12 @@ Never place durable state under `D:\.codex-tmp`. If state is inside a repo, ensu
 ## State Machine
 
 ```text
-main: created -> roles_ready -> planning -> awaiting_plan -> planned -> dispatched -> awaiting_callback -> reviewing -> verifying -> done
-rework: verifying -> needs_rework -> dispatched
-manual_recovery: plan_unreachable -> planned | callback_unreachable -> verifying | review_unreachable -> reviewing
-terminal: blocked | malformed_callback | tool_error | missing_role | abandoned
+v2 direct: manager_direct (no ledger)
+v2 delegated: created -> planned -> awaiting_architect_review? -> dispatched -> awaiting_callback -> reviewing? -> awaiting_qa_review? -> verifying? | manager_acceptance_pending -> done
+v2 terminal: done | blocked | malformed_callback | tool_error | missing_role | abandoned
+v1 compatibility: created -> roles_ready -> planning -> awaiting_plan -> planned -> dispatched -> awaiting_callback -> reviewing -> verifying -> done
+v1 rework: verifying -> needs_rework -> dispatched
+v1 manual_recovery: plan_unreachable -> planned | callback_unreachable -> verifying | review_unreachable -> reviewing
 ```
 
 `read_thread` must return a stable message id, timestamp, or ordered messages that prove the read window covers the dispatch/request anchor. If it cannot, move to `plan_unreachable` or `callback_unreachable` and ask the user to paste the missing marker block.

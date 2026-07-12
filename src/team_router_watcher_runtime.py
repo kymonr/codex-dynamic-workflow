@@ -371,7 +371,7 @@ def build_watcher_heartbeat_payload(update: dict[str, Any],
         watcher = update_watcher
     if watcher is None and next_wakeup is None:
         return None
-    if update.get("status") in TERMINAL_STATUSES or update.get("status") == "needs_rework":
+    if update.get("status") in TERMINAL_STATUSES | {"needs_rework", "manager_acceptance_pending"}:
         return None
     if update.get("action") in {"watch_no_action"}:
         return None
