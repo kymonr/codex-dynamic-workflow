@@ -6408,7 +6408,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
         self.assertEqual(ledger["status"], "tool_error")
         self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertNotIn("claim", pool["roles"]["executor"][0])
 
     def test_v2_creation_intent_recovery_binds_one_verified_bootstrap_identity_without_create(self):
@@ -6550,9 +6550,10 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
 
         self.assertEqual(blocked["outcome"], "busy")
         self.assertEqual((parallel["outcome"], parallel["binding"]), ("sent", "new"))
-        self.assertEqual((inherited["outcome"], inherited["binding"]), ("sent", "new"))
-        self.assertEqual(len(adapter.created), 3)
+        self.assertEqual(inherited["outcome"], "busy")
+        self.assertEqual(len(adapter.created), 2)
         self.assertNotEqual(adapter.created[0]["result"]["threadId"], adapter.created[1]["result"]["threadId"])
+        self.assertTrue(adapter.renamed[-1]["title"].endswith(" #2"))
 
     def test_v2_non_executor_dispatch_uses_its_own_waiting_state(self):
         adapter = FakeThreadAdapter()
@@ -6578,7 +6579,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
         self.assertFalse(ledger["dispatches"][-1]["creationAccepted"])
         self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertEqual(pool["creationIntents"], [])
 
     def test_create_timeout_recovers_server_created_thread_without_retrying_create(self):
@@ -6599,7 +6600,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         self.assertEqual((result["outcome"], result["threadId"]), ("sent", "thread-executor"))
         self.assertEqual(len(adapter.created), 1)
         self.assertEqual(len(adapter.sent), 1)
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertEqual(pool["creationIntents"], [])
 
     def test_v2_model_upgrade_is_once_only_and_receipt_is_requested_only(self):
@@ -6800,7 +6801,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         result = self._send(adapter)
 
         self.assertEqual((result["outcome"], result["reason"]), ("tool_error", "thread_tool_error"))
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertNotIn("claim", pool["roles"]["executor"][0])
         self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["status"], "tool_error")
 
@@ -6849,6 +6850,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         )
         for name, candidates, messages in cases:
             with self.subTest(name=name):
+                self.root = Path(self.td.name) / ("state-" + name)
                 task_id, request_id = "task-%s" % name, "request-%s" % name
                 self._save_task(task_id, parallel_allowed=True)
                 adapter = RecoveryAdapter(candidates, messages)
@@ -6872,7 +6874,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
                 self.assertEqual(adapter.created, [])
                 ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
                 self.assertEqual(ledger["status"], "creation_outcome_unknown")
-                pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-1"]
+                pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
                 self.assertIn(request_id, [item["requestId"] for item in pool["creationIntents"]])
                 self.assertTrue(any(
                     item.get("parsedFields", {}).get("reason") == "creation_outcome_unknown"
@@ -7063,7 +7065,7 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
 
         self.assertEqual((rework["status"], rework["reworkCount"]), ("dispatched", 1))
         self.assertEqual(rework["preferredThreadId"], "thread-executor")
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertNotIn("claim", pool["roles"]["executor"][0])
 
     def test_v2_callback_risk_escalation_without_candidates_waits_for_manager_routing(self):
@@ -7120,7 +7122,7 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
 
         self.assertEqual(updated["status"], "manager_routing_pending")
         self.assertEqual(updated["routingError"]["reason"], "plan_invalid")
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertNotIn("claim", pool["roles"]["executor"][0])
 
     def test_v2_closeout_parity_manager_and_verifier_share_receipt_and_format_pool_only(self):
@@ -7275,7 +7277,7 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
         )
 
         self.assertEqual((rework["status"], rework["reworkCount"], rework["preferredThreadId"]), ("dispatched", 1, "thread-verifier"))
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][self.parent_thread_id]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertNotIn("claim", pool["roles"]["verifier"][0])
 
 
@@ -7341,7 +7343,7 @@ class TestTeamRouterV2RolePool(unittest.TestCase):
         self._finalize(request_id, thread_id)
         self._release(task_id, request_id, thread_id)
 
-    def test_v2_role_pool_reuses_only_same_host_target_parent_and_role(self):
+    def test_v2_role_pool_reuses_only_same_host_target_and_role(self):
         first = self._reserve("task-a", "req-a")
         duplicate = self._reserve("task-a", "req-a")
         self.assertEqual(first["outcome"], "creation_intent")
@@ -7353,8 +7355,30 @@ class TestTeamRouterV2RolePool(unittest.TestCase):
         other_parent = self._reserve("task-c", "req-c", parent_thread_id="parent-b")
         other_target = self._reserve("task-d", "req-d", target_fingerprint="target-b")
         self.assertEqual((reused["outcome"], reused["threadId"]), ("reused", "thread-executor-a"))
-        self.assertEqual(other_parent["outcome"], "creation_intent")
+        self.assertEqual(other_parent["outcome"], "busy")
         self.assertEqual(other_target["outcome"], "creation_intent")
+
+    def test_v2_role_pool_reuses_idle_role_across_manager_threads(self):
+        self._make_idle()
+
+        reused = self._reserve(
+            "task-other-manager",
+            "req-other-manager",
+            parent_thread_id="parent-b",
+        )
+
+        self.assertEqual((reused["outcome"], reused["threadId"]), ("reused", "thread-executor-a"))
+        self.assertEqual(
+            team_router_state.manager_pool_lock_path(self.root, self.project_id, "parent-a"),
+            team_router_state.manager_pool_lock_path(self.root, self.project_id, "parent-b"),
+        )
+
+    def test_v2_role_title_is_stable_across_objectives(self):
+        first = team_router.v2_role_thread_title(self.project_id, "executor")
+        second = team_router.v2_role_thread_title(self.project_id, "executor")
+
+        self.assertEqual(first, second)
+        self.assertEqual(first, "执行者-Team Router project-123")
 
     def test_role_claim_is_mutex_and_parallel_creation_is_explicit(self):
         self._make_idle()
@@ -7426,16 +7450,17 @@ class TestTeamRouterV2RolePool(unittest.TestCase):
         self._make_idle(thread_id="thread-archived")
         registry = team_router.load_registry(self.root, self.project_id)
         project = registry["projects"][self.project_id]
-        project["managerPools"]["parent-a"]["roles"]["executor"][0]["archived"] = True
-        project["managerPools"]["parent-corrupt"] = {"roles": {"executor": [{
+        pool = project["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
+        pool["roles"]["executor"][0]["archived"] = True
+        pool["roles"]["executor"].append({
             "threadId": "thread-corrupt", "hostId": "local", "targetFingerprint": "target-a", "claim": "bad",
-        }]}, "creationIntents": []}
+        })
         team_router.save_registry(self.root, self.project_id, registry)
 
         self.assertEqual(self._reserve("task-new", "req-new")["outcome"], "creation_intent")
         self.assertEqual(
             self._reserve("task-corrupt", "req-corrupt", parent_thread_id="parent-corrupt")["outcome"],
-            "creation_intent",
+            "busy",
         )
 
     def _leak_lock(self, task_id, request_id):
@@ -7479,7 +7504,7 @@ class TestTeamRouterV2RolePool(unittest.TestCase):
         self.assertFalse(lock_path.exists())
         self.assertEqual(self._release(task_id, "req-claimed")["outcome"], "released")
 
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-a"]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertEqual(pool["creationIntents"], [])
         self.assertNotIn("claim", pool["roles"]["executor"][0])
         self.assertIsNone(team_router.recover_creation_intent(
@@ -7506,7 +7531,7 @@ class TestTeamRouterV2RolePool(unittest.TestCase):
         ledger["status"] = "done"
         team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
         self.assertEqual(cleanup("2026-07-11T20:00:02+08:00")["outcome"], "cleaned")
-        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"]["parent-a"]
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertEqual(pool["creationIntents"], [])
 
 
@@ -18231,7 +18256,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             first = run("ctr-20260712-100000-parallel-a")
             second = run("ctr-20260712-100000-parallel-b")
             blocked = run("ctr-20260712-100000-parallel-c", conflicts=("shared-write",))
-            pool = team_router.load_registry(root, project_id)["projects"][project_id]["managerPools"][parent_thread_id]
+            pool = team_router.load_registry(root, project_id)["projects"][project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
 
             self.assertTrue(first["ledger"]["plan"]["parallelAllowed"])
             self.assertTrue(second["ledger"]["plan"]["parallelAllowed"])

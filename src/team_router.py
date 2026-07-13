@@ -1263,6 +1263,12 @@ def v2_parent_thread_title(task_title: str) -> str:
     return "管理者-Team Router %s" % visible_task_title
 
 
+def v2_role_thread_title(project_id: str, role: str) -> str:
+    _validate_task_id(project_id)
+    _validate_role(role)
+    return "%s-Team Router %s" % (ROLE_DISPLAY_NAMES[role], project_id)
+
+
 def _role_thread_title_matches(project_id: str,
                                role: str,
                                title: str,
@@ -1998,6 +2004,8 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
         )
     if reservation["outcome"] != "creation_intent":
         return dict(reservation, targetFingerprint=fingerprint)
+    if reservation.get("creationIntent", {}).get("temporary") is True:
+        title += " #2"
     if reservation.get("existing"):
         return recover_v2_creation_intent_with_adapter(
             thread_adapter,
@@ -6574,7 +6582,7 @@ def run_v2_team_task_with_adapter(state_root: str | Path,
         role=role,
         task_id=task_id,
         request_id=create_task_id(),
-        title=role_thread_title(project_id, role, objective),
+        title=v2_role_thread_title(project_id, role),
         prompt=lambda thread_id: _v2_role_prompt(
             task_id,
             role,
