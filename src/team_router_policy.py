@@ -17,6 +17,7 @@ DEFAULT_ROLE_MODELS = {
     "standard": ("gpt-5.6-terra", "medium"),
     "high": ("gpt-5.6-sol", "high"),
 }
+PUBLIC_ROLE_MODEL_COMBINATIONS = frozenset(DEFAULT_ROLE_MODELS.values())
 FORBIDDEN_ROLE_MODEL_COMBINATIONS = frozenset({("gpt-5.6-sol", "ultra")})
 
 
@@ -42,6 +43,8 @@ def resolve_role_model(execution_class: str,
         result["modelOverrideReason"] = override_reason.strip()
     if (requested_model, requested_thinking) in FORBIDDEN_ROLE_MODEL_COMBINATIONS:
         raise StateStoreError("model_forbidden: gpt-5.6-sol ultra")
+    if (requested_model, requested_thinking) not in PUBLIC_ROLE_MODEL_COMBINATIONS:
+        raise StateStoreError("model_override_invalid: unsupported model/thinking")
     result.update({
         "requestedModel": requested_model,
         "requestedThinking": requested_thinking,

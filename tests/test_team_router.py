@@ -1827,6 +1827,7 @@ risks: none
             model_routing_authorization={
                 "allowedDefaults": [],
                 "authorizedBy": "complete_per_request_override",
+                "allowedOverrides": [{"role": "executor", "model": "gpt-5.6-sol", "thinking": "high"}],
             },
         )
         plan = team_router.resolve_v2_manager_plan(
@@ -6338,7 +6339,14 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
             objective="成本感知路由",
             project_local_path=self.root,
             parent_thread_id="parent-1",
-            resolved_plan={"routeRoles": ["executor"], "parallelAllowed": parallel_allowed},
+            resolved_plan={
+                "routeRoles": ["executor", "verifier"],
+                "parallelAllowed": parallel_allowed,
+                "roleRouting": {
+                    "executor": {"executionClass": "standard", "requestedModel": "gpt-5.6-terra", "requestedThinking": "medium"},
+                    "verifier": {"executionClass": "mechanical", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium"},
+                },
+            },
             task_authorization_package={"packageId": "auth-1"},
             created_at="2026-07-11T20:00:00+08:00",
         )
@@ -6381,6 +6389,164 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
             parallel_allowed=parallel_allowed,
         )
         return fingerprint
+
+    def test_v2_rejects_unknown_model_override_before_authorization(self):
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_override_invalid"):
+            team_router.resolve_role_model(
+                "standard",
+                model="gpt-5.6-unknown",
+                thinking="medium",
+                override_reason="requested for this task",
+            )
+
+    def test_v2_rejects_unknown_thinking_override_before_authorization(self):
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_override_invalid"):
+            team_router.resolve_role_model(
+                "standard",
+                model="gpt-5.6-terra",
+                thinking="unknown",
+                override_reason="requested for this task",
+            )
+
+    def test_v2_override_reason_does_not_bypass_exact_authorization(self):
+        authorization = team_router_v2.validate_model_routing_authorization(
+            {
+                "authorizedBy": "explicit_cost_aware_entry",
+                "allowedDefaults": ["gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high"],
+            },
+            route_roles=("executor",),
+        )
+        resolved = team_router.resolve_role_model(
+            "high", model="gpt-5.6-sol", thinking="high", override_reason="audit only",
+        )
+
+        self.assertFalse(team_router_v2._role_model_is_authorized(resolved, authorization, "executor"))
+
+    def test_v2_rejects_ordinary_model_mismatch_before_any_side_effect(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        ledger_before = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+        registry_before = json.dumps(team_router.load_registry(self.root, self.project_id), sort_keys=True)
+
+        with self.assertRaisesRegex(team_router.StateStoreError, "dispatch_model_mismatch"):
+            self._send(adapter, requested_model="gpt-5.6-luna", requested_thinking="medium")
+
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(adapter.renamed, [])
+        self.assertEqual(json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True), ledger_before)
+        self.assertEqual(json.dumps(team_router.load_registry(self.root, self.project_id), sort_keys=True), registry_before)
+
+    def test_v2_rejects_pending_upgrade_mismatch_without_consuming_it(self):
+        adapter = FakeThreadAdapter()
+        ledger = self._save_task()
+        ledger.update({
+            "status": "needs_rework",
+            "modelUpgradeCount": 1,
+            "modelUpgradePending": True,
+            "pendingModelUpgrade": {
+                "parentThreadId": "parent-1", "role": "executor", "requestedModel": "gpt-5.6-sol",
+                "requestedThinking": "high", "upgradedFrom": "gpt-5.6-terra", "completedResults": ["parsed registry"],
+                "readFiles": ["src/team_router_state.py"], "exactFailure": "callback failure", "unresolved": ["claim ordering"],
+            },
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        ledger_before = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+        registry_before = json.dumps(team_router.load_registry(self.root, self.project_id), sort_keys=True)
+
+        with self.assertRaisesRegex(team_router.StateStoreError, "dispatch_model_mismatch"):
+            self._send(adapter)
+
+        self.assertEqual(adapter.created, [])
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(adapter.renamed, [])
+        self.assertEqual(json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True), ledger_before)
+        self.assertEqual(json.dumps(team_router.load_registry(self.root, self.project_id), sort_keys=True), registry_before)
+
+    def test_v2_complete_override_authorizes_only_its_exact_role_pair(self):
+        authorization = team_router_v2.validate_model_routing_authorization(
+            {
+                "authorizedBy": "complete_per_request_override",
+                "allowedDefaults": [],
+                "allowedOverrides": [{"role": "executor", "model": "gpt-5.6-sol", "thinking": "high"}],
+            },
+            route_roles=("executor",),
+        )
+        resolved = team_router.resolve_role_model(
+            "high",
+            model="gpt-5.6-sol",
+            thinking="high",
+            override_reason="audit only",
+        )
+
+        self.assertTrue(team_router_v2._role_model_is_authorized(resolved, authorization, "executor"))
+        self.assertFalse(team_router_v2._role_model_is_authorized(resolved, authorization, "verifier"))
+
+    def test_v2_complete_multi_role_override_authorizes_each_exact_pair(self):
+        authorization = team_router_v2.validate_model_routing_authorization(
+            {
+                "authorizedBy": "complete_per_request_override",
+                "allowedDefaults": [],
+                "allowedOverrides": [
+                    {"role": "executor", "model": "gpt-5.6-sol", "thinking": "high"},
+                    {"role": "verifier", "model": "gpt-5.6-luna", "thinking": "medium"},
+                ],
+            },
+            route_roles=("executor", "verifier"),
+        )
+
+        self.assertTrue(team_router_v2._role_model_is_authorized(
+            team_router.resolve_role_model("high", model="gpt-5.6-sol", thinking="high", override_reason="approved"),
+            authorization, "executor",
+        ))
+        self.assertTrue(team_router_v2._role_model_is_authorized(
+            team_router.resolve_role_model("mechanical", model="gpt-5.6-luna", thinking="medium", override_reason="approved"),
+            authorization, "verifier",
+        ))
+
+    def test_v2_complete_override_rejects_unknown_duplicate_and_conflicting_entries(self):
+        base = {
+            "authorizedBy": "complete_per_request_override",
+            "allowedDefaults": [],
+            "allowedOverrides": [{"role": "executor", "model": "gpt-5.6-sol", "thinking": "high"}],
+        }
+        invalid = (
+            {**base, "unexpected": True},
+            {**base, "allowedOverrides": [{"role": "unknown", "model": "gpt-5.6-sol", "thinking": "high"}]},
+            {**base, "allowedOverrides": base["allowedOverrides"] * 2},
+            {**base, "allowedOverrides": base["allowedOverrides"] + [{"role": "executor", "model": "gpt-5.6-terra", "thinking": "medium"}]},
+        )
+        for authorization in invalid:
+            with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+                team_router_v2.validate_model_routing_authorization(authorization, route_roles=("executor",))
+
+    def test_v2_upgrade_requires_complete_route_override_authorization(self):
+        ledger = self._save_task()
+        ledger["taskAuthorizationPackage"]["modelRoutingAuthorization"] = {
+            "authorizedBy": "complete_per_request_override",
+            "allowedDefaults": [],
+            "allowedOverrides": [{"role": "executor", "model": "gpt-5.6-sol", "thinking": "high"}],
+        }
+        ledger.update({
+            "status": "tool_error",
+            "dispatches": [{
+                "role": "executor", "requestId": "request-1", "threadId": "thread-executor",
+                "requestedModel": "gpt-5.6-terra", "requestedThinking": "medium",
+                "dispatchAccepted": False, "failureReason": "callback failure",
+            }],
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        before = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+
+        with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
+            team_router.record_v2_model_upgrade(
+                self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+                failed_request_id="request-1", execution_class="high", model="gpt-5.6-sol", thinking="high",
+                override_reason="approved recovery", completed_results=["parsed registry"],
+                read_files=["src/team_router_state.py"], exact_failure="callback failed",
+                unresolved=["claim ordering"], requested_at="2026-07-11T21:05:00+08:00",
+            )
+        self.assertEqual(json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True), before)
 
     def test_v2_executor_uses_luna_bootstrap_then_terra_dispatch_accepted(self):
         adapter = FakeThreadAdapter()
@@ -6501,6 +6667,11 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
             request_id="request-1",
         )
         self._save_task("task-2")
+        second = team_router.load_task_ledger(self.root, self.project_id, "task-2")
+        second["plan"]["roleRouting"]["executor"].update(
+            requestedModel="gpt-5.6-luna", requestedThinking="medium",
+        )
+        team_router.save_task_ledger(self.root, self.project_id, "task-2", second)
 
         reused = self._send(
             adapter,
@@ -6563,6 +6734,8 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
             adapter,
             role="verifier",
             title="验证者-成本感知路由",
+            requested_model="gpt-5.6-luna",
+            requested_thinking="medium",
         )
 
         self.assertEqual(result["outcome"], "sent")
@@ -6714,8 +6887,8 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         consumed = self._send(
             adapter,
             request_id="request-2",
-            requested_model="gpt-5.6-terra",
-            requested_thinking="medium",
+            requested_model="gpt-5.6-sol",
+            requested_thinking="high",
         )
 
         self.assertEqual((consumed["outcome"], consumed["threadId"]), ("sent", first["threadId"]))
@@ -6807,7 +6980,11 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
 
     def test_sol_ultra_is_forbidden_before_adapter_dispatch(self):
         adapter = FakeThreadAdapter()
-        self._save_task()
+        ledger = self._save_task()
+        ledger["plan"]["roleRouting"]["executor"].update(
+            requestedModel="gpt-5.6-sol", requestedThinking="ultra",
+        )
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
 
         result = self._send(
             adapter,
@@ -17196,6 +17373,54 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             ],
         )
         self.assertEqual(signature.parameters["objective"].kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_v2_runner_uses_pending_pair_or_ordinary_role_routing_pair(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id = "project-v2-runner-pairs"
+            target = {"type": "project", "projectId": project_id}
+            plan = {
+                "scope": "src/example.py only", "permission": "local-package",
+                "stopCondition": "focused tests pass", "routeRoles": ["executor"],
+                "roleRouting": {"executor": {
+                    "executionClass": "standard", "requestedModel": "gpt-5.6-terra", "requestedThinking": "medium",
+                }},
+                "parallelAllowed": False,
+            }
+
+            def dispatch_pair(task_id, pending=None):
+                package = team_router.make_task_authorization_package(
+                    package_id="auth-%s" % task_id, task_id=task_id, parent_thread_id="parent-v2-runner-pairs",
+                    objective="dispatch one role", scope=plan["scope"], permission=plan["permission"],
+                    stop_condition=plan["stopCondition"], created_at="2026-07-12T10:00:00+08:00",
+                )
+                ledger = team_router.new_v2_task_ledger(
+                    root, project_id, task_id, objective="dispatch one role", project_local_path=root,
+                    parent_thread_id="parent-v2-runner-pairs", resolved_plan=plan,
+                    task_authorization_package=package,
+                    created_at="2026-07-12T10:00:00+08:00",
+                )
+                if pending is not None:
+                    ledger["pendingModelUpgrade"] = pending
+                    ledger["modelUpgradePending"] = True
+                    ledger["status"] = "needs_rework"
+                team_router.save_task_ledger(root, project_id, task_id, ledger)
+                with mock.patch("team_router.send_v2_role_request_with_adapter") as send:
+                    send.return_value = {"outcome": "sent", "ledger": ledger}
+                    team_router.run_v2_team_task_with_adapter(
+                        root, project_id, task_id, objective="dispatch one role", project_local_path=root,
+                        thread_adapter=object(), permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
+                        target=target, target_fingerprint=None, host_id="local", parent_thread_id="parent-v2-runner-pairs",
+                        manager_plan=None, task_authorization_package=None,
+                    )
+                return send.call_args.kwargs["requested_model"], send.call_args.kwargs["requested_thinking"]
+
+            self.assertEqual(dispatch_pair("ordinary"), ("gpt-5.6-terra", "medium"))
+            self.assertEqual(dispatch_pair("pending", {
+                "parentThreadId": "parent-v2-runner-pairs", "role": "executor", "requestedModel": "gpt-5.6-sol",
+                "requestedThinking": "high", "upgradedFrom": "gpt-5.6-terra", "completedResults": ["parsed registry"],
+                "readFiles": ["src/team_router_state.py"], "exactFailure": "callback failure", "unresolved": ["claim ordering"],
+            }), ("gpt-5.6-sol", "high"))
 
     def test_orchestrator_uses_v1_for_existing_legacy_ledger_even_with_manager_direct_plan(self):
         class LegacyAdapter(FakeThreadAdapter):

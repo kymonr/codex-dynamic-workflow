@@ -1767,6 +1767,20 @@ def _v2_pending_model_upgrade(ledger: Mapping[str, Any], role: str) -> Mapping[s
     return pending
 
 
+def _v2_expected_role_model(ledger: Mapping[str, Any], role: str,
+                            upgrade: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if isinstance(upgrade, Mapping):
+        return upgrade
+    plan = ledger.get("resolvedPlan") or ledger.get("plan")
+    routing = plan.get("roleRouting") if isinstance(plan, Mapping) else None
+    request = routing.get(role) if isinstance(routing, Mapping) else None
+    if not isinstance(request, Mapping):
+        raise StateStoreError("dispatch_model_mismatch: missing roleRouting.%s" % role)
+    _v2_text(request.get("requestedModel"), "roleRouting.%s.requestedModel" % role)
+    _v2_text(request.get("requestedThinking"), "roleRouting.%s.requestedThinking" % role)
+    return request
+
+
 def _v2_upgrade_prompt(prompt: str, upgrade: Mapping[str, Any] | None) -> str:
     prompt = _v2_text(prompt, "prompt")
     if not isinstance(upgrade, Mapping):
@@ -2114,42 +2128,22 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
     host_id = _v2_text(host_id, "hostId")
     requested_at = _v2_text(requested_at, "requestedAt")
     fingerprint = _v2_target_fingerprint(target, host_id, target_fingerprint)
-    if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
-        return _v2_terminal_tool_error(
-            state_root,
-            project_id,
-            task_id,
-            parent_thread_id=parent_thread_id,
-            role=role,
-            request_id=request_id,
-            host_id=host_id,
-            target_fingerprint=fingerprint,
-            requested_at=requested_at,
-            reason="model_forbidden",
-            requested_model=requested_model,
-            requested_thinking=requested_thinking,
-            return_thread_id=return_thread_id,
-        )
     ledger = load_task_ledger(state_root, project_id, task_id)
     if _required_str(ledger.get("parentThreadId"), "parentThreadId") != _required_str(parent_thread_id, "parentThreadId"):
         raise StateStoreError("model_upgrade_identity_mismatch: parentThreadId")
     upgrade = _v2_pending_model_upgrade(ledger, role)
-    model_override_reason = None
+    expected = _v2_expected_role_model(ledger, role, upgrade)
+    expected_model = _v2_text(expected.get("requestedModel"), "expected.requestedModel")
+    expected_thinking = _v2_text(expected.get("requestedThinking"), "expected.requestedThinking")
+    if (requested_model, requested_thinking) != (expected_model, expected_thinking):
+        raise StateStoreError("dispatch_model_mismatch")
+    model_override_reason = expected.get("modelOverrideReason")
     if upgrade is not None:
-        requested_model = _v2_text(upgrade.get("requestedModel"), "pendingModelUpgrade.requestedModel")
-        requested_thinking = _v2_text(upgrade.get("requestedThinking"), "pendingModelUpgrade.requestedThinking")
-        model_override_reason = upgrade.get("modelOverrideReason")
         preferred_thread_id = upgrade.get("preferredThreadId") or preferred_thread_id
         if ledger.get("status") in TERMINAL_STATUSES:
             ledger["status"] = "needs_rework"
             ledger["modelUpgradePending"] = True
             save_task_ledger(state_root, project_id, task_id, ledger)
-    if model_override_reason is None:
-        plan = ledger.get("resolvedPlan") or ledger.get("plan")
-        routing = plan.get("roleRouting") if isinstance(plan, Mapping) else None
-        role_request = routing.get(role) if isinstance(routing, Mapping) else None
-        if isinstance(role_request, Mapping) and isinstance(role_request.get("modelOverrideReason"), str):
-            model_override_reason = role_request["modelOverrideReason"]
     if (requested_model, requested_thinking) == ("gpt-5.6-sol", "ultra"):
         return _v2_terminal_tool_error(
             state_root,
@@ -6571,6 +6565,7 @@ def run_v2_team_task_with_adapter(state_root: str | Path,
     role_request = routing.get(role) if isinstance(routing, Mapping) else None
     if not isinstance(role_request, Mapping):
         raise StateStoreError("plan_invalid: missing roleRouting.%s" % role)
+    dispatch_request = _v2_pending_model_upgrade(ledger, role) or role_request
     result = send_v2_role_request_with_adapter(
         thread_adapter,
         state_root,
@@ -6592,8 +6587,8 @@ def run_v2_team_task_with_adapter(state_root: str | Path,
             authorization_package=ledger.get("taskAuthorizationPackage"),
             return_thread_id=return_thread_id,
         ),
-        requested_model=_required_str(role_request.get("requestedModel"), "roleRouting.requestedModel"),
-        requested_thinking=_required_str(role_request.get("requestedThinking"), "roleRouting.requestedThinking"),
+        requested_model=_required_str(dispatch_request.get("requestedModel"), "dispatch.requestedModel"),
+        requested_thinking=_required_str(dispatch_request.get("requestedThinking"), "dispatch.requestedThinking"),
         requested_at=observed_at,
         parallel_allowed=bool(plan.get("parallelAllowed")),
         return_thread_id=return_thread_id,

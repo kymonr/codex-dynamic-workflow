@@ -18,6 +18,8 @@ from team_router_state import (
     StateStoreError,
     TERMINAL_STATUSES,
     THREAD_PERMISSIONS,
+    V2_CONDITIONAL_ROLE_NAMES,
+    V2_DELEGATED_BASE_ROLE_NAMES,
     cleanup_terminal_manager_pool_task,
     load_task_ledger,
     new_v2_task_ledger,
@@ -201,7 +203,7 @@ def validate_model_routing_authorization(authorization: Mapping[str, Any] | None
                                          *,
                                          route_roles: tuple[str, ...]) -> dict[str, Any]:
     if not route_roles:
-        return {"allowedDefaults": frozenset()}
+        return {"allowedDefaults": frozenset(), "allowedOverrides": frozenset()}
     if not isinstance(authorization, Mapping):
         raise StateStoreError("model_authorization_required")
     authorized_by = authorization.get("authorizedBy")
@@ -213,20 +215,43 @@ def validate_model_routing_authorization(authorization: Mapping[str, Any] | None
     allowed_defaults = frozenset(str(value) for value in defaults)
     if not allowed_defaults.issubset(DEFAULT_MODEL_COMBINATIONS):
         raise StateStoreError("model_authorization_required")
-    if authorized_by == "explicit_cost_aware_entry" and allowed_defaults != DEFAULT_MODEL_COMBINATIONS:
+    if authorized_by == "explicit_cost_aware_entry":
+        if set(authorization) != {"authorizedBy", "allowedDefaults"} or allowed_defaults != DEFAULT_MODEL_COMBINATIONS:
+            raise StateStoreError("model_authorization_required")
+        return {"allowedDefaults": allowed_defaults, "allowedOverrides": frozenset()}
+    if set(authorization) != {"authorizedBy", "allowedDefaults", "allowedOverrides"} or allowed_defaults:
         raise StateStoreError("model_authorization_required")
-    if authorized_by == "complete_per_request_override" and allowed_defaults:
+    overrides = authorization.get("allowedOverrides")
+    if isinstance(overrides, str) or not isinstance(overrides, (list, tuple)) or not overrides:
         raise StateStoreError("model_authorization_required")
-    return {"allowedDefaults": allowed_defaults}
+    valid_roles = V2_DELEGATED_BASE_ROLE_NAMES | V2_CONDITIONAL_ROLE_NAMES
+    allowed_overrides = set()
+    seen_roles = set()
+    for override in overrides:
+        if not isinstance(override, Mapping) or set(override) != {"role", "model", "thinking"}:
+            raise StateStoreError("model_authorization_required")
+        role = _text(override.get("role"), "allowedOverrides.role")
+        model = _text(override.get("model"), "allowedOverrides.model")
+        thinking = _text(override.get("thinking"), "allowedOverrides.thinking")
+        if role not in valid_roles or role not in route_roles or "%s:%s" % (model, thinking) not in DEFAULT_MODEL_COMBINATIONS:
+            raise StateStoreError("model_authorization_required")
+        triple = (role, model, thinking)
+        if triple in allowed_overrides or role in seen_roles:
+            raise StateStoreError("model_authorization_required")
+        allowed_overrides.add(triple)
+        seen_roles.add(role)
+    if seen_roles != set(route_roles):
+        raise StateStoreError("model_authorization_required")
+    return {"allowedDefaults": allowed_defaults, "allowedOverrides": frozenset(allowed_overrides)}
 
 
 def _role_model_is_authorized(resolved: Mapping[str, Any],
-                              model_authorization: Mapping[str, Any]) -> bool:
+                              model_authorization: Mapping[str, Any], role: str) -> bool:
     override_reason = resolved.get("modelOverrideReason")
     if override_reason is None:
         combination = "%s:%s" % (resolved["requestedModel"], resolved["requestedThinking"])
         return combination in model_authorization["allowedDefaults"]
-    return True
+    return (role, resolved["requestedModel"], resolved["requestedThinking"]) in model_authorization["allowedOverrides"]
 
 
 def resolve_v2_manager_plan(*,
@@ -313,7 +338,7 @@ def resolve_v2_manager_plan(*,
             )
         except KeyError as exc:
             raise StateStoreError("plan_invalid: missing roleRouting.%s.executionClass" % role) from exc
-        if not _role_model_is_authorized(resolved, model_authorization):
+        if not _role_model_is_authorized(resolved, model_authorization, role):
             raise StateStoreError("model_authorization_required")
         resolved_routing[role] = resolved
     return dict(
@@ -635,9 +660,9 @@ def record_v2_model_upgrade(state_root: str,
     model_authorization = validate_model_routing_authorization(
         ledger.get("taskAuthorizationPackage", {}).get("modelRoutingAuthorization")
         if isinstance(ledger.get("taskAuthorizationPackage"), Mapping) else None,
-        route_roles=(role,),
+        route_roles=tuple(plan.get("routeRoles", ())),
     )
-    if not _role_model_is_authorized(resolved, model_authorization):
+    if not _role_model_is_authorized(resolved, model_authorization, role):
         raise StateStoreError("model_authorization_required")
     if int(ledger.get("modelUpgradeCount", 0)) >= 1:
         ledger["status"] = "blocked"
