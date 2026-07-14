@@ -306,6 +306,29 @@ def manager_pool_lock(state_root: str | Path,
             pass
 
 
+@contextmanager
+def task_dispatch_lock(state_root: str | Path, project_id: str, task_id: str, *, acquired_at: str):
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    lock_path = task_path(state_root, project_id, task_id).with_suffix(".dispatch.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"taskId": task_id, "pid": os.getpid(), "acquiredAt": _required_str(acquired_at, "acquiredAt")}, sort_keys=True).encode("utf-8")
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise StateStoreError("task dispatch lock is held: %s" % task_id) from exc
+    try:
+        os.write(fd, payload)
+        yield
+    finally:
+        os.close(fd)
+        try:
+            if lock_path.read_bytes() == payload:
+                lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _manager_pool(registry: dict[str, Any], project_id: str,
                   parent_thread_id: str) -> dict[str, Any]:
     projects = _as_mapping(registry.get("projects"), "registry.projects")

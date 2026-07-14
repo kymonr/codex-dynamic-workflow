@@ -554,7 +554,7 @@ def resume_v2_manager_routing(state_root: str | Path,
     if isinstance(ledger.get("resolvedPlan"), Mapping):
         staged["resolvedPlan"] = dict(staged_plan)
     resumed = next_v2_route_after_evidence(staged, {"requestedGateClass": "STRICT"})
-    resumed["status"] = "planned"
+    resumed["status"] = "awaiting_callback"
     resumed.pop("routingError", None)
     return save_task_ledger(state_root, project_id, task_id, resumed)
 

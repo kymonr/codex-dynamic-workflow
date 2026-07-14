@@ -136,6 +136,7 @@ sourceRoleThreadId: <reviewer role thread id>
 role: Reviewer
 result: pass | needs_rework | blocked
 summary: <review summary>
+findings: <finding counts or top blockers>
 requiredChanges: <none or changes>
 evidenceChecked: <checked evidence>
 risks: <none or risks>
@@ -172,6 +173,16 @@ deliveryError: <short error only when direct-send was unavailable or failed>
 ```
 
 Natural-language verdicts do not move state.
+
+## Strict V2 Correlation And Legacy Compatibility
+
+Every current strict V2 role result (Architect, Executor, Reviewer, QA, and Verifier) echoes the exact Router-owned `protocolVersion: 2`, `dispatchId`, `requestId`, and positive `attempt` from its prepared dispatch. Direct-send and the self-thread fallback use the same values. The Router accepts a result only when all four values match the current pending dispatch; malformed, old, or unknown-version results are quarantined and do not advance routing.
+
+Legacy V1 and pre-strict V2 dispatches retain their existing result shape and are not backfilled. A strict-only result is not accepted for a legacy dispatch, and a legacy-shaped result is not accepted for a current strict dispatch. Current ownership is always the latest dispatch for that role across strict and legacy records: a current strict dispatch never falls back to an older legacy receipt, and a newer legacy dispatch also prevents an older strict result from being consumed.
+
+`outcome_unknown` means send outcome cannot be safely retried automatically. A later matching result may still be consumed exactly once; duplicate delivery only adds distinct receipt evidence and never replays routing.
+
+If strict result routing fails before the atomic consume transition completes, the result remains `pending`, the task remains nonterminal, and the Role claim is retained. After the routing condition is repaired, the same exactly correlated result may be replayed; the failed attempt must not be finalized or released as terminal work.
 
 Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, protocolBlock) means the same protocol delivery target as send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>); prefer the explicit `threadId=<returnThreadId>` form in role request templates.
 

@@ -60,6 +60,7 @@ import team_router
 import team_router_state
 import team_router_policy
 import team_router_protocol
+import team_router_direct_return
 import team_router_v2
 import team_router_watcher_runtime
 
@@ -1166,6 +1167,19 @@ next: none
         with self.assertRaises(team_router.ProtocolError):
             team_router.parse_callback(text, "ctr-1")
 
+    def test_callback_parser_rejects_duplicate_field_in_one_block(self):
+        text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
+status: done
+final: true
+summary: first
+summary: overwritten
+evidence: tests
+risks: none
+next: none
+"""
+        with self.assertRaisesRegex(team_router.ProtocolError, "duplicate field"):
+            team_router.parse_callback(text, "ctr-1")
+
     def test_callback_parser_uses_last_final_message(self):
         text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
 status: done
@@ -1186,6 +1200,29 @@ next: retry
         msg = team_router.parse_callback(text, "ctr-1")
         self.assertEqual(msg.fields["status"], "blocked")
         self.assertEqual(msg.fields["summary"], "final")
+
+    def test_direct_return_rejects_two_final_markers_in_one_message(self):
+        text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
+status: done
+final: true
+summary: first
+evidence: tests
+risks: none
+next: none
+TEAM_ROUTER_CALLBACK taskId=ctr-1
+status: done
+final: true
+summary: second
+evidence: tests
+risks: none
+next: none
+"""
+        parsed, malformed, _ = team_router_direct_return._direct_return_protocol_message(
+            [{"sourceThreadId": "executor-thread", "messageId": "msg-1", "text": text}],
+            marker="TEAM_ROUTER_CALLBACK", task_id="ctr-1", source_thread_id="executor-thread",
+        )
+        self.assertIsNone(parsed)
+        self.assertIn("multiple", malformed["error"])
 
     def test_callback_parser_keeps_multiline_summary(self):
         text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
@@ -2099,6 +2136,50 @@ regressionRisks: low
                 )
                 self.assertIsNotNone(malformed)
                 self.assertIn("sourceRoleThreadId", malformed["error"])
+
+    def test_strict_v2_receipts_require_exact_dispatch_identity_for_all_roles_and_channels(self):
+        bodies = {
+            "executor": ("TEAM_ROUTER_CALLBACK", "status: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: verifier"),
+            "architect": ("TEAM_ROUTER_ARCHITECT_REVIEW", "result: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none\nskillProfileUsed: architect-default\narchitectureImpact: shared\ncompatibilityNotes: ok\nalternatives: none\nmigrationRisks: low"),
+            "reviewer": ("TEAM_ROUTER_REVIEW", "result: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"),
+            "qa": ("TEAM_ROUTER_QA_REVIEW", "result: pass\nsummary: ok\nfindings: none\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none\nskillProfileUsed: qa-default\ncoverageGaps: none\nverificationPlan: tests\nregressionRisks: low"),
+            "verifier": ("TEAM_ROUTER_VERDICT", "result: pass\nstatus: accepted\nsummary: ok\nrequiredChanges: none\nevidenceChecked: tests\nrisks: none"),
+        }
+        expected = {"protocolVersion": 2, "dispatchId": "dispatch-current", "requestId": "request-current", "attempt": 2}
+        for role, (marker, body) in bodies.items():
+            role_label = "QA" if role == "qa" else role.title()
+            base = "%s taskId=ctr-1\nsourceThreadId: parent\nsourceRoleThreadId: thread-%s\nrole: %s\nprotocolVersion: 2\ndispatchId: dispatch-current\nrequestId: request-current\nattempt: 2\n%s" % (marker, role, role_label, body)
+            msg = team_router.parse_message(base, marker, "ctr-1")
+            receipt = {"messageId": "msg-1", "sentAt": "now", "sourceThreadId": "thread-%s" % role}
+            for validator in (team_router._validate_direct_return_receipt, team_router._validate_self_thread_fallback_receipt):
+                self.assertIsNone(validator(msg, receipt, task_id="ctr-1", expected_role=role, expected_role_thread_id="thread-%s" % role, expected_return_thread_id="parent", expected_dispatch=expected))
+            for field, value in (("protocolVersion", "9"), ("dispatchId", "wrong"), ("requestId", "wrong"), ("attempt", "1"), ("attempt", "0"), ("attempt", "two")):
+                mutated = base.replace("%s: %s" % (field, "2" if field in {"protocolVersion", "attempt"} else "dispatch-current" if field == "dispatchId" else "request-current"), "%s: %s" % (field, value))
+                malformed = team_router._validate_direct_return_receipt(team_router.parse_message(mutated, marker, "ctr-1"), receipt, task_id="ctr-1", expected_role=role, expected_role_thread_id="thread-%s" % role, expected_return_thread_id="parent", expected_dispatch=expected)
+                self.assertIsNotNone(malformed)
+            missing = base.replace("\nrequestId: request-current", "")
+            self.assertIsNotNone(team_router._validate_direct_return_receipt(team_router.parse_message(missing, marker, "ctr-1"), receipt, task_id="ctr-1", expected_role=role, expected_role_thread_id="thread-%s" % role, expected_return_thread_id="parent", expected_dispatch=expected))
+
+    def test_strict_dispatch_never_falls_back_to_an_older_role_receipt(self):
+        ledger = {"workflowVersion": 2, "dispatches": [
+            {"role": "executor", "threadId": "legacy-thread", "returnThreadId": "parent", "callbackDelivery": "direct-send"},
+            {"role": "executor", "protocolVersion": 2, "dispatchId": "current", "deliveryStatus": "prepared"},
+        ]}
+
+        self.assertIsNone(team_router_direct_return._direct_return_record(ledger, "executor"))
+
+    def test_v1_and_legacy_v2_receipt_migration_matrix(self):
+        base = "TEAM_ROUTER_CALLBACK taskId=ctr-1\nstatus: done\nfinal: true\nsummary: ok\nevidence: tests\nrisks: none\nnext: verifier\nsourceThreadId: parent\nsourceRoleThreadId: thread-executor\nrole: Executor"
+        receipt = {"messageId": "msg-1", "sentAt": "now", "sourceThreadId": "thread-executor"}
+        legacy = {"role": "executor", "requestId": "legacy-request"}
+        strict = {"role": "executor", "protocolVersion": 2, "dispatchId": "dispatch-1", "requestId": "request-1", "attempt": 1}
+
+        self.assertIsNone(team_router._validate_direct_return_receipt(team_router.parse_callback(base, "ctr-1"), receipt, task_id="ctr-1", expected_role="executor", expected_role_thread_id="thread-executor", expected_return_thread_id="parent", expected_dispatch=legacy))
+        strict_only = base + "\nprotocolVersion: 2\ndispatchId: dispatch-1\nrequestId: request-1\nattempt: 1"
+        self.assertIsNotNone(team_router._validate_direct_return_receipt(team_router.parse_callback(strict_only, "ctr-1"), receipt, task_id="ctr-1", expected_role="executor", expected_role_thread_id="thread-executor", expected_return_thread_id="parent", expected_dispatch=legacy))
+        self.assertIsNotNone(team_router._validate_direct_return_receipt(team_router.parse_callback(base, "ctr-1"), receipt, task_id="ctr-1", expected_role="executor", expected_role_thread_id="thread-executor", expected_return_thread_id="parent", expected_dispatch=strict))
+        unknown = strict_only.replace("protocolVersion: 2", "protocolVersion: 9")
+        self.assertIsNotNone(team_router._validate_direct_return_receipt(team_router.parse_callback(unknown, "ctr-1"), receipt, task_id="ctr-1", expected_role="executor", expected_role_thread_id="thread-executor", expected_return_thread_id="parent", expected_dispatch=strict))
     def test_manager_direct_return_messages_reads_return_thread(self):
         adapter = FakeThreadAdapter()
         adapter.messages["parent-manager-thread"] = [
@@ -2317,6 +2398,17 @@ regressionRisks: low
         self.assertIn("compliance review", reviewer_gate["roleReuse"])
         self.assertIn("code-quality review", reviewer_gate["roleReuse"])
         self.assertIn("original reviewer", reviewer_gate["roleReuse"])
+
+    def test_executor_dispatch_has_one_canonical_role_and_dispatch_role(self):
+        message = team_router.make_executor_dispatch_message(
+            "ctr-20260715-executor-role",
+            {"scope": "src/team_router.py", "stopWhen": "tests pass", "executorPrompt": "fix one issue"},
+            "local-package",
+            {"messageId": "msg-1", "sentAt": "2026-07-15T10:00:00+08:00"},
+        )
+        self.assertIn("dispatchRole: executor", message)
+        self.assertEqual(message.count("role: Executor"), 1)
+        self.assertNotIn("role: executor", message)
 
     def test_role_request_messages_keep_protocol_keys_but_require_chinese_human_text(self):
         task_id = "ctr-20260628-chinese-callback"
@@ -3705,6 +3797,13 @@ regressionRisks: low
                     self.assertIn("longContextPolicy: 不要复制完整 diff、完整日志、完整背景或完整角色推理", message)
 
 class TestTeamRouterState(unittest.TestCase):
+    def test_task_dispatch_lock_is_separate_and_fails_closed_when_held(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            with team_router_state.task_dispatch_lock(root, "project-1", "task-1", acquired_at="2026-07-15T10:00:00+08:00"):
+                with self.assertRaisesRegex(team_router.StateStoreError, "task dispatch lock"):
+                    with team_router_state.task_dispatch_lock(root, "project-1", "task-1", acquired_at="2026-07-15T10:00:01+08:00"):
+                        pass
     def test_closeout_check_reports_read_only_status_and_unauthorized_gates(self):
         global_skill = Path("C:/tmp/team-router-closeout-missing-global-skill")
         result = subprocess.run(
@@ -6463,6 +6562,419 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         self.assertEqual(json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True), ledger_before)
         self.assertEqual(json.dumps(team_router.load_registry(self.root, self.project_id), sort_keys=True), registry_before)
 
+    def test_v2_send_records_router_owned_prepared_dispatch_then_acknowledges(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+
+        self._send(adapter)
+
+        dispatch = team_router.load_task_ledger(self.root, self.project_id, "task-1")["dispatches"][-1]
+        self.assertEqual(dispatch["protocolVersion"], 2)
+        self.assertTrue(dispatch["dispatchId"])
+        self.assertEqual(dispatch["requestId"], "request-1")
+        self.assertEqual(dispatch["attempt"], 1)
+        self.assertEqual(dispatch["deliveryStatus"], "acknowledged")
+        self.assertEqual(dispatch["resultStatus"], "pending")
+
+    def test_v2_send_exception_marks_prepared_dispatch_outcome_unknown_without_retry(self):
+        adapter = FakeThreadAdapter()
+        adapter.send_error = RuntimeError("send failed")
+        self._save_task()
+
+        result = self._send(adapter)
+
+        self.assertEqual(result["outcome"], "tool_error")
+        dispatches = team_router.load_task_ledger(self.root, self.project_id, "task-1")["dispatches"]
+        self.assertEqual(len(dispatches), 1)
+        self.assertEqual(dispatches[0]["deliveryStatus"], "outcome_unknown")
+        self.assertEqual(adapter.sent, [])
+
+    def test_v2_startup_recovery_marks_prepared_dispatch_outcome_unknown(self):
+        ledger = self._save_task()
+        ledger["dispatches"].append({
+            "role": "executor", "requestId": "request-1", "protocolVersion": 2,
+            "dispatchId": "dispatch-1", "attempt": 1, "deliveryStatus": "prepared", "resultStatus": "pending",
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+
+        recovered = team_router.recover_v2_prepared_dispatches(
+            self.root, self.project_id, "task-1", recovered_at="2026-07-11T20:01:00+08:00",
+        )
+
+        self.assertEqual(recovered["dispatches"][-1]["deliveryStatus"], "outcome_unknown")
+
+    def test_v2_dispatch_attempt_is_monotonic_per_task_and_role(self):
+        self._save_task()
+
+        for request_id in ("request-1", "request-2"):
+            team_router._prepare_v2_role_dispatch(
+                self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+                request_id=request_id, thread_id="thread-executor", host_id="local", target_fingerprint="target-1",
+                requested_model="gpt-5.6-terra", requested_thinking="medium",
+                requested_at="2026-07-11T20:00:00+08:00", creation_accepted=False, binding="reused",
+                model_override_reason=None, return_thread_id=None,
+            )
+
+        dispatches = team_router.load_task_ledger(self.root, self.project_id, "task-1")["dispatches"]
+        self.assertEqual([item["attempt"] for item in dispatches], [1, 2])
+        self.assertNotEqual(dispatches[0]["dispatchId"], dispatches[1]["dispatchId"])
+
+    def test_v2_guarded_prepare_rechecks_model_after_early_preflight(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+
+        def stale_binding(*args, **kwargs):
+            ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+            plan = ledger.get("resolvedPlan") or ledger["plan"]
+            plan["roleRouting"]["executor"] = {
+                "executionClass": "standard", "requestedModel": "gpt-5.6-luna", "requestedThinking": "medium",
+            }
+            team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+            return {"outcome": "reused", "threadId": "thread-executor", "targetFingerprint": kwargs["target_fingerprint"], "creationAccepted": False}
+
+        with mock.patch.object(team_router, "resolve_or_create_v2_role_with_adapter", stale_binding):
+            with self.assertRaisesRegex(team_router.StateStoreError, "dispatch_model_mismatch"):
+                self._send(adapter)
+        self.assertEqual(adapter.sent, [])
+        self.assertEqual(team_router.load_task_ledger(self.root, self.project_id, "task-1")["dispatches"], [])
+
+    def test_v2_terminal_pending_upgrade_is_consumed_in_prepared_transition(self):
+        adapter = FakeThreadAdapter()
+        adapter.send_error = RuntimeError("send failed")
+        ledger = self._save_task()
+        ledger.update({
+            "status": "completed", "modelUpgradeCount": 1, "modelUpgradePending": True,
+            "pendingModelUpgrade": {
+                "parentThreadId": "parent-1", "role": "executor", "requestedModel": "gpt-5.6-sol",
+                "requestedThinking": "high", "upgradedFrom": "gpt-5.6-terra", "completedResults": ["result"],
+                "readFiles": ["src/team_router.py"], "exactFailure": "failure", "unresolved": ["edge"],
+            },
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+
+        self._send(adapter, requested_model="gpt-5.6-sol", requested_thinking="high")
+
+        saved = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        dispatch = saved["dispatches"][-1]
+        self.assertEqual(saved["status"], "awaiting_callback")
+        self.assertNotIn("pendingModelUpgrade", saved)
+        self.assertNotIn("modelUpgradePending", saved)
+        self.assertEqual(dispatch["attempt"], 1)
+        self.assertTrue(dispatch["dispatchId"])
+        self.assertEqual(dispatch["upgradedFrom"], "gpt-5.6-terra")
+        self.assertEqual(dispatch["carryForward"]["exactFailure"], "failure")
+        self.assertEqual(dispatch["deliveryStatus"], "outcome_unknown")
+
+    def test_v2_adapter_send_runs_between_prepared_and_ack_locks(self):
+        test = self
+        calls = []
+
+        class LockAwareAdapter(FakeThreadAdapter):
+            def send_message_to_thread(self, **kwargs):
+                self.assertFalse(team_router_state.task_path(test.root, test.project_id, "task-1").with_suffix(".dispatch.lock").exists())
+                return super().send_message_to_thread(**kwargs)
+
+        @contextmanager
+        def counting_lock(*args, **kwargs):
+            calls.append(kwargs["acquired_at"])
+            with team_router_state.task_dispatch_lock(*args, **kwargs):
+                yield
+
+        self._save_task()
+        with mock.patch.object(team_router, "task_dispatch_lock", counting_lock):
+            self._send(LockAwareAdapter())
+        self.assertEqual(len(calls), 2)
+
+    def test_v2_result_consume_is_once_and_deduplicates_receipt_evidence(self):
+        self._save_task()
+        prepared, _ = team_router._prepare_v2_role_dispatch(
+            self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+            request_id="request-1", thread_id="thread-executor", host_id="local", target_fingerprint="target",
+            requested_model="gpt-5.6-terra", requested_thinking="medium", requested_at="2026-07-11T20:00:00+08:00",
+            creation_accepted=False, binding="reused", model_override_reason=None, return_thread_id="parent-1",
+        )
+
+        first, consumed = team_router._consume_v2_dispatch_result(
+            self.root, self.project_id, "task-1", dispatch=prepared, channel="manager-inbox", host_message_id="msg-1",
+            captured_at="2026-07-11T20:01:00+08:00",
+        )
+        second, repeated = team_router._consume_v2_dispatch_result(
+            self.root, self.project_id, "task-1", dispatch=prepared, channel="read_thread", host_message_id="msg-2",
+            captured_at="2026-07-11T20:02:00+08:00",
+        )
+        _, duplicate = team_router._consume_v2_dispatch_result(
+            self.root, self.project_id, "task-1", dispatch=prepared, channel="manager-inbox", host_message_id="msg-1",
+            captured_at="2026-07-11T20:03:00+08:00",
+        )
+
+        self.assertTrue(consumed)
+        self.assertFalse(repeated)
+        self.assertFalse(duplicate)
+        self.assertEqual(first["dispatches"][-1]["resultStatus"], "consumed")
+        self.assertEqual(len(second["dispatches"][-1]["resultReceipts"]), 2)
+
+    def test_v2_consume_rejects_old_strict_dispatch_after_newer_pending_attempt(self):
+        self._save_task()
+        first, _ = team_router._prepare_v2_role_dispatch(
+            self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+            request_id="request-1", thread_id="thread-executor", host_id="local", target_fingerprint="target",
+            requested_model="gpt-5.6-terra", requested_thinking="medium", requested_at="2026-07-11T20:00:00+08:00",
+            creation_accepted=False, binding="reused", model_override_reason=None, return_thread_id="parent-1",
+        )
+        team_router._prepare_v2_role_dispatch(
+            self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+            request_id="request-2", thread_id="thread-executor", host_id="local", target_fingerprint="target",
+            requested_model="gpt-5.6-terra", requested_thinking="medium", requested_at="2026-07-11T20:01:00+08:00",
+            creation_accepted=False, binding="reused", model_override_reason=None, return_thread_id="parent-1",
+        )
+        before = json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True)
+
+        with self.assertRaisesRegex(team_router.StateStoreError, "dispatch_not_current"):
+            team_router._consume_v2_dispatch_result(
+                self.root, self.project_id, "task-1", dispatch=first, channel="read_thread",
+                host_message_id="old-result", captured_at="2026-07-11T20:02:00+08:00",
+            )
+
+        self.assertEqual(
+            json.dumps(team_router.load_task_ledger(self.root, self.project_id, "task-1"), sort_keys=True),
+            before,
+        )
+
+    def test_v2_public_capture_rejects_strict_result_after_newer_legacy_dispatch(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        sent = self._send(adapter)
+        dispatch = sent["ledger"]["dispatches"][-1]
+        adapter.append_reply(
+            dispatch["threadId"],
+            "TEAM_ROUTER_CALLBACK taskId=task-1\nsourceThreadId: parent-1\n"
+            "sourceRoleThreadId: thread-executor\nrole: Executor\nprotocolVersion: 2\n"
+            "dispatchId: %s\nrequestId: request-1\nattempt: 1\nstatus: done\nfinal: true\n"
+            "summary: stale strict result\nevidence: focused\nrisks: none\nnext: manager"
+            % dispatch["dispatchId"],
+            message_id="strict-result", sent_at="2026-07-11T20:01:00+08:00",
+        )
+        validate = team_router._validate_self_thread_fallback_receipt
+
+        def append_newer_legacy(*args, **kwargs):
+            malformed = validate(*args, **kwargs)
+            ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+            ledger["dispatches"].append({
+                "role": "executor",
+                "requestId": "legacy-request",
+                "threadId": "thread-legacy",
+                "dispatchAccepted": True,
+            })
+            team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+            return malformed
+
+        with mock.patch.object(
+            team_router,
+            "_validate_self_thread_fallback_receipt",
+            side_effect=append_newer_legacy,
+        ):
+            with self.assertRaisesRegex(team_router.StateStoreError, "dispatch_not_current"):
+                team_router.capture_executor_callback_from_read(
+                    self.root,
+                    self.project_id,
+                    "task-1",
+                    adapter.messages[dispatch["threadId"]],
+                    captured_at="2026-07-11T20:02:00+08:00",
+                )
+
+        saved = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        self.assertEqual(saved["dispatches"][0]["resultStatus"], "pending")
+        self.assertEqual(saved["dispatches"][0].get("resultReceipts", []), [])
+
+    def test_v2_public_capture_route_failure_is_replayable_and_preserves_claim(self):
+        adapter = FakeThreadAdapter()
+        self._save_task()
+        sent = self._send(adapter)
+        dispatch = sent["ledger"]["dispatches"][-1]
+        adapter.append_reply(
+            dispatch["threadId"],
+            "TEAM_ROUTER_CALLBACK taskId=task-1\nsourceThreadId: parent-1\n"
+            "sourceRoleThreadId: thread-executor\nrole: Executor\nprotocolVersion: 2\n"
+            "dispatchId: %s\nrequestId: request-1\nattempt: 1\nstatus: done\nfinal: true\n"
+            "summary: replay after repair\nevidence: focused\nrisks: none\nnext: manager"
+            % dispatch["dispatchId"],
+            message_id="strict-result", sent_at="2026-07-11T20:01:00+08:00",
+        )
+
+        with mock.patch.object(
+            team_router,
+            "next_v2_route_after_evidence",
+            side_effect=team_router.StateStoreError("route_interrupted"),
+        ):
+            failed = team_router.capture_executor_callback_from_read(
+                self.root,
+                self.project_id,
+                "task-1",
+                adapter.messages[dispatch["threadId"]],
+                captured_at="2026-07-11T20:02:00+08:00",
+            )
+
+        self.assertEqual(failed["status"], "awaiting_callback")
+        self.assertEqual(failed["dispatches"][-1]["resultStatus"], "pending")
+        self.assertEqual(failed["dispatches"][-1].get("resultReceipts", []), [])
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
+        self.assertEqual(pool["roles"]["executor"][0]["claim"]["requestId"], "request-1")
+
+        def repaired_route(current, evidence):
+            repaired = dict(current)
+            repaired["status"] = "manager_acceptance_pending"
+            return repaired
+
+        with mock.patch.object(team_router, "next_v2_route_after_evidence", side_effect=repaired_route):
+            repaired = team_router.capture_executor_callback_from_read(
+                self.root,
+                self.project_id,
+                "task-1",
+                adapter.messages[dispatch["threadId"]],
+                captured_at="2026-07-11T20:03:00+08:00",
+            )
+        self.assertEqual(repaired["dispatches"][-1]["resultStatus"], "consumed")
+        self.assertEqual(len(repaired["dispatches"][-1]["resultReceipts"]), 1)
+        self.assertNotIn("routingError", repaired)
+        pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
+        self.assertNotIn("claim", pool["roles"]["executor"][0])
+
+    def test_v2_fallback_rejects_two_final_blocks_in_one_message(self):
+        self._save_task()
+        dispatch, _ = team_router._prepare_v2_role_dispatch(
+            self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+            request_id="request-1", thread_id="thread-executor", host_id="local", target_fingerprint="target",
+            requested_model="gpt-5.6-terra", requested_thinking="medium", requested_at="2026-07-11T20:00:00+08:00",
+            creation_accepted=False, binding="reused", model_override_reason=None, return_thread_id="parent-1",
+        )
+        ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
+        ledger["dispatches"][-1].update({
+            "callbackDelivery": "direct-send",
+            "roleThreadId": "thread-executor",
+            "returnThreadId": "parent-1",
+            "orchestratorThreadId": "parent-1",
+            "fallbackSearchAnchor": {"messageId": "dispatch", "sentAt": "2026-07-11T20:00:00+08:00"},
+        })
+        team_router.save_task_ledger(self.root, self.project_id, "task-1", ledger)
+        block = (
+            "TEAM_ROUTER_CALLBACK taskId=task-1\nsourceThreadId: parent-1\n"
+            "sourceRoleThreadId: thread-executor\nrole: Executor\nprotocolVersion: 2\n"
+            "dispatchId: %s\nrequestId: request-1\nattempt: 1\nstatus: done\nfinal: true\n"
+            "summary: %s\nevidence: focused\nrisks: none\nnext: manager"
+        )
+        saved = team_router.capture_executor_callback_from_read(
+            self.root, self.project_id, "task-1",
+            [
+                {"messageId": "dispatch", "sentAt": "2026-07-11T20:00:00+08:00", "text": "TEAM_ROUTER_DISPATCH taskId=task-1"},
+                {"messageId": "reply", "sentAt": "2026-07-11T20:01:00+08:00", "sourceThreadId": "thread-executor",
+                 "text": "%s\n%s" % ((block % (dispatch["dispatchId"], "first")), (block % (dispatch["dispatchId"], "second")))},
+            ],
+            captured_at="2026-07-11T20:02:00+08:00",
+        )
+        self.assertEqual(saved["status"], "malformed_callback")
+        self.assertEqual(saved["dispatches"][-1]["resultStatus"], "pending")
+        self.assertNotIn("first", json.dumps(saved.get("observations", [])))
+        self.assertNotIn("second", json.dumps(saved.get("observations", [])))
+
+    def test_v2_executor_self_thread_fallback_rejects_invalid_strict_correlation_without_direct_return(self):
+        self._save_task()
+        dispatch, _ = team_router._prepare_v2_role_dispatch(
+            self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+            request_id="request-1", thread_id="thread-executor", host_id="local", target_fingerprint="target",
+            requested_model="gpt-5.6-terra", requested_thinking="medium", requested_at="2026-07-11T20:00:00+08:00",
+            creation_accepted=False, binding="reused", model_override_reason=None, return_thread_id=None,
+        )
+
+        saved = team_router.capture_executor_callback_from_read(
+            self.root, self.project_id, "task-1",
+            [
+                {"messageId": "dispatch", "sentAt": "2026-07-11T20:00:00+08:00", "text": "TEAM_ROUTER_DISPATCH taskId=task-1"},
+                {
+                    "messageId": "reply", "sentAt": "2026-07-11T20:01:00+08:00",
+                    "sourceThreadId": "thread-executor",
+                    "text": (
+                        "TEAM_ROUTER_CALLBACK taskId=task-1\nsourceThreadId: parent-1\n"
+                        "sourceRoleThreadId: thread-executor\nrole: Executor\nprotocolVersion: 1\n"
+                        "dispatchId: wrong-dispatch\nstatus: done\nfinal: true\n"
+                        "summary: invalid correlation\nevidence: focused\nrisks: none\nnext: manager"
+                    ),
+                },
+            ],
+            captured_at="2026-07-11T20:02:00+08:00",
+        )
+
+        self.assertEqual(saved["status"], "malformed_callback")
+        self.assertEqual(saved["dispatches"][-1]["dispatchId"], dispatch["dispatchId"])
+        self.assertEqual(saved["dispatches"][-1]["resultStatus"], "pending")
+        self.assertNotIn("callbackReceipt", saved)
+        self.assertFalse(any(item.get("type") == "callback_raw" for item in saved.get("observations", [])))
+
+    def test_v2_legacy_self_thread_fallback_keeps_legacy_shape_but_rejects_strict_fields(self):
+        adapter = FakeThreadAdapter()
+        for mixed in (False, True):
+            task_id = "task-legacy-mixed" if mixed else "task-legacy-clean"
+            request_id = "request-legacy-mixed" if mixed else "request-legacy-clean"
+            self._save_task(task_id=task_id)
+            sent = self._send(adapter, task_id=task_id, request_id=request_id)
+            dispatch = sent["ledger"]["dispatches"][-1]
+            ledger = team_router.load_task_ledger(self.root, self.project_id, task_id)
+            for field in ("protocolVersion", "dispatchId", "attempt", "deliveryStatus", "resultStatus"):
+                ledger["dispatches"][-1].pop(field, None)
+            team_router.save_task_ledger(self.root, self.project_id, task_id, ledger)
+
+            callback = (
+                "TEAM_ROUTER_CALLBACK taskId=%s\nstatus: done\nfinal: true\n"
+                "summary: legacy result\nevidence: focused\nrisks: none\nnext: manager"
+            ) % task_id
+            if mixed:
+                callback += (
+                    "\nprotocolVersion: 2\ndispatchId: mixed-dispatch"
+                    "\nrequestId: mixed-request\nattempt: 1"
+                )
+            adapter.append_reply(
+                dispatch["threadId"],
+                callback,
+                message_id="legacy-result-%s" % ("mixed" if mixed else "clean"),
+                sent_at="2026-07-11T20:02:00+08:00",
+            )
+            saved = team_router.capture_executor_callback_from_read(
+                self.root,
+                self.project_id,
+                task_id,
+                adapter.messages[dispatch["threadId"]],
+                captured_at="2026-07-11T20:03:00+08:00",
+            )
+            if not mixed:
+                self.assertIn("callbackReceipt", saved)
+                self.assertNotIn("malformedDirectReturns", saved)
+                continue
+            self.assertEqual(saved["status"], "malformed_callback")
+            error = saved["malformedDirectReturns"][-1]["error"]
+            for field in ("protocolVersion", "dispatchId", "requestId", "attempt"):
+                self.assertIn("%s is not accepted for a legacy dispatch" % field, error)
+            self.assertNotIn("callbackReceipt", saved)
+
+    def test_v2_late_ack_preserves_consumed_result(self):
+        self._save_task()
+        prepared, _ = team_router._prepare_v2_role_dispatch(
+            self.root, self.project_id, "task-1", parent_thread_id="parent-1", role="executor",
+            request_id="request-1", thread_id="thread-executor", host_id="local", target_fingerprint="target",
+            requested_model="gpt-5.6-terra", requested_thinking="medium", requested_at="2026-07-11T20:00:00+08:00",
+            creation_accepted=False, binding="reused", model_override_reason=None, return_thread_id="parent-1",
+        )
+        team_router._consume_v2_dispatch_result(self.root, self.project_id, "task-1", dispatch=prepared, channel="read_thread", host_message_id="msg-result", captured_at="2026-07-11T20:01:00+08:00")
+
+        saved = team_router._record_v2_role_dispatch(
+            self.root, self.project_id, "task-1", role="executor", request_id="request-1", thread_id="thread-executor",
+            host_id="local", target_fingerprint="target", requested_model="gpt-5.6-terra", requested_thinking="medium",
+            requested_at="2026-07-11T20:00:00+08:00", creation_accepted=False, binding="reused",
+            send_result={"message": {"id": "msg-ack", "createdAt": "2026-07-11T20:02:00+08:00"}},
+            return_thread_id="parent-1", dispatch_id=prepared["dispatchId"],
+        )
+
+        self.assertEqual(saved["dispatches"][-1]["deliveryStatus"], "acknowledged")
+        self.assertEqual(saved["dispatches"][-1]["resultStatus"], "consumed")
+
     def test_v2_complete_override_authorizes_only_its_exact_role_pair(self):
         authorization = team_router_v2.validate_model_routing_authorization(
             {
@@ -6563,7 +7075,7 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         self.assertNotIn("hostId", adapter.sent[0]["kwargs"])
         self.assertNotIn("hostId", adapter.renamed[0])
 
-    def test_v2_send_failure_closes_claim_without_awaiting_callback(self):
+    def test_v2_send_failure_preserves_claim_while_awaiting_late_callback(self):
         adapter = FakeThreadAdapter()
         adapter.send_error = RuntimeError("model rejected")
         self._save_task()
@@ -6572,10 +7084,11 @@ class TestTeamRouterV2DynamicDispatch(unittest.TestCase):
         self.assertEqual(result["outcome"], "tool_error")
         self.assertEqual(result["reason"], "model_unavailable")
         ledger = team_router.load_task_ledger(self.root, self.project_id, "task-1")
-        self.assertEqual(ledger["status"], "tool_error")
+        self.assertEqual(ledger["status"], "awaiting_callback")
         self.assertFalse(ledger["dispatches"][-1]["dispatchAccepted"])
         pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
-        self.assertNotIn("claim", pool["roles"]["executor"][0])
+        self.assertEqual(pool["roles"]["executor"][0]["claim"]["taskId"], "task-1")
+        self.assertEqual(pool["roles"]["executor"][0]["claim"]["requestId"], "request-1")
 
     def test_v2_creation_intent_recovery_binds_one_verified_bootstrap_identity_without_create(self):
         class RecoveryAdapter(FakeThreadAdapter):
@@ -7456,6 +7969,177 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
         self.assertEqual((rework["status"], rework["reworkCount"], rework["preferredThreadId"]), ("dispatched", 1, "thread-verifier"))
         pool = team_router.load_registry(self.root, self.project_id)["projects"][self.project_id]["managerPools"][team_router_state.PROJECT_ROLE_POOL_KEY]
         self.assertNotIn("claim", pool["roles"]["verifier"][0])
+
+    def _save_v1_mixed_verifier_history(self, *, direct_return=False):
+        ledger = self._save_awaiting_acceptance()
+        legacy_request = {
+            "role": "verifier",
+            "threadId": "thread-legacy-verifier",
+            "messageId": "msg-legacy-request",
+            "sentAt": "2026-07-15T10:00:00+08:00",
+            "searchAnchor": {
+                "messageId": "msg-legacy-request",
+                "sentAt": "2026-07-15T10:00:00+08:00",
+            },
+        }
+        if direct_return:
+            legacy_request.update({
+                "returnThreadId": self.parent_thread_id,
+                "returnSearchAnchor": {
+                    "messageId": "msg-legacy-request",
+                    "sentAt": "2026-07-15T10:00:00+08:00",
+                },
+                "verdictDelivery": "direct-send",
+            })
+        ledger.update({
+            "workflowVersion": 1,
+            "status": "verifying",
+            "dispatches": [
+                *ledger["dispatches"],
+                {
+                    "role": "verifier",
+                    "threadId": "thread-strict-verifier",
+                    "roleThreadId": "thread-strict-verifier",
+                    "requestId": "strict-request",
+                    "protocolVersion": 2,
+                    "dispatchId": "strict-dispatch",
+                    "attempt": 1,
+                    "dispatchAccepted": True,
+                    "resultStatus": "pending",
+                },
+            ],
+            "verification": {"request": legacy_request},
+        })
+        return team_router.save_task_ledger(
+            self.root, self.project_id, self.task_id, ledger,
+        )
+
+    def test_v1_verifier_fallback_rejects_legacy_verdict_when_strict_dispatch_exists(self):
+        self._save_v1_mixed_verifier_history()
+        messages = [
+            {
+                "messageId": "msg-legacy-request",
+                "sentAt": "2026-07-15T10:00:00+08:00",
+                "text": "verify",
+            },
+            {
+                "messageId": "msg-legacy-verdict",
+                "sentAt": "2026-07-15T10:01:00+08:00",
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nresult: pass\n"
+                    "summary: stale legacy verdict\nrequiredChanges: none\n"
+                    "evidenceChecked: focused test\nrisks: none"
+                ) % self.task_id,
+            },
+        ]
+
+        with self.assertRaisesRegex(team_router.StateStoreError, "strict verifier dispatch"):
+            team_router.capture_verifier_verdict_from_read(
+                self.root,
+                self.project_id,
+                self.task_id,
+                messages,
+                captured_at="2026-07-15T10:02:00+08:00",
+            )
+
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertEqual(saved["status"], "verifying")
+        self.assertEqual(saved["dispatches"][-1]["resultStatus"], "pending")
+        self.assertNotIn("resultReceipts", saved["dispatches"][-1])
+
+    def test_v1_verifier_direct_return_rejects_legacy_verdict_when_strict_dispatch_exists(self):
+        self._save_v1_mixed_verifier_history(direct_return=True)
+        messages = [{
+            "messageId": "msg-legacy-verdict",
+            "sentAt": "2026-07-15T10:01:00+08:00",
+            "sourceThreadId": "thread-legacy-verifier",
+            "text": (
+                "TEAM_ROUTER_VERDICT taskId=%s\n"
+                "sourceThreadId: %s\n"
+                "sourceRoleThreadId: thread-legacy-verifier\n"
+                "role: Verifier\nresult: pass\n"
+                "summary: stale legacy verdict\nrequiredChanges: none\n"
+                "evidenceChecked: focused test\nrisks: none"
+            ) % (self.task_id, self.parent_thread_id),
+        }]
+
+        result = team_router._capture_verifier_verdict_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-07-15T10:02:00+08:00",
+        )
+
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertIsNone(result)
+        self.assertEqual(saved["status"], "verifying")
+        self.assertEqual(saved["dispatches"][-1]["resultStatus"], "pending")
+        self.assertNotIn("resultReceipts", saved["dispatches"][-1])
+
+    def test_v2_verifier_direct_return_rejects_newer_legacy_record_after_strict_history(self):
+        ledger = self._save_awaiting_acceptance()
+        strict_dispatch = {
+            "role": "verifier",
+            "threadId": "thread-strict-verifier",
+            "roleThreadId": "thread-strict-verifier",
+            "requestId": "strict-request",
+            "protocolVersion": 2,
+            "dispatchId": "strict-dispatch",
+            "attempt": 1,
+            "dispatchAccepted": True,
+            "resultStatus": "pending",
+        }
+        legacy_dispatch = {
+            "role": "verifier",
+            "threadId": "thread-legacy-verifier",
+            "requestId": "legacy-request",
+            "returnThreadId": self.parent_thread_id,
+            "verdictDelivery": "direct-send",
+            "returnSearchAnchor": {
+                "messageId": "msg-legacy-request",
+                "sentAt": "2026-07-15T10:00:00+08:00",
+            },
+        }
+        ledger.update({
+            "status": "verifying",
+            "dispatches": [
+                *ledger["dispatches"],
+                strict_dispatch,
+                legacy_dispatch,
+            ],
+            "verification": {"request": legacy_dispatch},
+        })
+        team_router.save_task_ledger(self.root, self.project_id, self.task_id, ledger)
+        messages = [{
+            "messageId": "msg-legacy-verdict",
+            "sentAt": "2026-07-15T10:01:00+08:00",
+            "sourceThreadId": "thread-legacy-verifier",
+            "text": (
+                "TEAM_ROUTER_VERDICT taskId=%s\n"
+                "sourceThreadId: %s\n"
+                "sourceRoleThreadId: thread-legacy-verifier\n"
+                "role: Verifier\nresult: pass\n"
+                "summary: stale legacy verdict\nrequiredChanges: none\n"
+                "evidenceChecked: focused test\nrisks: none"
+            ) % (self.task_id, self.parent_thread_id),
+        }]
+
+        result = team_router._capture_verifier_verdict_from_manager_inbox(
+            self.root,
+            self.project_id,
+            self.task_id,
+            messages,
+            captured_at="2026-07-15T10:02:00+08:00",
+        )
+
+        saved = team_router.load_task_ledger(self.root, self.project_id, self.task_id)
+        self.assertIsNone(result)
+        self.assertEqual(saved["status"], "verifying")
+        self.assertEqual(saved["dispatches"][-2]["resultStatus"], "pending")
+        self.assertNotIn("resultReceipts", saved["dispatches"][-2])
+        self.assertNotIn("verdict", saved["verification"])
+        self.assertFalse(saved.get("closeout"))
 
 
 class TestTeamRouterV2RolePool(unittest.TestCase):
@@ -17245,6 +17929,21 @@ class TestV2DelegatedAuthorizationReceipt(unittest.TestCase):
         ):
             self.assertIn(text, reference)
 
+    def test_v2_role_prompts_use_canonical_dispatch_correlation_binder(self):
+        package, plan = self._authorization()
+        dispatch = {"protocolVersion": 2, "dispatchId": "dispatch-1", "requestId": "request-1", "attempt": 3}
+        for role in ("architect", "executor", "reviewer", "qa", "verifier"):
+            with self.subTest(role=role):
+                base = team_router._v2_role_prompt(
+                    package["taskId"], role, plan, objective=package["objective"],
+                    role_thread_id="%s-thread" % role, authorization_package=package,
+                )
+                prompt = team_router._bind_v2_dispatch_correlation(base, dispatch)
+                for key, value in dispatch.items():
+                    self.assertEqual(prompt.count("%s: %s" % (key, value)), 1)
+        with self.assertRaises(team_router.StateStoreError):
+            team_router._bind_v2_dispatch_correlation("prompt", {"protocolVersion": 2})
+
     def test_v2_role_prompt_rejects_mismatched_or_inactive_receipt(self):
         package, plan = self._authorization()
         cases = (
@@ -17421,6 +18120,202 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "requestedThinking": "high", "upgradedFrom": "gpt-5.6-terra", "completedResults": ["parsed registry"],
                 "readFiles": ["src/team_router_state.py"], "exactFailure": "callback failure", "unresolved": ["claim ordering"],
             }), ("gpt-5.6-sol", "high"))
+
+    def test_v2_runner_recovers_prepared_dispatch_without_resend(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = (
+                "project-v2-prepared-recovery",
+                "ctr-v2-prepared-recovery",
+                "parent-v2-prepared-recovery",
+            )
+            objective = "recover one uncertain executor dispatch"
+            target = {"type": "project", "projectId": project_id}
+            plan = {
+                "scope": "src/example.py only",
+                "permission": "local-package",
+                "stopCondition": "focused tests pass",
+                "routeRoles": ["executor"],
+                "roleRouting": {
+                    "executor": {
+                        "executionClass": "standard",
+                        "requestedModel": "gpt-5.6-terra",
+                        "requestedThinking": "medium",
+                    },
+                },
+                "parallelAllowed": False,
+            }
+            package = team_router.make_task_authorization_package(
+                package_id="auth-%s" % task_id,
+                task_id=task_id,
+                parent_thread_id=parent_thread_id,
+                objective=objective,
+                scope=plan["scope"],
+                permission=plan["permission"],
+                stop_condition=plan["stopCondition"],
+                created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={
+                    "authorizedBy": "explicit_cost_aware_entry",
+                    "allowedDefaults": [
+                        "gpt-5.6-luna:medium",
+                        "gpt-5.6-terra:medium",
+                        "gpt-5.6-sol:high",
+                    ],
+                },
+            )
+            ledger = team_router.new_v2_task_ledger(
+                root,
+                project_id,
+                task_id,
+                objective=objective,
+                project_local_path=root,
+                parent_thread_id=parent_thread_id,
+                resolved_plan=plan,
+                task_authorization_package=package,
+                created_at="2026-07-12T10:00:00+08:00",
+            )
+            ledger["status"] = "dispatched"
+            ledger["dispatches"] = [{
+                "role": "executor",
+                "requestId": "request-prepared",
+                "threadId": "thread-executor",
+                "protocolVersion": 2,
+                "dispatchId": "dispatch-prepared",
+                "attempt": 1,
+                "dispatchAccepted": False,
+                "deliveryStatus": "prepared",
+                "resultStatus": "pending",
+            }]
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+            adapter = FakeThreadAdapter()
+
+            with mock.patch.object(team_router, "send_v2_role_request_with_adapter") as send:
+                team_router.run_v2_team_task_with_adapter(
+                    root,
+                    project_id,
+                    task_id,
+                    objective=objective,
+                    project_local_path=root,
+                    thread_adapter=adapter,
+                    permission="local-package",
+                    observed_at="2026-07-12T10:01:00+08:00",
+                    target=target,
+                    target_fingerprint=None,
+                    host_id="local",
+                    parent_thread_id=parent_thread_id,
+                    manager_plan=None,
+                    task_authorization_package=None,
+                )
+
+            saved = team_router.load_task_ledger(root, project_id, task_id)
+            self.assertEqual(len(saved["dispatches"]), 1)
+            self.assertEqual(saved["dispatches"][0]["attempt"], 1)
+            self.assertEqual(saved["dispatches"][0]["deliveryStatus"], "outcome_unknown")
+            send.assert_not_called()
+            self.assertEqual(adapter.created, [])
+            self.assertEqual(adapter.sent, [])
+            self.assertEqual(adapter.renamed, [])
+
+    def test_v2_runner_consumes_matching_late_result_after_prepared_recovery(self):
+        with workspace_temp_dir() as td:
+            root = Path(td) / "state"
+            project_id, task_id, parent_thread_id = (
+                "project-v2-late-result",
+                "ctr-v2-late-result",
+                "parent-v2-late-result",
+            )
+            objective = "recover and consume one late executor result"
+            target = {"type": "project", "projectId": project_id}
+            plan = {
+                "scope": "src/example.py only",
+                "permission": "local-package",
+                "stopCondition": "focused tests pass",
+                "effectiveGateClass": "NORMAL",
+                "routeRoles": ["executor"],
+                "roleRouting": {
+                    "executor": {
+                        "executionClass": "standard",
+                        "requestedModel": "gpt-5.6-terra",
+                        "requestedThinking": "medium",
+                    },
+                },
+                "parallelAllowed": False,
+            }
+            package = team_router.make_task_authorization_package(
+                package_id="auth-%s" % task_id, task_id=task_id,
+                parent_thread_id=parent_thread_id, objective=objective,
+                scope=plan["scope"], permission=plan["permission"],
+                stop_condition=plan["stopCondition"],
+                created_at="2026-07-12T10:00:00+08:00",
+                model_routing_authorization={
+                    "authorizedBy": "explicit_cost_aware_entry",
+                    "allowedDefaults": [
+                        "gpt-5.6-luna:medium",
+                        "gpt-5.6-terra:medium",
+                        "gpt-5.6-sol:high",
+                    ],
+                },
+            )
+            ledger = team_router.new_v2_task_ledger(
+                root, project_id, task_id, objective=objective,
+                project_local_path=root, parent_thread_id=parent_thread_id,
+                resolved_plan=plan, task_authorization_package=package,
+                created_at="2026-07-12T10:00:00+08:00",
+            )
+            ledger["status"] = "awaiting_callback"
+            ledger["dispatches"] = [{
+                "role": "executor", "requestId": "request-late",
+                "threadId": "thread-executor", "roleThreadId": "thread-executor",
+                "protocolVersion": 2, "dispatchId": "dispatch-late", "attempt": 1,
+                "dispatchAccepted": False, "deliveryStatus": "prepared", "resultStatus": "pending",
+                "returnThreadId": parent_thread_id, "orchestratorThreadId": parent_thread_id,
+                "callbackDelivery": "direct-send", "fallbackDelivery": "self-thread-marker",
+                "expectedCallback": "TEAM_ROUTER_CALLBACK taskId=%s" % task_id,
+                "searchAnchor": {"messageId": None, "sentAt": "2026-07-12T10:00:00+08:00"},
+                "fallbackSearchAnchor": {"messageId": None, "sentAt": "2026-07-12T10:00:00+08:00"},
+                "returnSearchAnchor": {"messageId": None, "sentAt": "2026-07-12T10:00:00+08:00"},
+            }]
+            team_router.save_task_ledger(root, project_id, task_id, ledger)
+            adapter = FakeThreadAdapter()
+            adapter.append_reply(
+                "thread-executor",
+                "TEAM_ROUTER_DISPATCH taskId=%s" % task_id,
+                message_id="dispatch-late",
+                sent_at="2026-07-12T10:00:00+08:00",
+            )
+            adapter.append_reply(
+                "thread-executor",
+                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\n"
+                "sourceRoleThreadId: thread-executor\nrole: Executor\nprotocolVersion: 2\n"
+                "dispatchId: dispatch-late\nrequestId: request-late\nattempt: 1\n"
+                "status: done\nfinal: true\nsummary: late result\nchanged: callback route\n"
+                "evidence: focused test OK\nrisks: none\nnext: manager"
+                % (task_id, parent_thread_id),
+                message_id="late-result",
+                sent_at="2026-07-12T10:01:00+08:00",
+            )
+
+            with mock.patch.object(team_router, "send_v2_role_request_with_adapter") as send:
+                update = team_router.run_v2_team_task_with_adapter(
+                    root, project_id, task_id, objective=objective,
+                    project_local_path=root, thread_adapter=adapter,
+                    permission="local-package", observed_at="2026-07-12T10:01:00+08:00",
+                    target=target, target_fingerprint=None, host_id="local",
+                    parent_thread_id=parent_thread_id, manager_plan=None,
+                    task_authorization_package=None,
+                )
+
+            saved = team_router.load_task_ledger(root, project_id, task_id)
+            self.assertEqual(update["status"], "manager_acceptance_pending")
+            self.assertEqual(len(saved["dispatches"]), 1)
+            self.assertEqual(saved["dispatches"][0]["attempt"], 1)
+            self.assertEqual(saved["dispatches"][0]["resultStatus"], "consumed")
+            self.assertEqual(len(saved["dispatches"][0]["resultReceipts"]), 1)
+            self.assertIn("callbackReceipt", saved)
+            send.assert_not_called()
+            self.assertEqual(adapter.created, [])
+            self.assertEqual(adapter.sent, [])
+            self.assertEqual(adapter.renamed, [])
 
     def test_orchestrator_uses_v1_for_existing_legacy_ledger_even_with_manager_direct_plan(self):
         class LegacyAdapter(FakeThreadAdapter):
@@ -17690,9 +18585,14 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                     "sourceThreadId": dispatch["threadId"],
                     "text": (
                         "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\n"
-                        "sourceRoleThreadId: %s\nrole: Executor\nstatus: done\nfinal: true\n"
+                        "sourceRoleThreadId: %s\nrole: Executor\nprotocolVersion: %s\n"
+                        "dispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\n"
                         "summary: focused change complete\nevidence: focused test OK\nrisks: none\nnext: manager"
-                    ) % (task_id, parent_thread_id, dispatch["threadId"]),
+                    ) % (
+                        task_id, parent_thread_id, dispatch["threadId"],
+                        dispatch["protocolVersion"], dispatch["dispatchId"],
+                        dispatch["requestId"], dispatch["attempt"],
+                    ),
                 }],
                 captured_at="2026-07-12T10:02:00+08:00",
             )
@@ -17746,9 +18646,9 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "messageId": "msg-executor-direct", "sentAt": "2026-07-12T10:01:00+08:00", "sourceThreadId": executor["threadId"],
                 "text": (
                     "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
-                    "role: Executor\nstatus: done\nfinal: true\nsummary: executor done\nevidence: focused test OK\n"
+                    "role: Executor\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\nsummary: executor done\nevidence: focused test OK\n"
                     "risks: strict protocol risk\nnext: manager"
-                ) % (task_id, parent_thread_id, executor["threadId"]),
+                ) % (task_id, parent_thread_id, executor["threadId"], executor["protocolVersion"], executor["dispatchId"], executor["requestId"], executor["attempt"]),
             })
             pending = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
             self.assertEqual(pending["status"], "manager_routing_pending")
@@ -17764,15 +18664,21 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 root, project_id, task_id, manager_plan=resume_plan, task_authorization_package=package, **common,
             )
             self.assertEqual((resumed["action"], resumed["status"]), ("sent_v2_reviewer", "reviewing"))
+            resumed_executor = next(
+                item for item in resumed["ledger"]["dispatches"] if item.get("role") == "executor"
+            )
+            self.assertEqual(resumed_executor["resultStatus"], "consumed")
+            self.assertEqual(len(resumed_executor["resultReceipts"]), 1)
+            self.assertEqual(resumed_executor["resultReceipts"][0]["hostMessageId"], "msg-executor-direct")
             reviewer = resumed["ledger"]["dispatches"][-1]
             self.assertNotIn("routingError", resumed["ledger"])
             adapter.messages.setdefault(parent_thread_id, []).append({
                 "messageId": "msg-reviewer-direct", "sentAt": "2026-07-12T10:02:00+08:00", "sourceThreadId": reviewer["threadId"],
                 "text": (
                     "TEAM_ROUTER_REVIEW taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Reviewer\n"
-                    "result: pass\nsummary: reviewer pass\nfindings: none\nrequiredChanges: none\n"
+                    "protocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nresult: pass\nsummary: reviewer pass\nfindings: none\nrequiredChanges: none\n"
                     "evidenceChecked: focused test OK\nrisks: none"
-                ) % (task_id, parent_thread_id, reviewer["threadId"]),
+                ) % (task_id, parent_thread_id, reviewer["threadId"], reviewer["protocolVersion"], reviewer["dispatchId"], reviewer["requestId"], reviewer["attempt"]),
             })
             verifier = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
             self.assertEqual((verifier["action"], verifier["status"]), ("sent_v2_verifier", "verifying"))
@@ -17830,9 +18736,9 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "sourceThreadId": executor["threadId"],
                 "text": (
                     "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
-                    "role: Executor\nstatus: done\nfinal: true\nsummary: executor done\n"
+                    "role: Executor\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\nsummary: executor done\n"
                     "evidence: focused test OK\nrisks: none\nnext: reviewer"
-                ) % (task_id, parent_thread_id, executor["threadId"]),
+                ) % (task_id, parent_thread_id, executor["threadId"], executor["protocolVersion"], executor["dispatchId"], executor["requestId"], executor["attempt"]),
             })
             second = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
             self.assertEqual((second["action"], second["status"]), ("sent_v2_reviewer", "reviewing"))
@@ -17846,9 +18752,9 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "sourceThreadId": reviewer["threadId"],
                 "text": (
                     "TEAM_ROUTER_REVIEW taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
-                    "role: Reviewer\nresult: pass\nsummary: reviewer pass\nfindings: none\n"
+                    "role: Reviewer\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nresult: pass\nsummary: reviewer pass\nfindings: none\n"
                     "requiredChanges: none\nevidenceChecked: focused test OK\nrisks: none"
-                ) % (task_id, parent_thread_id, reviewer["threadId"]),
+                ) % (task_id, parent_thread_id, reviewer["threadId"], reviewer["protocolVersion"], reviewer["dispatchId"], reviewer["requestId"], reviewer["attempt"]),
             })
             third = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
             self.assertEqual((third["action"], third["status"]), ("sent_v2_verifier", "verifying"))
@@ -17862,9 +18768,9 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "sourceThreadId": verifier["threadId"],
                 "text": (
                     "TEAM_ROUTER_VERDICT taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
-                    "role: Verifier\nresult: pass\nsummary: verifier pass\nrequiredChanges: none\n"
+                    "role: Verifier\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nresult: pass\nsummary: verifier pass\nrequiredChanges: none\n"
                     "evidenceChecked: focused test OK\nrisks: none"
-                ) % (task_id, parent_thread_id, verifier["threadId"]),
+                ) % (task_id, parent_thread_id, verifier["threadId"], verifier["protocolVersion"], verifier["dispatchId"], verifier["requestId"], verifier["attempt"]),
             })
             complete = team_router.orchestrate_team_task_with_adapter(root, project_id, task_id, **common)
 
@@ -17913,9 +18819,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 adapter.messages.setdefault(parent_thread_id, []).append({
                     "messageId": message_id, "sentAt": "2026-07-12T10:01:00+08:00",
                     "sourceThreadId": record["threadId"],
-                    "text": "%s taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: %s\n%s" % (
+                    "text": "%s taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: %s\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\n%s" % (
                         marker, task_id, parent_thread_id, record["threadId"],
-                        team_router.ROLE_ALIASES[record["role"]], body,
+                        team_router.ROLE_ALIASES[record["role"]], record["protocolVersion"],
+                        record["dispatchId"], record["requestId"], record["attempt"], body,
                     ),
                 })
 
@@ -18086,7 +18993,11 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             executor = first["ledger"]["dispatches"][-1]
             adapter.append_reply(
                 executor["threadId"],
-                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Executor\nstatus: done\nfinal: true\nsummary: fallback pass\nevidence: focused test OK\nrisks: none\nnext: manager" % (task_id, parent_thread_id, executor["threadId"]),
+                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Executor\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\nsummary: fallback pass\nevidence: focused test OK\nrisks: none\nnext: manager" % (
+                    task_id, parent_thread_id, executor["threadId"],
+                    executor["protocolVersion"], executor["dispatchId"],
+                    executor["requestId"], executor["attempt"],
+                ),
                 message_id="msg-self-thread", sent_at="2026-07-12T10:01:00+08:00",
             )
             registry = team_router.load_registry(root, project_id)
@@ -18213,7 +19124,11 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             executor = first["ledger"]["dispatches"][-1]
             adapter.append_reply(
                 executor["threadId"],
-                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Executor\nstatus: done\nfinal: true\nsummary: watcher fallback pass\nevidence: focused test OK\nrisks: none\nnext: manager" % (task_id, parent_thread_id, executor["threadId"]),
+                "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: Executor\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\nsummary: watcher fallback pass\nevidence: focused test OK\nrisks: none\nnext: manager" % (
+                    task_id, parent_thread_id, executor["threadId"],
+                    executor["protocolVersion"], executor["dispatchId"],
+                    executor["requestId"], executor["attempt"],
+                ),
                 message_id="msg-watch-fallback", sent_at="2026-07-12T10:01:00+08:00",
             )
             self.assertEqual(team_router.load_registry(root, project_id)["projects"][project_id]["roles"], {})
@@ -18290,9 +19205,9 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "sourceThreadId": executor["threadId"],
                 "text": (
                     "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\n"
-                    "role: Executor\nstatus: done\nfinal: true\nsummary: direct check pass\n"
+                    "role: Executor\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\nsummary: direct check pass\n"
                     "evidence: focused test OK\nrisks: none\nnext: manager"
-                ) % (task_id, parent_thread_id, executor["threadId"]),
+                ) % (task_id, parent_thread_id, executor["threadId"], executor["protocolVersion"], executor["dispatchId"], executor["requestId"], executor["attempt"]),
             }]
 
             early = team_router.watch_team_task_with_adapter(
@@ -18330,9 +19245,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             adapter.messages.setdefault(parent_thread_id, []).append({
                 "messageId": message_id, "sentAt": "2026-07-12T10:01:00+08:00",
                 "sourceThreadId": dispatch["threadId"],
-                "text": "%s taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: %s\n%s" % (
+                "text": "%s taskId=%s\nsourceThreadId: %s\nsourceRoleThreadId: %s\nrole: %s\nprotocolVersion: %s\ndispatchId: %s\nrequestId: %s\nattempt: %s\n%s" % (
                     marker, task_id, parent_thread_id, dispatch["threadId"],
-                    team_router.ROLE_ALIASES[dispatch["role"]], fields,
+                    team_router.ROLE_ALIASES[dispatch["role"]], dispatch["protocolVersion"],
+                    dispatch["dispatchId"], dispatch["requestId"], dispatch["attempt"], fields,
                 ),
             })
 

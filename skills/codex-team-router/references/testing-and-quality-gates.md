@@ -90,6 +90,16 @@ Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, pr
 - Malformed direct-return tests must cover wrong or missing protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; `_record_malformed_direct_return` should preserve the observed protocol field values and keep `self-thread-marker fallback` recovery without advancing the ledger.
 - `scripts/team_router_closeout_check.py` is read-only closeout evidence: report git status, diff files, SKILL hard cap and 7200 target, repo/global skill sync status, and unauthorized commit/push/global sync gates. It must not stage, commit, push, PR, merge, deploy, or sync.
 
+## Strict V2 Dispatch Correlation Regression Gate
+
+- Every strict V2 fixture and role reply builder must echo `protocolVersion`, `dispatchId`, `requestId`, and positive `attempt` from the current prepared dispatch, exactly and without fixture-generated substitutes. The validator remains fail-closed for a missing, malformed, stale, or unknown-version value.
+- A single protocol message with a duplicate field, or more than one final role marker for the same task, is malformed; duplicate receipts are identified by the same channel/message key and do not consume routing again.
+- The delivery state sequence is `prepared` before send, `acknowledged` only after the send acknowledgement, and `outcome_unknown` when send outcome is not known. `outcome_unknown` has no automatic retry: later matching evidence may be accepted once.
+- Result consumption is once-only. A late acknowledgement may add delivery evidence without undoing a consumed result; later distinct receipt evidence may be recorded without replaying state transitions.
+- Current ownership is determined by the latest dispatch for the Role across strict and legacy records; a newer record of either version makes an older strict result non-current.
+- A strict consume-and-route failure before persistence keeps the result pending, the task nonterminal, and the Role claim active. The exact correlated result must succeed after the routing prerequisite is repaired, without creating a second dispatch.
+- Legacy V1 and designated live legacy V2 fixtures keep their existing shapes. Strict V2 correlation is not backfilled into them, and mixed strict/legacy or unknown-version receipts fail closed.
+
 ## Read-only Current-State Tools
 
 - `scripts/team_router_closeout_check.py` remains read-only closeout evidence: report git status, diff files, SKILL hard cap and 7200 target, repo/global skill sync status, and unauthorized commit/push/global sync gates. It must not stage, commit, push, PR, merge, deploy, or sync.
