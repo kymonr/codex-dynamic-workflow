@@ -294,6 +294,7 @@ def resolve_v2_manager_plan(*,
         requires_independent_context=requires_independent_context,
         requires_independent_review=requires_independent_review,
         lightweight_verification_available=lightweight_verification_available,
+        workspace_write=bool(authorization["workspaceWrite"]),
     )
     plan = {
         "objective": objective,
@@ -313,7 +314,11 @@ def resolve_v2_manager_plan(*,
     if execution_mode == "manager_direct":
         return dict(plan, routeRoles=(), roleRouting={}, parallelAllowed=False)
 
-    route_roles = resolve_v2_route(gate["effectiveGateClass"], tuple(explicit_roles))
+    route_roles = resolve_v2_route(
+        gate["effectiveGateClass"],
+        tuple(explicit_roles),
+        requires_verifier=bool(authorization["workspaceWrite"]),
+    )
     model_authorization = validate_model_routing_authorization(
         authorization_package.get("modelRoutingAuthorization"),
         route_roles=route_roles,
@@ -466,26 +471,33 @@ def next_v2_route_after_evidence(ledger: Mapping[str, Any],
         raise StateStoreError("authorization_mismatch: externalGates")
     requested_gate = _v2_reclassification_gate(plan, evidence)
     existing_roles = tuple(plan.get("routeRoles", ()))
-    replanned = resolve_v2_manager_plan(
-        objective=_text(ledger.get("objective"), "objective"),
-        scope=_text(plan.get("scope"), "scope"),
-        permission=_text(plan.get("permission"), "permission"),
-        stop_condition=_text(plan.get("stopCondition"), "stopCondition"),
-        requested_gate_class=requested_gate,
-        authorization_package=ledger.get("taskAuthorizationPackage"),
-        explicit_roles=existing_roles,
-        requested_role_routing=_v2_reclassification_role_routing(plan),
-        requires_parallelism=bool(plan.get("parallelAllowed")),
-        parallel_conflicts=tuple(plan.get("parallelConflicts", ())),
-        ledger_input={
-            "taskId": ledger.get("taskId"),
-            "parentThreadId": ledger.get("parentThreadId"),
-        },
-    )
+    current_gate = str(plan.get("effectiveGateClass", "")).upper()
+    if current_gate in {"FAST", "NORMAL"} and requested_gate in {"FAST", "NORMAL"}:
+        replanned = dict(plan)
+        replanned["effectiveGateClass"] = requested_gate
+        gate_change = "evidence preserved effective gate at %s" % requested_gate
+    else:
+        replanned = resolve_v2_manager_plan(
+            objective=_text(ledger.get("objective"), "objective"),
+            scope=_text(plan.get("scope"), "scope"),
+            permission=_text(plan.get("permission"), "permission"),
+            stop_condition=_text(plan.get("stopCondition"), "stopCondition"),
+            requested_gate_class=requested_gate,
+            authorization_package=ledger.get("taskAuthorizationPackage"),
+            explicit_roles=existing_roles,
+            requested_role_routing=_v2_reclassification_role_routing(plan),
+            requires_parallelism=bool(plan.get("parallelAllowed")),
+            parallel_conflicts=tuple(plan.get("parallelConflicts", ())),
+            ledger_input={
+                "taskId": ledger.get("taskId"),
+                "parentThreadId": ledger.get("parentThreadId"),
+            },
+        )
+        gate_change = "evidence raised effective gate to %s" % replanned["effectiveGateClass"]
     replanned["requestedGateClass"] = plan.get("requestedGateClass")
-    replanned["gateReason"] = "%s; evidence raised effective gate to %s" % (
+    replanned["gateReason"] = "%s; %s" % (
         plan.get("gateReason", "requested %s" % plan.get("requestedGateClass")),
-        replanned["effectiveGateClass"],
+        gate_change,
     )
     updated = dict(ledger)
     updated["plan"] = replanned

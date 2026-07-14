@@ -4,7 +4,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 ## Version 2 Route Closure
 
-The parent Manager owns the Version 2 plan and is never a child role. `architect` and `qa` are explicit visible roles only: Architect precedes Executor; QA precedes Verifier. Selecting Reviewer or QA closes the route with Verifier. FAST/NORMAL delegated work otherwise ends at Manager acceptance, while STRICT/PACKAGE is Executor -> Reviewer -> Verifier. Version 1 keeps its legacy child Manager contract unchanged.
+The parent Manager owns the Version 2 plan and is never a child role. `architect` and `qa` are explicit visible roles only: Architect precedes Executor; QA precedes Verifier. Selecting Reviewer or QA closes the route with Verifier. FAST/NORMAL delegated read-only/design-only work otherwise ends at Manager acceptance; new FAST/NORMAL workspace writes close Executor -> Verifier, while STRICT/PACKAGE is Executor -> Reviewer -> Verifier. Persisted pre-A3 FAST/NORMAL V2 routes remain frozen unless evidence raises risk. Version 1 keeps its legacy child Manager contract unchanged.
 
 ## Architect
 

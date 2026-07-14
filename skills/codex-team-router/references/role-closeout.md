@@ -4,7 +4,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 ## Version 2 Routing Receipt And Acceptance
 
-FAST/NORMAL delegated Executor work closes only through structured Manager acceptance; STRICT/PACKAGE closes through Verifier. Both closeouts include the same `routingReceipt`: dispatch-order role, `binding`, optional thread id, `requestedModel`, `requestedThinking`, create/bootstrap and dispatch acceptance when attempted, override reason, `upgradedFrom`, rework count, and `solUltraDispatched: false`.
+FAST/NORMAL delegated read-only/design-only Executor work closes through structured Manager acceptance. New FAST/NORMAL workspace writes and all STRICT/PACKAGE routes close through Verifier; Reviewer remains conditional on risk or an explicit Reviewer/QA route. Both closeouts include the same `routingReceipt`: dispatch-order role, `binding`, optional thread id, `requestedModel`, `requestedThinking`, create/bootstrap and dispatch acceptance when attempted, override reason, `upgradedFrom`, rework count, and `solUltraDispatched: false`.
 
 `requestedModel` is not `actualModel` or billing evidence. The Runtime has no actual-model, token, price, or cost source, so the receipt must never claim those facts. Automatic budgets are one automatic model upgrade and one automatic rework per task; preserve the failed delta on the first attempt and enforce a hard stop after the second attempt fails or the budget is exhausted.
 

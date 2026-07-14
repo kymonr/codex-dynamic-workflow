@@ -23,7 +23,7 @@ Required reference files:
 
 ## Version 2 Documentation Contract
 
-Docs tests must lock the parent-owned V2 plan, no child Manager creation, Manager direct before side effects, standard-entry versus explicit cost-aware model authorization, visible-thread-only dispatch, Luna/Terra/Sol defaults, and the Sol Ultra prohibition. They must also lock manager-owned pool reuse, canonical target/host fingerprinting, `parallelAllowed` propagation, bounded creation-intent recovery, one model-upgrade and one rework budget, and Manager-acceptance versus Reviewer/Verifier closure.
+Docs tests must lock the parent-owned V2 plan, no child Manager creation, Manager direct before side effects and only for read-only/design-only work, standard-entry versus explicit cost-aware model authorization, visible-thread-only dispatch, Luna/Terra/Sol defaults, and the Sol Ultra prohibition. They must also lock new FAST/NORMAL workspace-write Executor -> Verifier closure without automatic Reviewer, persisted pre-A3 low-risk route freezing, manager-owned pool reuse, canonical target/host fingerprinting, `parallelAllowed` propagation, bounded creation-intent recovery, one model-upgrade and one rework budget, and Manager-acceptance versus Reviewer/Verifier closure.
 
 The routing receipt is a projection of requested dispatches. It may contain `routingReceipt`, `requestedModel`, `requestedThinking`, bootstrap/create/send acceptance, binding, upgrade, and rework fields; it must not contain `actualModel`, price, token, or cost claims. `requestedModel is not actualModel or billing evidence`.
 
@@ -86,7 +86,7 @@ For a non-terminal task, display the handoff so the next parent turn can resume 
 Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, protocolBlock) means the same protocol delivery target as send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>); prefer the explicit `threadId=<returnThreadId>` form in role request templates.
 ## Optimization 1-6 Regression Gates
 
-- `explain_team_router_gate()` must keep `classify_team_router_gate()` compatible while reporting readable reasons for local-package, package term, reviewer-required term, fast docs term, and normal fallback.
+- `explain_team_router_gate()` must keep `classify_team_router_gate()` compatible while treating local-package as permission rather than risk; `explain_team_router_route()` must report workspace-write Verifier closure, package term, reviewer-required term, fast docs term, normal fallback, and persisted V2 `routeRoles` consistently.
 - Malformed direct-return tests must cover wrong or missing protocol-block `sourceThreadId`, `role`, and `sourceRoleThreadId`; `_record_malformed_direct_return` should preserve the observed protocol field values and keep `self-thread-marker fallback` recovery without advancing the ledger.
 - `scripts/team_router_closeout_check.py` is read-only closeout evidence: report git status, diff files, SKILL hard cap and 7200 target, repo/global skill sync status, and unauthorized commit/push/global sync gates. It must not stage, commit, push, PR, merge, deploy, or sync.
 

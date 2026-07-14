@@ -4,7 +4,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 ## Conditional Reviewer Gate
 
-Version 2 starts with route closure, not a fixed three-role chain. FAST/NORMAL Manager direct has no role; FAST/NORMAL delegated work uses executor -> Manager acceptance unless the route explicitly includes Reviewer or QA, which then requires Verifier. STRICT/PACKAGE requires executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance). `local-package` is a workspace permission, not a reviewer trigger by itself.
+Version 2 starts with route closure, not a fixed three-role chain. FAST/NORMAL read-only/design-only Manager direct has no role; delegated read-only/design-only work uses executor -> Manager acceptance unless the route explicitly includes Reviewer or QA. FAST/NORMAL `local-package` workspace write is never Manager direct and uses executor -> verifier without requiring Reviewer. STRICT/PACKAGE requires executor -> reviewer(read-only/adversarial) -> verifier(read-only acceptance). `local-package` is a workspace permission, not a reviewer trigger by itself.
 
 Version 1 compatibility: Ordinary small fixes and clearly low-risk tasks use executor -> verifier.
 

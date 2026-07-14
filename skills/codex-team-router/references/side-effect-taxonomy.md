@@ -32,7 +32,7 @@ Mutating project work: modifying project files, running formatters that write, g
 
 In active Manager Mode, `WORKSPACE_WRITE` is delegated to executor when the manager dispatch explicitly grants an authorized `local-package` scope and required reviewer/verifier gates apply. The executor may write only within the explicit scope/files/paths in that delegation. Manager/dispatcher direct file edits are opt-in: they require an explicit current-turn instruction that the manager should do that exact file-changing action. Commit, PR, publish, and release must first be presented as gated actions and wait for explicit authorization.
 
-`local-package` does not automatically mean STRICT/PACKAGE or create Reviewer/Verifier. Version 2 first applies risk classification and route closure: FAST/NORMAL delegated work may use Manager acceptance; STRICT/PACKAGE and explicit Reviewer/QA keep the independent review/verification route.
+`local-package` does not automatically mean STRICT/PACKAGE or create Reviewer. Version 2 first applies risk classification and route closure: Manager direct is read-only/design-only, every new FAST/NORMAL workspace write closes Executor -> Verifier, and STRICT/PACKAGE or explicit Reviewer/QA keeps the independent Reviewer/Verifier route. Persisted pre-A3 FAST/NORMAL V2 `routeRoles` are not silently expanded unless evidence raises risk to STRICT/PACKAGE.
 
 Small artifact/docs/.gitignore policy tasks still count as `WORKSPACE_WRITE` when they edit files or run write-prone verification; active Manager Mode must dispatch an authorized executor package, or proceed only when the user explicitly says in the current turn that the manager should do that exact work.
 

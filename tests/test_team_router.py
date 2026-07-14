@@ -1372,6 +1372,16 @@ risks: none
             with self.subTest(gate=gate):
                 self.assertEqual(team_router.resolve_v2_execution_mode(gate), "delegated")
 
+    def test_v2_workspace_write_is_delegated_and_closes_verifier(self):
+        self.assertEqual(
+            team_router.resolve_v2_execution_mode("NORMAL", workspace_write=True),
+            "delegated",
+        )
+        self.assertEqual(
+            team_router.resolve_v2_route("NORMAL", requires_verifier=True),
+            ("executor", "verifier"),
+        )
+
     def test_v2_local_package_permission_does_not_raise_risk_by_name(self):
         ledger = {
             "workflowVersion": 2,
@@ -1385,7 +1395,12 @@ risks: none
         )
         self.assertEqual(resolved["requestedGateClass"], "NORMAL")
         self.assertEqual(resolved["effectiveGateClass"], "NORMAL")
-        self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "NORMAL")
+        self.assertFalse(team_router.reviewer_gate_required_for_ledger(ledger))
+        explanation = team_router.explain_team_router_route(ledger)
+        self.assertEqual(explanation["gateClass"], "NORMAL")
+        self.assertEqual(explanation["executionMode"], "delegated")
+        self.assertEqual(explanation["roles"], ["executor", "verifier"])
         with self.assertRaisesRegex(team_router.StateStoreError, "authorization_missing"):
             team_router.resolve_effective_gate(
                 "NORMAL",
@@ -1407,6 +1422,58 @@ risks: none
             )["effectiveGateClass"],
             "STRICT",
         )
+
+    def test_v2_low_risk_reclassification_preserves_persisted_pre_a3_route(self):
+        plan = {
+            "scope": "workspace",
+            "permission": "local-package",
+            "stopCondition": "executor callback",
+            "requestedGateClass": "NORMAL",
+            "effectiveGateClass": "NORMAL",
+            "executionMode": "delegated",
+            "routeRoles": ["executor"],
+            "roleRouting": {
+                "executor": {
+                    "executionClass": "standard",
+                    "requestedModel": "gpt-5.6-terra",
+                    "requestedThinking": "medium",
+                },
+            },
+            "gateReason": "pre-A3 persisted route",
+        }
+        ledger = {
+            "workflowVersion": 2,
+            "taskId": "task-pre-a3",
+            "parentThreadId": "parent-1",
+            "objective": "ordinary local docs update",
+            "permission": "local-package",
+            "plan": dict(plan),
+            "resolvedPlan": dict(plan),
+        }
+
+        updated = team_router.next_v2_route_after_evidence(
+            ledger,
+            {"summary": "completed without elevated risk", "risks": "none"},
+        )
+
+        self.assertEqual(updated["status"], "manager_acceptance_pending")
+        self.assertEqual(updated["resolvedPlan"]["routeRoles"], ["executor"])
+        self.assertNotIn("verifier", updated["resolvedPlan"]["roleRouting"])
+        self.assertIn("evidence preserved effective gate", updated["resolvedPlan"]["gateReason"])
+        explanation = team_router.explain_team_router_route(updated)
+        self.assertEqual(explanation["executionMode"], "delegated")
+        self.assertEqual(explanation["roles"], ["executor"])
+
+    def test_route_explanation_preserves_v1_executor_verifier_contract(self):
+        explanation = team_router.explain_team_router_route({
+            "workflowVersion": 1,
+            "objective": "ordinary read-only task",
+            "permission": "read-only",
+        })
+
+        self.assertEqual(explanation["gateClass"], "NORMAL")
+        self.assertEqual(explanation["executionMode"], "delegated")
+        self.assertEqual(explanation["roles"], ["executor", "verifier"])
 
     def test_v2_route_closes_conditional_role_dependencies(self):
         self.assertEqual(team_router.resolve_v2_route("NORMAL"), ("executor",))
@@ -1578,13 +1645,13 @@ risks: none
             parent_thread_id="parent-direct",
             objective="ordinary docs update",
             scope="docs/x.md",
-            permission="local-package",
+            permission="read-only",
             stop_condition="focused tests pass",
             created_at="2026-07-11T20:00:00+08:00",
         )
         requested_plan = {
             "scope": "docs/x.md",
-            "permission": "local-package",
+            "permission": "read-only",
             "stopCondition": "focused tests pass",
             "requestedGateClass": "NORMAL",
         }
@@ -1649,7 +1716,10 @@ risks: none
             "stopCondition": "focused tests pass",
             "requestedGateClass": "NORMAL",
             "explicitRoles": ("executor",),
-            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            "requestedRoleRouting": {
+                "executor": {"executionClass": "standard"},
+                "verifier": {"executionClass": "mechanical"},
+            },
         }
         for name, actual_task_id, actual_parent_thread_id in (
             ("task", "task-actual", "parent-package"),
@@ -1722,6 +1792,56 @@ risks: none
         new_ledger.assert_not_called()
         save_ledger.assert_not_called()
 
+    def test_prepare_v2_workspace_write_requires_verifier_routing_before_state(self):
+        package = team_router.make_task_authorization_package(
+            package_id="auth-write",
+            task_id="task-write",
+            parent_thread_id="parent-write",
+            objective="ordinary delegated task",
+            scope="src/x.py",
+            permission="local-package",
+            stop_condition="focused tests pass",
+            created_at="2026-07-11T20:00:00+08:00",
+            model_routing_authorization={
+                "allowedDefaults": [
+                    "gpt-5.6-luna:medium",
+                    "gpt-5.6-terra:medium",
+                    "gpt-5.6-sol:high",
+                ],
+                "authorizedBy": "explicit_cost_aware_entry",
+            },
+        )
+        requested_plan = {
+            "scope": "src/x.py",
+            "permission": "local-package",
+            "stopCondition": "focused tests pass",
+            "requestedGateClass": "NORMAL",
+            "requestedRoleRouting": {
+                "executor": {"executionClass": "standard"},
+            },
+        }
+        with workspace_temp_dir() as td, mock.patch(
+            "team_router_v2.new_v2_task_ledger"
+        ) as new_ledger, mock.patch("team_router_v2.save_task_ledger") as save_ledger:
+            with self.assertRaisesRegex(
+                team_router.StateStoreError,
+                "plan_invalid: missing roleRouting.verifier",
+            ):
+                team_router.prepare_v2_manager_task(
+                    Path(td) / "state",
+                    "project-1",
+                    "task-write",
+                    objective="ordinary delegated task",
+                    project_local_path=td,
+                    parent_thread_id="parent-write",
+                    requested_plan=requested_plan,
+                    authorization_package=package,
+                    created_at="2026-07-11T20:00:00+08:00",
+                )
+
+        new_ledger.assert_not_called()
+        save_ledger.assert_not_called()
+
     def test_prepare_v2_delegated_saves_one_planned_ledger(self):
         package = team_router.make_task_authorization_package(
             package_id="auth-1",
@@ -1747,7 +1867,10 @@ risks: none
             "stopCondition": "focused tests pass",
             "requestedGateClass": "NORMAL",
             "explicitRoles": ("executor",),
-            "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+            "requestedRoleRouting": {
+                "executor": {"executionClass": "standard"},
+                "verifier": {"executionClass": "mechanical"},
+            },
         }
         with workspace_temp_dir() as td, mock.patch(
             "team_router_v2.save_task_ledger",
@@ -1766,6 +1889,7 @@ risks: none
             )
 
         self.assertEqual(result["executionMode"], "delegated")
+        self.assertEqual(result["routeRoles"], ("executor", "verifier"))
         self.assertEqual(result["ledger"]["status"], "planned")
         self.assertEqual(result["ledger"]["taskAuthorizationPackage"], package)
         save_ledger.assert_called_once()
@@ -1788,7 +1912,10 @@ risks: none
             "stop_condition": "focused tests pass",
             "requested_gate_class": "NORMAL",
             "explicit_roles": ("executor",),
-            "requested_role_routing": {"executor": {"executionClass": "standard"}},
+            "requested_role_routing": {
+                "executor": {"executionClass": "standard"},
+                "verifier": {"executionClass": "mechanical"},
+            },
         }
         with self.assertRaisesRegex(team_router.StateStoreError, "model_authorization_required"):
             team_router.resolve_v2_manager_plan(authorization_package=package, **common)
@@ -1838,7 +1965,10 @@ risks: none
             "stop_condition": "focused tests pass",
             "requested_gate_class": "NORMAL",
             "authorization_package": package,
-            "requested_role_routing": {"executor": {"executionClass": "standard"}},
+            "requested_role_routing": {
+                "executor": {"executionClass": "standard"},
+                "verifier": {"executionClass": "mechanical"},
+            },
             "requires_parallelism": True,
         }
         allowed = team_router.resolve_v2_manager_plan(parallel_conflicts=(), **common)
@@ -1858,7 +1988,7 @@ risks: none
             parent_thread_id="parent-1",
             objective="delegated task",
             scope="src/x.py",
-            permission="local-package",
+            permission="read-only",
             stop_condition="focused tests pass",
             created_at="2026-07-11T20:00:00+08:00",
             model_routing_authorization={
@@ -1870,7 +2000,7 @@ risks: none
         plan = team_router.resolve_v2_manager_plan(
             objective="delegated task",
             scope="src/x.py",
-            permission="local-package",
+            permission="read-only",
             stop_condition="focused tests pass",
             requested_gate_class="NORMAL",
             authorization_package=package,
@@ -4857,7 +4987,7 @@ risks: none
         self.assertEqual(team_router.classify_team_router_gate(ledger), "NORMAL")
         self.assertFalse(team_router.gate_class_requires_reviewer("NORMAL"))
 
-    def test_classify_team_router_gate_strict_for_local_package_permission(self):
+    def test_classify_team_router_gate_normal_for_local_package_permission(self):
         ledger = {
             "objective": "update local helper behavior",
             "plan": {"fields": {
@@ -4869,8 +4999,8 @@ risks: none
             }},
         }
 
-        self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
-        self.assertTrue(team_router.reviewer_gate_required_for_ledger(ledger))
+        self.assertEqual(team_router.classify_team_router_gate(ledger), "NORMAL")
+        self.assertFalse(team_router.reviewer_gate_required_for_ledger(ledger))
 
     def test_classify_team_router_gate_package_for_deliberate_local_package_signal(self):
         ledger = {
@@ -4908,8 +5038,8 @@ risks: none
                     "objective": "ordinary helper",
                     "plan": {"fields": {"acknowledgedPermission": "local-package", "scope": "src"}},
                 },
-                "STRICT",
-                "local-package permission requires reviewer gate",
+                "NORMAL",
+                "normal fallback",
             ),
             (
                 {
@@ -5763,10 +5893,12 @@ risks: none
 
         fast_lane = policy["fastLane"]
         self.assertEqual(fast_lane["classes"], ("FAST", "NORMAL", "STRICT", "PACKAGE"))
-        self.assertEqual(fast_lane["FAST"]["route"], "executor -> verifier")
+        self.assertIn("workspace write: executor -> verifier", fast_lane["FAST"]["route"])
+        self.assertIn("Manager acceptance", fast_lane["FAST"]["route"])
         self.assertEqual(fast_lane["FAST"]["fallbackReadWindowSeconds"], 300)
         self.assertIn("docs/BOM", fast_lane["FAST"]["scope"])
-        self.assertEqual(fast_lane["NORMAL"]["route"], "executor -> verifier")
+        self.assertIn("workspace write: executor -> verifier", fast_lane["NORMAL"]["route"])
+        self.assertIn("Manager acceptance", fast_lane["NORMAL"]["route"])
         self.assertEqual(fast_lane["NORMAL"]["fallbackReadWindowSeconds"], 300)
         self.assertIn("small focused code/test work", fast_lane["NORMAL"]["scope"])
         self.assertEqual(fast_lane["STRICT"]["route"], "executor -> reviewer -> verifier")
@@ -5862,7 +5994,8 @@ risks: none
         self.assertIn("authorized local-package dispatch", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("explicit scope/files", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("only within that explicit scope", policy["WORKSPACE_WRITE"]["boundary"])
-        self.assertIn("required reviewer/verifier gates", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("Verifier closure", policy["WORKSPACE_WRITE"]["boundary"])
+        self.assertIn("Reviewer is conditional", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("exact current-turn manager instruction", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("specific file edit/file-change action", policy["WORKSPACE_WRITE"]["boundary"])
         self.assertIn("commit/PR/publish/release", policy["WORKSPACE_WRITE"]["boundary"])
@@ -6037,7 +6170,8 @@ risks: none
         self.assertIn("WORKSPACE_WRITE", policy["sideEffectTaxonomy"])
         self.assertIn("local-package authorization", policy["sideEffectTaxonomy"])
         self.assertIn("explicit scope/files", policy["sideEffectTaxonomy"])
-        self.assertIn("required gates", policy["sideEffectTaxonomy"])
+        self.assertIn("Verifier closure", policy["sideEffectTaxonomy"])
+        self.assertIn("local-package is not a risk or Reviewer trigger", policy["sideEffectTaxonomy"])
         self.assertIn("exact current-turn manager instruction", policy["sideEffectTaxonomy"])
         self.assertIn("specific file-change action", policy["sideEffectTaxonomy"])
         self.assertIn("commit/PR/publish/release", policy["sideEffectTaxonomy"])
@@ -7616,7 +7750,7 @@ class TestTeamRouterV2ManagerAcceptance(unittest.TestCase):
             parent_thread_id=self.parent_thread_id,
             objective="implement a narrow local fix",
             scope="src/example.py only",
-            permission="local-package",
+            permission="read-only",
             stop_condition="focused tests pass",
             created_at="2026-07-11T21:00:00+08:00",
             model_routing_authorization={
@@ -10283,7 +10417,7 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
         )
         self.assertEqual(blocked["status"], "blocked")
 
-    def test_plain_local_package_callback_routes_to_reviewer_before_verifier(self):
+    def test_plain_local_package_callback_routes_directly_to_verifier(self):
         adapter = FakeThreadAdapter()
         ledger = self._awaiting_callback_ledger()
         ledger["objective"] = "update local helper behavior"
@@ -10309,26 +10443,9 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             captured_at="2026-06-22T20:04:00+08:00",
         )
 
-        self.assertEqual(updated["status"], "reviewing")
-        self.assertEqual(updated["gateClass"], "STRICT")
-        with self.assertRaises(team_router.StateStoreError) as ctx:
-            team_router.send_verifier_request_with_adapter(
-                self.root,
-                self.project_id,
-                self.task_id,
-                thread_adapter=adapter,
-                permission="local-package",
-                sent_at="2026-06-22T20:05:00+08:00",
-            )
-        self.assertIn("not ready for verifier", str(ctx.exception))
-
-        team_router.update_registry_roles(
-            self.root,
-            self.project_id,
-            {"reviewer": {"threadId": "thread-reviewer", "title": "审查者-test"}},
-            "2026-06-22T20:04:30+08:00",
-        )
-        reviewing = team_router.send_reviewer_request_with_adapter(
+        self.assertEqual(updated["status"], "verifying")
+        self.assertEqual(updated["gateClass"], "NORMAL")
+        verifying = team_router.send_verifier_request_with_adapter(
             self.root,
             self.project_id,
             self.task_id,
@@ -10337,9 +10454,8 @@ class TestTeamRouterManagerIntegration(unittest.TestCase):
             sent_at="2026-06-22T20:05:00+08:00",
         )
 
-        self.assertEqual(reviewing["status"], "reviewing")
-        self.assertEqual(reviewing["review"]["request"]["threadId"], "thread-reviewer")
-        self.assertEqual(adapter.sent[-1]["kwargs"]["threadId"], "thread-reviewer")
+        self.assertEqual(verifying["status"], "verifying")
+        self.assertIsNone(verifying["review"])
         self.assertIn("permission: local-package", adapter.sent[-1]["kwargs"]["prompt"])
 
     def test_read_only_plain_low_risk_callback_still_routes_to_verifier(self):
@@ -15952,7 +16068,9 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "Visible Codex role threads only; never fall back to native spawn_agent.",
             "Luna Medium / Terra Medium / Sol High",
             "Sol Ultra is forbidden for role dispatch.",
-            "FAST/NORMAL delegated work ends with Manager acceptance; STRICT/PACKAGE requires Reviewer then Verifier.",
+            "FAST/NORMAL read-only/design-only work may be Manager direct; when delegated without Reviewer/QA it ends with Manager acceptance.",
+            "Manager direct is never allowed for workspace write: new FAST/NORMAL `local-package` work closes Executor -> Verifier without making Reviewer mandatory.",
+            "STRICT/PACKAGE requires Reviewer then Verifier, and explicit Reviewer/QA also requires Verifier.",
         ):
             self.assertIn(needle, skill)
 
@@ -18487,7 +18605,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "stopCondition": package["stopCondition"],
                 "requestedGateClass": "NORMAL",
                 "explicitRoles": ("executor",),
-                "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                "requestedRoleRouting": {
+                    "executor": {"executionClass": "standard"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
             }
             target = {"type": "project", "projectId": project_id}
             adapter = V2Adapter()
@@ -18530,7 +18651,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             )
             self.assertEqual(len(scheduler.scheduled), 1)
 
-    def test_v2_route_matrix_normal_direct_return_enters_manager_acceptance(self):
+    def test_v2_route_matrix_normal_workspace_write_runs_verifier(self):
         class V2Adapter(FakeThreadAdapter):
             def list_projects(self, **kwargs):
                 return {"projects": [{
@@ -18556,9 +18677,18 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                     "allowedDefaults": ["gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high"],
                 },
             )
+            adapter = V2Adapter()
+            common = {
+                "objective": objective, "project_local_path": root,
+                "thread_adapter": adapter, "permission": "local-package",
+                "observed_at": "2026-07-12T10:00:00+08:00",
+                "target": {"type": "project", "projectId": project_id},
+                "parent_thread_id": parent_thread_id,
+                "heartbeat_scheduler": FakeHeartbeatScheduler(),
+            }
             update = team_router.orchestrate_team_task_with_adapter(
                 root, project_id, task_id, objective=objective, project_local_path=root,
-                thread_adapter=V2Adapter(), permission="local-package",
+                thread_adapter=adapter, permission="local-package",
                 observed_at="2026-07-12T10:00:00+08:00",
                 target={"type": "project", "projectId": project_id},
                 parent_thread_id=parent_thread_id, heartbeat_scheduler=FakeHeartbeatScheduler(),
@@ -18566,7 +18696,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                     "scope": package["scope"], "permission": package["permission"],
                     "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
                     "explicitRoles": ("executor",),
-                    "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                    "requestedRoleRouting": {
+                        "executor": {"executionClass": "standard"},
+                        "verifier": {"executionClass": "mechanical"},
+                    },
                 },
                 task_authorization_package=package,
             )
@@ -18575,29 +18708,48 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             self.assertEqual(dispatch["callbackDelivery"], "direct-send")
             self.assertEqual(dispatch["returnThreadId"], parent_thread_id)
 
-            accepted = team_router._capture_executor_callback_from_manager_inbox(
-                root,
-                project_id,
-                task_id,
-                [{
-                    "messageId": "msg-direct-callback",
-                    "sentAt": "2026-07-12T10:01:00+08:00",
-                    "sourceThreadId": dispatch["threadId"],
-                    "text": (
-                        "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\n"
-                        "sourceRoleThreadId: %s\nrole: Executor\nprotocolVersion: %s\n"
-                        "dispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\n"
-                        "summary: focused change complete\nevidence: focused test OK\nrisks: none\nnext: manager"
-                    ) % (
-                        task_id, parent_thread_id, dispatch["threadId"],
-                        dispatch["protocolVersion"], dispatch["dispatchId"],
-                        dispatch["requestId"], dispatch["attempt"],
-                    ),
-                }],
-                captured_at="2026-07-12T10:02:00+08:00",
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-direct-callback",
+                "sentAt": "2026-07-12T10:01:00+08:00",
+                "sourceThreadId": dispatch["threadId"],
+                "text": (
+                    "TEAM_ROUTER_CALLBACK taskId=%s\nsourceThreadId: %s\n"
+                    "sourceRoleThreadId: %s\nrole: Executor\nprotocolVersion: %s\n"
+                    "dispatchId: %s\nrequestId: %s\nattempt: %s\nstatus: done\nfinal: true\n"
+                    "summary: focused change complete\nevidence: focused test OK\nrisks: none\nnext: verifier"
+                ) % (
+                    task_id, parent_thread_id, dispatch["threadId"],
+                    dispatch["protocolVersion"], dispatch["dispatchId"],
+                    dispatch["requestId"], dispatch["attempt"],
+                ),
+            })
+            verifier_update = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, **common,
             )
-
-            self.assertEqual(accepted["status"], "manager_acceptance_pending")
+            self.assertEqual((verifier_update["action"], verifier_update["status"]), ("sent_v2_verifier", "verifying"))
+            executor = next(item for item in verifier_update["ledger"]["dispatches"] if item["role"] == "executor")
+            self.assertEqual(executor["resultStatus"], "consumed")
+            self.assertEqual(len(executor["resultReceipts"]), 1)
+            verifier = verifier_update["ledger"]["dispatches"][-1]
+            adapter.messages.setdefault(parent_thread_id, []).append({
+                "messageId": "msg-direct-verdict",
+                "sentAt": "2026-07-12T10:03:00+08:00",
+                "sourceThreadId": verifier["threadId"],
+                "text": (
+                    "TEAM_ROUTER_VERDICT taskId=%s\nsourceThreadId: %s\n"
+                    "sourceRoleThreadId: %s\nrole: Verifier\nprotocolVersion: %s\n"
+                    "dispatchId: %s\nrequestId: %s\nattempt: %s\nresult: pass\n"
+                    "summary: verified\nrequiredChanges: none\nevidenceChecked: focused test OK\nrisks: none"
+                ) % (
+                    task_id, parent_thread_id, verifier["threadId"], verifier["protocolVersion"],
+                    verifier["dispatchId"], verifier["requestId"], verifier["attempt"],
+                ),
+            })
+            complete = team_router.orchestrate_team_task_with_adapter(
+                root, project_id, task_id, **common,
+            )
+            self.assertEqual((complete["action"], complete["status"]), ("v2_terminal_closeout", "done"))
+            self.assertEqual([item["role"] for item in complete["ledger"]["dispatches"]], ["executor", "verifier"])
 
     def test_v2_manager_resume_routes_pending_strict_callback_to_reviewer_then_verifier(self):
         class V2Adapter(FakeThreadAdapter):
@@ -18622,7 +18774,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             normal_plan = {
                 "scope": package["scope"], "permission": package["permission"],
                 "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
-                "explicitRoles": ("executor",), "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                "explicitRoles": ("executor",), "requestedRoleRouting": {
+                    "executor": {"executionClass": "standard"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
             }
             resume_plan = {
                 "scope": package["scope"], "permission": package["permission"],
@@ -18877,7 +19032,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                     "scope": package["scope"], "permission": package["permission"],
                     "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
                     "explicitRoles": ("executor",),
-                    "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                    "requestedRoleRouting": {
+                        "executor": {"executionClass": "standard"},
+                        "verifier": {"executionClass": "mechanical"},
+                    },
                 },
                 task_authorization_package=package,
             )
@@ -18903,7 +19061,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                 "scope": package["scope"], "permission": package["permission"],
                 "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
                 "explicitRoles": ("executor",),
-                "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                "requestedRoleRouting": {
+                    "executor": {"executionClass": "standard"},
+                    "verifier": {"executionClass": "mechanical"},
+                },
             }
             resolved = team_router.resolve_v2_manager_plan(
                 objective=objective, scope=package["scope"], permission=package["permission"],
@@ -18969,7 +19130,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             objective, target = "finish one local task", {"type": "project", "projectId": project_id}
             package = team_router.make_task_authorization_package(
                 package_id="auth-v2-fallback", task_id=task_id, parent_thread_id=parent_thread_id,
-                objective=objective, scope="src/example.py only", permission="local-package",
+                objective=objective, scope="src/example.py only", permission="read-only",
                 stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
                 model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
                     "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
@@ -18978,7 +19139,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             adapter = V2Adapter()
             common = {
                 "objective": objective, "project_local_path": root, "thread_adapter": adapter,
-                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "permission": "read-only", "observed_at": "2026-07-12T10:00:00+08:00",
                 "target": target, "parent_thread_id": parent_thread_id,
                 "heartbeat_scheduler": FakeHeartbeatScheduler(),
             }
@@ -19103,7 +19264,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             objective, target = "finish one watched local task", {"type": "project", "projectId": project_id}
             package = team_router.make_task_authorization_package(
                 package_id="auth-v2-watch", task_id=task_id, parent_thread_id=parent_thread_id,
-                objective=objective, scope="src/example.py only", permission="local-package",
+                objective=objective, scope="src/example.py only", permission="read-only",
                 stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
                 model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
                     "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
@@ -19112,7 +19273,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             adapter = V2Adapter()
             first = team_router.orchestrate_team_task_with_adapter(
                 root, project_id, task_id, objective=objective, project_local_path=root,
-                thread_adapter=adapter, permission="local-package", observed_at="2026-07-12T10:00:00+08:00",
+                thread_adapter=adapter, permission="read-only", observed_at="2026-07-12T10:00:00+08:00",
                 target=target, parent_thread_id=parent_thread_id, heartbeat_scheduler=FakeHeartbeatScheduler(),
                 manager_plan={
                     "scope": package["scope"], "permission": package["permission"],
@@ -19135,7 +19296,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             scheduler = FakeHeartbeatScheduler()
 
             update = team_router.watch_team_task_with_adapter(
-                root, project_id, task_id, thread_adapter=adapter, permission="local-package",
+                root, project_id, task_id, thread_adapter=adapter, permission="read-only",
                 observed_at="2026-07-12T10:01:30+08:00", heartbeat_scheduler=scheduler,
             )
 
@@ -19172,7 +19333,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             objective, target = "check one explicit callback", {"type": "project", "projectId": project_id}
             package = team_router.make_task_authorization_package(
                 package_id="auth-v2-cadence", task_id=task_id, parent_thread_id=parent_thread_id,
-                objective=objective, scope="src/example.py only", permission="local-package",
+                objective=objective, scope="src/example.py only", permission="read-only",
                 stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
                 model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
                     "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
@@ -19187,7 +19348,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             adapter = CountingV2Adapter()
             common = {
                 "objective": objective, "project_local_path": root, "thread_adapter": adapter,
-                "permission": "local-package", "target": target, "parent_thread_id": parent_thread_id,
+                "permission": "read-only", "target": target, "parent_thread_id": parent_thread_id,
                 "heartbeat_scheduler": FakeHeartbeatScheduler(),
             }
             first = team_router.orchestrate_team_task_with_adapter(
@@ -19211,7 +19372,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             }]
 
             early = team_router.watch_team_task_with_adapter(
-                root, project_id, task_id, thread_adapter=adapter, permission="local-package",
+                root, project_id, task_id, thread_adapter=adapter, permission="read-only",
                 observed_at="2026-07-12T10:00:10+08:00", heartbeat_scheduler=FakeHeartbeatScheduler(),
             )
 
@@ -19231,10 +19392,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             def list_threads(self, **kwargs):
                 return {"threads": []}
 
-        def make_package(*, task_id, parent_thread_id, objective):
+        def make_package(*, task_id, parent_thread_id, objective, permission="local-package"):
             return team_router.make_task_authorization_package(
                 package_id="auth-%s" % task_id, task_id=task_id, parent_thread_id=parent_thread_id,
-                objective=objective, scope="src/example.py only", permission="local-package",
+                objective=objective, scope="src/example.py only", permission=permission,
                 stop_condition="focused test passes", created_at="2026-07-12T10:00:00+08:00",
                 model_routing_authorization={"authorizedBy": "explicit_cost_aware_entry", "allowedDefaults": [
                     "gpt-5.6-luna:medium", "gpt-5.6-terra:medium", "gpt-5.6-sol:high",
@@ -19258,11 +19419,12 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             architect_objective = "apply one explicit architecture review"
             architect_package = make_package(
                 task_id=architect_task, parent_thread_id=architect_parent, objective=architect_objective,
+                permission="read-only",
             )
             architect_adapter = V2Adapter()
             architect_common = {
                 "objective": architect_objective, "project_local_path": root, "thread_adapter": architect_adapter,
-                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "permission": architect_package["permission"], "observed_at": "2026-07-12T10:00:00+08:00",
                 "target": {"type": "project", "projectId": architect_project},
                 "parent_thread_id": architect_parent, "heartbeat_scheduler": FakeHeartbeatScheduler(),
             }
@@ -19307,7 +19469,7 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
             qa_adapter = V2Adapter()
             qa_common = {
                 "objective": qa_objective, "project_local_path": root, "thread_adapter": qa_adapter,
-                "permission": "local-package", "observed_at": "2026-07-12T10:00:00+08:00",
+                "permission": qa_package["permission"], "observed_at": "2026-07-12T10:00:00+08:00",
                 "target": {"type": "project", "projectId": qa_project},
                 "parent_thread_id": qa_parent, "heartbeat_scheduler": FakeHeartbeatScheduler(),
             }
@@ -19390,7 +19552,10 @@ class TestTeamRouterV2FacadePreflight(unittest.TestCase):
                         "scope": package["scope"], "permission": package["permission"],
                         "stopCondition": package["stopCondition"], "requestedGateClass": "NORMAL",
                         "requiresParallelism": True, "parallelConflicts": conflicts,
-                        "requestedRoleRouting": {"executor": {"executionClass": "standard"}},
+                        "requestedRoleRouting": {
+                            "executor": {"executionClass": "standard"},
+                            "verifier": {"executionClass": "mechanical"},
+                        },
                     }, task_authorization_package=package,
                 )
 

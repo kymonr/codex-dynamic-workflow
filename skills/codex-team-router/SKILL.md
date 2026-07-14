@@ -49,7 +49,7 @@ Visible Codex role threads only; never fall back to native spawn_agent. Team Rou
 
 ## Gates
 
-FAST/NORMAL delegated work ends with Manager acceptance; STRICT/PACKAGE requires Reviewer then Verifier. Explicit Reviewer/QA also requires Verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
+FAST/NORMAL read-only/design-only work may be Manager direct; when delegated without Reviewer/QA it ends with Manager acceptance. Manager direct is never allowed for workspace write: new FAST/NORMAL `local-package` work closes Executor -> Verifier without making Reviewer mandatory. STRICT/PACKAGE requires Reviewer then Verifier, and explicit Reviewer/QA also requires Verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
 
 ## Lifecycle Gates
 
