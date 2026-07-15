@@ -4973,6 +4973,86 @@ risks: none
         self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
         self.assertTrue(team_router.gate_class_requires_reviewer("STRICT"))
 
+    def test_bilingual_strict_risk_floor_matrix(self):
+        terms = (
+            "cross-module refactor", "跨模块重构",
+            "permission boundary", "权限边界",
+            "state machine", "state-machine", "状态机",
+            "legacy protocol compatibility",
+            "compatibility with legacy protocol", "兼容旧协议",
+            "database migration", "数据库迁移",
+        )
+        for term in terms:
+            ledger = {"objective": "implement %s" % term}
+            with self.subTest(term=term):
+                self.assertEqual(team_router.classify_team_router_gate(ledger), "STRICT")
+                explanation = team_router.explain_team_router_gate(ledger)
+                self.assertTrue(explanation["requiresReviewer"])
+                self.assertTrue(explanation["requiresArchitect"])
+                for requested in ("FAST", "NORMAL"):
+                    self.assertEqual(
+                        team_router.resolve_effective_gate(
+                            requested, ledger, authorization={}
+                        )["effectiveGateClass"],
+                        "STRICT",
+                    )
+
+    def test_bilingual_normal_qa_floor_matrix(self):
+        for term in ("regression test", "coverage gap", "回归测试", "覆盖缺口"):
+            ledger = {"objective": "docs-only %s" % term}
+            with self.subTest(term=term):
+                self.assertEqual(team_router.classify_team_router_gate(ledger), "NORMAL")
+                explanation = team_router.explain_team_router_gate(ledger)
+                self.assertFalse(explanation["requiresReviewer"])
+                self.assertFalse(explanation["requiresArchitect"])
+                self.assertTrue(explanation["requiresQa"])
+                self.assertIn("normal QA floor", explanation["reasons"])
+                for requested in ("FAST", "NORMAL"):
+                    self.assertEqual(
+                        team_router.resolve_effective_gate(
+                            requested, ledger, authorization={}
+                        )["effectiveGateClass"],
+                        "NORMAL",
+                    )
+
+    def test_bilingual_risk_floor_false_positives_and_ceiling(self):
+        false_positives = (
+            "模块化说明", "跨模块说明", "权限说明", "权限字段",
+            "边界值测试", "状态文案", "机器状态", "旧协议文档引用",
+            "兼容格式", "数据库查询", "迁移说明文档", "新增单元测试",
+            "覆盖率报告",
+        )
+        for text in false_positives:
+            ledger = {"objective": "docs-only %s" % text}
+            with self.subTest(text=text):
+                self.assertEqual(team_router.classify_team_router_gate(ledger), "FAST")
+                self.assertFalse(team_router.classify_architect_gate(ledger))
+                self.assertFalse(team_router.classify_qa_gate(ledger))
+                self.assertFalse(team_router.reviewer_gate_required_for_ledger(ledger))
+        self.assertEqual(
+            team_router.classify_team_router_gate({"objective": "完善普通中文任务"}),
+            "NORMAL",
+        )
+        floor_ledger = {"objective": "docs-only 回归测试"}
+        self.assertEqual(team_router.classify_team_router_gate(floor_ledger), "NORMAL")
+        for requested in ("STRICT", "PACKAGE"):
+            with self.subTest(requested=requested):
+                self.assertEqual(
+                    team_router.resolve_effective_gate(
+                        requested, floor_ledger, authorization={}
+                    )["effectiveGateClass"],
+                    requested,
+                )
+        package_ledger = {"objective": "docs-only package gate 回归测试"}
+        self.assertEqual(team_router.classify_team_router_gate(package_ledger), "PACKAGE")
+        for requested in ("FAST", "NORMAL", "STRICT", "PACKAGE"):
+            self.assertEqual(
+                team_router.resolve_effective_gate(
+                    requested, package_ledger, authorization={}
+                )["effectiveGateClass"],
+                "PACKAGE",
+            )
+
     def test_classify_team_router_gate_normal_fallback_for_plain_task(self):
         ledger = {
             "objective": "update local helper behavior",

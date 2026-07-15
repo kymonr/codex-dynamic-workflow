@@ -22,7 +22,23 @@ Runtime adapters execute this gate with `send_reviewer_request_with_adapter()`, 
 
 When the user names `reviewer` for Team Router self changes, the manager must use a reviewer role conversation/thread; if no existing reviewer thread exists, explicitly create/register reviewer role conversation or stop and report it. subagent fallback is not allowed.
 
-Trigger logic covers `runtime gate`, `reviewer gate`, `Team Router self changes`, and `Team Router` combined with reviewer/runtime/protocol/policy/permission/safety/process/shared/high-risk semantics. A plain `team_router.py` filename or low-risk docs-only/single-file cleanup does not trigger reviewer by itself.
+Trigger logic covers `runtime gate`, `reviewer gate`, `Team Router self changes`, and `Team Router` combined with reviewer/runtime/protocol/policy/permission/safety/process/shared/high-risk semantics. Deterministic risk-floor precedence is `PACKAGE > STRICT bilingual risk > NORMAL bilingual QA floor > FAST > NORMAL fallback`.
+
+The bilingual route matrix matches only these complete phrases:
+
+| Complete phrase group | Effective floor | Conditional roles |
+| --- | --- | --- |
+| `cross-module refactor / 跨模块重构` | STRICT | Reviewer=true, Architect=true |
+| `permission boundary / 权限边界` | STRICT | Reviewer=true, Architect=true |
+| `state machine / state-machine / 状态机` | STRICT | Reviewer=true, Architect=true |
+| `legacy protocol compatibility / compatibility with legacy protocol / 兼容旧协议` | STRICT | Reviewer=true, Architect=true |
+| `database migration / 数据库迁移` | STRICT | Reviewer=true, Architect=true |
+| `regression test / 回归测试` | NORMAL | QA=true, Reviewer=false |
+| `coverage gap / 覆盖缺口` | NORMAL | QA=true, Reviewer=false |
+
+The requested gate is a lower bound: requested FAST/NORMAL may only upgrade, requested STRICT/PACKAGE never downgrade, and PACKAGE remains the ceiling. Matching is conservative and literal: related single words or near phrases do not trigger this bilingual floor, but a complete phrase in negation, quotation, or discussion text still upgrades the route. This leaves a documented contextual false-positive risk; A4 does not introduce NLP, a path classifier, or regex inference.
+
+A3 behavior remains intact: FAST/NORMAL workspace write routes Executor -> Verifier, `local-package` is not a Reviewer trigger, and historical persisted `routeRoles` remain compatible and authoritative. A plain `team_router.py` filename or low-risk docs-only/single-file cleanup does not trigger Reviewer by itself.
 
 Role reuse policy applies to reviewer too: for the same `taskId` or task family, reuse existing reviewer when the conditional reviewer gate applies, and send rework review back to the original reviewer thread.
 

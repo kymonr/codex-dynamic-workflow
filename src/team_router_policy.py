@@ -120,6 +120,17 @@ REVIEWER_GATE_REQUIRED_TERMS = (
     "审查者",
     "direct-return",
     "direct return",
+    "cross-module refactor",
+    "跨模块重构",
+    "权限边界",
+    "state machine",
+    "state-machine",
+    "状态机",
+    "legacy protocol compatibility",
+    "compatibility with legacy protocol",
+    "兼容旧协议",
+    "database migration",
+    "数据库迁移",
 )
 
 REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS = (
@@ -155,6 +166,12 @@ ARCHITECT_GATE_TERMS = (
     "dependency-boundary",
     "high-risk refactor",
     "durable maintainability",
+    "跨模块重构",
+    "权限边界",
+    "state machine",
+    "状态机",
+    "兼容旧协议",
+    "数据库迁移",
 )
 
 QA_GATE_TERMS = (
@@ -168,6 +185,8 @@ QA_GATE_TERMS = (
     "evidence insufficient",
     "smoke",
     "test matrix",
+    "回归测试",
+    "覆盖缺口",
 )
 
 GATE_CLASSES = ("FAST", "NORMAL", "STRICT", "PACKAGE")
@@ -179,6 +198,12 @@ FAST_GATE_TERMS = (
     "typo",
     "wording",
     "readme",
+)
+NORMAL_GATE_FLOOR_TERMS = (
+    "regression test",
+    "coverage gap",
+    "回归测试",
+    "覆盖缺口",
 )
 PACKAGE_GATE_TERMS = (
     "package gate",
@@ -319,6 +344,8 @@ def classify_team_router_gate(ledger: Mapping[str, Any]) -> str:
         return "PACKAGE"
     if _reviewer_risk_required_for_ledger(ledger):
         return "STRICT"
+    if any(term in text for term in NORMAL_GATE_FLOOR_TERMS):
+        return "NORMAL"
     if any(term in text for term in FAST_GATE_TERMS):
         return "FAST"
     return "NORMAL"
@@ -328,6 +355,7 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
     text = _reviewer_gate_text(ledger)
     reasons: list[str] = []
     package_terms = [term for term in PACKAGE_GATE_TERMS if term in text]
+    normal_floor_terms = [term for term in NORMAL_GATE_FLOOR_TERMS if term in text]
     fast_terms = [term for term in FAST_GATE_TERMS if term in text]
     reviewer_terms = [term for term in REVIEWER_GATE_REQUIRED_TERMS if term in text]
     team_router_qualifiers = [
@@ -339,6 +367,8 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
         reasons.append("explicit reviewer requirement")
     if reviewer_terms or ("team router" in text and team_router_qualifiers):
         reasons.append("reviewer-required term")
+    if normal_floor_terms:
+        reasons.append("normal QA floor")
     if classify_architect_gate(ledger):
         reasons.append("architect gate")
     if classify_qa_gate(ledger):
