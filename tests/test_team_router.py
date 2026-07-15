@@ -1180,6 +1180,18 @@ next: none
         with self.assertRaisesRegex(team_router.ProtocolError, "duplicate field"):
             team_router.parse_callback(text, "ctr-1")
 
+    def test_callback_parser_keeps_needs_feedback_out_of_protocol_status(self):
+        text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
+status: needs_feedback
+final: true
+summary: need a decision
+evidence: none
+risks: blocked
+next: manager
+"""
+        with self.assertRaisesRegex(team_router.ProtocolError, "status must be one of"):
+            team_router.parse_callback(text, "ctr-1")
+
     def test_callback_parser_uses_last_final_message(self):
         text = """TEAM_ROUTER_CALLBACK taskId=ctr-1
 status: done
@@ -2539,6 +2551,26 @@ regressionRisks: low
         self.assertIn("dispatchRole: executor", message)
         self.assertEqual(message.count("role: Executor"), 1)
         self.assertNotIn("role: executor", message)
+
+    def test_executor_dispatch_delegates_complete_outcome_autonomously(self):
+        message = team_router.make_executor_dispatch_message(
+            "ctr-20260715-executor-outcome",
+            {"scope": "src tests", "stopWhen": "focused tests pass", "executorPrompt": "fix the scoped issue"},
+            "local-package",
+            {"messageId": "msg-1", "sentAt": "2026-07-15T10:00:00+08:00"},
+        )
+        self.assertIn("executionDirective: complete_outcome_autonomously", message)
+        self.assertIn(
+            "autonomousWorkflow: understand -> internal plan -> RED -> implement -> focused tests -> self-review",
+            message,
+        )
+        self.assertIn("terminalRoleOutcomes: done | needs_feedback | blocked", message)
+        self.assertIn("no continuation or micro-dispatch", message)
+        self.assertIn("zero-write", message)
+        self.assertIn("clean worktree", message)
+        self.assertIn("exact error", message)
+        self.assertIn("do not claim broker-recovery", message)
+        self.assertIn("status: done | blocked", message)
 
     def test_role_request_messages_keep_protocol_keys_but_require_chinese_human_text(self):
         task_id = "ctr-20260628-chinese-callback"
@@ -5862,18 +5894,17 @@ risks: none
         self.assertIn("original verifier", policy["roleReuse"]["reworkVerifier"])
         self.assertIn("isolation/audit boundary changes", policy["roleReuse"]["newThreadOnlyWhen"])
         title_policy = policy["roleTitleNormalization"]
-        self.assertEqual(title_policy["format"], "角色-任务名")
-        self.assertIn("immediately after creating or discovering", title_policy["requiredAfter"])
-        self.assertIn("set_thread_title", title_policy["requiredAfter"])
-        self.assertEqual(title_policy["appliesTo"], ("manager", "executor", "reviewer", "verifier"))
-        self.assertIn("执行者-Team Router <task label>", title_policy["examples"])
-        self.assertIn("审查者-Team Router <task label>", title_policy["examples"])
-        self.assertIn("验证者-Team Router <task label>", title_policy["examples"])
-        self.assertEqual(title_policy["parentThread"]["format"], "调度者-Team Router <task label>")
-        self.assertIn("parent/current manager-dispatcher", title_policy["parentThread"]["scope"])
-        self.assertIn("manager first renames", title_policy["parentThread"]["firstAction"])
-        self.assertIn("before child-role dispatch", title_policy["parentThread"]["firstAction"])
-        self.assertIn("requires explicit parent_thread_id", title_policy["parentThread"]["runtimeStatus"])
+        self.assertEqual(title_policy["v1"]["roleFormat"], "角色-任务名")
+        self.assertEqual(title_policy["v1"]["parent"]["format"], "调度者-Team Router <task label>")
+        self.assertEqual(title_policy["v1"]["legacyDiscoveryAlias"], "TeamRouter <role> - <projectId>")
+        self.assertIn("set_thread_title", title_policy["v1"]["requiredAfter"])
+        self.assertEqual(title_policy["v2"]["parent"]["format"], "管理者-Team Router <task label>")
+        self.assertEqual(title_policy["v2"]["pooledRoleFormat"], "角色-Team Router <projectId>")
+        self.assertEqual(title_policy["v2"]["temporaryParallelSuffix"], "#2")
+        self.assertEqual(
+            title_policy["v2"]["poolIdentity"],
+            ("projectId", "hostId", "targetFingerprint", "role"),
+        )
         self.assertIn("verdictDelivery: direct-send", policy["verifierDirectReturn"]["requiredFields"])
         self.assertIn("verdictFallback: self-thread-marker", policy["verifierDirectReturn"]["requiredFields"])
         self.assertEqual(
@@ -16071,6 +16102,23 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             return text[start:]
         return text[start:min(ends)]
 
+    def test_autonomous_executor_docs_require_worktree_fan_out_and_project_pool(self):
+        manager_mode = (self._skill_references_dir() / "manager-mode.md").read_text(encoding="utf-8")
+        quality = (self._skill_references_dir() / "testing-and-quality-gates.md").read_text(encoding="utf-8")
+        adapter = (self._skill_references_dir() / "adapter-runtime.md").read_text(encoding="utf-8")
+        runbook = (
+            ROOT / "docs" / "runbooks" / "codex-team-router-live-orchestration.md"
+        ).read_text(encoding="utf-8")
+        fan_out = (
+            "multiple ready execution units with no dependencies and disjoint write sets "
+            "must fan out to separate Executors in independent worktrees"
+        )
+        self.assertIn(fan_out.lower(), manager_mode.lower())
+        self.assertIn(fan_out.lower(), runbook.lower())
+        self.assertIn("independent worktree fan-out", quality)
+        self.assertIn('projects[projectId].managerPools["__project__"]', adapter)
+        self.assertNotIn("managerPools[parentThreadId]", adapter)
+
     def test_skill_entrypoint_uses_progressive_disclosure_references(self):
         skill_path = self._skill_path()
         references_dir = self._skill_references_dir()
@@ -16956,15 +17004,21 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "验证者 (Verifier)",
             "只有规划者、执行者、验证者是长期 role thread",
             "父线程侧状态控制器 (Parent-Side State Controller)",
-            "Visible Codex desktop thread titles use `角色-任务名`",
-            "`调度者-Team Router",
-            "`执行者-Team Router 管理者模式触发词修复`",
-            "`验证者-Team Router 管理者模式触发词修复`",
+            "Title normalization is versioned",
+            "V1 uses role titles `角色-任务名`",
+            "V2 uses parent `管理者-Team Router <task label>`",
+            "pooled role titles `角色-Team Router <projectId>`",
+            "temporary parallel role may add suffix `#2`",
+            "complete outcome, not one micro-step",
+            "terminal role outcome `done`, `needs_feedback`, or `blocked`",
+            "zero-write",
+            "clean worktree",
+            "broker-recovery",
             "set_thread_title",
             "Skill/rule/process writes route executor -> reviewer -> verifier",
             "Superpowers grants no manager write authority",
             "Title changes require explicit current-turn authorization",
-            "before creating, dispatching, or normalizing child role threads",
+            "only after direct/model-authorization preflight",
             "explicit role-intent phrases",
             "“你是管理者”",
             "“你作为管理者”",
@@ -17107,10 +17161,15 @@ class TestTeamRouterSkillDoc(unittest.TestCase):
             "规划者 (Manager)",
             "执行者 (Executor)",
             "验证者 (Verifier)",
-            "Visible Codex desktop thread titles use `角色-任务名`",
-            "`调度者-Team Router",
-            "`执行者-Team Router 管理者模式触发词修复`",
-            "`验证者-Team Router 管理者模式触发词修复`",
+            "Title rules are versioned",
+            "V1 uses parent `调度者-Team Router <task label>` and role `角色-任务名`",
+            "V2 uses parent `管理者-Team Router <task label>`",
+            "pooled role `角色-Team Router <projectId>`",
+            "temporary parallel role may append `#2`",
+            "complete-outcome delegation",
+            "does not send continuation prompts or micro-dispatches",
+            "zero-write + clean worktree",
+            "broker-recovery",
             "set_thread_title",
             "explicit role-intent phrases",
             "“你是管理者”",
@@ -18111,11 +18170,52 @@ class TestV2DelegatedAuthorizationReceipt(unittest.TestCase):
                     "authorizationPackageId: auth-delegated-receipt",
                     "authorizationStatus: authorized",
                     "authorizationSource: taskAuthorizationPackage",
-                    "executionDirective: start_immediately",
                     "commitAuthorization: false",
                     "externalGates: none",
                 ):
                     self.assertIn(line, prompt)
+                if role == "executor":
+                    self.assertIn("executionDirective: complete_outcome_autonomously", prompt)
+                    self.assertIn(
+                        "autonomousWorkflow: understand -> internal plan -> RED -> implement -> focused tests -> self-review",
+                        prompt,
+                    )
+                    self.assertIn("terminalRoleOutcomes: done | needs_feedback | blocked", prompt)
+                    self.assertIn(
+                        "callbackStatusSerialization: TEAM_ROUTER_CALLBACK.status is done | blocked; serialize needs_feedback as blocked",
+                        prompt,
+                    )
+                    self.assertIn("no continuation or micro-dispatch", prompt)
+                    self.assertIn("do not claim broker-recovery", prompt)
+                else:
+                    self.assertIn("executionDirective: start_immediately", prompt)
+                    self.assertNotIn("complete_outcome_autonomously", prompt)
+
+    def test_v2_executor_prompt_maps_needs_feedback_to_parseable_blocked_callback(self):
+        package, plan = self._authorization()
+        prompt = team_router._v2_role_prompt(
+            package["taskId"], "executor", plan, objective=package["objective"],
+            role_thread_id="executor-thread", authorization_package=package,
+        )
+        self.assertIn("serialize needs_feedback as blocked", prompt)
+        callback = """TEAM_ROUTER_CALLBACK taskId=%s
+status: blocked
+final: true
+summary: needs feedback from manager
+evidence: none
+risks: decision required
+next: manager
+""" % package["taskId"]
+        self.assertEqual(
+            team_router.parse_callback(callback, package["taskId"]).fields["status"],
+            "blocked",
+        )
+
+    def test_facade_docstring_describes_caller_supplied_adapter_boundary(self):
+        doc = " ".join((team_router.__doc__ or "").split())
+        self.assertIn("caller-supplied", doc)
+        self.assertIn("adapter", doc)
+        self.assertIn("does not independently discover or invoke host tools", doc)
         reference = (
             ROOT / "skills" / "codex-team-router" / "references" / "role-handoff-and-review-package.md"
         ).read_text(encoding="utf-8")

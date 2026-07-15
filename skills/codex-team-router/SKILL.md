@@ -13,7 +13,7 @@ Team Router controls Codex desktop role threads, registry/ledger, direct return,
 
 Roles: 调度者/Orchestrator, 工具宿主边界/Adapter Host Boundary, 状态控制器/State Controller, 规划者/Manager (`TEAM_ROUTER_PLAN`), 执行者/Executor (`TEAM_ROUTER_CALLBACK`), conditional 审查者/Reviewer (`TEAM_ROUTER_REVIEW`), 验证者/Verifier (`TEAM_ROUTER_VERDICT`). Details: `references/manager-mode.md`.
 
-Visible titles use `角色-任务名`. Title changes require explicit current-turn authorization; authorized dispatch also requires callable `set_thread_title` and `parent_thread_id`, or returns `tool_error`.
+Visible titles, complete-outcome Executor delegation, and broker-recovery boundaries are versioned in `references/manager-mode.md`. Title changes require explicit current-turn authorization; authorized dispatch also requires callable `set_thread_title` and `parent_thread_id`, or returns `tool_error`.
 
 ## Manager Mode Hard Rules
 

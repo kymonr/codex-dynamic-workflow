@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Helpers for the codex-team-router MVP.
+"""Team Router orchestration facade.
 
-This module is intentionally local and deterministic. It does not call Codex
-thread tools; callers pass thread/tool observations in as plain data.
+Pure protocol, policy, state, and runtime helpers live in dedicated modules.
+This facade coordinates a caller-supplied thread adapter; it does not
+independently discover or invoke host tools without that explicit adapter.
 """
 from __future__ import annotations
 
@@ -218,6 +219,13 @@ ROLE_HUMAN_LANGUAGE_RULE = (
     "语言规则：协议 marker、字段名和枚举值保持英文；给人看的目标、范围、总结、证据、风险、"
     "requiredChanges、evidenceChecked、next 等内容默认用中文。只有命令、路径、文件名、"
     "日志、报错、工具名和不可避免的技术标识保留英文。"
+)
+EXECUTOR_OUTCOME_DELEGATION_PROMPT_LINES = (
+    "autonomousWorkflow: understand -> internal plan -> RED -> implement -> focused tests -> self-review",
+    "terminalRoleOutcomes: done | needs_feedback | blocked",
+    "callbackStatusSerialization: TEAM_ROUTER_CALLBACK.status is done | blocked; serialize needs_feedback as blocked",
+    "managerControlBoundary: no continuation or micro-dispatch; complete the assigned outcome autonomously",
+    "hostWriteCapabilityFailure: return blocked with zero-write, clean worktree, and exact error; do not claim broker-recovery, writer success, or hard permission",
 )
 ROLE_THREAD_PATH_HANDOFF_PROMPT_LINES = (
     "roleCommunicationMode: concise-protocol-plus-paths",
@@ -506,20 +514,25 @@ MANAGER_ORCHESTRATION_POLICY = {
             "concurrency conflict",
             "model/capability requirement",
         ),
-    },    "roleTitleNormalization": {
-        "format": "角色-任务名",
-        "requiredAfter": "immediately after creating or discovering any role thread, call set_thread_title and persist the normalized title",
-        "appliesTo": ("manager", "executor", "reviewer", "verifier"),
-        "examples": (
-            "执行者-Team Router <task label>",
-            "审查者-Team Router <task label>",
-            "验证者-Team Router <task label>",
-        ),
-        "parentThread": {
-            "format": "调度者-Team Router <task label>",
-            "scope": "parent/current manager-dispatcher thread title when the host UI exposes a current-thread title hook",
-            "firstAction": "after the task label is clear, the manager first renames the current/parent conversation before child-role dispatch; if the host cannot provide current thread id or set_thread_title, stop with tool_error/blocked",
-            "runtimeStatus": "adapter-created path requires explicit parent_thread_id/current thread id plus callable set_thread_title; if unavailable, return tool_error/blocked before child-role dispatch",
+    },
+    "roleTitleNormalization": {
+        "v1": {
+            "roleFormat": "角色-任务名",
+            "parent": {
+                "format": "调度者-Team Router <task label>",
+                "scope": "parent/current manager-dispatcher thread title",
+            },
+            "legacyDiscoveryAlias": "TeamRouter <role> - <projectId>",
+            "requiredAfter": "immediately after creating or discovering a V1 role thread, call set_thread_title and persist the normalized title",
+        },
+        "v2": {
+            "parent": {
+                "format": "管理者-Team Router <task label>",
+                "scope": "authorized delegated parent after direct/model-authorization preflight",
+            },
+            "pooledRoleFormat": "角色-Team Router <projectId>",
+            "temporaryParallelSuffix": "#2",
+            "poolIdentity": ("projectId", "hostId", "targetFingerprint", "role"),
         },
     },
     "verifierDirectReturn": {
@@ -3200,6 +3213,9 @@ def make_executor_dispatch_message(task_id: str,
     else:
         lines.extend(_self_thread_only_prompt_lines())
     lines.extend((
+        "",
+        "executionDirective: complete_outcome_autonomously",
+        *EXECUTOR_OUTCOME_DELEGATION_PROMPT_LINES,
         "",
         *_executor_startup_failure_prompt_lines(),
         "",
@@ -6756,7 +6772,9 @@ def _v2_role_prompt(task_id: str,
         "authorizationPackageId: %s" % package_id,
         "authorizationStatus: authorized",
         "authorizationSource: taskAuthorizationPackage",
-        "executionDirective: start_immediately",
+        "executionDirective: %s" % (
+            "complete_outcome_autonomously" if role == "executor" else "start_immediately"
+        ),
         "commitAuthorization: false",
         "externalGates: none",
         "permission: %s" % permission,
@@ -6781,6 +6799,7 @@ def _v2_role_prompt(task_id: str,
         ))
     if role == "executor":
         lines.extend((
+            *EXECUTOR_OUTCOME_DELEGATION_PROMPT_LINES,
             "completionFields: status, final, summary, evidence, risks, next",
             "final: true only when this role has completed its assigned work",
         ))
