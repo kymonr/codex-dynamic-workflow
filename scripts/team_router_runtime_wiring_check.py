@@ -22,6 +22,7 @@ from team_router_broker_adapter import (  # noqa: E402
     broker_host_context_kwargs,
     broker_host_readiness_snapshot,
     fetch_broker_readiness,
+    validate_broker_config,
 )
 from team_router_state import StateStoreError  # noqa: E402
 
@@ -59,7 +60,7 @@ def _manager_startup_path(injection: str, host_context_keys: list[str] | None = 
     }
 
 
-def _manual_report(missing: list[str], reason: str, *, orchestration_status: str = "manual_only") -> dict[str, object]:
+def _manual_report(missing: list[str], reason: str, *, orchestration_status: str = "manual/pre-created") -> dict[str, object]:
     return {
         "mode": "read-only",
         "status": "manual_only",
@@ -89,9 +90,13 @@ def build_report(broker_url: str | None, session_token: str | None) -> tuple[int
 
     config = BrokerConfig(base_url=broker_url, session_token=session_token)
     try:
+        validate_broker_config(config)
+    except StateStoreError as exc:
+        return 2, _manual_report(["broker configuration"], str(exc))
+    try:
         readiness = fetch_broker_readiness(config)
     except StateStoreError as exc:
-        return 1, _manual_report(["broker readiness"], str(exc), orchestration_status="host_contract_blocked")
+        return 1, _manual_report(["broker readiness"], str(exc))
 
     host_snapshot = broker_host_readiness_snapshot(readiness)
     host_readiness = team_router_doctor.classify_host_readiness_snapshot(host_snapshot)
@@ -118,7 +123,7 @@ def build_report(broker_url: str | None, session_token: str | None) -> tuple[int
         return 1, {
             "mode": "read-only",
             "status": "manual_only",
-            "orchestrationStatus": "host_contract_blocked",
+            "orchestrationStatus": "manual/pre-created",
             "automaticEntryAllowed": False,
             "missing": ["host_context"],
             "reason": str(exc),

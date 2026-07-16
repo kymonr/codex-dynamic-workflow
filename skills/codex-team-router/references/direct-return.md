@@ -2,7 +2,9 @@
 
 This reference is part of the Team Router contract. `SKILL.md` is the short entrypoint; keep direct-return details here.
 
-Terminology: Codex delegation wrapper metadata may expose the sender role thread as `<source_thread_id>` / normalized message `sourceThreadId`. That wrapper source identifies the role thread that sent the message. Inside the Team Router protocol block, `sourceThreadId` is the parent/orchestrator return thread id and must match the pending ledger `returnThreadId`; `sourceRoleThreadId` is the role thread id and must match the expected `roleThreadId` / role thread record for the pending role ledger entry.
+This file is the single normative owner of Role result schemas and templates. Other references link here and must not copy result templates.
+
+Source authority is fail-closed. A plain Codex delegation wrapper may claim `<source_thread_id>`; normalization records that text-only claim as `delegatedSourceThreadId`, never as trusted Host `sourceThreadId`. The wrapper/body cannot authenticate its own sender. Desktop `read_thread` may additionally provide Host-structured `content[].codexDelegation`; normalization promotes that item to trusted `agentMessage` provenance only when its source and input are complete and match any wrapper/top-level source. Manager-inbox consumption requires normalized Host `type: agentMessage`, a canonical Host item id, and trustworthy Host source metadata matching the pending Role thread. A `userMessage` without matching Host-structured delegation metadata remains unconsumable even if its body contains a complete strict tuple. Inside the Team Router protocol block, `sourceThreadId` remains the parent/orchestrator return thread id and `sourceRoleThreadId` remains the claimed Role thread id; both are correlation fields, not Host sender authentication.
 
 Direct return is the primary completion path when the current orchestrator/parent thread id is known. protocol direct-send is allowed and is not a workspace/file write; it is a protocol delivery action to the parent thread. The role must first call `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)` to direct-send the final protocol block to Manager, then output the same protocol block body as the self-thread-marker fallback in its own thread as the audit copy.
 
@@ -23,7 +25,7 @@ Bare `create_thread` plus later `read_thread` is not a valid Team Router role re
 
 Executor, reviewer, and verifier roles must be Codex desktop thread roles when Team Router expects direct return. Do not dispatch Team Router role work to collaboration subagents or other non-thread agents: they are not reliable role threads and may not expose `send_message_to_thread`.
 
-Before reusing a role thread for direct-return work, confirm it is a usable Codex thread, not archived/broken, and can call `send_message_to_thread`. An archived role/thread is unavailable for reuse, period: create or use a non-archived visible replacement role and record the replacement reason. If a non-archived role is still not user-visible, read_thread readable, or otherwise usable, treat it as unavailable/broken and replace it with a visible role. If direct-send is unavailable or fails for a given run, keep the self-thread marker as fallback for that run and record fallback-only metadata on the local protocol block: `deliveryStatus: fallback_only` plus `deliveryError` only when direct-send was unavailable or failed.
+Without a trusted execution-domain issuer/field/version/lifetime, idle Role reuse is disabled. Only the exact active `taskId + requestId` binding may resume long enough to finish its current result; release/terminal cleanup retires the pool record. Do not invent or persist `executionDomainKey`. An archived/broken Role is unavailable, period. If direct-send is unavailable or fails for a given run, keep the self-thread marker as fallback for that run and record fallback-only metadata on the local protocol block: `deliveryStatus: fallback_only` plus `deliveryError` only when direct-send was unavailable or failed.
 
 Prompt metadata by role:
 
@@ -42,6 +44,7 @@ Manager inbox capture is part of the ledger state machine. A direct-return callb
 
 Manager inbox validation requirements:
 
+- require normalized Host `type: agentMessage`, canonical Host item id, and trustworthy Host source metadata; matching Host-structured `content[].codexDelegation` may supply that provenance, while wrapper/body-only claims never satisfy it.
 - validate `taskId` against the active ledger task.
 - validate protocol-block `sourceThreadId` against the expected parent/orchestrator `returnThreadId`.
 - validate `sourceRoleThreadId` against the expected `roleThreadId` / role thread record.
@@ -58,6 +61,8 @@ Keep `self-thread-marker` as the fallback/audit path. If direct-send is unavaila
 ## Protocols
 
 Marker lines use `MARKER key=value`. Ordinary fields use `key: value`. Reject mixed marker formats such as `taskId: <id>`.
+
+Every terminal Role result block is limited to 1200 UTF-8 bytes. There is no line-count limit. Put longer evidence in the Role thread or `reviewPackagePath`; direct-send and self-thread fallback use the same bounded body.
 
 ### Manager Plan
 
@@ -102,9 +107,13 @@ TEAM_ROUTER_CALLBACK taskId=<taskId>
 sourceThreadId: <manager/orchestrator thread id>
 sourceRoleThreadId: <executor role thread id>
 role: Executor
+protocolVersion: 2
+dispatchId: <current prepared dispatch id>
+requestId: <current prepared request id>
+attempt: <current positive attempt>
 status: done | blocked
 final: true
-summary: <3-7 lines>
+summary: <concise bounded summary>
 evidence: <paths, command summaries, or thread observations>
 risks: <none or risks>
 next: <none or next step>
@@ -134,8 +143,13 @@ TEAM_ROUTER_REVIEW taskId=<taskId>
 sourceThreadId: <manager/orchestrator thread id>
 sourceRoleThreadId: <reviewer role thread id>
 role: Reviewer
+protocolVersion: 2
+dispatchId: <current prepared dispatch id>
+requestId: <current prepared request id>
+attempt: <current positive attempt>
 result: pass | needs_rework | blocked
 summary: <review summary>
+findings: <finding counts or top blockers>
 requiredChanges: <none or changes>
 evidenceChecked: <checked evidence>
 risks: <none or risks>
@@ -162,6 +176,10 @@ TEAM_ROUTER_VERDICT taskId=<taskId>
 sourceThreadId: <manager/orchestrator thread id>
 sourceRoleThreadId: <verifier role thread id>
 role: Verifier
+protocolVersion: 2
+dispatchId: <current prepared dispatch id>
+requestId: <current prepared request id>
+attempt: <current positive attempt>
 result: pass | needs_rework | blocked
 summary: <verdict summary>
 requiredChanges: <none or changes>
@@ -173,12 +191,69 @@ deliveryError: <short error only when direct-send was unavailable or failed>
 
 Natural-language verdicts do not move state.
 
+## Strict V2 Correlation And Legacy Compatibility
+
+Every current strict V2 role result (Architect, Executor, Reviewer, QA, and Verifier) echoes the exact Router-owned `protocolVersion: 2`, `dispatchId`, `requestId`, and positive `attempt` from its prepared dispatch. Direct-send and the self-thread fallback use the same values. The Router accepts a result only when all four values match the current pending dispatch; malformed, old, or unknown-version results are quarantined and do not advance routing.
+
+Legacy V1 and pre-strict V2 dispatches retain their existing result shape and are not backfilled. A strict-only result is not accepted for a legacy dispatch, and a legacy-shaped result is not accepted for a current strict dispatch. Current ownership is always the latest dispatch for that role across strict and legacy records: a current strict dispatch never falls back to an older legacy receipt, and a newer legacy dispatch also prevents an older strict result from being consumed.
+
+`outcome_unknown` means send outcome cannot be safely retried automatically. A later matching result may still be consumed exactly once; duplicate delivery only adds distinct receipt evidence and never replays routing.
+
+If strict result routing fails before the atomic consume transition completes, the result remains `pending`, the task remains nonterminal, and the Role claim is retained. After the routing condition is repaired, the same exactly correlated result may be replayed; the failed attempt must not be finalized or released as terminal work.
+
 Compatibility anchor: legacy shorthand send_message_to_thread(sourceThreadId, protocolBlock) means the same protocol delivery target as send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>); prefer the explicit `threadId=<returnThreadId>` form in role request templates.
 
 Legacy wording: first call `send_message_to_thread(sourceThreadId, protocolBlock)` with the final protocol block, then output the same protocol block body in the role thread as self-thread-marker fallback. New role request templates must prefer the explicit `send_message_to_thread(threadId=<returnThreadId>, prompt=<完整 TEAM_ROUTER_* block>)` form.
 ## Architect And QA Direct Return
 
 See `references/conditional-roles.md` for the complete conditional role contract.
+
+Architect result schema:
+
+```text
+TEAM_ROUTER_ARCHITECT_REVIEW taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id>
+sourceRoleThreadId: <architect role thread id>
+role: Architect
+protocolVersion: 2
+dispatchId: <current prepared dispatch id>
+requestId: <current prepared request id>
+attempt: <current positive attempt>
+result: pass | needs_rework | blocked
+summary: <summary>
+findings: <findings or none>
+requiredChanges: <none or changes>
+evidenceChecked: <checked evidence>
+risks: <none or risks>
+skillProfileUsed: architect-default
+architectureImpact: <impact>
+compatibilityNotes: <compatibility notes>
+alternatives: <alternatives or none>
+migrationRisks: <migration risks>
+```
+
+QA result schema:
+
+```text
+TEAM_ROUTER_QA_REVIEW taskId=<taskId>
+sourceThreadId: <manager/orchestrator thread id>
+sourceRoleThreadId: <qa role thread id>
+role: QA
+protocolVersion: 2
+dispatchId: <current prepared dispatch id>
+requestId: <current prepared request id>
+attempt: <current positive attempt>
+result: pass | needs_rework | blocked
+summary: <summary>
+findings: <findings or none>
+requiredChanges: <none or changes>
+evidenceChecked: <checked evidence>
+risks: <none or risks>
+skillProfileUsed: qa-default
+coverageGaps: <coverage gaps or none>
+verificationPlan: <verification plan>
+regressionRisks: <regression risks or none>
+```
 
 Direct-return marker map additions:
 

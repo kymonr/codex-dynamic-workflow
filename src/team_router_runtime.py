@@ -124,9 +124,30 @@ def _unwrap_codex_delegation_text(text: str) -> tuple[str | None, str]:
     return source_thread_id, inner_text
 
 
+def _structured_codex_delegation(message: Mapping[str, Any]) -> tuple[str, str] | None:
+    if message.get("type") not in {"userMessage", "agentMessage"}:
+        return None
+    content = message.get("content")
+    if not isinstance(content, list):
+        return None
+    delegations = [
+        item.get("codexDelegation")
+        for item in content
+        if isinstance(item, Mapping) and isinstance(item.get("codexDelegation"), Mapping)
+    ]
+    if len(delegations) != 1:
+        return None
+    delegation = delegations[0]
+    source_thread_id = _first_str(delegation, ("sourceThreadId", "source_thread_id"))
+    input_text = delegation.get("input")
+    if source_thread_id is None or not isinstance(input_text, str):
+        return None
+    return source_thread_id, input_text.strip()
+
+
 def _normalize_thread_message(message: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(message)
-    message_id = _first_str(message, ("messageId", "message_id", "id", "turnId"))
+    message_id = _first_str(message, ("messageId", "message_id", "id"))
     sent_at = _first_timestamp(message, (
         "sentAt", "sent_at", "createdAt", "created_at", "timestamp",
     ))
@@ -141,9 +162,28 @@ def _normalize_thread_message(message: Mapping[str, Any]) -> dict[str, Any]:
     source_thread_id = _first_str(message, ("sourceThreadId", "source_thread_id"))
     delegated_source_thread_id, delegated_text = _unwrap_codex_delegation_text(text)
     if delegated_source_thread_id is not None:
-        source_thread_id = delegated_source_thread_id
+        normalized["delegatedSourceThreadId"] = delegated_source_thread_id
         normalized["delegatedText"] = delegated_text
         text = delegated_text
+    structured_delegation = _structured_codex_delegation(message)
+    if structured_delegation is not None:
+        structured_source_thread_id, structured_text = structured_delegation
+        wrapper_matches = (
+            delegated_source_thread_id is None
+            or (
+                delegated_source_thread_id == structured_source_thread_id
+                and delegated_text == structured_text
+            )
+        )
+        host_source_matches = (
+            source_thread_id is None
+            or source_thread_id == structured_source_thread_id
+        )
+        if wrapper_matches and host_source_matches:
+            normalized["type"] = "agentMessage"
+            normalized["hostProvenance"] = "codexDelegation"
+            source_thread_id = structured_source_thread_id
+            text = structured_text
     normalized["messageId"] = message_id
     if sent_at is not None:
         normalized["sentAt"] = sent_at

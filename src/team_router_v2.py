@@ -18,6 +18,8 @@ from team_router_state import (
     StateStoreError,
     TERMINAL_STATUSES,
     THREAD_PERMISSIONS,
+    V2_CONDITIONAL_ROLE_NAMES,
+    V2_DELEGATED_BASE_ROLE_NAMES,
     cleanup_terminal_manager_pool_task,
     load_task_ledger,
     new_v2_task_ledger,
@@ -201,7 +203,7 @@ def validate_model_routing_authorization(authorization: Mapping[str, Any] | None
                                          *,
                                          route_roles: tuple[str, ...]) -> dict[str, Any]:
     if not route_roles:
-        return {"allowedDefaults": frozenset()}
+        return {"allowedDefaults": frozenset(), "allowedOverrides": frozenset()}
     if not isinstance(authorization, Mapping):
         raise StateStoreError("model_authorization_required")
     authorized_by = authorization.get("authorizedBy")
@@ -213,20 +215,43 @@ def validate_model_routing_authorization(authorization: Mapping[str, Any] | None
     allowed_defaults = frozenset(str(value) for value in defaults)
     if not allowed_defaults.issubset(DEFAULT_MODEL_COMBINATIONS):
         raise StateStoreError("model_authorization_required")
-    if authorized_by == "explicit_cost_aware_entry" and allowed_defaults != DEFAULT_MODEL_COMBINATIONS:
+    if authorized_by == "explicit_cost_aware_entry":
+        if set(authorization) != {"authorizedBy", "allowedDefaults"} or allowed_defaults != DEFAULT_MODEL_COMBINATIONS:
+            raise StateStoreError("model_authorization_required")
+        return {"allowedDefaults": allowed_defaults, "allowedOverrides": frozenset()}
+    if set(authorization) != {"authorizedBy", "allowedDefaults", "allowedOverrides"} or allowed_defaults:
         raise StateStoreError("model_authorization_required")
-    if authorized_by == "complete_per_request_override" and allowed_defaults:
+    overrides = authorization.get("allowedOverrides")
+    if isinstance(overrides, str) or not isinstance(overrides, (list, tuple)) or not overrides:
         raise StateStoreError("model_authorization_required")
-    return {"allowedDefaults": allowed_defaults}
+    valid_roles = V2_DELEGATED_BASE_ROLE_NAMES | V2_CONDITIONAL_ROLE_NAMES
+    allowed_overrides = set()
+    seen_roles = set()
+    for override in overrides:
+        if not isinstance(override, Mapping) or set(override) != {"role", "model", "thinking"}:
+            raise StateStoreError("model_authorization_required")
+        role = _text(override.get("role"), "allowedOverrides.role")
+        model = _text(override.get("model"), "allowedOverrides.model")
+        thinking = _text(override.get("thinking"), "allowedOverrides.thinking")
+        if role not in valid_roles or role not in route_roles or "%s:%s" % (model, thinking) not in DEFAULT_MODEL_COMBINATIONS:
+            raise StateStoreError("model_authorization_required")
+        triple = (role, model, thinking)
+        if triple in allowed_overrides or role in seen_roles:
+            raise StateStoreError("model_authorization_required")
+        allowed_overrides.add(triple)
+        seen_roles.add(role)
+    if seen_roles != set(route_roles):
+        raise StateStoreError("model_authorization_required")
+    return {"allowedDefaults": allowed_defaults, "allowedOverrides": frozenset(allowed_overrides)}
 
 
 def _role_model_is_authorized(resolved: Mapping[str, Any],
-                              model_authorization: Mapping[str, Any]) -> bool:
+                              model_authorization: Mapping[str, Any], role: str) -> bool:
     override_reason = resolved.get("modelOverrideReason")
     if override_reason is None:
         combination = "%s:%s" % (resolved["requestedModel"], resolved["requestedThinking"])
         return combination in model_authorization["allowedDefaults"]
-    return True
+    return (role, resolved["requestedModel"], resolved["requestedThinking"]) in model_authorization["allowedOverrides"]
 
 
 def resolve_v2_manager_plan(*,
@@ -269,6 +294,7 @@ def resolve_v2_manager_plan(*,
         requires_independent_context=requires_independent_context,
         requires_independent_review=requires_independent_review,
         lightweight_verification_available=lightweight_verification_available,
+        workspace_write=bool(authorization["workspaceWrite"]),
     )
     plan = {
         "objective": objective,
@@ -288,7 +314,11 @@ def resolve_v2_manager_plan(*,
     if execution_mode == "manager_direct":
         return dict(plan, routeRoles=(), roleRouting={}, parallelAllowed=False)
 
-    route_roles = resolve_v2_route(gate["effectiveGateClass"], tuple(explicit_roles))
+    route_roles = resolve_v2_route(
+        gate["effectiveGateClass"],
+        tuple(explicit_roles),
+        requires_verifier=bool(authorization["workspaceWrite"]),
+    )
     model_authorization = validate_model_routing_authorization(
         authorization_package.get("modelRoutingAuthorization"),
         route_roles=route_roles,
@@ -313,7 +343,7 @@ def resolve_v2_manager_plan(*,
             )
         except KeyError as exc:
             raise StateStoreError("plan_invalid: missing roleRouting.%s.executionClass" % role) from exc
-        if not _role_model_is_authorized(resolved, model_authorization):
+        if not _role_model_is_authorized(resolved, model_authorization, role):
             raise StateStoreError("model_authorization_required")
         resolved_routing[role] = resolved
     return dict(
@@ -441,26 +471,33 @@ def next_v2_route_after_evidence(ledger: Mapping[str, Any],
         raise StateStoreError("authorization_mismatch: externalGates")
     requested_gate = _v2_reclassification_gate(plan, evidence)
     existing_roles = tuple(plan.get("routeRoles", ()))
-    replanned = resolve_v2_manager_plan(
-        objective=_text(ledger.get("objective"), "objective"),
-        scope=_text(plan.get("scope"), "scope"),
-        permission=_text(plan.get("permission"), "permission"),
-        stop_condition=_text(plan.get("stopCondition"), "stopCondition"),
-        requested_gate_class=requested_gate,
-        authorization_package=ledger.get("taskAuthorizationPackage"),
-        explicit_roles=existing_roles,
-        requested_role_routing=_v2_reclassification_role_routing(plan),
-        requires_parallelism=bool(plan.get("parallelAllowed")),
-        parallel_conflicts=tuple(plan.get("parallelConflicts", ())),
-        ledger_input={
-            "taskId": ledger.get("taskId"),
-            "parentThreadId": ledger.get("parentThreadId"),
-        },
-    )
+    current_gate = str(plan.get("effectiveGateClass", "")).upper()
+    if current_gate in {"FAST", "NORMAL"} and requested_gate in {"FAST", "NORMAL"}:
+        replanned = dict(plan)
+        replanned["effectiveGateClass"] = requested_gate
+        gate_change = "evidence preserved effective gate at %s" % requested_gate
+    else:
+        replanned = resolve_v2_manager_plan(
+            objective=_text(ledger.get("objective"), "objective"),
+            scope=_text(plan.get("scope"), "scope"),
+            permission=_text(plan.get("permission"), "permission"),
+            stop_condition=_text(plan.get("stopCondition"), "stopCondition"),
+            requested_gate_class=requested_gate,
+            authorization_package=ledger.get("taskAuthorizationPackage"),
+            explicit_roles=existing_roles,
+            requested_role_routing=_v2_reclassification_role_routing(plan),
+            requires_parallelism=bool(plan.get("parallelAllowed")),
+            parallel_conflicts=tuple(plan.get("parallelConflicts", ())),
+            ledger_input={
+                "taskId": ledger.get("taskId"),
+                "parentThreadId": ledger.get("parentThreadId"),
+            },
+        )
+        gate_change = "evidence raised effective gate to %s" % replanned["effectiveGateClass"]
     replanned["requestedGateClass"] = plan.get("requestedGateClass")
-    replanned["gateReason"] = "%s; evidence raised effective gate to %s" % (
+    replanned["gateReason"] = "%s; %s" % (
         plan.get("gateReason", "requested %s" % plan.get("requestedGateClass")),
-        replanned["effectiveGateClass"],
+        gate_change,
     )
     updated = dict(ledger)
     updated["plan"] = replanned
@@ -529,7 +566,7 @@ def resume_v2_manager_routing(state_root: str | Path,
     if isinstance(ledger.get("resolvedPlan"), Mapping):
         staged["resolvedPlan"] = dict(staged_plan)
     resumed = next_v2_route_after_evidence(staged, {"requestedGateClass": "STRICT"})
-    resumed["status"] = "planned"
+    resumed["status"] = "awaiting_callback"
     resumed.pop("routingError", None)
     return save_task_ledger(state_root, project_id, task_id, resumed)
 
@@ -635,9 +672,9 @@ def record_v2_model_upgrade(state_root: str,
     model_authorization = validate_model_routing_authorization(
         ledger.get("taskAuthorizationPackage", {}).get("modelRoutingAuthorization")
         if isinstance(ledger.get("taskAuthorizationPackage"), Mapping) else None,
-        route_roles=(role,),
+        route_roles=tuple(plan.get("routeRoles", ())),
     )
-    if not _role_model_is_authorized(resolved, model_authorization):
+    if not _role_model_is_authorized(resolved, model_authorization, role):
         raise StateStoreError("model_authorization_required")
     if int(ledger.get("modelUpgradeCount", 0)) >= 1:
         ledger["status"] = "blocked"

@@ -184,7 +184,7 @@ roleCloseoutPolicy: final protocol block is still closeout; no extra closeout me
 
 ## Compact Reviewer/Verifier Return
 
-Reviewer and Verifier direct returns to the parent are fixed compact protocol bodies: at most 12 lines and 1200 UTF-8 bytes. The direct-send and self-thread fallback use the same body. Keep parser and identity fields, then one-line human fields only.
+Reviewer and Verifier direct returns to the parent are compact protocol bodies of at most 1200 UTF-8 bytes; there is no arbitrary line-count limit. The direct-send and self-thread fallback use the same body. The complete schemas and templates are owned only by `references/direct-return.md`.
 
 For `needs_rework` or `blocked`, put P0-P3, acceptedEvidence, unverifiedClaims, and verifierFocus in a separate role-thread `TEAM_ROUTER_DETAIL taskId=<taskId>` message. Never direct-send that detail to Manager. The compact final block carries only `findingCounts`, `topBlockers`, `detailThreadId`, `detailAnchor`, and `nextGate`. `detailAnchor` identifies that role-thread detail message; it is not a parent-thread anchor.
 

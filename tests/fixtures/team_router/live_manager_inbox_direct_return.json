@@ -27,7 +27,16 @@
         {
           "type": "userMessage",
           "id": "item-direct-callback",
-          "text": "<codex_delegation>\n  <source_thread_id>thread-executor-fixture</source_thread_id>\n  <input>TEAM_ROUTER_CALLBACK taskId=ctr-live-direct-fixture-1\nstatus: done\nfinal: true\nsummary: live direct-return callback observed\nevidence: manager inbox direct-send smoke\nrisks: none\nnext: verifier</input>\n</codex_delegation>"
+          "content": [
+            {
+              "type": "text",
+              "text": "<codex_delegation>\n  <source_thread_id>thread-executor-fixture</source_thread_id>\n  <input>TEAM_ROUTER_CALLBACK taskId=ctr-live-direct-fixture-1\nstatus: done\nfinal: true\nsummary: live direct-return callback observed\nevidence: manager inbox direct-send smoke\nrisks: none\nnext: verifier</input>\n</codex_delegation>",
+              "codexDelegation": {
+                "sourceThreadId": "thread-executor-fixture",
+                "input": "TEAM_ROUTER_CALLBACK taskId=ctr-live-direct-fixture-1\nstatus: done\nfinal: true\nsummary: live direct-return callback observed\nevidence: manager inbox direct-send smoke\nrisks: none\nnext: verifier"
+              }
+            }
+          ]
         }
       ]
     }

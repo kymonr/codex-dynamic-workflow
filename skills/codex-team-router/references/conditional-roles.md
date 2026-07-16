@@ -4,7 +4,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 
 ## Version 2 Route Closure
 
-The parent Manager owns the Version 2 plan and is never a child role. `architect` and `qa` are explicit visible roles only: Architect precedes Executor; QA precedes Verifier. Selecting Reviewer or QA closes the route with Verifier. FAST/NORMAL delegated work otherwise ends at Manager acceptance, while STRICT/PACKAGE is Executor -> Reviewer -> Verifier. Version 1 keeps its legacy child Manager contract unchanged.
+The parent Manager owns the Version 2 plan and is never a child role. `architect` and `qa` are explicit visible roles only: Architect precedes Executor; QA precedes Verifier. Selecting Reviewer or QA closes the route with Verifier. FAST/NORMAL delegated read-only/design-only work otherwise ends at Manager acceptance; new FAST/NORMAL workspace writes close Executor -> Verifier, while STRICT/PACKAGE is Executor -> Reviewer -> Verifier. Persisted pre-A3 FAST/NORMAL V2 routes remain frozen unless evidence raises risk. Version 1 keeps its legacy child Manager contract unchanged.
 
 ## Architect
 
@@ -30,44 +30,7 @@ architect/QA do not replace reviewer. The reviewer remains separate from archite
 
 ## Markers
 
-Architect result marker:
-
-```text
-TEAM_ROUTER_ARCHITECT_REVIEW taskId=<taskId>
-result: pass | needs_rework | blocked
-sourceThreadId: <returnThreadId>
-sourceRoleThreadId: <architect roleThreadId>
-role: Architect
-summary: <summary>
-findings: <findings or none>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-skillProfileUsed: architect-default
-architectureImpact: <impact>
-compatibilityNotes: <compatibility notes>
-alternatives: <alternatives or none>
-migrationRisks: <migration risks>
-```
-
-QA result marker:
-
-```text
-TEAM_ROUTER_QA_REVIEW taskId=<taskId>
-result: pass | needs_rework | blocked
-sourceThreadId: <returnThreadId>
-sourceRoleThreadId: <qa roleThreadId>
-role: QA
-summary: <summary>
-findings: <findings or none>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-skillProfileUsed: qa-default
-coverageGaps: <coverage gaps or none>
-verificationPlan: <verification plan>
-regressionRisks: <regression risks or none>
-```
+The complete Architect and QA result schemas/templates are owned only by `references/direct-return.md`; do not copy or fork them here.
 
 For `TEAM_ROUTER_ARCHITECT_REVIEW` and `TEAM_ROUTER_QA_REVIEW`, `sourceThreadId`, `sourceRoleThreadId`, `role`, and `skillProfileUsed` are required parser fields. The marker-specific `role` enum is `Architect` for architect and `QA` for QA. The marker-specific `skillProfileUsed` enum is `architect-default` or `qa-default`.
 

@@ -13,7 +13,7 @@ Team Router controls Codex desktop role threads, registry/ledger, direct return,
 
 Roles: 调度者/Orchestrator, 工具宿主边界/Adapter Host Boundary, 状态控制器/State Controller, 规划者/Manager (`TEAM_ROUTER_PLAN`), 执行者/Executor (`TEAM_ROUTER_CALLBACK`), conditional 审查者/Reviewer (`TEAM_ROUTER_REVIEW`), 验证者/Verifier (`TEAM_ROUTER_VERDICT`). Details: `references/manager-mode.md`.
 
-Visible titles use `角色-任务名`. Title changes require explicit current-turn authorization; authorized dispatch also requires callable `set_thread_title` and `parent_thread_id`, or returns `tool_error`.
+Visible titles, complete-outcome Executor delegation, and broker-recovery boundaries are versioned in `references/manager-mode.md`. Authorized dispatch requires `parent_thread_id`; title normalization is best-effort and warning-only.
 
 ## Manager Mode Hard Rules
 
@@ -32,12 +32,12 @@ Daily Manager shortcut: `references/manager-quick-card.md`.
 Before live orchestration, probe required Codex app tools and stop with `tool_error` if unavailable:
 
 ```text
-list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread
+list_projects -> [best-effort set_thread_title] -> create_thread -> send_message_to_thread -> read_thread
 ```
 
-Adapter orchestration requires callable thread tools, `parent_thread_id`, `set_thread_title`, and a heartbeat scheduler. Model-side descriptors are not Python callables; otherwise status is `tool_error` / `manual orchestration only`. See `references/adapter-runtime.md` and `references/manager-polling-cadence.md`.
+Adapter orchestration requires callable core thread tools, `parent_thread_id`, and trusted Host sender/source plus execution-domain identity. Missing scheduler is interactive-only; missing title support is warning-only. Model-side descriptors are not Python callables. See `references/adapter-runtime.md` and `references/manager-polling-cadence.md`.
 
-Reuse existing roles for the same task/task family; rework returns to the original role. Archived role/thread is unavailable for reuse, period: replace it with a non-archived visible role and record the replacement reason; there is no unarchive exception.
+Resume only the exact active task/request Role binding. Without trusted execution-domain evidence, idle reuse is disabled. Archived Role is unavailable, period.
 
 Luna Medium / Terra Medium / Sol High map to `gpt-5.6-luna + medium`, `gpt-5.6-terra + medium`, and `gpt-5.6-sol + high`. Sol Ultra is forbidden for role dispatch.
 
@@ -49,7 +49,7 @@ Visible Codex role threads only; never fall back to native spawn_agent. Team Rou
 
 ## Gates
 
-FAST/NORMAL delegated work ends with Manager acceptance; STRICT/PACKAGE requires Reviewer then Verifier. Explicit Reviewer/QA also requires Verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
+FAST/NORMAL read-only/design-only work may be Manager direct; when delegated without Reviewer/QA it ends with Manager acceptance. Manager direct is never allowed for workspace write: new FAST/NORMAL `local-package` work closes Executor -> Verifier without making Reviewer mandatory. STRICT/PACKAGE requires Reviewer then Verifier, and explicit Reviewer/QA also requires Verifier. A required review-only role must already be authorized or the flow blocks without creating one. See `references/reviewer-gate.md`.
 
 ## Lifecycle Gates
 

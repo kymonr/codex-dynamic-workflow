@@ -174,6 +174,8 @@ def _iter_marker_blocks(text: str) -> list[ProtocolMessage]:
         field_match = FIELD_RE.match(line)
         if field_match:
             current_field = field_match.group(1)
+            if current_field in current_fields:
+                raise ProtocolError("duplicate field in marker block: %s" % current_field)
             current_fields[current_field] = field_match.group(2).strip()
             continue
         if current_field is not None and stripped:

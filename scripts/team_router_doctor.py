@@ -39,6 +39,10 @@ REQUIRED_THREAD_TOOLS = tuple(
         ),
     )
 )
+CORE_THREAD_TOOLS = tuple(
+    tool for tool in REQUIRED_THREAD_TOOLS
+    if tool != "set_thread_title"
+)
 
 
 _truth_status = team_router_status_tools.truth_status
@@ -52,17 +56,8 @@ ROLE_PROTOCOL_MARKERS = {
     "reviewer": "TEAM_ROUTER_REVIEW",
     "verifier": "TEAM_ROUTER_VERDICT",
 }
-TRUE_VALUES = {"1", "true", "yes", "y", "available", "callable", "exposed", "ready"}
-
-
 def _as_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        return value.strip().lower() in TRUE_VALUES
-    return False
+    return value is True
 
 
 def _first_present(snapshot: dict[str, object], names: tuple[str, ...]) -> object:
@@ -134,11 +129,14 @@ def classify_host_readiness_snapshot(snapshot: dict[str, object] | None) -> dict
     if snapshot is None:
         capabilities = {tool: False for tool in REQUIRED_THREAD_TOOLS}
         capabilities["heartbeat_scheduler"] = False
+        capabilities["trusted_sender_provenance"] = False
+        capabilities["trusted_execution_domain"] = False
         return {
             "mode": "read-only",
             "status": "not_supplied",
-            "orchestrationStatus": "manual_only",
+            "orchestrationStatus": "manual/pre-created",
             "missing": [],
+            "warnings": [],
             "capabilities": capabilities,
             "summary": "no host readiness snapshot supplied; manual orchestration only",
             "boundary": "evidence-only; no thread tools are called by doctor",
@@ -149,39 +147,57 @@ def classify_host_readiness_snapshot(snapshot: dict[str, object] | None) -> dict
     parent_thread_id = str(_first_present(snapshot, ("parentThreadId", "parent_thread_id")) or "").strip()
     adapter_callable = _as_bool(_first_present(snapshot, ("adapterCallable", "callableAdapter", "pythonCallableAdapter")))
     tool_surface_exposed = _thread_tool_surface_exposed(snapshot)
+    trusted_sender = _first_present(snapshot, ("trustedSenderProvenance", "trusted_sender_provenance")) is True
+    trusted_domain = _first_present(snapshot, ("trustedExecutionDomain", "trusted_execution_domain")) is True
     missing = []
+    warnings = []
     if not adapter_callable:
         missing.append("callable adapter")
-    for tool_name, is_callable in tool_capabilities.items():
-        if not is_callable:
+    for tool_name in CORE_THREAD_TOOLS:
+        if not tool_capabilities.get(tool_name, False):
             missing.append("callable %s" % tool_name)
+    if not tool_capabilities.get("set_thread_title", False):
+        warnings.append("callable set_thread_title")
     if not parent_thread_id:
         missing.append("parent_thread_id")
+    if not trusted_sender:
+        missing.append("trusted sender provenance")
+    if not trusted_domain:
+        missing.append("trusted execution domain")
     if not heartbeat_callable:
-        missing.append("callable heartbeat scheduler")
+        warnings.append("callable heartbeat scheduler")
     if not runtime_probe_ready:
         missing.append("runtime readiness probe")
     status = "ready" if not missing else "blocked"
-    orchestration_status = "adapter_smoke_ready" if status == "ready" else "host_contract_blocked"
+    orchestration_status = (
+        "manual/pre-created"
+        if status != "ready"
+        else "unattended_contract_ready" if heartbeat_callable else "interactive_contract_ready"
+    )
     capabilities = dict(tool_capabilities)
     capabilities["heartbeat_scheduler"] = heartbeat_callable
+    capabilities["trusted_sender_provenance"] = trusted_sender
+    capabilities["trusted_execution_domain"] = trusted_domain
     return {
         "mode": "read-only",
         "status": status,
         "orchestrationStatus": orchestration_status,
         "missing": missing,
+        "warnings": warnings,
         "capabilities": capabilities,
         "evidence": {
             "threadToolSurfaceExposed": tool_surface_exposed,
             "parentThreadIdPresent": bool(parent_thread_id),
             "adapterCallable": adapter_callable,
             "heartbeatSchedulerCallable": heartbeat_callable,
+            "trustedSenderProvenance": trusted_sender,
+            "trustedExecutionDomain": trusted_domain,
             "runtimeProbeReady": runtime_probe_ready,
         },
         "summary": (
-            "host readiness evidence supports adapter heartbeat smoke path"
+            "host readiness evidence supports %s" % orchestration_status
             if status == "ready"
-            else "host readiness evidence supplied but live orchestration requires " + ", ".join(missing)
+            else "host readiness evidence supplied but contract orchestration requires " + ", ".join(missing)
         ),
         "boundary": "evidence-only; model-side Codex app tool exposure is not a Python callable adapter",
     }

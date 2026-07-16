@@ -25,7 +25,7 @@ Use this shape first:
 Manager direct 在 ledger、标题、heartbeat、线程操作前返回，且不写状态。
 派工前确认显式模型授权；Luna Medium / Terra Medium / Sol High 只是该授权下的默认路由。
 Role 仅用可见 Codex thread，并显式传 model + thinking；Sol Ultra 和 native spawn_agent fallback 都禁止。
-FAST/NORMAL: direct 或 Executor -> Manager acceptance；STRICT/PACKAGE: Executor -> Reviewer -> Verifier。
+FAST/NORMAL read-only/design-only: direct 或 Executor -> Manager acceptance；FAST/NORMAL workspace write: Executor -> Verifier，禁止 Manager direct；STRICT/PACKAGE: Executor -> Reviewer -> Verifier。
 commit、push、PR、merge、deploy、global sync 都单独授权；Task 10 global sync 另开 gate。
 ```
 
@@ -35,8 +35,9 @@ commit、push、PR、merge、deploy、global sync 都单独授权；Task 10 glob
 - Prefer `taskBriefPath`, `executorReportPath`, or `reviewPackagePath` over inline evidence.
 - Use reviewer/verifier direct-return as the normal closeout path when a parent thread id is available.
 - Treat `local-package` as executor-only workspace write permission.
+- `local-package` does not raise risk or require Reviewer by itself, but every new FAST/NORMAL workspace-write route requires Verifier.
 - Keep `commit`, `push`, `PR`, `merge`, `deploy`, and `global sync` outside the package unless the user explicitly opens that gate.
-- Reuse only the same manager-owned pool identity (`parentThreadId`, host, target fingerprint, role). A creation intent with an unknown outcome is terminal; do not automatically retry create.
+- Resume only the exact active `taskId + requestId` binding under project, host, target fingerprint, and role. Without a trusted execution-domain contract, idle Role reuse is disabled. Creation-intent identity additionally includes `parentThreadId`; an unknown creation outcome is terminal, so do not automatically retry create.
 - Version 1 compatibility only: a legacy nonterminal ledger keeps its child Manager flow; never convert it in place.
 
 ## Do Not Inline By Default

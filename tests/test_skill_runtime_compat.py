@@ -1,8 +1,7 @@
 import os
+import json
 import unittest
 from pathlib import Path
-
-import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,8 +9,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def read_skill(relative_path):
     text = (ROOT / relative_path).read_text(encoding="utf-8")
-    _, frontmatter, body = text.split("---", 2)
-    return yaml.safe_load(frontmatter), body
+    prefix, frontmatter, body = text.split("---", 2)
+    if prefix.strip():
+        raise ValueError("skill frontmatter must start at the first line")
+    metadata = {}
+    for line in frontmatter.splitlines():
+        if not line.strip():
+            continue
+        key, separator, value = line.partition(":")
+        if not separator:
+            raise ValueError("invalid skill frontmatter line: %s" % line)
+        value = value.strip()
+        metadata[key.strip()] = json.loads(value) if value.startswith('"') else value
+    return metadata, body
 
 
 class SkillRuntimeCompatTests(unittest.TestCase):
@@ -91,7 +101,7 @@ class SkillRuntimeCompatTests(unittest.TestCase):
         manager = (ROOT / "skills/codex-team-router/references/manager-mode.md").read_text(encoding="utf-8").lower()
         taxonomy = (ROOT / "skills/codex-team-router/references/side-effect-taxonomy.md").read_text(encoding="utf-8").lower()
         closeout = (ROOT / "skills/codex-team-router/references/role-closeout.md").read_text(encoding="utf-8").lower()
-        self.assertIn("title changes require explicit current-turn authorization", router)
+        self.assertIn("title normalization is best-effort and warning-only", router)
         self.assertNotIn("may authorize the manager to delegate", manager)
         self.assertIn("title changes require explicit current-turn authorization", manager)
         self.assertNotIn("authorize routing only", taxonomy)

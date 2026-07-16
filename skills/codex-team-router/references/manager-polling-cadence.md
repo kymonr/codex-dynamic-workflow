@@ -15,10 +15,10 @@ When a manager or dispatcher delegates work to a router, executor, reviewer, or 
 - For ordinary background roles, one short observation-only first check at `firstCheckAt` is allowed right after dispatch/read registration so fast completions can be received without waiting for the full heartbeat window.
 - After that single first check, set `lastReadAt` to the observation time and move `nextAllowedReadAt` to at least `lastReadAt + 300 seconds`; ordinary proactive polling then returns to the 5 minutes / 300 second minimum heartbeat unless the current user explicitly asks for status/stop/immediate handling.
 
-## Backoff
+## Bounded Fallback
 
-- Use backoff for follow-up checks instead of fixed short intervals.
-- For manual parent-thread polling, a small visible pattern is `10s -> 20s -> 40s`; after that, wait for a role event, user-triggered status/stop/immediate request, timeout/blocker handling, or the ordinary 300 second heartbeat window.
+- After the single observation-only first check, do not invent a second short-interval backoff ladder. Follow the ledger schedule.
+- Wait until `nextAllowedReadAt` and keep ordinary proactive fallback reads at least 300 seconds apart. A role event, user-triggered status/stop/immediate request, timeout, or blocker handling may justify an earlier read.
 - A normal pattern is one ordinary heartbeat no more frequently than every 5 minutes for the same role/thread; do not shrink the cadence just because the role has not pushed a reply.
 - Do not perform multiple `read_thread` calls within a few seconds unless there is a concrete reason to intervene immediately.
 - If `firstCheckAt` or `nextAllowedReadAt` exists, respect it; no manual reads before `nextAllowedReadAt` except user-triggered status/stop/immediate, timeout, or blocker handling.

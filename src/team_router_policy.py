@@ -9,6 +9,7 @@ from team_router_state import (
     StateStoreError,
     V2_CONDITIONAL_ROLE_NAMES,
     V2_DELEGATED_BASE_ROLE_NAMES,
+    task_workflow_version,
 )
 
 
@@ -17,6 +18,7 @@ DEFAULT_ROLE_MODELS = {
     "standard": ("gpt-5.6-terra", "medium"),
     "high": ("gpt-5.6-sol", "high"),
 }
+PUBLIC_ROLE_MODEL_COMBINATIONS = frozenset(DEFAULT_ROLE_MODELS.values())
 FORBIDDEN_ROLE_MODEL_COMBINATIONS = frozenset({("gpt-5.6-sol", "ultra")})
 
 
@@ -42,6 +44,8 @@ def resolve_role_model(execution_class: str,
         result["modelOverrideReason"] = override_reason.strip()
     if (requested_model, requested_thinking) in FORBIDDEN_ROLE_MODEL_COMBINATIONS:
         raise StateStoreError("model_forbidden: gpt-5.6-sol ultra")
+    if (requested_model, requested_thinking) not in PUBLIC_ROLE_MODEL_COMBINATIONS:
+        raise StateStoreError("model_override_invalid: unsupported model/thinking")
     result.update({
         "requestedModel": requested_model,
         "requestedThinking": requested_thinking,
@@ -55,7 +59,8 @@ def resolve_v2_execution_mode(effective_gate_class: str,
                               requires_parallelism: bool = False,
                               requires_independent_context: bool = False,
                               requires_independent_review: bool = False,
-                              lightweight_verification_available: bool = True) -> str:
+                              lightweight_verification_available: bool = True,
+                              workspace_write: bool = False) -> str:
     gate = str(effective_gate_class or "").upper()
     if gate not in GATE_CLASSES:
         raise StateStoreError("invalid effectiveGateClass: %s" % effective_gate_class)
@@ -66,12 +71,15 @@ def resolve_v2_execution_mode(effective_gate_class: str,
         and not requires_independent_context
         and not requires_independent_review
         and lightweight_verification_available
+        and not workspace_write
     )
     return "manager_direct" if direct else "delegated"
 
 
 def resolve_v2_route(effective_gate_class: str,
-                     explicit_roles: tuple[str, ...] = ()) -> tuple[str, ...]:
+                     explicit_roles: tuple[str, ...] = (),
+                     *,
+                     requires_verifier: bool = False) -> tuple[str, ...]:
     gate = str(effective_gate_class or "").upper()
     if gate not in GATE_CLASSES:
         raise StateStoreError("invalid effectiveGateClass: %s" % effective_gate_class)
@@ -83,7 +91,7 @@ def resolve_v2_route(effective_gate_class: str,
     roles.update(V2_DELEGATED_BASE_ROLE_NAMES)
     if gate in {"STRICT", "PACKAGE"}:
         roles.update({"reviewer", "verifier"})
-    if "reviewer" in roles or "qa" in roles:
+    if requires_verifier or "reviewer" in roles or "qa" in roles:
         roles.add("verifier")
     order = ("architect", "executor", "reviewer", "qa", "verifier")
     return tuple(role for role in order if role in roles)
@@ -112,6 +120,17 @@ REVIEWER_GATE_REQUIRED_TERMS = (
     "审查者",
     "direct-return",
     "direct return",
+    "cross-module refactor",
+    "跨模块重构",
+    "权限边界",
+    "state machine",
+    "state-machine",
+    "状态机",
+    "legacy protocol compatibility",
+    "compatibility with legacy protocol",
+    "兼容旧协议",
+    "database migration",
+    "数据库迁移",
 )
 
 REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS = (
@@ -147,6 +166,12 @@ ARCHITECT_GATE_TERMS = (
     "dependency-boundary",
     "high-risk refactor",
     "durable maintainability",
+    "跨模块重构",
+    "权限边界",
+    "state machine",
+    "状态机",
+    "兼容旧协议",
+    "数据库迁移",
 )
 
 QA_GATE_TERMS = (
@@ -160,6 +185,8 @@ QA_GATE_TERMS = (
     "evidence insufficient",
     "smoke",
     "test matrix",
+    "回归测试",
+    "覆盖缺口",
 )
 
 GATE_CLASSES = ("FAST", "NORMAL", "STRICT", "PACKAGE")
@@ -171,6 +198,12 @@ FAST_GATE_TERMS = (
     "typo",
     "wording",
     "readme",
+)
+NORMAL_GATE_FLOOR_TERMS = (
+    "regression test",
+    "coverage gap",
+    "回归测试",
+    "覆盖缺口",
 )
 PACKAGE_GATE_TERMS = (
     "package gate",
@@ -292,9 +325,7 @@ def _ledger_has_local_package_permission(ledger: Mapping[str, Any]) -> bool:
     return any(str(value or "").strip().lower() == "local-package" for value in sources)
 
 
-def reviewer_gate_required_for_ledger(ledger: Mapping[str, Any]) -> bool:
-    if _ledger_has_local_package_permission(ledger):
-        return True
+def _reviewer_risk_required_for_ledger(ledger: Mapping[str, Any]) -> bool:
     if _reviewer_gate_explicitly_required(ledger):
         return True
     text = _reviewer_gate_text(ledger)
@@ -303,14 +334,18 @@ def reviewer_gate_required_for_ledger(ledger: Mapping[str, Any]) -> bool:
     return "team router" in text and any(term in text for term in REVIEWER_GATE_TEAM_ROUTER_QUALIFIERS)
 
 
+def reviewer_gate_required_for_ledger(ledger: Mapping[str, Any]) -> bool:
+    return _reviewer_risk_required_for_ledger(ledger)
+
+
 def classify_team_router_gate(ledger: Mapping[str, Any]) -> str:
     text = _reviewer_gate_text(ledger)
     if any(term in text for term in PACKAGE_GATE_TERMS):
         return "PACKAGE"
-    if _ledger_has_local_package_permission(ledger):
+    if _reviewer_risk_required_for_ledger(ledger):
         return "STRICT"
-    if reviewer_gate_required_for_ledger(ledger):
-        return "STRICT"
+    if any(term in text for term in NORMAL_GATE_FLOOR_TERMS):
+        return "NORMAL"
     if any(term in text for term in FAST_GATE_TERMS):
         return "FAST"
     return "NORMAL"
@@ -320,6 +355,7 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
     text = _reviewer_gate_text(ledger)
     reasons: list[str] = []
     package_terms = [term for term in PACKAGE_GATE_TERMS if term in text]
+    normal_floor_terms = [term for term in NORMAL_GATE_FLOOR_TERMS if term in text]
     fast_terms = [term for term in FAST_GATE_TERMS if term in text]
     reviewer_terms = [term for term in REVIEWER_GATE_REQUIRED_TERMS if term in text]
     team_router_qualifiers = [
@@ -327,12 +363,12 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
     ]
     if package_terms:
         reasons.append("package term")
-    if _ledger_has_local_package_permission(ledger):
-        reasons.append("local-package permission requires reviewer gate")
     if _reviewer_gate_explicitly_required(ledger):
         reasons.append("explicit reviewer requirement")
     if reviewer_terms or ("team router" in text and team_router_qualifiers):
         reasons.append("reviewer-required term")
+    if normal_floor_terms:
+        reasons.append("normal QA floor")
     if classify_architect_gate(ledger):
         reasons.append("architect gate")
     if classify_qa_gate(ledger):
@@ -353,20 +389,49 @@ def explain_team_router_gate(ledger: Mapping[str, Any]) -> dict[str, Any]:
 
 def explain_team_router_route(ledger: Mapping[str, Any]) -> dict[str, Any]:
     explanation = explain_team_router_gate(ledger)
-    roles = ["executor"]
-    if explanation["requiresArchitect"]:
-        roles.insert(0, "architect")
-    if explanation["requiresReviewer"]:
-        roles.append("reviewer")
-    if explanation["requiresQa"]:
-        roles.append("qa")
-    roles.append("verifier")
+    if task_workflow_version(ledger) != 2:
+        roles = ["executor"]
+        if explanation["requiresArchitect"]:
+            roles.insert(0, "architect")
+        if explanation["requiresReviewer"]:
+            roles.append("reviewer")
+        if explanation["requiresQa"]:
+            roles.append("qa")
+        roles.append("verifier")
+        execution_mode = "delegated"
+    else:
+        plan = ledger.get("resolvedPlan") if isinstance(ledger.get("resolvedPlan"), Mapping) else ledger.get("plan")
+        persisted_roles = plan.get("routeRoles") if isinstance(plan, Mapping) else None
+        if isinstance(persisted_roles, (list, tuple)):
+            roles = list(persisted_roles)
+            execution_mode = str(plan.get("executionMode") or ("delegated" if roles else "manager_direct"))
+        else:
+            explicit_roles = tuple(
+                role for role, required in (
+                    ("architect", explanation["requiresArchitect"]),
+                    ("reviewer", explanation["requiresReviewer"]),
+                    ("qa", explanation["requiresQa"]),
+                )
+                if required
+            )
+            workspace_write = _ledger_has_local_package_permission(ledger)
+            execution_mode = resolve_v2_execution_mode(
+                explanation["gateClass"],
+                explicit_roles=explicit_roles,
+                workspace_write=workspace_write,
+            )
+            roles = [] if execution_mode == "manager_direct" else list(resolve_v2_route(
+                explanation["gateClass"],
+                explicit_roles,
+                requires_verifier=workspace_write,
+            ))
     return {
         "gateClass": explanation["gateClass"],
+        "executionMode": execution_mode,
         "requiresArchitect": explanation["requiresArchitect"],
         "requiresReviewer": explanation["requiresReviewer"],
         "requiresQa": explanation["requiresQa"],
-        "route": " -> ".join(roles),
+        "route": " -> ".join(roles) if roles else "manager direct",
         "roles": roles,
         "reasons": explanation["reasons"],
     }

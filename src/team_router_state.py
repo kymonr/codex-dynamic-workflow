@@ -306,6 +306,29 @@ def manager_pool_lock(state_root: str | Path,
             pass
 
 
+@contextmanager
+def task_dispatch_lock(state_root: str | Path, project_id: str, task_id: str, *, acquired_at: str):
+    _validate_task_id(project_id)
+    _validate_task_id(task_id)
+    lock_path = task_path(state_root, project_id, task_id).with_suffix(".dispatch.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"taskId": task_id, "pid": os.getpid(), "acquiredAt": _required_str(acquired_at, "acquiredAt")}, sort_keys=True).encode("utf-8")
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise StateStoreError("task dispatch lock is held: %s" % task_id) from exc
+    try:
+        os.write(fd, payload)
+        yield
+    finally:
+        os.close(fd)
+        try:
+            if lock_path.read_bytes() == payload:
+                lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _manager_pool(registry: dict[str, Any], project_id: str,
                   parent_thread_id: str) -> dict[str, Any]:
     projects = _as_mapping(registry.get("projects"), "registry.projects")
@@ -485,7 +508,7 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                     }
                 return _pool_busy(role, request_id)
 
-            matching_records = [
+            candidate_records = [
                 record for record in records
                 if record.get("hostId") == host_id
                 and record.get("targetFingerprint") == target_fingerprint
@@ -493,23 +516,13 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                 and record["threadId"]
                 and _role_record_is_reusable(record)
             ]
-            if preferred_thread_id is not None:
-                matching_records.sort(key=lambda record: record.get("threadId") != preferred_thread_id)
-            for record in matching_records:
+            active_records = [
+                record for record in candidate_records
+                if isinstance(record.get("claim"), Mapping)
+            ]
+            # ponytail: Host exposes no trusted domain, so only an active request may resume its binding.
+            for record in active_records:
                 claim = record.get("claim")
-                if not isinstance(claim, Mapping):
-                    record["claim"] = {
-                        "taskId": task_id,
-                        "requestId": request_id,
-                        "claimedAt": claimed_at,
-                    }
-                    save_registry(state_root, project_id, registry)
-                    return {
-                        "outcome": "reused",
-                        "role": role,
-                        "threadId": record["threadId"],
-                        "roleRecord": dict(record),
-                    }
                 if claim.get("taskId") == task_id and claim.get("requestId") == request_id:
                     return {
                         "outcome": "reused",
@@ -524,11 +537,11 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                 and intent.get("targetFingerprint") == target_fingerprint
                 and intent.get("role") == role
             ]
-            if matching_records and not parallel_allowed:
+            if active_records and not parallel_allowed:
                 return _pool_busy(role, request_id)
             if matching_intents and not parallel_allowed:
                 return _pool_busy(role, request_id)
-            if len(matching_records) + len(matching_intents) >= 2:
+            if len(active_records) + len(matching_intents) >= 2:
                 return _pool_busy(role, request_id)
 
             intent = {
@@ -539,7 +552,7 @@ def reserve_role_or_creation_intent(state_root: str | Path,
                 "taskId": task_id,
                 "requestId": request_id,
                 "claimedAt": claimed_at,
-                "temporary": bool(matching_records or matching_intents),
+                "temporary": bool(active_records or matching_intents),
             }
             intents.append(intent)
             pool["creationIntents"] = intents
@@ -661,7 +674,8 @@ def release_role_claim(state_root: str | Path,
             registry = load_registry(state_root, project_id)
             pool = _manager_pool(registry, project_id, parent_thread_id)
             released = False
-            for record in _pool_role_records(pool, role):
+            records = _pool_role_records(pool, role)
+            for index, record in enumerate(records):
                 claim = record.get("claim")
                 if (
                     record.get("threadId") == thread_id
@@ -669,7 +683,7 @@ def release_role_claim(state_root: str | Path,
                     and claim.get("taskId") == task_id
                     and claim.get("requestId") == request_id
                 ):
-                    record.pop("claim", None)
+                    records.pop(index)
                     released = True
                     break
             if not released:
@@ -788,8 +802,8 @@ def _cleanup_terminal_pool_task(state_root: str | Path, project_id: str,
             record = _as_mapping(raw_record, "managerPool.roles.%s[]" % role, default_empty=False)
             claim = record.get("claim")
             if isinstance(claim, Mapping) and claim.get("taskId") == task_id:
-                record.pop("claim", None)
                 changed = True
+                continue
             normalized.append(record)
         roles[role] = normalized
     pool["roles"] = roles
