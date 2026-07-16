@@ -91,6 +91,7 @@ from team_router_runtime import (
     thread_send_anchor,
 )
 from team_router_direct_return import (
+    DIRECT_RETURN_MAX_UTF8_BYTES,
     _direct_return_candidate_messages as _direct_return_candidate_messages_for_window,
     _direct_return_capture_allowed_for_status,
     _direct_return_protocol_message as _direct_return_protocol_message_for_window,
@@ -102,6 +103,7 @@ from team_router_direct_return import (
     _validate_self_thread_fallback_receipt,
 )
 from team_router_host_runtime import (
+    READINESS_TIERS,
     THREAD_TOOL_NAMES,
     LiveOrchestrationHostContext,
     _heartbeat_scheduler_call,
@@ -275,7 +277,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "zeroReadBoundary": "direct-send return is preferred, but bounded status reads are allowed and remain required as fallback; zero-read waiting is not required",
         "forbidden": "continuous polling or mid-run instruction injection through read_thread follow-up messages",
         "userVisibleUpdates": "report the first active observation once, then report only status changes, timeouts, blocked states, or completion; do not repeat unchanged active status after every read_thread poll",
-        "manualPollBackoffSeconds": (10, 20, 40),
+        "fallbackCadenceSeconds": 300,
         "activeRoleStatusMeaning": "active/inProgress/running/working means the role is still doing normal processing, not a failure or stuck signal",
         "activeRoleInterventionBoundary": "while a role remains active/inProgress/running/working, do not restart it, do not create a replacement role, and do not send a shorter delta prompt or convergence nudge just because it is still processing",
         "timeoutNoticePolicy": "emit one timeout notice at most before any intervention decision; do not repeatedly promise one more poll",
@@ -497,10 +499,11 @@ MANAGER_ORCHESTRATION_POLICY = {
         "skipReport": "closeout must still state compoundingDecision: skipped and reason: ordinary successful implementation/testing with no new reusable risk",
     },
     "roleReuse": {
-        "default": "standing role policy: check registry first and reuse existing executor, existing reviewer when the conditional reviewer gate applies, and existing verifier threads for the same taskId or task family when available; do not create a new role merely because the review lens changes",
-        "reworkExecutor": "send rework to the original executor thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
-        "reworkReviewer": "send re-review to the original reviewer thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
-        "reworkVerifier": "send rework verification to the original verifier thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
+        "default": "V2 resumes only the exact active taskId + requestId binding under projectId + hostId + targetFingerprint + role; idle reuse is disabled without a trusted execution-domain contract",
+        "v1Compatibility": "legacy V1 may reuse an existing executor, conditional reviewer, or verifier only within the same active task flow",
+        "reworkExecutor": "send rework to the original active-task executor thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
+        "reworkReviewer": "send re-review to the original active-task reviewer thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
+        "reworkVerifier": "send rework verification to the original active-task verifier thread unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
         "dispatchFreshness": "every dispatch, including reused roles, must carry sourceThreadId/sourceRoleThreadId/role plus direct-send and self-thread-marker fields with a fresh searchAnchor/message metadata; do not reuse a stale search anchor",
         "archivedNoReuseRequirement": "an archived role/thread is unavailable for reuse, period; create or use a non-archived visible replacement role and record the replacement reason",
         "newThreadOnlyWhen": (
@@ -523,7 +526,7 @@ MANAGER_ORCHESTRATION_POLICY = {
                 "scope": "parent/current manager-dispatcher thread title",
             },
             "legacyDiscoveryAlias": "TeamRouter <role> - <projectId>",
-            "requiredAfter": "immediately after creating or discovering a V1 role thread, call set_thread_title and persist the normalized title",
+            "bestEffortAfter": "after creating or discovering a V1 role thread, attempt set_thread_title and persist the normalized title when successful; failure is warning-only",
         },
         "v2": {
             "parent": {
@@ -575,7 +578,7 @@ MANAGER_ORCHESTRATION_POLICY = {
         "skipWhen": "ordinary small fixes or clearly low-risk tasks",
         "reviewerResponsibility": "read-only adversarial design review for risks, rule gaps, omissions, and new bad modes; not final acceptance",
         "verifierResponsibility": "read-only final acceptance that executor output and reviewer requirements are satisfied",
-        "roleReuse": "reuse the same reviewer thread for the same taskId or task family; do not create a new reviewer only because the review lens changes, for example compliance review vs code-quality review; re-review returns to the original reviewer unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change",
+        "roleReuse": "within the same active taskId + requestId binding, re-review returns to the original reviewer unless that role is blocked, unavailable, archived, broken, invalid, or boundaries change; without trusted execution-domain evidence, idle reviewer reuse is disabled",
         "runtimeImplementation": "watch/run use send_reviewer_request_with_adapter(), read_reviewer_review_update_with_adapter(), and capture_reviewer_review_from_read(); reviewer pass -> verifier, needs_rework -> executor rework gate, blocked -> blocked",
         "namedReviewerRequirement": "when the user names reviewer for Team Router self changes, use a reviewer role conversation/thread; if none exists, explicitly create/register reviewer role conversation or stop and report it; subagent fallback is not allowed",
     },    "reviewerDirectReturn": {
@@ -1131,6 +1134,144 @@ def protocol_contract_snapshot() -> dict[str, Any]:
         },
         "threadPermissions": sorted(THREAD_PERMISSIONS),
         "threadToolNames": list(THREAD_TOOL_NAMES),
+        "sourceAuthority": {
+            "delegationWrapper": "untrusted_claim",
+            "managerInboxRequiredHostType": "agentMessage",
+            "managerInboxRequiredHostFields": ["type", "messageId", "sourceThreadId"],
+            "selfThreadRequiredHostFields": ["type", "messageId"],
+            "rule": "body and wrapper identity never override Host metadata",
+        },
+        "strictV2Correlation": {
+            "exactFields": ["protocolVersion", "dispatchId", "requestId", "attempt"],
+            "purpose": "correlation_and_anti_replay_not_sender_authentication",
+            "consume": "latest_pending_role_dispatch_exactly_once",
+        },
+        "poolIdentity": {
+            "activeBindingScope": ["projectId", "hostId", "targetFingerprint", "role", "taskId", "requestId"],
+            "parentThreadIdInScope": False,
+            "idleRecordReuse": False,
+        },
+        "creationIntentIdentity": {
+            "sameRequestKey": ["projectId", "parentThreadId", "role", "requestId"],
+            "fullMatch": ["parentThreadId", "hostId", "targetFingerprint", "role", "taskId", "requestId"],
+        },
+        "executionDomainPolicy": {
+            "issuer": None,
+            "field": None,
+            "version": None,
+            "lifetime": None,
+            "persistExecutionDomainKey": False,
+            "idleReuse": "disabled_without_trusted_domain",
+            "activeBinding": "exact_current_request_may_finish",
+        },
+        "readiness": {
+            "tiers": list(READINESS_TIERS),
+            "callableEvidenceCeiling": "unattended_contract_ready",
+            "liveEvidenceSource": "codex-desktop-live",
+            "titleUpdate": "best_effort_warning",
+        },
+        "pollingPolicy": {
+            "primary": "direct_return",
+            "fallback": "bounded_self_thread_read",
+            "fallbackCadenceSeconds": MIN_ROLE_POLL_INTERVAL_SECONDS,
+            "continuousPolling": False,
+        },
+        "reworkPolicy": {
+            "v1": {
+                "executorRework": "user_confirmed_legacy_path",
+                "reviewer": "conditional_before_verifier",
+            },
+            "v2": {
+                "resultReplay": "exact_pending_dispatch_once",
+                "managerAcceptance": "required_for_delegated_fast_normal_without_final_verifier",
+                "reviewerVerifier": "route_closure_preserved",
+            },
+        },
+        "resultRetention": {
+            "maxUtf8Bytes": DIRECT_RETURN_MAX_UTF8_BYTES,
+            "maxLines": None,
+            "normativeOwner": "skills/codex-team-router/references/direct-return.md",
+        },
+        "normativeExemplars": {
+            "TEAM_ROUTER_CALLBACK": """TEAM_ROUTER_CALLBACK taskId=ctr-contract-example
+sourceThreadId: parent-contract
+sourceRoleThreadId: executor-contract
+role: Executor
+protocolVersion: 2
+dispatchId: dispatch-contract
+requestId: request-contract
+attempt: 1
+status: done
+final: true
+summary: 已完成
+evidence: focused test OK
+risks: none
+next: manager""",
+            "TEAM_ROUTER_REVIEW": """TEAM_ROUTER_REVIEW taskId=ctr-contract-example
+sourceThreadId: parent-contract
+sourceRoleThreadId: reviewer-contract
+role: Reviewer
+protocolVersion: 2
+dispatchId: dispatch-contract
+requestId: request-contract
+attempt: 1
+result: pass
+summary: 审查通过
+findings: none
+requiredChanges: none
+evidenceChecked: focused test OK
+risks: none""",
+            "TEAM_ROUTER_VERDICT": """TEAM_ROUTER_VERDICT taskId=ctr-contract-example
+sourceThreadId: parent-contract
+sourceRoleThreadId: verifier-contract
+role: Verifier
+protocolVersion: 2
+dispatchId: dispatch-contract
+requestId: request-contract
+attempt: 1
+result: pass
+summary: 验收通过
+requiredChanges: none
+evidenceChecked: focused test OK
+risks: none""",
+            "TEAM_ROUTER_ARCHITECT_REVIEW": """TEAM_ROUTER_ARCHITECT_REVIEW taskId=ctr-contract-example
+sourceThreadId: parent-contract
+sourceRoleThreadId: architect-contract
+role: Architect
+protocolVersion: 2
+dispatchId: dispatch-contract
+requestId: request-contract
+attempt: 1
+result: pass
+summary: 架构通过
+findings: none
+requiredChanges: none
+evidenceChecked: focused test OK
+risks: none
+skillProfileUsed: architect-default
+architectureImpact: none
+compatibilityNotes: compatible
+alternatives: none
+migrationRisks: none""",
+            "TEAM_ROUTER_QA_REVIEW": """TEAM_ROUTER_QA_REVIEW taskId=ctr-contract-example
+sourceThreadId: parent-contract
+sourceRoleThreadId: qa-contract
+role: QA
+protocolVersion: 2
+dispatchId: dispatch-contract
+requestId: request-contract
+attempt: 1
+result: pass
+summary: QA 通过
+findings: none
+requiredChanges: none
+evidenceChecked: focused test OK
+risks: none
+skillProfileUsed: qa-default
+coverageGaps: none
+verificationPlan: focused test
+regressionRisks: none""",
+        },
         "markers": markers,
         "terminalStatuses": sorted(TERMINAL_STATUSES),
         "recoverableStatuses": dict(sorted(RECOVERABLE_STATUSES.items())),
@@ -1465,16 +1606,31 @@ def _normalize_adapter_role_title(thread_adapter: Any,
     expected_title = role_thread_title(project_id, role, task_title)
     if record.get("title") == expected_title:
         return record
-    result = _optional_adapter_call(
+    warning = _best_effort_set_thread_title(
         thread_adapter,
-        "set_thread_title",
-        threadId=record["threadId"],
+        thread_id=record["threadId"],
         title=expected_title,
     )
-    if result is not None:
-        record = dict(record)
+    record = dict(record)
+    if warning is None:
         record["title"] = expected_title
+    else:
+        record["titleWarning"] = warning
     return record
+
+
+def _best_effort_set_thread_title(thread_adapter: Any, *, thread_id: str,
+                                  title: str) -> dict[str, Any] | None:
+    try:
+        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
+    except Exception as exc:
+        return {
+            "type": "title_update_failed",
+            "threadId": thread_id,
+            "requestedTitle": title,
+            "error": str(exc)[:240],
+        }
+    return None
 
 
 def _v2_target_fingerprint(target: Mapping[str, Any], host_id: str,
@@ -2137,7 +2293,6 @@ def recover_v2_creation_intent_with_adapter(thread_adapter: Any,
         )
         if finalized["outcome"] != "created":
             raise StateStoreError("role creation finalization failed: %s" % finalized["outcome"])
-        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
     except Exception as exc:
         return fail(
             _v2_adapter_failure_reason(exc),
@@ -2145,7 +2300,14 @@ def recover_v2_creation_intent_with_adapter(thread_adapter: Any,
             thread_id=thread_id,
             creation_accepted=True,
         )
-    return dict(finalized, outcome="recovered", targetFingerprint=target_fingerprint, creationAccepted=True)
+    title_warning = _best_effort_set_thread_title(thread_adapter, thread_id=thread_id, title=title)
+    return dict(
+        finalized,
+        outcome="recovered",
+        targetFingerprint=target_fingerprint,
+        creationAccepted=True,
+        **({"titleWarning": title_warning} if title_warning is not None else {}),
+    )
 
 
 def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
@@ -2195,36 +2357,17 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
             and role_record.get("creationRequestId") == request_id
         )
         binding_outcome = "created" if resumed_creation else "reused"
-        try:
-            _adapter_call(
-                thread_adapter,
-                "set_thread_title",
-                threadId=reservation["threadId"],
-                title=title,
-            )
-        except Exception as exc:
-            return _v2_terminal_tool_error(
-                state_root,
-                project_id,
-                task_id,
-                parent_thread_id=parent_thread_id,
-                role=role,
-                request_id=request_id,
-                host_id=host_id,
-                target_fingerprint=fingerprint,
-                requested_at=requested_at,
-                reason=_v2_adapter_failure_reason(exc),
-                error=exc,
-                thread_id=reservation["threadId"],
-                requested_model=requested_model,
-                requested_thinking=requested_thinking,
-                binding=_v2_binding_outcome(binding_outcome),
-            )
+        title_warning = _best_effort_set_thread_title(
+            thread_adapter,
+            thread_id=reservation["threadId"],
+            title=title,
+        )
         return dict(
             reservation,
             outcome=binding_outcome,
             targetFingerprint=fingerprint,
             creationAccepted=True if resumed_creation else None,
+            **({"titleWarning": title_warning} if title_warning is not None else {}),
         )
     if reservation["outcome"] != "creation_intent":
         return dict(reservation, targetFingerprint=fingerprint)
@@ -2291,7 +2434,6 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
         )
         if finalized["outcome"] != "created":
             raise StateStoreError("role creation finalization failed: %s" % finalized["outcome"])
-        _adapter_call(thread_adapter, "set_thread_title", threadId=thread_id, title=title)
     except Exception as exc:
         return _v2_terminal_tool_error(
             state_root,
@@ -2311,7 +2453,13 @@ def resolve_or_create_v2_role_with_adapter(thread_adapter: Any,
             binding="new",
             creation_accepted=False if "thread_id" not in locals() else True,
         )
-    return dict(finalized, targetFingerprint=fingerprint, creationAccepted=True)
+    title_warning = _best_effort_set_thread_title(thread_adapter, thread_id=thread_id, title=title)
+    return dict(
+        finalized,
+        targetFingerprint=fingerprint,
+        creationAccepted=True,
+        **({"titleWarning": title_warning} if title_warning is not None else {}),
+    )
 
 
 def _bind_v2_dispatch_correlation(prompt: str, dispatch: Mapping[str, Any]) -> str:
@@ -2467,12 +2615,15 @@ def send_v2_role_request_with_adapter(thread_adapter: Any,
         return_thread_id=return_thread_id,
         dispatch_id=prepared["dispatchId"],
     )
-    return {
+    result = {
         "outcome": "sent",
         "threadId": thread_id,
         "binding": _v2_binding_outcome(binding["outcome"]),
         "ledger": saved,
     }
+    if isinstance(binding.get("titleWarning"), Mapping):
+        result["titleWarning"] = dict(binding["titleWarning"])
+    return result
 
 
 UNAVAILABLE_ROLE_STATUSES = {"archived", "blocked", "broken", "invalid", "unavailable"}
@@ -3383,6 +3534,13 @@ def _messages_text(messages: list[Mapping[str, Any]]) -> str:
     return "\n\n".join(_message_text(message) for message in messages if _message_text(message))
 
 
+def _manager_inbox_return_anchor(record: Mapping[str, Any],
+                                  label: str) -> Mapping[str, Any] | None:
+    if record.get("protocolVersion") == 2:
+        return None
+    return _as_mapping(record.get("returnSearchAnchor"), label, default_empty=False)
+
+
 
 def _direct_return_capture_allowed(ledger: Mapping[str, Any], role: str) -> bool:
     status = str(ledger.get("status") or "")
@@ -4048,7 +4206,7 @@ def make_reviewer_request_message(task_id: str,
     else:
         lines.extend(_self_thread_only_prompt_lines())
     if not path_handoff_enabled:
-        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
+        lines.append("compactReturn: <=1200 UTF-8 bytes; no line cap; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
     if compact_read_only_enabled:
         lines.extend(_compact_callback_summary_prompt_lines(callback_block, task_id))
     else:
@@ -4584,7 +4742,7 @@ def make_verifier_request_message(task_id: str,
     else:
         lines.extend(_self_thread_only_prompt_lines())
     if not path_handoff_enabled:
-        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
+        lines.append("compactReturn: <=1200 UTF-8 bytes; no line cap; same direct/fallback; detail=role-thread or reviewPackagePath, never Manager; pass=counts only")
     reviewer_lines = _reviewer_result_prompt_lines(reviewer_result, compact=path_handoff_enabled)
     if path_handoff_enabled:
         lines.extend(("", "verify: scope,permission,packageEvidenceBoundary,reviewer-requiredChanges"))
@@ -5587,7 +5745,7 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
         marker="TEAM_ROUTER_CALLBACK",
         task_id=task_id,
         source_thread_id=_required_str(dispatch.get("threadId"), "executorDispatch.threadId"),
-        anchor=_as_mapping(dispatch.get("returnSearchAnchor"), "executorDispatch.returnSearchAnchor", default_empty=False),
+        anchor=_manager_inbox_return_anchor(dispatch, "executorDispatch.returnSearchAnchor"),
     )
     if malformed is None and msg is not None:
         malformed = _validate_direct_return_receipt(
@@ -5598,6 +5756,7 @@ def _capture_executor_callback_from_manager_inbox(state_root: str | Path,
             expected_role_thread_id=_required_str(dispatch.get("roleThreadId") or dispatch.get("threadId"), "executorDispatch.roleThreadId"),
             expected_return_thread_id=_required_str(dispatch.get("returnThreadId"), "executorDispatch.returnThreadId"),
             expected_dispatch=dispatch,
+            require_host_agent_message=True,
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
@@ -5664,7 +5823,7 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
         marker="TEAM_ROUTER_REVIEW",
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "reviewerRequest.threadId"),
-        anchor=_as_mapping(request.get("returnSearchAnchor"), "reviewerRequest.returnSearchAnchor", default_empty=False),
+        anchor=_manager_inbox_return_anchor(request, "reviewerRequest.returnSearchAnchor"),
     )
     if malformed is None and msg is not None:
         malformed = _validate_direct_return_receipt(
@@ -5675,6 +5834,7 @@ def _capture_reviewer_review_from_manager_inbox(state_root: str | Path,
             expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "reviewerRequest.roleThreadId"),
             expected_return_thread_id=_required_str(request.get("returnThreadId"), "reviewerRequest.returnThreadId"),
             expected_dispatch=request,
+            require_host_agent_message=True,
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
@@ -5741,7 +5901,7 @@ def _capture_role_review_from_manager_inbox(state_root: str | Path,
         marker=marker,
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "%sRequest.threadId" % role),
-        anchor=_as_mapping(request.get("returnSearchAnchor"), "%sRequest.returnSearchAnchor" % role, default_empty=False),
+        anchor=_manager_inbox_return_anchor(request, "%sRequest.returnSearchAnchor" % role),
     )
     if malformed is None and msg is not None:
         malformed = _validate_direct_return_receipt(
@@ -5752,6 +5912,7 @@ def _capture_role_review_from_manager_inbox(state_root: str | Path,
             expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "%sRequest.roleThreadId" % role),
             expected_return_thread_id=_required_str(request.get("returnThreadId"), "%sRequest.returnThreadId" % role),
             expected_dispatch=request,
+            require_host_agent_message=True,
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
@@ -5857,7 +6018,7 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
         marker="TEAM_ROUTER_VERDICT",
         task_id=task_id,
         source_thread_id=_required_str(request.get("threadId"), "verifierRequest.threadId"),
-        anchor=_as_mapping(request.get("returnSearchAnchor"), "verifierRequest.returnSearchAnchor", default_empty=False),
+        anchor=_manager_inbox_return_anchor(request, "verifierRequest.returnSearchAnchor"),
     )
     if malformed is None and msg is not None:
         malformed = _validate_direct_return_receipt(
@@ -5868,6 +6029,7 @@ def _capture_verifier_verdict_from_manager_inbox(state_root: str | Path,
             expected_role_thread_id=_required_str(request.get("roleThreadId") or request.get("threadId"), "verifierRequest.roleThreadId"),
             expected_return_thread_id=_required_str(request.get("returnThreadId"), "verifierRequest.returnThreadId"),
             expected_dispatch=request,
+            require_host_agent_message=True,
         )
     if malformed is not None:
         ledger = _record_malformed_direct_return(
@@ -6808,7 +6970,7 @@ def _v2_role_prompt(task_id: str,
     else:
         lines.append("completionFields: result, summary, findings, requiredChanges, evidenceChecked, risks")
     if role in {"reviewer", "verifier"}:
-        lines.append("compactReturn: <=12 lines/<1200B; same direct/fallback; pass=counts only; detail never direct-send")
+        lines.append("compactReturn: <=1200 UTF-8 bytes; no line cap; same direct/fallback; pass=counts only; detail never direct-send")
         if role == "reviewer":
             lines.append("compactReviewerBody: findings=findingCounts/topBlockers; requiredChanges=nextGate; evidenceChecked=detailThreadId/detailAnchor|reviewPackagePath")
         else:
@@ -6876,6 +7038,8 @@ def _capture_v2_role_reply_with_adapter(state_root: str | Path,
     record = _latest_v2_role_dispatch(ledger, role)
     if record is None:
         raise StateStoreError("missing V2 %s dispatch for task: %s" % (role, task_id))
+    if record.get("resultStatus") == "consumed":
+        return load_task_ledger(state_root, project_id, task_id)
     direct_capture = {
         "architect": _capture_architect_review_from_manager_inbox,
         "executor": _capture_executor_callback_from_manager_inbox,
@@ -6905,6 +7069,10 @@ def _capture_v2_role_reply_with_adapter(state_root: str | Path,
         )
         if captured is not None:
             return captured
+        latest = load_task_ledger(state_root, project_id, task_id)
+        latest_record = _latest_v2_role_dispatch(latest, role)
+        if latest_record is not None and latest_record.get("resultStatus") == "consumed":
+            return latest
     messages = _read_thread_messages_with_adapter(
         thread_adapter,
         _required_str(record.get("threadId"), "V2 dispatch.threadId"),
@@ -7320,17 +7488,21 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
         parent_thread_id=parent_thread_id,
         heartbeat_scheduler=heartbeat_scheduler,
     )
+    if not readiness["capabilities"].get("heartbeat_scheduler", False):
+        heartbeat_scheduler = None
     capabilities = dict(capabilities)
     capabilities.update(entry["capabilities"])
     capabilities["heartbeat_scheduler"] = readiness["capabilities"].get("heartbeat_scheduler", False)
+    title_warnings: list[dict[str, Any]] = []
     task_title = _task_title_from_objective(objective)
     if not v2_requested and not task_path(state_root, project_id, task_id).exists():
-        _adapter_call(
+        warning = _best_effort_set_thread_title(
             thread_adapter,
-            "set_thread_title",
-            threadId=_required_str(parent_thread_id, "parentThreadId"),
+            thread_id=_required_str(parent_thread_id, "parentThreadId"),
             title=parent_thread_title(task_title),
         )
+        if warning is not None:
+            title_warnings.append(warning)
     project_lookup_id = codex_project_id or project_id
     project_target = (
         dict(target)
@@ -7350,12 +7522,13 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
                 "projectTarget": project_target,
             }
         if v2_ledger is None:
-            _adapter_call(
+            warning = _best_effort_set_thread_title(
                 thread_adapter,
-                "set_thread_title",
-                threadId=_required_str(parent_thread_id, "parentThreadId"),
+                thread_id=_required_str(parent_thread_id, "parentThreadId"),
                 title=v2_parent_thread_title(task_title),
             )
+            if warning is not None:
+                title_warnings.append(warning)
         update = run_v2_team_task_with_adapter(
             state_root,
             project_id,
@@ -7392,8 +7565,11 @@ def orchestrate_team_task_with_adapter(state_root: str | Path,
             return_thread_id=return_thread_id,
         )
     update["capabilities"] = capabilities
+    update["readiness"] = readiness
     update["codexProjectId"] = project_lookup_id
     update["projectTarget"] = project_target
+    if title_warnings:
+        update["titleWarnings"] = title_warnings
     return _attach_watcher_heartbeat_schedule(
         update,
         heartbeat_scheduler,

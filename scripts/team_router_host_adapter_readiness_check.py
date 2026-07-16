@@ -38,11 +38,13 @@ REQUIRED_THREAD_TOOLS = tuple(getattr(team_router, "THREAD_TOOL_NAMES", (
 class SyntheticThreadAdapter:
     """Callable-shape adapter that refuses to execute represented tools."""
 
-    def __init__(self, callable_tools: Mapping[str, bool], tool_descriptors: Mapping[str, Any] | None = None):
+    def __init__(self, callable_tools: Mapping[str, bool], tool_descriptors: Mapping[str, Any] | None = None,
+                 identity_evidence: Mapping[str, Any] | None = None):
         self.calls: list[dict[str, Any]] = []
+        self.team_router_identity_evidence = dict(identity_evidence or {})
         descriptors = tool_descriptors or {}
         for tool_name in REQUIRED_THREAD_TOOLS:
-            if bool(callable_tools.get(tool_name)):
+            if callable_tools.get(tool_name) is True:
                 setattr(self, tool_name, self._forbidden_tool(tool_name))
             elif tool_name in descriptors:
                 setattr(self, tool_name, descriptors[tool_name])
@@ -77,7 +79,7 @@ def _load_snapshot(path: Path | None) -> dict[str, Any] | None:
 def _callable_tools(snapshot: Mapping[str, Any]) -> dict[str, bool]:
     raw = snapshot.get("callableTools")
     raw_tools = raw if isinstance(raw, Mapping) else {}
-    return {tool_name: bool(raw_tools.get(tool_name)) for tool_name in REQUIRED_THREAD_TOOLS}
+    return {tool_name: raw_tools.get(tool_name) is True for tool_name in REQUIRED_THREAD_TOOLS}
 
 
 def _tool_descriptors(snapshot: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -97,11 +99,13 @@ def host_readiness_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any
         return None
     return {
         "source": snapshot.get("source", "host-adapter-readiness-check"),
-        "codexAppThreadToolsExposed": bool(snapshot.get("codexAppThreadToolsExposed")) or bool(_tool_descriptors(snapshot)),
-        "adapterCallable": bool(snapshot.get("adapterCallable")),
+        "codexAppThreadToolsExposed": snapshot.get("codexAppThreadToolsExposed") is True or bool(_tool_descriptors(snapshot)),
+        "adapterCallable": snapshot.get("adapterCallable") is True,
         "callableTools": _callable_tools(snapshot),
         "parentThreadId": str(snapshot.get("parentThreadId") or snapshot.get("parent_thread_id") or "").strip(),
-        "heartbeatSchedulerCallable": bool(snapshot.get("heartbeatSchedulerCallable")),
+        "heartbeatSchedulerCallable": snapshot.get("heartbeatSchedulerCallable") is True,
+        "trustedSenderProvenance": snapshot.get("trustedSenderProvenance") is True,
+        "trustedExecutionDomain": snapshot.get("trustedExecutionDomain") is True,
         "runtimeProbe": _runtime_probe(snapshot),
     }
 
@@ -113,7 +117,7 @@ def build_report(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         return {
             "mode": "read-only",
             "status": "not_supplied",
-            "orchestrationStatus": "manual_only",
+            "orchestrationStatus": "manual/pre-created",
             "adapterInjection": {
                 "source": None,
                 "pythonCallableAdapter": False,
@@ -122,6 +126,7 @@ def build_report(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             },
             "readiness": {
                 "status": "blocked",
+                "tier": "manual/pre-created",
                 "missing": ["host adapter snapshot"],
                 "capabilities": {**{tool: False for tool in REQUIRED_THREAD_TOOLS}, "heartbeat_scheduler": False},
                 "reason": "host adapter snapshot is required to prove Python callable injection",
@@ -133,7 +138,15 @@ def build_report(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         }
 
     adapter_callable = bool(host_snapshot["adapterCallable"])
-    adapter = SyntheticThreadAdapter(host_snapshot["callableTools"], _tool_descriptors(snapshot)) if adapter_callable else None
+    identity_evidence = {
+        "trustedSenderProvenance": host_snapshot["trustedSenderProvenance"],
+        "trustedExecutionDomain": host_snapshot["trustedExecutionDomain"],
+    }
+    adapter = SyntheticThreadAdapter(
+        host_snapshot["callableTools"],
+        _tool_descriptors(snapshot),
+        identity_evidence,
+    ) if adapter_callable else None
     scheduler_callable = bool(host_snapshot["heartbeatSchedulerCallable"])
     scheduler = SyntheticHeartbeatScheduler() if scheduler_callable else None
     readiness = team_router.assess_live_orchestration_readiness(
@@ -146,8 +159,8 @@ def build_report(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     scheduler_calls = len(scheduler.calls) if scheduler is not None else 0
     return {
         "mode": "read-only",
-        "status": doctor_host["status"],
-        "orchestrationStatus": doctor_host["orchestrationStatus"],
+        "status": readiness["status"],
+        "orchestrationStatus": readiness["tier"],
         "adapterInjection": {
             "source": host_snapshot.get("source"),
             "pythonCallableAdapter": adapter_callable,
@@ -159,7 +172,7 @@ def build_report(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "doctorHostReadiness": doctor_host,
         "summary": (
             "host adapter snapshot proves Python callable injection without executing thread tools"
-            if doctor_host["status"] == "ready"
+            if readiness["status"] == "ready"
             else "host adapter snapshot does not prove Python callable injection"
         ),
         "boundary": "read-only; no thread tools are called",
@@ -184,7 +197,9 @@ def main(argv: list[str] | None = None) -> int:
         print("status: %s" % report["status"])
         print("orchestrationStatus: %s" % report["orchestrationStatus"])
         print("summary: %s" % report["summary"])
-    return 0
+    if args.adapter_snapshot_json is None:
+        return 2
+    return 0 if report["status"] == "ready" else 1
 
 
 if __name__ == "__main__":

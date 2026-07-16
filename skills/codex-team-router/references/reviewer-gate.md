@@ -40,28 +40,11 @@ The requested gate is a lower bound: requested FAST/NORMAL may only upgrade, req
 
 A3 behavior remains intact: FAST/NORMAL workspace write routes Executor -> Verifier, `local-package` is not a Reviewer trigger, and historical persisted `routeRoles` remain compatible and authoritative. A plain `team_router.py` filename or low-risk docs-only/single-file cleanup does not trigger Reviewer by itself.
 
-Role reuse policy applies to reviewer too: for the same `taskId` or task family, reuse existing reviewer when the conditional reviewer gate applies, and send rework review back to the original reviewer thread.
+Role binding policy applies to Reviewer too: within the same active `taskId + requestId`, send re-review back to the original Reviewer thread. Without trusted execution-domain evidence, an idle/released/terminal Reviewer is not reusable.
 
 ## Reviewer Review Protocol
 
-```text
-TEAM_ROUTER_REVIEW_REQUEST taskId=<taskId>
-reviewMarker: TEAM_ROUTER_REVIEW taskId=<taskId>
-returnThreadId: <explicit orchestrator/parent thread id when direct return is available>
-reviewDelivery: direct-send
-reviewFallback: self-thread-marker
-reviewerMode: read-only/adversarial
-permission: read-only | design-only | local-package
-scope: <review scope>
-
-TEAM_ROUTER_REVIEW taskId=<taskId>
-result: pass | needs_rework | blocked
-summary: <review summary>
-findings: <adversarial findings or none>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-```
+Use the single normative Reviewer request/result schema in `references/direct-return.md`; do not copy or fork the template here.
 
 Natural-language reviews do not move state. Reviewer is a conditional reviewer, not final acceptance; verifier remains final acceptance.
 ## Architect And QA Boundary

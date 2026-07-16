@@ -7,7 +7,7 @@ This reference is part of the Team Router contract. `SKILL.md` is the short entr
 The parent thread is the orchestrator. The role threads only reply in their own threads with marker blocks. The required live-tool order is:
 
 ```text
-list_projects -> set_thread_title -> create_thread -> send_message_to_thread -> read_thread
+list_projects -> [best-effort set_thread_title] -> create_thread -> send_message_to_thread -> read_thread
 ```
 
 Use exactly one role-thread creation path per task. Do not mix the adapter-created and pre-created paths.
@@ -20,7 +20,7 @@ For authorized delegation, resolve the structured target and calculate `targetFi
 
 ## Recommended Adapter Runner
 
-Use `assess_live_orchestration_readiness()` and `parent_entry_guard()` at the parent boundary before choosing the adapter-created path. If callable thread tools are unavailable, `parent_thread_id` is missing, callable `set_thread_title` is missing, the host heartbeat scheduler is absent or is not callable / lacks a callable schedule method, or the adapter object only contains model-side tool descriptors, do not continue the adapter runner. The readiness helper is a pure contract check; it reports missing host contracts and must not fabricate callable adapter, parent thread id, title tool, or heartbeat scheduler support. Version 1 compatibility: manual/pre-created continuation uses existing `manager` / `executor` / `verifier` role bindings, plus reviewer only when conditional review is required.
+Use `assess_live_orchestration_readiness()` and `parent_entry_guard()` at the parent boundary before choosing the adapter-created path. The hard gate is a callable core adapter (`list_projects`, `list_threads`, `create_thread`, `send_message_to_thread`, `read_thread`), explicit `parent_thread_id`, trustworthy Host sender/source identity, and trustworthy execution-domain identity. Missing scheduler limits readiness to `interactive_contract_ready`; a callable scheduler permits `unattended_contract_ready`. Missing or failed `set_thread_title` is a warning because title normalization is best-effort. Model-side tool descriptors are never Python callables. Callable/snapshot evidence cannot claim live verification: only explicit `codex-desktop-live` call-count evidence may produce `interactive_live_verified` or `unattended_live_verified`. Version 1 compatibility: manual/pre-created continuation uses existing `manager` / `executor` / `verifier` role bindings, plus reviewer only when conditional review is required.
 
 Use `orchestrate_team_task_with_adapter()` when the parent host can provide adapter callables and an explicit current parent thread id as `parent_thread_id`. V1 uses parent `调度者-Team Router <task label>` and role `角色-任务名`; the old `TeamRouter <role> - <projectId>` form is discovery/migration-only. V2 performs preflight before readiness/title/heartbeat, then uses parent `管理者-Team Router <task label>` and pooled role `角色-Team Router <projectId>`, with temporary parallel suffix `#2` when allowed. The suffix does not alter pool identity. The runner returns `action`, `status`, `ledger`, `userOutput`, `capabilities`, `codexProjectId`, and `projectTarget`. It is not the entrypoint for pre-created role threads when the host lacks callable tools.
 

@@ -30,44 +30,7 @@ architect/QA do not replace reviewer. The reviewer remains separate from archite
 
 ## Markers
 
-Architect result marker:
-
-```text
-TEAM_ROUTER_ARCHITECT_REVIEW taskId=<taskId>
-result: pass | needs_rework | blocked
-sourceThreadId: <returnThreadId>
-sourceRoleThreadId: <architect roleThreadId>
-role: Architect
-summary: <summary>
-findings: <findings or none>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-skillProfileUsed: architect-default
-architectureImpact: <impact>
-compatibilityNotes: <compatibility notes>
-alternatives: <alternatives or none>
-migrationRisks: <migration risks>
-```
-
-QA result marker:
-
-```text
-TEAM_ROUTER_QA_REVIEW taskId=<taskId>
-result: pass | needs_rework | blocked
-sourceThreadId: <returnThreadId>
-sourceRoleThreadId: <qa roleThreadId>
-role: QA
-summary: <summary>
-findings: <findings or none>
-requiredChanges: <none or changes>
-evidenceChecked: <checked evidence>
-risks: <none or risks>
-skillProfileUsed: qa-default
-coverageGaps: <coverage gaps or none>
-verificationPlan: <verification plan>
-regressionRisks: <regression risks or none>
-```
+The complete Architect and QA result schemas/templates are owned only by `references/direct-return.md`; do not copy or fork them here.
 
 For `TEAM_ROUTER_ARCHITECT_REVIEW` and `TEAM_ROUTER_QA_REVIEW`, `sourceThreadId`, `sourceRoleThreadId`, `role`, and `skillProfileUsed` are required parser fields. The marker-specific `role` enum is `Architect` for architect and `QA` for QA. The marker-specific `skillProfileUsed` enum is `architect-default` or `qa-default`.
 

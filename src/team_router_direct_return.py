@@ -14,6 +14,9 @@ from team_router_protocol import (
     parse_review,
     parse_verdict,
 )
+
+
+DIRECT_RETURN_MAX_UTF8_BYTES = 1200
 from team_router_state import StateStoreError
 
 
@@ -210,13 +213,36 @@ def _validate_direct_return_receipt(msg: ProtocolMessage,
                                     expected_role_thread_id: str,
                                     expected_return_thread_id: str | None = None,
                                     expected_dispatch: Mapping[str, Any] | None = None,
-                                    require_protocol_identity: bool = True) -> dict[str, Any] | None:
+                                    require_protocol_identity: bool = True,
+                                    require_host_agent_message: bool = False) -> dict[str, Any] | None:
     message = manager_message if isinstance(manager_message, Mapping) else {}
     role_value = str(msg.fields.get("role") or "").strip()
     source_role_thread_id = str(msg.fields.get("sourceRoleThreadId") or "").strip()
     protocol_source_thread_id = str(msg.fields.get("sourceThreadId") or "").strip()
+    host_source_thread_id = str(message.get("sourceThreadId") or "").strip()
+    delegated_source_thread_id = str(message.get("delegatedSourceThreadId") or "").strip()
     expected_return = str(expected_return_thread_id or "").strip()
     errors: list[str] = []
+    if len(msg.raw.encode("utf-8")) > DIRECT_RETURN_MAX_UTF8_BYTES:
+        errors.append("%s result exceeds 1200 UTF-8 bytes" % msg.marker)
+    if (
+        host_source_thread_id
+        and delegated_source_thread_id
+        and host_source_thread_id != delegated_source_thread_id
+    ):
+        errors.append("wrapper source conflicts with Host source")
+    if require_host_agent_message:
+        if message.get("type") != "agentMessage":
+            errors.append("Host agentMessage provenance is required")
+        if not str(message.get("messageId") or "").strip():
+            errors.append("Host item id is required")
+        if not host_source_thread_id:
+            errors.append("Host sourceThreadId is required")
+        elif host_source_thread_id != expected_role_thread_id:
+            errors.append(
+                "Host sourceThreadId must be %r, got %r"
+                % (expected_role_thread_id, host_source_thread_id)
+            )
     if msg.task_id != task_id:
         errors.append("%s.taskId must be %r, got %r" % (msg.marker, task_id, msg.task_id))
     if require_protocol_identity and expected_return:
@@ -293,8 +319,18 @@ def _validate_self_thread_fallback_receipt(msg: ProtocolMessage,
     )
     message = fallback_message if isinstance(fallback_message, Mapping) else {}
     message_source_thread_id = str(message.get("sourceThreadId") or "").strip()
+    fallback_errors: list[str] = []
+    if message.get("type") != "agentMessage":
+        fallback_errors.append("self-thread receipt requires Host agentMessage")
+    if not str(message.get("messageId") or "").strip():
+        fallback_errors.append("self-thread receipt Host item id is required")
     if message_source_thread_id and message_source_thread_id != expected_role_thread_id:
-        error = "message sourceThreadId must be %r, got %r" % (expected_role_thread_id, message_source_thread_id)
+        fallback_errors.append(
+            "message sourceThreadId must be %r, got %r"
+            % (expected_role_thread_id, message_source_thread_id)
+        )
+    if fallback_errors:
+        error = "; ".join(fallback_errors)
         if malformed is not None:
             malformed = dict(malformed)
             existing = str(malformed.get("error") or "")

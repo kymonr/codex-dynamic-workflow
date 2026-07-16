@@ -37,7 +37,7 @@ commit、push、PR、merge、deploy、global sync 都单独授权；Task 10 glob
 - Treat `local-package` as executor-only workspace write permission.
 - `local-package` does not raise risk or require Reviewer by itself, but every new FAST/NORMAL workspace-write route requires Verifier.
 - Keep `commit`, `push`, `PR`, `merge`, `deploy`, and `global sync` outside the package unless the user explicitly opens that gate.
-- Reuse only the same manager-owned pool identity (`parentThreadId`, host, target fingerprint, role). A creation intent with an unknown outcome is terminal; do not automatically retry create.
+- Resume only the exact active `taskId + requestId` binding under project, host, target fingerprint, and role. Without a trusted execution-domain contract, idle Role reuse is disabled. Creation-intent identity additionally includes `parentThreadId`; an unknown creation outcome is terminal, so do not automatically retry create.
 - Version 1 compatibility only: a legacy nonterminal ledger keeps its child Manager flow; never convert it in place.
 
 ## Do Not Inline By Default

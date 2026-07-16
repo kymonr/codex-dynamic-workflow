@@ -17,11 +17,22 @@ THREAD_TOOL_NAMES = (
     "send_message_to_thread",
     "set_thread_title",
 )
+CORE_THREAD_TOOL_NAMES = tuple(
+    tool_name for tool_name in THREAD_TOOL_NAMES
+    if tool_name != "set_thread_title"
+)
+READINESS_TIERS = (
+    "manual/pre-created",
+    "interactive_contract_ready",
+    "unattended_contract_ready",
+    "interactive_live_verified",
+    "unattended_live_verified",
+)
 
 
 def probe_thread_adapter_capabilities(
     thread_adapter: Any,
-    required_tools: Iterable[str] = THREAD_TOOL_NAMES,
+    required_tools: Iterable[str] = CORE_THREAD_TOOL_NAMES,
 ) -> dict[str, bool]:
     capabilities = {
         tool_name: callable(_adapter_method(thread_adapter, tool_name))
@@ -73,31 +84,76 @@ def assess_live_orchestration_readiness(
     parent_thread_id: str | None,
     heartbeat_scheduler: Any,
     required_tools: Iterable[str] = THREAD_TOOL_NAMES,
+    identity_evidence: Mapping[str, Any] | None = None,
+    live_verification_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     missing: list[str] = []
-    capabilities: dict[str, bool] = {}
+    warnings: list[str] = []
+    capabilities = {
+        tool_name: bool(thread_adapter is not None and callable(_adapter_method(thread_adapter, tool_name)))
+        for tool_name in THREAD_TOOL_NAMES
+    }
     if thread_adapter is None:
         missing.append("callable adapter")
     else:
         for tool_name in required_tools:
-            is_callable = callable(_adapter_method(thread_adapter, tool_name))
-            capabilities[tool_name] = is_callable
-            if not is_callable:
+            if tool_name == "set_thread_title":
+                continue
+            if not capabilities.get(tool_name, False):
                 missing.append("callable %s" % tool_name)
+    if not capabilities["set_thread_title"]:
+        warnings.append("callable set_thread_title")
+    if identity_evidence is None and thread_adapter is not None:
+        candidate = _adapter_method(thread_adapter, "team_router_identity_evidence")
+        identity_evidence = candidate if isinstance(candidate, Mapping) else None
+    identity = dict(identity_evidence or {})
+    capabilities["trusted_sender_provenance"] = identity.get("trustedSenderProvenance") is True
+    capabilities["trusted_execution_domain"] = identity.get("trustedExecutionDomain") is True
+    if not capabilities["trusted_sender_provenance"]:
+        missing.append("trusted sender provenance")
+    if not capabilities["trusted_execution_domain"]:
+        missing.append("trusted execution domain")
     capabilities["heartbeat_scheduler"] = _is_callable_heartbeat_scheduler(heartbeat_scheduler)
     if not str(parent_thread_id or "").strip():
         missing.append("parent_thread_id")
     if not capabilities["heartbeat_scheduler"]:
-        missing.append("callable heartbeat scheduler")
-    status = "ready" if not missing else "blocked"
+        warnings.append("callable heartbeat scheduler")
+    if missing:
+        tier = "manual/pre-created"
+    elif capabilities["heartbeat_scheduler"]:
+        tier = "unattended_contract_ready"
+    else:
+        tier = "interactive_contract_ready"
+    live_evidence = dict(live_verification_evidence or {})
+    live_source = live_evidence.get("source") == "codex-desktop-live"
+    live_thread_calls = live_evidence.get("threadToolCallsExecuted")
+    live_thread_verified = (
+        live_source
+        and isinstance(live_thread_calls, int)
+        and not isinstance(live_thread_calls, bool)
+        and live_thread_calls > 0
+    )
+    if tier == "interactive_contract_ready" and live_thread_verified:
+        tier = "interactive_live_verified"
+    elif tier == "unattended_contract_ready" and live_thread_verified:
+        scheduler_calls = live_evidence.get("heartbeatSchedulesExecuted")
+        if isinstance(scheduler_calls, int) and not isinstance(scheduler_calls, bool) and scheduler_calls > 0:
+            tier = "unattended_live_verified"
+        else:
+            tier = "interactive_live_verified"
+    status = "blocked" if tier == "manual/pre-created" else "ready"
     return {
         "status": status,
+        "tier": tier,
         "missing": missing,
+        "warnings": warnings,
         "capabilities": capabilities,
+        "identityEvidence": identity,
+        "liveVerificationEvidence": live_evidence,
         "reason": (
-            "live orchestration ready"
+            "live orchestration contract tier: %s" % tier
             if status == "ready"
-            else "live orchestration requires " + ", ".join(missing)
+            else "manual/pre-created only; requires " + ", ".join(missing)
         ),
     }
 

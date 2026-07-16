@@ -12,6 +12,8 @@
   },
   "parentThreadId": "parent-thread-fixture",
   "heartbeatSchedulerCallable": true,
+  "trustedSenderProvenance": true,
+  "trustedExecutionDomain": true,
   "runtimeProbe": {
     "status": "ready",
     "missing": []
