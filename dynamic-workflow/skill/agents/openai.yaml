@@ -1,4 +1,0 @@
-interface:
-  display_name: "Dynamic Workflow"
-  short_description: "Explicit custom multi-agent workflow routing"
-  default_prompt: "Use $dynamic-workflow only for an explicitly requested dynamic workflow; do not replace dedicated Codex review, DeepSeek review, or concurrent-writer worktree routes."

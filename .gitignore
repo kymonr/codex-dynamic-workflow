@@ -4,16 +4,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# 运行产物（不进项目）
+# 本地运行产物
 /runs/
 *.tmp
 
-# codegraph 索引（不进 git）
+# 本地索引
 .codegraph/
-
-# Superpowers 本地流程状态（不进 git）
-.superpowers/
-
-# 本地图片/动效生成产物（归档或跟踪前必须显式确认）
-/pet-runs/
-/ig_*.png

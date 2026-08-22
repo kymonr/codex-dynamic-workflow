@@ -1,0 +1,6 @@
+interface:
+  display_name: "Dynamic Workflow"
+  short_description: "Route v2 native work; keep Grok as an explicit task"
+  default_prompt: "Use $dynamic-workflow to route narrow read-only work to Spark or Explorer, ordinary delegated work and scoped writing to Luna, complex or high-impact work to Sol, and keep Grok outside native routing unless I explicitly request a separate Grok conversation task."
+policy:
+  allow_implicit_invocation: true

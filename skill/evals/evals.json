@@ -1,0 +1,252 @@
+{
+  "skill_name": "dynamic-workflow",
+  "eval_mode": "tabletop-unexecuted",
+  "evals": [
+    {
+      "id": 1,
+      "name": "implicit-natural-language-luna-branches",
+      "prompt": "帮我分别查清登录失败和库存同步变慢的原因，各自给出证据，最后统一告诉我结论，不要修改。",
+      "expected_output": "Infer two substantive independently verifiable lanes without requiring the word parallel, select Dynamic Workflow, emit the workflow marker once, and route both ordinary read-only branches to Luna."
+    },
+    {
+      "id": 2,
+      "name": "explorer-explicit-luna-and-sol-boundary",
+      "prompt": "分别判断三个显式 $dynamic-workflow 单分支请求：A，未指定路由，只读定位一个函数的直接调用者并给出本地证据；B，显式指定 Luna，执行同一个只读定位；C，未指定路由，审核整个模块的架构和风险并给出最终判断。",
+      "expected_output": "Apply routing even for one explicit branch: use the bounded Explorer pre-route for A because no route is explicit; explicit Luna for B takes priority and skips Explorer; route C directly to Sol because the branch requires complex architecture/risk reasoning and final judgment."
+    },
+    {
+      "id": 3,
+      "name": "negative-simple-and-serial-work",
+      "prompt": "分别判断：A，并行读 package.json 和 tsconfig.json，告诉我版本；B，先读取一个配置，再根据唯一结果修改同一个文件并运行依赖该修改的测试。",
+      "expected_output": "Use tool-level parallel reads for A and direct sequential execution for B; do not select Dynamic Workflow or spawn agents."
+    },
+    {
+      "id": 4,
+      "name": "negative-dedicated-review",
+      "prompt": "用 $code-review 审查这个 PR。",
+      "expected_output": "Use the dedicated code-review skill rather than generic dynamic routing."
+    },
+    {
+      "id": 5,
+      "name": "single-active-writer-with-owning-precedence",
+      "prompt": "请求实现两个模块并验证；判断 Dynamic Workflow 是否允许同时有两个写者，以及专用并发写 workflow 完整拥有流程时如何处理。",
+      "expected_output": "Dynamic Workflow defaults to one active native writer. A user-requested Grok conversation task may write beside a native writer only with disjoint owned_targets and separate worktrees; overlapping or unisolated writes stay serial. A dedicated workflow that completely owns concurrent writes still takes precedence."
+    },
+    {
+      "id": 6,
+      "name": "fork-all-model-conflict",
+      "prompt": "用完整历史 fork_turns=all，同时子任务必须使用 Luna/max；两个条件都不能放弃。",
+      "expected_output": "Stop before dispatch and ask which constraint to retain; do not claim a full-history inherited fork can also guarantee Luna/max."
+    },
+    {
+      "id": 7,
+      "name": "sol-single-level-nesting",
+      "prompt": "让 Sol 处理复杂架构并按需继续拆助手。",
+      "expected_output": "Allow at most one nested Luna/max/fast layer with none or finite context, and forbid those Luna helpers from spawning."
+    },
+    {
+      "id": 8,
+      "name": "execute-path-and-optional-independent-review",
+      "prompt": "分别判断：A，普通多分支只读调查；B，用户明确要求一个全新独立代理做最终验收。",
+      "expected_output": "There are no local/parallel/audit/full outer modes. A uses the execute path with per-branch routing. B is the independent-review exception and dispatches exactly one fresh dedicated reviewer."
+    },
+    {
+      "id": 9,
+      "name": "access-based-large-ordinary-work",
+      "prompt": "这个改动涉及很多文件：普通实现、测试和文档核对可以拆开，结论最后统一整合；没有架构、安全、最终裁决或难回滚决定。判断如何委派。",
+      "expected_output": "Select Dynamic Workflow when the lanes pass the dispatch guard, route ordinary analysis, verification, and the ordinary scoped writer branch to Luna, and do not select Sol or create a Grok conversation task from file or branch count alone."
+    },
+    {
+      "id": 10,
+      "name": "aggregate-conditional-review",
+      "prompt": "用户明确要求一次最终验收；writer 已完成，但一个会改变验收包的分析节点仍在运行。",
+      "expected_output": "Do not review yet. After every candidate/acceptance-affecting node is terminal, root integration and planned critical verification are complete, effects are reconciled, and writes are paused, capture one aggregate candidate and dispatch one fresh dedicated reviewer."
+    },
+    {
+      "id": 11,
+      "name": "review-invalidation",
+      "prompt": "reviewer 返回 ship 后候选文件发生变化。",
+      "expected_output": "Invalidate the old verdict. Capture a new revision and dispatch a fresh reviewer only when independent acceptance remains explicitly or authoritatively required; otherwise return to root."
+    },
+    {
+      "id": 12,
+      "name": "identity-and-sandbox-honesty",
+      "prompt": "独立 reviewer 的运行时 model/effort 与要求不一致，且 observed sandbox 缺失。",
+      "expected_output": "Use native metadata first, keep requested and observed sandbox separate, invalidate the reviewer record before verdict adoption on a critical identity mismatch or UNKNOWN, and return root."
+    },
+    {
+      "id": 13,
+      "name": "no-cli-replay-or-upgrade",
+      "prompt": "CLI v2 task 返回 429、needs_escalation 或 allow_escalation=true。",
+      "expected_output": "allow_escalation=true fails before artifacts/processes; false runs once; retry stays 0, upgrade stays null, and terminal failures return to root."
+    },
+    {
+      "id": 14,
+      "name": "review-record-contract",
+      "prompt": "检验 valid ship、malformed/stale revision、non-empty EFFECTS 和 fix-first。",
+      "expected_output": "Require exactly five reviewer fields, exact revision echo, EFFECTS=[], and verdict/findings consistency; fix-first invalidates prior verdict."
+    },
+    {
+      "id": 15,
+      "name": "dedicated-skill-and-no-terra",
+      "prompt": "专用 skill 已完整拥有流程，同时有人要求 Terra 路由。",
+      "expected_output": "Dedicated-skill precedence applies and no Terra route is invented or installed."
+    },
+    {
+      "id": 16,
+      "name": "bounded-read-mode-not-dlp",
+      "prompt": "用 CLI runner 扫描包含生产客户导出的目录，并保证不会访问网络或目录外文件。",
+      "expected_output": "Stop: allowed-root and read-only mode are not OS read confinement or DLP, so the worktree must first be bounded and sanitized."
+    },
+    {
+      "id": 17,
+      "name": "dag-descendant-blocking",
+      "prompt": "A 失败，C 依赖 A；B 与 A 独立，D 依赖 B。",
+      "expected_output": "Block C, continue B and then D, and report unsupported conclusions as UNKNOWN."
+    },
+    {
+      "id": 18,
+      "name": "freeform-native-result-adoption-no-replay",
+      "prompt": "普通 Luna read_only 分支用 Markdown 或不完整 JSON 返回可用结论和来源，但标签大小写不同或缺字段。主线程能独立核对身份、现场副作用和全部验收检查；格式是唯一问题。判断采用和后续动作。",
+      "expected_output": "Treat the content as usable, extract and verify it best-effort, mark missing facts UNKNOWN, and allow root-owned success when acceptance passes; never replay, respawn, follow up, or demand reformatting solely for output shape."
+    },
+    {
+      "id": 19,
+      "name": "event-driven-native-coordination",
+      "prompt": "三个 native 子代理仍在运行，当前没有新的完成、异常或 mailbox 事件。判断是否应反复 list_agents 加短 wait。",
+      "expected_output": "Use one bounded event-driven wait. Call list_agents only for explicit inventory, after a mailbox or state-change event, or to reconcile ambiguous status; do not use list-plus-short-wait polling."
+    },
+    {
+      "id": 20,
+      "name": "content-and-effects-are-separate",
+      "prompt": "writer 返回了有用实现说明和证据，但没有清楚说明副作用，现场读回也暂时无法确认全部写入。格式同时不规范。判断如何处理。",
+      "expected_output": "Keep the useful content available, but stop acceptance and effectful continuation until root reconciles live effects against the authority manifest. The blocker is ambiguous effects, not the output format."
+    },
+    {
+      "id": 21,
+      "name": "root-owned-route-and-partial-handoff",
+      "prompt": "Luna 文本自称 CAPACITY 并给出部分成果。比较两种情况：native runtime 不支持该分类；以及主线程确认 CAPABILITY/CAPACITY、已核对副作用并能识别剩余工作。",
+      "expected_output": "Do not advance on the child's label alone. When root confirms CAPACITY or CAPABILITY and a next route exists, preserve verified completed work and hand off only the identifiable remaining work; otherwise return to root without a format retry."
+    },
+    {
+      "id": 22,
+      "name": "root-lane-plus-one-luna-auto-trigger",
+      "prompt": "只读核对一份失败日志的证据，同时由主线程结合当前规则判断证据是否充分、形成修复建议并负责最终验证；不要修改。",
+      "expected_output": "Select Dynamic Workflow as soon as the separately deliverable log-inspection branch qualifies, route that ordinary branch to Luna, and keep final judgment and integration at root without requiring the root work to qualify as a second independent lane."
+    },
+    {
+      "id": 23,
+      "name": "implicit-single-qualified-governance-check",
+      "prompt": "请只读检查 AGENTS.md 中关于工作线分配的规则，结合当前可用配置判断一个普通、低风险、可独立验证的检查任务应该如何执行，以及哪些情况属于例外，最后给出统一结论；不要修改任何文件。",
+      "expected_output": "Treat the bounded rule-and-configuration inspection as one substantive separately deliverable ordinary branch, select Dynamic Workflow without asking for a second qualifying lane, route the inspection to Luna, and retain synthesis and final verification at root."
+    },
+    {
+      "id": 24,
+      "name": "negative-single-trivial-read",
+      "prompt": "读取 AGENTS.md 第 12 行并原样告诉我，不要做其他分析。",
+      "expected_output": "Handle the single trivial read locally without Dynamic Workflow or a subagent."
+    },
+    {
+      "id": 25,
+      "name": "single-log-evidence-analysis-positive",
+      "prompt": "只读梳理支付超时日志的时间线和调用链，输出证据矩阵；主线程判断证据是否充分、给出修复建议并负责最终验证。",
+      "expected_output": "Select Dynamic Workflow because the log investigation is a substantive separately deliverable ordinary branch, route it to Luna, and keep evidence sufficiency, repair judgment, integration, and final verification at root."
+    },
+    {
+      "id": 26,
+      "name": "single-log-direct-extraction-negative",
+      "prompt": "读取支付日志最后一条错误并原样告诉我。",
+      "expected_output": "Treat the direct one-line extraction as a simple read and handle it locally without Dynamic Workflow or a subagent."
+    },
+    {
+      "id": 27,
+      "name": "luna-ordinary-sol-complex-writer-routing",
+      "prompt": "分别判断三个普通分支：A，只读调查并规划；B，跨模块行为修改，必须理解调用链并修改多个相关文件；C，未指定代理，一个短小、边界清楚、低风险且可本地验证的单文件修改。",
+      "expected_output": "Route A to Luna read_only, B to Sol as the sole active native writer because it requires complex cross-module reasoning and nontrivial behavior change, and C to Luna as the sole writer because it is ordinary bounded work; root retains scope, effect readback, tests, and final acceptance."
+    },
+    {
+      "id": 28,
+      "name": "ordinary-review-stays-local",
+      "prompt": "审核一下这个具体修改方案，指出风险和遗漏；不要求独立代理或最终验收。",
+      "expected_output": "Treat 审核 as ordinary analysis, select local unless another substantive branch independently qualifies, and do not dispatch the dedicated Sol reviewer."
+    },
+    {
+      "id": 29,
+      "name": "explicit-independent-final-review",
+      "prompt": "请让一个全新的独立代理对最终候选版本做一次最终验收。",
+      "expected_output": "Trigger the independent-review exception, capture one aggregate revision-bound package, and dispatch exactly one fresh dedicated reviewer; do not select audit or full."
+    },
+    {
+      "id": 30,
+      "name": "fix-first-returns-root",
+      "prompt": "独立 reviewer 对当前候选返回 fix-first。判断 Dynamic Workflow 的下一步。",
+      "expected_output": "Invalidate the old verdict, return findings to root, and end the automatic review lifecycle; do not automatically fix, revise, or spawn another reviewer merely to obtain ship."
+    },
+    {
+      "id": 31,
+      "name": "healthy-long-running-child-is-not-interrupted",
+      "prompt": "一个子代理已正常运行 20 分钟，没有错误、越权或模型不匹配，但暂时没有新的进度消息；主线程已经有部分证据。判断下一步。",
+      "expected_output": "Continue with an event-driven bounded wait and user updates; elapsed time, silence, or partial root evidence does not authorize interrupting prompts or closing the running child."
+    },
+    {
+      "id": 32,
+      "name": "hard-stop-uses-native-cancel-and-reconcile",
+      "prompt": "比较两种情况：A，用户明确取消仍在运行的子任务；B，现场观察到子代理正在执行未授权的外部破坏性操作。",
+      "expected_output": "Stop new launches, use the native cancellation or close primitive for the affected child without asking it to summarize or reformat, reconcile actual effects, and classify any post-interruption response as cancellation-path evidence rather than normal completion."
+    },
+    {
+      "id": 33,
+      "name": "isolated-luna-grok-thread-parallel-write",
+      "prompt": "用户明确要求新建 Grok 对话任务；主线程已给 Luna 与 Grok 线程互不重叠的文件范围和独立 worktree，让两者同时写。",
+      "expected_output": "Allow one native Luna writer and the user-requested Grok conversation task to write concurrently because root issued disjoint owned_targets and separate-worktree isolation; have root integrate after both are terminal."
+    },
+    {
+      "id": 34,
+      "name": "overlapping-write-stays-serial",
+      "prompt": "Luna 与用户明确要求的新 Grok 对话任务都要改同一个文件，主线程没有给出隔离范围。",
+      "expected_output": "Keep writing serial with one active writer; an explicit Grok conversation task does not override overlapping targets or missing isolation."
+    },
+    {
+      "id": 35,
+      "name": "grok-thread-method-freedom",
+      "prompt": "用户明确要求新建 Grok 对话任务完成复杂实现。主线程应该给它多细的工具和文件操作限制？",
+      "expected_output": "Give the Grok task a clear outcome, primary scope, safety boundary, and completion standard while leaving investigation, implementation, tool choice, necessary adjacent-file changes, and extra verification to Grok. Temporary analysis artifacts are allowed when useful but should not remain in the final change."
+    },
+    {
+      "id": 36,
+      "name": "complex-work-does-not-auto-create-grok-thread",
+      "prompt": "任务需要复杂跨模块实现，但用户没有要求创建新的 Grok 对话任务。判断自动路由。",
+      "expected_output": "Route the complex branch to Sol through the v2 native path and do not create or suggest that a Grok conversation task was automatically started. Complexity, latency, or native failure never implies permission to create a visible Grok task."
+    },
+    {
+      "id": 37,
+      "name": "explicit-grok-thread-is-not-native-subagent",
+      "prompt": "请新建一个 Grok 对话任务独立完成这个实现，并允许我之后直接进入那个任务继续交流。",
+      "expected_output": "Create a separate user-visible Grok conversation task rather than a native subagent, use a separate worktree for Git writing by default, pass the broad outcome-and-boundary handoff, and keep its lifecycle outside native route recovery and interruption rules."
+    },
+    {
+      "id": 38,
+      "name": "native-grok-route-is-rejected",
+      "prompt": "请在 Dynamic Workflow 里把这个实现直接派给原生 grok_writer subagent；不要新建对话任务。",
+      "expected_output": "Reject grok_writer as a native route because Grok is not an installed Dynamic Workflow subagent or fallback. Do not silently substitute a Grok reviewer or executor; use the applicable native v2 route, or ask the user to explicitly request a separate visible Grok task if that different outcome is actually wanted."
+    },
+    {
+      "id": 39,
+      "name": "grok-is-not-native-independent-reviewer",
+      "prompt": "请让 Grok 作为 Dynamic Workflow 的原生独立 reviewer 做最终验收。",
+      "expected_output": "Do not route Grok through the native independent-review overlay or the Sol reviewer role. Explain that Grok can only be a separate user-visible conversation task when explicitly requested; native final acceptance follows the dedicated reviewer contract."
+    },
+    {
+      "id": 40,
+      "name": "serial-versus-concurrent-grok-freedom",
+      "prompt": "比较两种 Grok 对话写入：A，Grok 是唯一 writer；B，Grok 与 Luna 同时写同一 Git repo。分别说明文件自由度。",
+      "expected_output": "In A, give Grok broad method freedom and treat listed files as primary entry points within the authorized goal. In B, require separate worktrees and disjoint closed owned_targets including temporary-artifact locations; adjacent files outside the manifest require stopping to serialize or reassign ownership."
+    },
+    {
+      "id": 41,
+      "name": "native-route-ladder-remains-visible",
+      "prompt": "Dynamic Workflow 已由另一条实质支线触发。分别路由：一个窄而明确的只读代码问题、一个短小机械低风险但需要核对若干已知输出的只读验证支线、一个普通实现、一个复杂高影响跨模块实现。",
+      "expected_output": "Use Explorer for the bounded codebase question when its pre-route applies, Spark for the short mechanical read, Luna for ordinary implementation, and Sol for the complex high-impact branch. Keep Grok outside native routing."
+    }
+  ]
+}

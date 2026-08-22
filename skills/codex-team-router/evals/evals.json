@@ -1,9 +1,0 @@
-{
-  "skill_name": "codex-team-router",
-  "eval_mode": "tabletop-unexecuted",
-  "evals": [
-    {"id": 1, "name": "positive-explicit-manager-mode", "prompt": "你作为管理者，用 Team Router 规划这项工作。", "expected_output": "Enter Manager Mode without dispatch until a separate explicit dispatch gate.", "files": []},
-    {"id": 2, "name": "negative-bare-manager", "prompt": "修复 manager parser。", "expected_output": "Do not trigger Manager Mode from a bare manager token.", "files": []},
-    {"id": 3, "name": "negative-review-no-thread", "prompt": "只 review Team Router 规则，不要创建任务。", "expected_output": "Read-only review; do not create threads, messages, or ledger state.", "files": []}
-  ]
-}

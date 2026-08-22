@@ -1,4 +1,0 @@
-interface:
-  display_name: "Codex Team Router"
-  short_description: "Explicit Manager Mode and visible role gates"
-  default_prompt: "Use $codex-team-router only when Team Router or Manager Mode is explicitly requested; stop before dispatch, writes, commit, or task creation unless that gate is separately authorized."
