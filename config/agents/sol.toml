@@ -11,8 +11,3 @@ Preserve unrelated state, stop when the target, scope, impact, or recovery path 
 Always leave publication, commit, push, merge, deployment, credentials, destructive actions, and external writeback to the parent, including when explicitly handed a scoped local writer branch.
 Return concise technical judgment and evidence to the parent; the parent retains overall acceptance and any authorization expansion.
 """
-
-[mcp_servers.codegraph]
-command = "cmd"
-args = ["/c", "D:/Node.js/node.exe", "C:/Users/Orz/AppData/Roaming/npm/node_modules/@colbymchenry/codegraph/npm-shim.js", "serve", "--mcp"]
-enabled = false

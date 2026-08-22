@@ -3,10 +3,15 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.coverage
+.venv/
 
-# 本地运行产物
+# Local runtime artifacts
 /runs/
+/.codex-dynamic-workflow/
 *.tmp
 
-# 本地索引
+# Local indexes and machine overrides
 .codegraph/
+config/agents/*.local.toml

@@ -999,7 +999,7 @@ async def _kill_tree(proc: asyncio.subprocess.Process) -> str | None:
     if sys.platform == "win32":
         try:
             system_directory = _windows_system_directory()
-            taskkill = system_directory / "taskkill.exe"
+            taskkill = (system_directory / "taskkill.exe").resolve()
             if not taskkill.is_absolute() or not taskkill.is_file():
                 record_failure(f"taskkill target is not an absolute file: {taskkill}")
             else:
@@ -1696,6 +1696,7 @@ def _runs_root() -> Path:
 
 
 def _prepare_run_root(root: Path, spec: dict[str, Any], codex_home: Path) -> None:
+    root = root.resolve()
     if root == Path(root.anchor):
         raise WorkflowError(f"运行产物根不能是盘符根: {root}")
     home = Path.home().resolve()
