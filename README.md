@@ -146,6 +146,21 @@ Validated-only node kinds: `loop`.
 
 human gate 使用不可变 contract 与原子 exclusive-create decision record。运行进入 `paused` 后，只有 `gate-decide` 再配合显式 `resume-ir` 才继续。`actor` 与 `source` 只是未经认证的审计标签；gate decision 只是数据，不授予 workspace write、凭据、Git、发布、合并、部署或破坏性权限。
 
+reference repository audit 的 closeout 保持两条显式、互斥的结果路径：
+
+```text
+discover-modules → audit-modules → verify-audits
+                                      ├→ summarize-audit
+                                      └→ choose-verification-path
+                                           ├→ prepare-clean-candidate ─┐
+                                           └→ prepare-blocker-report ──┴→ review-gate (join)
+                                                                          └→ choose-gate-outcome
+                                                                               ├→ record-accepted → finalize-accepted
+                                                                               └→ record-rejected → finalize-rejected
+```
+
+`record-accepted` 与 `record-rejected` 都显式接收 `choose-gate-outcome`、`review-gate` 和 `summarize-audit`；它们的严格对象合同包含 `decision`（`approve`/`reject`）、`summary`、`evidence[]` 与 `next_actions[]`。每个 finalizer 只接收对应的 record，并在该合同上增加 `status`（`accepted`/`rejected`）与 `uncertainty[]`。未选中的 record 及其 finalizer 会按依赖传播为 `skipped`，不会创建 task 目录。
+
 ## 计划预览与运行状态
 
 在启动模型前，可使用 `plan-ir` 验证并预览完整控制流；它不会访问 `workdir`、调用模型或写入运行目录：

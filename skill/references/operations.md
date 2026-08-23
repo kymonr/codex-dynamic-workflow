@@ -38,11 +38,21 @@ agent → map → verify → reduce → conditional
                               human_gate
                                    ↓
                               conditional
-                              ├─ accepted
-                              └─ rejected
-                                   ↓
-                              explicit join
+                              ├─ record-accepted → finalize-accepted
+                              └─ record-rejected → finalize-rejected
 ```
+
+The closeout paths are explicit and mutually exclusive. Both record nodes
+depend on `choose-gate-outcome`, `review-gate`, and `summarize-audit`; their
+prompts must carry both `{{result:review-gate}}` and
+`{{result:summarize-audit}}`. Each finalizer depends only on its corresponding
+record and its prompt carries only that record result. The record contract is
+an object with `decision` (`approve` or `reject`), `summary`, `evidence[]`, and
+`next_actions[]`. Each final contract retains those fields and adds `status`
+(`accepted` or `rejected`) and `uncertainty[]`, with strict object, array, item,
+enum, required, and `additionalProperties: false` schema keywords. An
+unselected record and its finalizer propagate `skipped`; they are not executed
+and therefore do not create task directories.
 
 Replace the example `workdir` with one deliberately sanitized repository before running it. `loop` remains validated-only and is not silently executed.
 
