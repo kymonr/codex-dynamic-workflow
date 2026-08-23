@@ -123,8 +123,20 @@ class ArtifactStore:
     def load_json(self, reference: dict[str, Any]) -> Any:
         path = self.resolve_reference(reference)
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            payload = path.read_bytes()
+            metadata = reference[ARTIFACT_REFERENCE_KEY]
+            if len(payload) != metadata.get("bytes"):
+                raise ArtifactLimitError(
+                    f"artifact size changed before JSON load: {path}"
+                )
+            if hashlib.sha256(payload).hexdigest() != metadata.get("sha256"):
+                raise ArtifactLimitError(
+                    f"artifact digest changed before JSON load: {path}"
+                )
+            return json.loads(payload.decode("utf-8"))
+        except ArtifactLimitError:
+            raise
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ArtifactLimitError(f"cannot load artifact {path}: {exc}") from exc
 
 

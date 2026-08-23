@@ -5,8 +5,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from skill.runtime.artifacts import ArtifactStore, is_artifact_reference, substitute_upstream_results
+from skill.runtime.artifacts import (
+    ArtifactStore,
+    canonical_json_bytes,
+    is_artifact_reference,
+    substitute_upstream_results,
+)
 from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
 from skill.runtime.schema_contract import (
     build_envelope_schema,
@@ -112,6 +118,40 @@ class ArtifactTests(unittest.TestCase):
             store = ArtifactStore(Path(temporary), limits)
             with self.assertRaises(ArtifactLimitError):
                 store.put_json("source", {"payload": "x" * 200})
+
+    def test_load_json_revalidates_the_bytes_it_parses(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            limits = RuntimeLimits.from_mapping(
+                {
+                    "max_result_bytes": 4096,
+                    "max_log_bytes": 4096,
+                    "max_run_artifact_bytes": 65536,
+                    "max_upstream_inline_bytes": 16,
+                    "max_event_bytes": 4096,
+                },
+                env={},
+            )
+            store = ArtifactStore(Path(temporary), limits)
+            reference = store.put_json("source", {"value": "ok"})
+            original_resolve = store.resolve_reference
+
+            def replace_after_validation(candidate):
+                path = original_resolve(candidate)
+                replacement = canonical_json_bytes({"value": "no"})
+                self.assertEqual(len(replacement), path.stat().st_size)
+                path.write_bytes(replacement)
+                return path
+
+            with mock.patch.object(
+                store,
+                "resolve_reference",
+                side_effect=replace_after_validation,
+            ):
+                with self.assertRaisesRegex(
+                    ArtifactLimitError,
+                    "digest changed before JSON load",
+                ):
+                    store.load_json(reference)
 
 
 class StateStoreTests(unittest.TestCase):

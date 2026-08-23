@@ -32,6 +32,14 @@ def main(argv: list[str] | None = None) -> int:
         from swarm_presets import main as preset_main
 
         return preset_main(arguments)
+    if arguments and arguments[0] in {
+        "auto-plan-contract",
+        "auto-plan-apply",
+        "auto-plan",
+    }:
+        from auto_planner import main as auto_plan_main
+
+        return auto_plan_main(arguments)
 
     from runner import main as legacy_main
 
