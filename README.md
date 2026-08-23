@@ -11,7 +11,7 @@
 
 默认只允许一个 native writer。Grok 与 native writer 并发写入时，必须使用独立 worktree，并给双方互斥、封闭的 `owned_targets`。
 
-机器可读的角色与路径合同位于 `config/workflow-policy.toml`。角色 TOML、公开文档和接入片段必须通过一致性检查，避免路由规则在多个文件之间悄悄漂移。
+机器可读的角色、资源限制与路径合同位于 `config/workflow-policy.toml`。角色 TOML、公开文档和接入片段必须通过一致性检查，避免规则在多个文件之间悄悄漂移。
 
 ## 执行路径
 
@@ -33,18 +33,52 @@ python3.12 skill/cli.py run \
   --ack-external-model-export
 ```
 
-`skill/cli.py` 会在导入兼容 runner 前设置跨平台的运行目录默认值。直接执行 `skill/runner.py` 仅保留为兼容入口，不应作为新的集成方式。
+中断后的显式恢复：
+
+```powershell
+py -3.12 skill\cli.py resume `
+  --run-dir D:\path\to\runs\example-run `
+  --allowed-root D:\path\bounded-project `
+  --ack-external-model-export
+```
+
+`run` 会持续写入 `events.jsonl` 和 `checkpoint.json`。显式 `resume` 会核对计划摘要，只恢复未完成节点；已成功节点通过内容寻址 artifact 复用，不重新把完整结果塞入主线程或下游 prompt。
+
+## 资源和结果边界
+
+每次运行始终存在有限上限：
+
+- 单节点结构化输出；
+- 单节点日志；
+- 整次运行产物；
+- 注入下游 prompt 的上游结果累计字节；
+- 单条事件日志。
+
+默认值和不可突破的硬上限记录在 `config/workflow-policy.toml`。超过限制会终止相关节点；超量日志会截断到上限，超量结构化输出会被丢弃，并保留最后一个仍可安全写入的 checkpoint，不会无限增长磁盘或上下文。
+
+所有成功结果都会生成 SHA-256 内容寻址 artifact。小结果仍可内联；超过累计 inline budget 时，下游只收到带摘要、哈希和精确只读路径的 `UPSTREAM_ARTIFACT_REFERENCE`，避免重复复制大对象。
+
+## Workflow IR v3
+
+仓库已加入声明式 Workflow IR v3 基础：
+
+```powershell
+py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
+```
+
+当前静态 `agent` 节点可以编译成 v2 只读 DAG；`map`、`verify`、`loop`、`reduce`、`conditional` 与 `human_gate` 已有严格版本化校验，但在 v3 控制流 runtime 完成前不会被静默执行或降级。详细合同见 `skill/references/workflow-ir.md`。
 
 ## 仓库结构
 
 ```text
-config/workflow-policy.toml      机器可读路由与路径合同
+config/workflow-policy.toml      机器可读路由、限制与路径合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
 skill/cli.py                     跨平台 CLI 入口
 skill/platform_paths.py          本地状态、产物与 worktree 路径解析
-skill/runner.py                  兼容的只读 DAG runner
+skill/runner.py                  有界、可恢复的只读 DAG runner
+skill/runtime/                   schema、artifact、limits、state、Workflow IR 模块
 skill/scripts/                   路由 smoke 与合同检查
 skill/tests/                     离线回归测试
 ```
@@ -69,8 +103,13 @@ skill/tests/                     离线回归测试
 | `DYNWF_HOME` | Dynamic Workflow 本地状态根目录 |
 | `DYNWF_RUNS_ROOT` | CLI run artifacts 根目录 |
 | `DYNWF_WORKTREE_ROOT` | 隔离 worktree 根目录 |
+| `DYNWF_MAX_RESULT_BYTES` | 单节点输出上限，不能超过硬上限 |
+| `DYNWF_MAX_LOG_BYTES` | 单节点日志上限，不能超过硬上限 |
+| `DYNWF_MAX_RUN_ARTIFACT_BYTES` | 单次运行总产物上限 |
+| `DYNWF_MAX_UPSTREAM_INLINE_BYTES` | 每个下游 prompt 的累计上游内联预算 |
+| `DYNWF_MAX_EVENT_BYTES` | 单条事件上限 |
 
-优先级为“显式环境变量 → 平台默认目录”。共享配置和文档中不得提交个人用户名、固定 Node 安装路径或固定盘符临时目录。
+优先级为“spec 显式限制 → 环境变量 → 默认值”。共享配置和文档中不得提交个人用户名、固定 Node 安装路径或固定盘符临时目录。
 
 ## 验证
 

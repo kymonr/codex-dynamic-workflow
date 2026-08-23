@@ -11,6 +11,27 @@ runs_root_env = "DYNWF_RUNS_ROOT"
 worktree_root_env = "DYNWF_WORKTREE_ROOT"
 app_dir_name = "codex-dynamic-workflow"
 
+[limits.defaults]
+max_result_bytes = 2097152
+max_log_bytes = 8388608
+max_run_artifact_bytes = 67108864
+max_upstream_inline_bytes = 8192
+max_event_bytes = 262144
+
+[limits.hard_ceiling]
+max_result_bytes = 67108864
+max_log_bytes = 268435456
+max_run_artifact_bytes = 1073741824
+max_upstream_inline_bytes = 1048576
+max_event_bytes = 1048576
+
+[workflow_ir]
+current_version = 3
+static_execution_version = 2
+control_flow_runtime_version = 3
+validated_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
+executable_node_kinds = ["agent"]
+
 [routes.spark]
 agent_type = "spark"
 model = "gpt-5.3-codex-spark"
