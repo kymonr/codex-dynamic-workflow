@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      issues: read
+      issues: write
       pull-requests: read
 
     steps:
@@ -65,7 +65,8 @@ jobs:
           PR_NUMBER: "15"
           EXPECTED_SHA256: "0e0e5e78b8f3dd186c11b66cc3914d37772ba2f8348f66522ae38e3d6bf23e00"
         run: |
-          python - <<'PY'
+          set -o pipefail
+          python - <<'PY' 2>&1 | tee "${RUNNER_TEMP}/reconstruct.log"
           from __future__ import annotations
 
           import base64
@@ -140,19 +141,29 @@ jobs:
           PY
 
       - name: Apply PR15 hardening patch
-        run: python .github/scripts/repair_pr15.py
+        run: |
+          set -o pipefail
+          python .github/scripts/repair_pr15.py 2>&1 | tee "${RUNNER_TEMP}/apply.log"
 
       - name: Compile Python sources
-        run: python -m compileall -q skill
+        run: |
+          set -o pipefail
+          python -m compileall -q skill 2>&1 | tee "${RUNNER_TEMP}/compile.log"
 
       - name: Validate routing policy consistency
-        run: python skill/scripts/check_policy_consistency.py --json
+        run: |
+          set -o pipefail
+          python skill/scripts/check_policy_consistency.py --json 2>&1 | tee "${RUNNER_TEMP}/policy.log"
 
       - name: Run offline routing smoke
-        run: python skill/scripts/routing_smoke.py
+        run: |
+          set -o pipefail
+          python skill/scripts/routing_smoke.py 2>&1 | tee "${RUNNER_TEMP}/smoke.log"
 
       - name: Run unit tests
-        run: python -m unittest discover -s skill/tests -v
+        run: |
+          set -o pipefail
+          python -m unittest discover -s skill/tests -v 2>&1 | tee "${RUNNER_TEMP}/tests.log"
 
       - name: Capture repair evidence
         if: always()
@@ -170,6 +181,68 @@ jobs:
           name: pr15-hardening-evidence
           path: ${{ runner.temp }}/pr15-hardening-evidence
           if-no-files-found: error
+
+      - name: Report repair diagnostics
+        if: always()
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: "15"
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import subprocess
+          import urllib.request
+          from pathlib import Path
+
+          runner_temp = Path(os.environ["RUNNER_TEMP"])
+          sections = []
+          for name in ("reconstruct", "apply", "compile", "policy", "smoke", "tests"):
+              path = runner_temp / f"{name}.log"
+              if not path.is_file():
+                  continue
+              text = path.read_text(encoding="utf-8", errors="replace")
+              sections.append(f"[{name}]\n{text[-3500:]}")
+          diagnostics = "\n\n".join(sections)[-18000:]
+          git_status = subprocess.run(
+              ["git", "status", "--short"],
+              check=False,
+              capture_output=True,
+              text=True,
+          ).stdout[-4000:]
+          body = (
+              "<!-- pr15-repair-diagnostic -->\n"
+              f"run_id={os.environ.get('GITHUB_RUN_ID')}\n"
+              f"status={os.environ['JOB_STATUS']}\n\n"
+              "```text\n"
+              f"{diagnostics}\n\n[git status]\n{git_status}\n"
+              "```"
+          )
+          payload = json.dumps({"body": body}).encode("utf-8")
+          url = (
+              f"https://api.github.com/repos/{os.environ['REPOSITORY']}/issues/"
+              f"{os.environ['PR_NUMBER']}/comments"
+          )
+          request = urllib.request.Request(
+              url,
+              data=payload,
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              result = json.load(response)
+          print(f"posted repair diagnostics comment {result.get('id')}")
+          PY
 
       - name: Restore canonical CI and remove temporary machinery
         run: |
