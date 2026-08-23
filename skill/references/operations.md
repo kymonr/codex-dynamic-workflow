@@ -68,12 +68,12 @@ py -3.12 skill\cli.py run-status `
   --node-id review-gate
 ```
 
-`checkpoint.json` is the status source of truth. `summary.json` is treated as a compatibility/user-facing projection and is compared against the checkpoint; mismatches are reported rather than silently reconciled. The command returns only operational metadata:
+`checkpoint.json` is the status source of truth. `summary.json` is treated as a compatibility/user-facing projection and is compared against the checkpoint; mismatches are reported rather than silently reconciled. The command rejects checkpoints whose entry IDs or entry statuses disagree with the checkpoint state map. It also recomputes the resolved Workflow IR digest and reports any mismatch with the checkpoint. The command returns only operational metadata:
 
 - workflow state and per-state counts;
 - node status, timestamps, resume count and error;
 - condition state and gate state;
-- checkpoint/summary digest consistency;
+- resolved IR / checkpoint / summary digest consistency;
 - redacted gate metadata without the gate prompt or task outputs.
 
 The run directory must be a real child of `DYNWF_RUNS_ROOT` and may not traverse symlinks, junctions or reparse points. The command rejects malformed IR, checkpoint node-set changes and unsafe gate records. For the full gate prompt and immutable decision contract, use `gate-status`.

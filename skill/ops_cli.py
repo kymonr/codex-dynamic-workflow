@@ -47,6 +47,30 @@ class OpsCommandError(RuntimeError):
     """A read-only operational command cannot safely continue."""
 
 
+def _workflow_ir_digest(ir: Mapping[str, Any]) -> str:
+    payload = {
+        key: ir[key]
+        for key in (
+            "version",
+            "name",
+            "mode",
+            "objective",
+            "workdir",
+            "budgets",
+            "limits",
+            "nodes",
+        )
+        if key in ir
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _load_json(
     path: str | Path,
     *,
@@ -306,6 +330,14 @@ def _validate_checkpoint(
             raise OpsCommandError(f"checkpoint state is invalid for {node_id}")
         if not isinstance(entry, dict):
             raise OpsCommandError(f"checkpoint entry is invalid for {node_id}")
+        if entry.get("id") != node_id:
+            raise OpsCommandError(
+                f"checkpoint entry id does not match its key: {node_id}"
+            )
+        if entry.get("status") != state:
+            raise OpsCommandError(
+                f"checkpoint entry status disagrees with states for {node_id}"
+            )
         normalized_states[node_id] = state
         normalized_entries[node_id] = entry
     return normalized_states, normalized_entries
@@ -338,6 +370,8 @@ def _summary_consistency(
         node_id = node.get("id")
         status = node.get("status")
         if not isinstance(node_id, str) or not isinstance(status, str):
+            return "malformed"
+        if node_id in observed:
             return "malformed"
         observed[node_id] = status
     return "match" if observed == dict(checkpoint_states) else "mismatch"
@@ -418,6 +452,9 @@ def _run_status(run_dir: str | Path, *, node_id: str | None = None) -> dict[str,
     gates = [_gate_status(record) for record in gate_store.list_records()]
     summary_ir_digest = summary.get("ir_digest") if isinstance(summary, dict) else None
     checkpoint_ir_digest = checkpoint.get("ir_digest")
+    if not isinstance(checkpoint_ir_digest, str) or not checkpoint_ir_digest:
+        raise OpsCommandError("checkpoint ir_digest must be a non-empty string")
+    resolved_ir_digest = _workflow_ir_digest(ir)
 
     return {
         "operation": "run-status",
@@ -439,8 +476,14 @@ def _run_status(run_dir: str | Path, *, node_id: str | None = None) -> dict[str,
         "unknown_state_count": sum(
             count for state, count in counts.items() if state not in KNOWN_STATES
         ),
+        "resolved_ir_digest": resolved_ir_digest,
         "checkpoint_ir_digest": checkpoint_ir_digest,
         "summary_ir_digest": summary_ir_digest,
+        "resolved_ir_digest_consistency": (
+            "match"
+            if resolved_ir_digest == checkpoint_ir_digest
+            else "mismatch"
+        ),
         "ir_digest_consistency": (
             "unavailable"
             if summary_ir_digest is None
