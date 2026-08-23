@@ -16,6 +16,14 @@ def main(argv: list[str] | None = None) -> int:
         from ir_runner import main as ir_main
 
         return ir_main(arguments)
+    if arguments and arguments[0] in {
+        "condition-evaluate",
+        "gate-status",
+        "gate-decide",
+    }:
+        from gate_cli import main as gate_main
+
+        return gate_main(arguments)
 
     from runner import main as legacy_main
 

@@ -1,9 +1,10 @@
 """Trusted Workflow IR v3 control-flow scheduler.
 
-This module executes only declarative, read-only ``agent``, ``map``, ``verify``
-and ``reduce`` nodes. It never evaluates model-authored Python, JavaScript,
-shell, path expressions, or arbitrary selectors. Dynamic expansion is finite,
-deterministic, budgeted, artifact-backed, and checkpointed.
+This module executes declarative, read-only ``agent``, ``map``, ``verify``,
+``reduce``, ``conditional`` and ``human_gate`` nodes. It never evaluates
+model-authored Python, JavaScript, shell, path expressions, or arbitrary
+selectors. Dynamic expansion and decisions are finite, deterministic,
+budgeted, artifact-backed, and checkpointed.
 """
 
 from __future__ import annotations
@@ -22,6 +23,12 @@ from .artifacts import (
     choose_public_output,
     is_artifact_reference,
 )
+from .condition import evaluate_condition
+from .human_gate import (
+    HumanGateError,
+    HumanGateStore,
+    compute_gate_input_identity,
+)
 from .limits import (
     ArtifactLimitError,
     RuntimeLimits,
@@ -30,7 +37,11 @@ from .limits import (
 )
 from .state_store import RunStateStore, now_iso
 from .workflow_ir import (
+    DEFAULT_DEPENDENCY_POLICY,
     EXECUTABLE_NODE_KINDS,
+    JOIN_DEPENDENCY_POLICY,
+    TIMEOUT_SCOPE,
+    TOKEN_BUDGET_MODE,
     VERIFICATION_RESULT_SCHEMA,
     validate_workflow_ir,
 )
@@ -41,8 +52,11 @@ AgentExecutor = Callable[
 ]
 
 SUCCESS = "succeeded"
+SKIPPED = "skipped"
+WAITING = "waiting"
 TERMINAL_STATES = {
     SUCCESS,
+    SKIPPED,
     "failed",
     "blocked",
     "cancelled",
@@ -150,12 +164,17 @@ def _base_node_entry(node: dict[str, Any]) -> dict[str, Any]:
         "kind": node["kind"],
         "status": "pending",
         "depends_on": list(node["depends_on"]),
+        "dependency_policy": node.get(
+            "dependency_policy", DEFAULT_DEPENDENCY_POLICY
+        ),
         "started": None,
         "finished": None,
         "output": None,
         "output_artifact": None,
         "error": None,
         "children": {},
+        "condition_outcome": None,
+        "gate": None,
         "resume_count": 0,
     }
 
@@ -243,6 +262,7 @@ class TrustedControlFlowScheduler:
             max_event_bytes=limits.max_event_bytes,
             max_run_artifact_bytes=limits.max_run_artifact_bytes,
         )
+        self.gate_store = HumanGateStore(self.run_dir, limits)
         self.entries: dict[str, dict[str, Any]] = {}
         self.states: dict[str, str] = {}
         self.results: dict[str, dict[str, Any]] = {}
@@ -317,6 +337,8 @@ class TrustedControlFlowScheduler:
                 "blocked",
                 "cancelled",
                 "needs_escalation",
+                "skipped",
+                "waiting",
             )
         }
         return {
@@ -335,10 +357,19 @@ class TrustedControlFlowScheduler:
             "blocked_count": counts["blocked"],
             "cancelled_count": counts["cancelled"],
             "needs_escalation_count": counts["needs_escalation"],
-            "all_succeeded": counts["succeeded"] == len(ordered),
+            "skipped_count": counts["skipped"],
+            "waiting_count": counts["waiting"],
+            "paused": counts["waiting"] > 0,
+            "all_succeeded": (
+                counts["succeeded"] + counts["skipped"] == len(ordered)
+            ),
             "claimed_agent_count": len(self.claimed_agents),
             "max_agents": self.max_agents,
             "max_concurrency": self.max_concurrency,
+            "budget_semantics": {
+                "max_tokens": TOKEN_BUDGET_MODE,
+                "timeouts": TIMEOUT_SCOPE,
+            },
             "limits": self.limits.to_dict(),
             "nodes": ordered,
         }
@@ -752,6 +783,142 @@ class TrustedControlFlowScheduler:
             self.results[node["id"]] = _entry_record(entry)
         return entry
 
+    def _gate_dependency_payload(
+        self, node: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        payload: list[dict[str, Any]] = []
+        for dependency in node["depends_on"]:
+            entry = self.entries[dependency]
+            reference = entry.get("output_artifact")
+            artifact_sha256 = None
+            output_digest = None
+            if reference is not None:
+                if not is_artifact_reference(reference):
+                    raise ControlFlowError(
+                        f"gate dependency {dependency} has an invalid artifact"
+                    )
+                self.store.resolve_reference(reference)
+                artifact_sha256 = reference["$artifact"]["sha256"]
+            elif entry["status"] == SUCCESS:
+                output_digest = _canonical_digest(entry.get("output"))
+            payload.append(
+                {
+                    "node_id": dependency,
+                    "status": entry["status"],
+                    "artifact_sha256": artifact_sha256,
+                    "output_digest": output_digest,
+                }
+            )
+        return payload
+
+    async def _run_conditional_node(
+        self, node: dict[str, Any], entry: dict[str, Any]
+    ) -> dict[str, Any]:
+        config = node["config"]
+        source_id = config["condition"]["source"]
+        sources: dict[str, Any] = {}
+        if self.states[source_id] == SUCCESS:
+            sources[source_id] = self._load_result_value(source_id)
+        outcome = evaluate_condition(config["condition"], sources)
+        entry["condition_outcome"] = outcome
+        if outcome["state"] == "unknown":
+            selected: list[str] = []
+            skipped: list[str] = []
+        elif outcome["state"] == "true":
+            selected = list(config["then"])
+            skipped = list(config["else"])
+        else:
+            selected = list(config["else"])
+            skipped = list(config["then"])
+        manifest = {
+            "condition_version": 1,
+            "kind": "conditional",
+            "node_id": node["id"],
+            "condition": config["condition"],
+            "outcome": outcome,
+            "selected_targets": selected,
+            "skipped_targets": skipped,
+        }
+        self._set_node_output(entry, manifest)
+        self.state_store.append_event(
+            "workflow.conditional.evaluated",
+            {
+                "node_id": node["id"],
+                "state": outcome["state"],
+                "selected_targets": selected,
+                "skipped_targets": skipped,
+            },
+        )
+        if outcome["state"] == "unknown":
+            entry["status"] = "needs_escalation"
+            entry["error"] = "conditional outcome is unknown: " + outcome["reason"]
+            return entry
+        for target in skipped:
+            if self.states[target] != "pending":
+                raise ControlFlowError(
+                    f"conditional target {target} is not pending"
+                )
+            self.states[target] = SKIPPED
+            target_entry = self.entries[target]
+            target_entry["status"] = SKIPPED
+            target_entry["error"] = (
+                f"not selected by conditional node {node['id']}"
+            )
+            target_entry["finished"] = now_iso()
+            self.state_store.append_event(
+                "workflow.node.skipped",
+                {
+                    "node_id": target,
+                    "conditional_node": node["id"],
+                    "outcome": outcome["state"],
+                },
+            )
+        entry["status"] = SUCCESS
+        entry["error"] = None
+        return entry
+
+    async def _run_human_gate_node(
+        self, node: dict[str, Any], entry: dict[str, Any]
+    ) -> dict[str, Any]:
+        config = node["config"]
+        dependencies = self._gate_dependency_payload(node)
+        input_identity = compute_gate_input_identity(
+            node["id"],
+            config["prompt"],
+            config["options"],
+            dependencies,
+        )
+        try:
+            record = self.gate_store.open_gate(
+                node["id"],
+                prompt=config["prompt"],
+                options=config["options"],
+                input_identity=input_identity,
+            )
+        except HumanGateError as exc:
+            entry["status"] = "needs_escalation"
+            entry["error"] = f"human gate record rejected: {exc}"
+            return entry
+        entry["gate"] = record
+        if record["status"] == "waiting":
+            entry["status"] = WAITING
+            entry["error"] = "explicit human decision required"
+            return entry
+        manifest = {
+            "gate_version": record["gate_version"],
+            "kind": "human_gate",
+            "node_id": node["id"],
+            "input_identity": record["input_identity"],
+            "decision": record["decision"],
+            "actor": record["actor"],
+            "source": record["source"],
+            "note": record["note"],
+        }
+        self._set_node_output(entry, manifest)
+        entry["status"] = SUCCESS
+        entry["error"] = None
+        return entry
+
     async def _execute_node(self, node_id: str) -> dict[str, Any]:
         node = self.node_by_id[node_id]
         entry = self.entries[node_id]
@@ -771,6 +938,10 @@ class TrustedControlFlowScheduler:
                 entry = await self._run_verify_node(node, entry)
             elif node["kind"] == "reduce":
                 entry = await self._run_reduce_node(node, entry)
+            elif node["kind"] == "conditional":
+                entry = await self._run_conditional_node(node, entry)
+            elif node["kind"] == "human_gate":
+                entry = await self._run_human_gate_node(node, entry)
             else:  # guarded by __init__; retained as a fail-closed assertion.
                 raise ControlFlowError(
                     f"node kind is not executable: {node['kind']}"
@@ -780,16 +951,29 @@ class TrustedControlFlowScheduler:
         except Exception as exc:
             entry["status"] = "failed"
             entry["error"] = f"{type(exc).__name__}: {exc}"
-        entry["finished"] = now_iso()
-        await self._event(
-            "workflow.node.completed",
-            {
-                "node_id": node_id,
-                "kind": node["kind"],
-                "status": entry["status"],
-                "error": entry.get("error"),
-            },
-        )
+        if entry["status"] == WAITING:
+            entry["finished"] = None
+            await self._event(
+                "workflow.node.waiting",
+                {
+                    "node_id": node_id,
+                    "kind": node["kind"],
+                    "input_identity": (
+                        entry.get("gate") or {}
+                    ).get("input_identity"),
+                },
+            )
+        else:
+            entry["finished"] = now_iso()
+            await self._event(
+                "workflow.node.completed",
+                {
+                    "node_id": node_id,
+                    "kind": node["kind"],
+                    "status": entry["status"],
+                    "error": entry.get("error"),
+                },
+            )
         return entry
 
     def _restore(self) -> None:
@@ -822,7 +1006,7 @@ class TrustedControlFlowScheduler:
         self.started = checkpoint.get("started") or now_iso()
         self.finished = None
         for node_id, state in list(self.states.items()):
-            if state == "running":
+            if state in {"running", WAITING}:
                 self.states[node_id] = "pending"
                 self.entries[node_id]["status"] = "pending"
                 self.entries[node_id]["resume_count"] = int(
@@ -917,7 +1101,8 @@ class TrustedControlFlowScheduler:
                     for node_id, state in list(self.states.items()):
                         if state != "pending":
                             continue
-                        dependencies = self.node_by_id[node_id]["depends_on"]
+                        node = self.node_by_id[node_id]
+                        dependencies = node["depends_on"]
                         failed = [
                             dependency
                             for dependency in dependencies
@@ -937,16 +1122,81 @@ class TrustedControlFlowScheduler:
                             )
                             propagated = True
                             changed = True
+                            continue
 
-                ready = [
-                    node_id
-                    for node_id in self.node_order
-                    if self.states[node_id] == "pending"
-                    and all(
-                        self.states[dependency] == SUCCESS
-                        for dependency in self.node_by_id[node_id]["depends_on"]
+                        skipped = [
+                            dependency
+                            for dependency in dependencies
+                            if self.states[dependency] == SKIPPED
+                        ]
+                        if not skipped:
+                            continue
+                        policy = node.get(
+                            "dependency_policy", DEFAULT_DEPENDENCY_POLICY
+                        )
+                        dependency_states = [
+                            self.states[dependency] for dependency in dependencies
+                        ]
+                        all_resolved = all(
+                            dependency_state in {SUCCESS, SKIPPED}
+                            for dependency_state in dependency_states
+                        )
+                        join_has_success = any(
+                            dependency_state == SUCCESS
+                            for dependency_state in dependency_states
+                        )
+                        if policy == JOIN_DEPENDENCY_POLICY and (
+                            not all_resolved or join_has_success
+                        ):
+                            continue
+                        self.states[node_id] = SKIPPED
+                        entry = self.entries[node_id]
+                        entry["status"] = SKIPPED
+                        entry["error"] = (
+                            "upstream branch was skipped: " + ", ".join(skipped)
+                        )
+                        entry["finished"] = now_iso()
+                        self.state_store.append_event(
+                            "workflow.node.skipped",
+                            {
+                                "node_id": node_id,
+                                "dependencies": skipped,
+                                "reason": "upstream_skipped",
+                            },
+                        )
+                        propagated = True
+                        changed = True
+
+                ready = []
+                for node_id in self.node_order:
+                    if self.states[node_id] != "pending":
+                        continue
+                    node = self.node_by_id[node_id]
+                    dependencies = node["depends_on"]
+                    dependency_states = [
+                        self.states[dependency] for dependency in dependencies
+                    ]
+                    policy = node.get(
+                        "dependency_policy", DEFAULT_DEPENDENCY_POLICY
                     )
-                ]
+                    if policy == JOIN_DEPENDENCY_POLICY:
+                        is_ready = (
+                            all(
+                                dependency_state in {SUCCESS, SKIPPED}
+                                for dependency_state in dependency_states
+                            )
+                            and any(
+                                dependency_state == SUCCESS
+                                for dependency_state in dependency_states
+                            )
+                        )
+                    else:
+                        is_ready = all(
+                            dependency_state == SUCCESS
+                            for dependency_state in dependency_states
+                        )
+                    if is_ready:
+                        ready.append(node_id)
                 while ready and len(running) < self.max_concurrency:
                     node_id = ready.pop(0)
                     self.states[node_id] = "running"
@@ -961,7 +1211,7 @@ class TrustedControlFlowScheduler:
                 if running:
                     done, _ = await asyncio.wait(
                         set(running.values()),
-                        timeout=0.5,
+                        timeout=1.0,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     for completed in done:
@@ -971,20 +1221,19 @@ class TrustedControlFlowScheduler:
                         del running[node_id]
                         try:
                             entry = completed.result()
-                        except asyncio.CancelledError:
-                            raise
                         except Exception as exc:
-                            entry = self.entries[node_id]
+                            entry = _base_node_entry(self.node_by_id[node_id])
                             entry["status"] = "failed"
                             entry["error"] = (
-                                f"scheduler internal error: {type(exc).__name__}: {exc}"
+                                f"runtime internal error: {type(exc).__name__}: {exc}"
                             )
+                            entry["started"] = now_iso()
                             entry["finished"] = now_iso()
                         self.entries[node_id] = entry
                         self.states[node_id] = entry["status"]
-                        if entry["status"] == SUCCESS:
-                            self.results[node_id] = _entry_record(entry)
                         await self._snapshot()
+                elif any(state == WAITING for state in self.states.values()):
+                    break
                 elif any(state == "pending" for state in self.states.values()):
                     raise ControlFlowError(
                         "scheduler has pending nodes but no ready or running node"
@@ -1002,12 +1251,25 @@ class TrustedControlFlowScheduler:
                 await self._snapshot()
             raise
 
+        waiting_nodes = [
+            node_id for node_id, state in self.states.items() if state == WAITING
+        ]
+        if waiting_nodes:
+            self.finished = None
+            self.state_store.append_event(
+                "workflow.paused",
+                {"waiting_nodes": waiting_nodes, "states": dict(self.states)},
+            )
+            await self._snapshot()
+            return self._summary()
+
         self.finished = now_iso()
         self.state_store.append_event(
             "workflow.completed", {"states": dict(self.states)}
         )
         await self._snapshot()
         return self._summary()
+
 
 
 # Imported late to keep the main implementation's dependency list explicit.
