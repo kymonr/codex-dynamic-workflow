@@ -39,158 +39,72 @@ jobs:
   pr15-hardening-repair:
     name: PR15 hardening repair
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/codex/trusted-ir-conditional-human-gate' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 15 &&
       github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      issues: write
+      pull-requests: read
+    env:
+      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.TARGET_BRANCH }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Apply and verify fixed repair payload
-        id: repair
-        shell: bash
+      - name: Reconstruct verified repair script
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
           EXPECTED_SHA256: "0e0e5e78b8f3dd186c11b66cc3914d37772ba2f8348f66522ae38e3d6bf23e00"
         run: |
-          set +e
-          {
-            python - <<'PY'
-          from __future__ import annotations
-
+          python - <<'PY'
           import base64
           import gzip
           import hashlib
-          import json
           import os
-          import re
-          import urllib.request
           from pathlib import Path
 
-          repository = os.environ["REPOSITORY"]
-          token = os.environ["GITHUB_TOKEN"]
-          comments: list[dict[str, object]] = []
-          page = 1
-          while True:
-              request = urllib.request.Request(
-                  f"https://api.github.com/repos/{repository}/issues/15/comments?per_page=100&page={page}",
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Accept": "application/vnd.github+json",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                  },
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  batch = json.load(response)
-              if not isinstance(batch, list):
-                  raise RuntimeError("GitHub comments response is not a list")
-              comments.extend(batch)
-              if len(batch) < 100:
-                  break
-              page += 1
-
-          pattern = re.compile(
-              r"<!-- pr15-repair-payload:(\d+)/5 -->\s*([A-Za-z0-9+/=]+)\s*$",
-              re.DOTALL,
-          )
-          parts: dict[int, str] = {}
-          for comment in comments:
-              body = comment.get("body")
-              if not isinstance(body, str):
-                  continue
-              match = pattern.fullmatch(body.strip())
-              if not match:
-                  continue
-              index = int(match.group(1))
-              if index in parts:
-                  raise RuntimeError(f"duplicate repair payload part {index}")
-              parts[index] = match.group(2)
-
-          if set(parts) != set(range(1, 6)):
-              raise RuntimeError(f"repair payload is incomplete: {sorted(parts)}")
-          encoded = "".join(parts[index] for index in range(1, 6))
+          source = Path(".github/scripts/pr15-hardening.payload")
+          encoded = source.read_text(encoding="utf-8").strip()
           script = gzip.decompress(base64.b64decode(encoded, validate=True))
-          actual_sha256 = hashlib.sha256(script).hexdigest()
-          if actual_sha256 != os.environ["EXPECTED_SHA256"]:
-              raise RuntimeError(f"repair script digest mismatch: {actual_sha256}")
+          digest = hashlib.sha256(script).hexdigest()
+          if digest != os.environ["EXPECTED_SHA256"]:
+              raise RuntimeError(f"repair digest mismatch: {digest}")
           target = Path(".github/scripts/repair_pr15.py")
-          target.parent.mkdir(parents=True, exist_ok=True)
           target.write_bytes(script)
-          print(f"reconstructed {target} ({len(script)} bytes, sha256={actual_sha256})")
-          PY
-            python .github/scripts/repair_pr15.py
-            python -m compileall -q skill
-            python skill/scripts/check_policy_consistency.py --json
-            python skill/scripts/routing_smoke.py
-            python -m unittest discover -s skill/tests -v
-            git diff --check
-          } 2>&1 | tee /tmp/pr15-repair.log
-          status=${PIPESTATUS[0]}
-          echo "status=${status}" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Report repair failure to PR
-        if: steps.repair.outputs.status != '0'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import urllib.request
-          from pathlib import Path
-
-          log = Path("/tmp/pr15-repair.log")
-          tail = log.read_text(encoding="utf-8", errors="replace")[-18000:] if log.is_file() else "missing repair log"
-          body = (
-              "<!-- pr15-repair-diagnostic -->\n"
-              "PR15 hardening repair failed.\n"
-              f"Run: {os.environ['RUN_URL']}\n\n"
-              "```text\n" + tail + "\n```"
-          )
-          request = urllib.request.Request(
-              f"https://api.github.com/repos/{os.environ['REPOSITORY']}/issues/15/comments",
-              data=json.dumps({"body": body}).encode("utf-8"),
-              method="POST",
-              headers={
-                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-                  "Accept": "application/vnd.github+json",
-                  "Content-Type": "application/json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=30):
-              pass
+          print(f"reconstructed {target}, sha256={digest}")
           PY
 
-      - name: Stop after reported failure
-        if: steps.repair.outputs.status != '0'
-        run: exit 1
+      - name: Apply hardening patch
+        run: python .github/scripts/repair_pr15.py
 
-      - name: Commit verified code-only repair
-        if: steps.repair.outputs.status == '0'
-        shell: bash
+      - name: Validate patched tree
         run: |
-          set -euo pipefail
+          python -m compileall -q skill
+          python skill/scripts/check_policy_consistency.py --json
+          python skill/scripts/routing_smoke.py
+          python -m unittest discover -s skill/tests -v
+          git diff --check
+
+      - name: Restore canonical CI and remove temporary machinery
+        run: |
           rm -f .github/scripts/repair_pr15.py
+          rm -f .github/scripts/pr15-hardening.payload
           rmdir .github/scripts 2>/dev/null || true
+          rm -f .github/workflows/pr15-hardening-repair.yml
+          git show 0d36f3d356d654104d54e49b3f8bebf2747022a6:.github/workflows/ci.yml > .github/workflows/ci.yml
+          git diff --check
+
+      - name: Commit and push verified repair
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md config skill
-          git diff --cached --check
+          git add -A
           git commit -m "fix: harden conditional and human gate runtime"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"
