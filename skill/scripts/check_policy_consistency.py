@@ -33,6 +33,8 @@ REQUIRED_RUNTIME_FILES = (
     "skill/runtime/state_store.py",
     "skill/runtime/workflow_ir.py",
     "skill/runtime/control_flow.py",
+    "skill/runtime/condition.py",
+    "skill/runtime/human_gate.py",
     "skill/references/workflow-ir.md",
 )
 PERSONAL_PATH_PATTERNS = (
@@ -47,6 +49,9 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 
 def _load_module(name: str, path: Path):
+    runtime_path = str(path.parent)
+    if runtime_path not in sys.path:
+        sys.path.insert(0, runtime_path)
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load module {path}")

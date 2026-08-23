@@ -1,16 +1,20 @@
 """Versioned, declarative Workflow IR v3.
 
 The IR is data, never authorization or executable source code. The trusted
-runtime currently supports read-only ``agent``, ``map``, ``verify`` and
-``reduce`` nodes. ``loop``, ``conditional`` and ``human_gate`` remain
-versioned and validated, but are rejected by the executor until their explicit
-runtime contracts land.
+runtime supports read-only ``agent``, ``map``, ``verify``, ``reduce``,
+``conditional`` and ``human_gate`` nodes. ``loop`` remains versioned and
+validated but non-executable until its bounded iteration contract lands.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+try:
+    from .condition import ConditionValidationError, validate_condition
+except ImportError:  # Standalone policy-contract import.
+    from condition import ConditionValidationError, validate_condition
 
 IR_VERSION = 3
 IR_MODES = {"direct", "delegate", "workflow"}
@@ -23,10 +27,11 @@ NODE_KINDS = {
     "conditional",
     "human_gate",
 }
-EXECUTABLE_NODE_KINDS = {"agent", "map", "verify", "reduce"}
+EXECUTABLE_NODE_KINDS = {"agent", "map", "verify", "reduce", "conditional", "human_gate"}
 AGENT_PROFILES = {"spark", "luna", "sol"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 NODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+GATE_OPTION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 TOP_KEYS = {
     "version",
     "name",
@@ -332,25 +337,66 @@ def _validate_reserved_config(
             raise WorkflowIRValidationError(
                 f"{where} has unknown keys: {unknown}"
             )
-        return {
-            "condition": _non_empty_string(
+        try:
+            condition = validate_condition(
                 config.get("condition"), f"{where}.condition"
-            ),
-            "then": _non_empty_string(config.get("then"), f"{where}.then"),
-            "else": _non_empty_string(config.get("else"), f"{where}.else"),
-        }
+            )
+        except ConditionValidationError as exc:
+            raise WorkflowIRValidationError(str(exc)) from exc
+        branches: dict[str, list[str]] = {}
+        for branch_name in ("then", "else"):
+            value = config.get(branch_name, [])
+            if not isinstance(value, list) or any(
+                not isinstance(item, str) or not NODE_ID_RE.fullmatch(item)
+                for item in value
+            ):
+                raise WorkflowIRValidationError(
+                    f"{where}.{branch_name} must be a node-id list"
+                )
+            folded = [item.casefold() for item in value]
+            if len(folded) != len(set(folded)):
+                raise WorkflowIRValidationError(
+                    f"{where}.{branch_name} contains duplicates"
+                )
+            branches[branch_name] = list(value)
+        if not branches["then"] and not branches["else"]:
+            raise WorkflowIRValidationError(
+                f"{where} must select at least one branch target"
+            )
+        return {"condition": condition, **branches}
     if kind == "human_gate":
-        allowed = {"prompt"}
+        allowed = {"prompt", "options"}
         unknown = sorted(set(config) - allowed)
         if unknown:
             raise WorkflowIRValidationError(
                 f"{where} has unknown keys: {unknown}"
             )
-        return {
-            "prompt": _non_empty_string(
-                config.get("prompt"), f"{where}.prompt"
+        prompt = _non_empty_string(
+            config.get("prompt"), f"{where}.prompt"
+        )
+        if len(prompt) > 4000:
+            raise WorkflowIRValidationError(
+                f"{where}.prompt exceeds 4000 characters"
             )
-        }
+        options = config.get("options", ["approve", "reject"])
+        if not isinstance(options, list) or not 2 <= len(options) <= 8:
+            raise WorkflowIRValidationError(
+                f"{where}.options must contain 2..8 strings"
+            )
+        if any(
+            not isinstance(option, str)
+            or not GATE_OPTION_RE.fullmatch(option)
+            for option in options
+        ):
+            raise WorkflowIRValidationError(
+                f"{where}.options contains an invalid option"
+            )
+        folded = [option.casefold() for option in options]
+        if len(folded) != len(set(folded)):
+            raise WorkflowIRValidationError(
+                f"{where}.options must be case-insensitively unique"
+            )
+        return {"prompt": prompt, "options": list(options)}
     raise WorkflowIRValidationError(f"unsupported node kind: {kind}")
 
 
@@ -414,6 +460,40 @@ def _validate_control_flow_references(nodes: list[dict[str, Any]]) -> None:
             raise WorkflowIRValidationError(
                 f"node {node['id']} cannot consume {source_kind} node {source}"
             )
+
+    for node in nodes:
+        if node["kind"] != "conditional":
+            continue
+        config = node["config"]
+        source = config["condition"]["source"]
+        if source not in by_id:
+            raise WorkflowIRValidationError(
+                f"node {node['id']} condition.source references unknown node {source}"
+            )
+        if source not in node["depends_on"]:
+            raise WorkflowIRValidationError(
+                f"node {node['id']} must list condition.source={source} in depends_on"
+            )
+        then_targets = config["then"]
+        else_targets = config["else"]
+        overlap = sorted(set(then_targets) & set(else_targets))
+        if overlap:
+            raise WorkflowIRValidationError(
+                f"conditional branches must be disjoint: {overlap}"
+            )
+        for target in then_targets + else_targets:
+            if target not in by_id:
+                raise WorkflowIRValidationError(
+                    f"conditional branch target is unknown: {target}"
+                )
+            if target == node["id"]:
+                raise WorkflowIRValidationError(
+                    "conditional cannot select itself"
+                )
+            if node["id"] not in by_id[target]["depends_on"]:
+                raise WorkflowIRValidationError(
+                    f"conditional branch target {target} must directly depend on {node['id']}"
+                )
 
 
 def validate_workflow_ir(raw: Any) -> dict[str, Any]:

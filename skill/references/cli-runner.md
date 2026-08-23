@@ -126,3 +126,7 @@ There is no transient same-route retry, prompt replay, regex retry classificatio
 ## Workflow IR control-flow commands
 
 使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent → map → verify → reduce` 控制流。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。
+
+## Condition and human-gate commands
+
+`condition-evaluate` 只预览受限条件，不推进 checkpoint。`gate-status` 查看 run-scoped gate；`gate-decide` 必须提供 node、decision、actor、`user|host` source 与 expected input identity。gate 命令不调用模型，且不会扩展授权。waiting run 的 `run-ir` 返回 paused，之后显式执行 `resume-ir`。

@@ -66,7 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser(
-        "run-ir", help="execute trusted agent/map/verify/reduce Workflow IR"
+        "run-ir",
+        help="execute trusted agent/map/verify/reduce/conditional/human_gate IR",
     )
     _add_safety_args(run, include_spec=True)
     run.add_argument("--run-dir", default=None, help="test/custom-root run directory")
@@ -219,8 +220,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if summary.get("paused"):
+        waiting = [
+            node["id"]
+            for node in summary.get("nodes", [])
+            if node.get("status") == "waiting"
+        ]
+        print(
+            "== 已暂停: human gate waiting; "
+            f"nodes={','.join(waiting)}; "
+            f"详情 {Path(summary['run_dir']) / 'summary.json'} =="
+        )
+        return 3
+
     print(
         f"== 完成: {summary['succeeded_count']}/{summary['total']} nodes succeeded; "
+        f"skipped={summary.get('skipped_count', 0)}; "
         f"agents={summary['claimed_agent_count']}/{summary['max_agents']}; "
         f"详情 {Path(summary['run_dir']) / 'summary.json'} =="
     )

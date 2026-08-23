@@ -79,3 +79,9 @@ v3 runner 只解释声明式数据，不执行工作流提供的 Python、JavaSc
 - `verify` 只能消费 map manifest，每个 verifier 固定返回 `accept | reject | unknown`、summary 和 evidence。语义 reject 是数据，不伪装成进程失败。
 - `reduce` 只能消费声明依赖中的 map/verify manifest；大型输入通过内容寻址 artifact reference 传递。
 - `checkpoint.json` 保存动态 child、claimed agents 与 artifact identity；`resume-ir` 复用已成功 child，只重排确认中断的 running 工作。
+
+## Trusted conditional and human gate
+
+`conditional.config.condition` 是 `{source, pointer, operator, value?}`，不支持表达式或可执行 selector。`then` 与 `else` 显式列出分支专属节点；非选中节点写为 `skipped`，join 可把 `succeeded` 与 `skipped` 都视为已满足依赖。条件无法确定时节点进入 `needs_escalation`。
+
+`human_gate` 使用 `{prompt, options}`。运行第一次到达 gate 时写入 `human-gates/<node-id>.json` 并返回 paused；记录绑定依赖 artifact identity，终态决策不可修改。显式决策后由 `resume-ir` 重新核对 identity 并继续。

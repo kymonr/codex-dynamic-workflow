@@ -30,7 +30,7 @@ current_version = 3
 static_execution_version = 2
 control_flow_runtime_version = 3
 validated_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
-executable_node_kinds = ["agent", "map", "verify", "reduce"]
+executable_node_kinds = ["agent", "map", "verify", "reduce", "conditional", "human_gate"]
 
 [routes.spark]
 agent_type = "spark"
@@ -81,3 +81,18 @@ verify_manifest_version = 1
 verification_verdicts = ["accept", "reject", "unknown"]
 resume_reuses_succeeded_children = true
 semantic_reject_is_data = true
+
+[workflow_ir.conditional]
+expression_language = false
+source_reference_mode = "exact_node_id"
+json_pointer = true
+unknown_outcome = "needs_escalation"
+non_selected_state = "skipped"
+
+[workflow_ir.human_gate]
+record_version = 1
+status_values = ["waiting", "decided"]
+decision_sources = ["user", "host"]
+input_identity = "sha256"
+terminal_decision_immutable = true
+grants_authority = false

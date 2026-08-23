@@ -136,3 +136,9 @@ GitHub Actions 会在 Windows 和 Linux 的 Python 3.12 上运行编译检查、
 Workflow IR v3 可通过 `skill/cli.py run-ir` 执行可信的只读 `agent`、`map`、`verify` 和 `reduce` 节点，并用 `resume-ir` 从 checkpoint 显式恢复。动态 child、manifest、事件和结果均受既有资源预算与内容寻址 artifact 边界约束。
 
 `loop`、`conditional` 和 `human_gate` 仍会被严格校验，但当前不会执行或静默降级。IR 本身不是授权，不能扩大写入、凭据、发布或破坏性权限。
+
+## Conditional 与 Human Gate
+
+Workflow IR v3 现支持受限 `conditional` 和显式 `human_gate`：条件仅使用 exact node ID、JSON Pointer 与封闭运算符，`unknown` 会返回 root；非选中分支记录为 `skipped`。human gate 会写入输入身份绑定的 run-scoped 记录并使运行进入 `paused`，只有 `gate-decide` 后显式 `resume-ir` 才继续。
+
+gate decision 只是数据，不授予 workspace write、凭据、Git、发布、合并、部署或破坏性权限。`loop` 仍只验证、不执行。
