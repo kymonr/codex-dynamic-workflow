@@ -80,14 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _normalize_ir(
-    raw: Any,
+def _normalize_runtime_ir(
+    ir: dict[str, Any],
     *,
     allowed_roots: list[str],
     allowed_sensitive_paths: list[str],
     codex_home: Path,
 ) -> tuple[dict[str, Any], RuntimeLimits]:
-    ir = validate_workflow_ir(raw)
     normalized_workdir = legacy._check_workdir_safe(
         ir["workdir"],
         allowed_roots,
@@ -103,6 +102,78 @@ def _normalize_ir(
     # different environment budget.
     ir["limits"] = limits.to_dict()
     return ir, limits
+
+
+def _execution_matches(left: Any, right: Any) -> bool:
+    """Compare JSON values without treating booleans as integers."""
+
+    try:
+        return json.dumps(
+            left,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ) == json.dumps(
+            right,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _normalize_declared_ir(
+    raw: Any,
+    *,
+    allowed_roots: list[str],
+    allowed_sensitive_paths: list[str],
+    codex_home: Path,
+) -> tuple[dict[str, Any], RuntimeLimits]:
+    """Validate and normalize a user-declared Workflow IR."""
+
+    return _normalize_runtime_ir(
+        validate_workflow_ir(raw),
+        allowed_roots=allowed_roots,
+        allowed_sensitive_paths=allowed_sensitive_paths,
+        codex_home=codex_home,
+    )
+
+
+def _normalize_resolved_ir_for_resume(
+    raw: Any,
+    *,
+    allowed_roots: list[str],
+    allowed_sensitive_paths: list[str],
+    codex_home: Path,
+) -> tuple[dict[str, Any], RuntimeLimits]:
+    """Validate a scheduler-resolved IR and recompute its runtime metadata."""
+
+    if not isinstance(raw, dict):
+        raise WorkflowIRValidationError(
+            "resolved Workflow IR must be an object"
+        )
+    if "execution" not in raw:
+        raise WorkflowIRValidationError(
+            "resolved Workflow IR must contain top-level execution"
+        )
+
+    persisted_execution = raw["execution"]
+    declared = dict(raw)
+    declared.pop("execution")
+    normalized = validate_workflow_ir(declared)
+    if not _execution_matches(persisted_execution, normalized["execution"]):
+        raise WorkflowIRValidationError(
+            "resolved Workflow IR execution does not match recomputed execution"
+        )
+    return _normalize_runtime_ir(
+        normalized,
+        allowed_roots=allowed_roots,
+        allowed_sensitive_paths=allowed_sensitive_paths,
+        codex_home=codex_home,
+    )
 
 
 async def _run(
@@ -164,7 +235,12 @@ def main(argv: list[str] | None = None) -> int:
             run_dir / "workflow-ir.resolved.json" if resume else args.spec
         )
         codex_home = legacy.resolve_codex_home()
-        ir, limits = _normalize_ir(
+        normalize = (
+            _normalize_resolved_ir_for_resume
+            if resume
+            else _normalize_declared_ir
+        )
+        ir, limits = normalize(
             raw,
             allowed_roots=args.allowed_root,
             allowed_sensitive_paths=args.allow_sensitive_path,
