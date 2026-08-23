@@ -66,7 +66,7 @@ py -3.12 skill\cli.py resume `
 py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
 ```
 
-当前静态 `agent` 节点可以编译成 v2 只读 DAG；`map`、`verify`、`loop`、`reduce`、`conditional` 与 `human_gate` 已有严格版本化校验，但在 v3 控制流 runtime 完成前不会被静默执行或降级。详细合同见 `skill/references/workflow-ir.md`。
+当前静态 `agent` 节点仍可编译成 v2 只读 DAG；v3 可信控制流 runtime 可执行 `agent`、`map`、`verify`、`reduce`、`conditional` 与 `human_gate`，`loop` 仅验证、不执行，也不会被静默降级。详细合同见 `skill/references/workflow-ir.md`。
 
 ## 仓库结构
 
