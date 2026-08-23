@@ -15,6 +15,7 @@ if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
 
 import ops_cli
+from runtime.control_flow import TrustedControlFlowScheduler
 from runtime.human_gate import HumanGateStore
 from runtime.workflow_ir import validate_workflow_ir
 from test_ops_cli import gate_ir, limits
@@ -30,11 +31,11 @@ class RunStatusIntegrityTests(unittest.TestCase):
         self.run_dir.mkdir()
         self.limits = limits()
 
-        resolved = validate_workflow_ir(gate_ir())
-        resolved["limits"] = self.limits.to_dict()
-        self.ir_digest = ops_cli._workflow_ir_digest(resolved)
+        self.resolved = validate_workflow_ir(gate_ir())
+        self.resolved["limits"] = self.limits.to_dict()
+        self.ir_digest = ops_cli._workflow_ir_digest(self.resolved)
         (self.run_dir / "workflow-ir.resolved.json").write_text(
-            json.dumps(resolved), encoding="utf-8"
+            json.dumps(self.resolved), encoding="utf-8"
         )
 
         states = {"source": "succeeded", "approval": "waiting"}
@@ -104,6 +105,20 @@ class RunStatusIntegrityTests(unittest.TestCase):
                     ["run-status", "--run-dir", str(self.run_dir)]
                 )
         return code, json.loads(output.getvalue())
+
+    def test_ops_digest_matches_scheduler_contract(self) -> None:
+        async def never_execute(task, results, prior_entry):
+            raise AssertionError("digest contract must not execute an agent")
+
+        digest_dir = self.root / "digest-only"
+        scheduler = TrustedControlFlowScheduler(
+            self.resolved,
+            digest_dir,
+            execute_agent=never_execute,
+            limits=self.limits,
+        )
+        self.assertEqual(self.ir_digest, scheduler.ir_digest)
+        self.assertFalse(digest_dir.exists())
 
     def test_resolved_ir_digest_mismatch_is_reported(self) -> None:
         ir_path = self.run_dir / "workflow-ir.resolved.json"
