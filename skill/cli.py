@@ -24,6 +24,10 @@ def main(argv: list[str] | None = None) -> int:
         from gate_cli import main as gate_main
 
         return gate_main(arguments)
+    if arguments and arguments[0] in {"plan-ir", "run-status"}:
+        from ops_cli import main as ops_main
+
+        return ops_main(arguments)
 
     from runner import main as legacy_main
 
