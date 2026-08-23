@@ -145,3 +145,21 @@ Validated-only node kinds: `loop`.
 受限 `conditional` 只使用 exact node ID、JSON Pointer 与封闭运算符；`unknown` 会返回 root。未选分支及其后继默认传播为 `skipped`，不会执行。只有显式声明 `dependency_policy: "join"` 的汇合节点才能消费一边 `succeeded`、一边 `skipped` 的依赖；所有依赖都为 `skipped` 时，汇合节点也会保持 `skipped`。
 
 human gate 使用不可变 contract 与原子 exclusive-create decision record。运行进入 `paused` 后，只有 `gate-decide` 再配合显式 `resume-ir` 才继续。`actor` 与 `source` 只是未经认证的审计标签；gate decision 只是数据，不授予 workspace write、凭据、Git、发布、合并、部署或破坏性权限。
+
+## 计划预览与运行状态
+
+在启动模型前，可使用 `plan-ir` 验证并预览完整控制流；它不会访问 `workdir`、调用模型或写入运行目录：
+
+```powershell
+py -3.12 skill\cli.py plan-ir `
+  --spec examples\reference-repository-audit.workflow-ir.json
+```
+
+运行后可使用 `run-status` 只读检查 checkpoint、summary 与 gate 元数据，不会推进节点：
+
+```powershell
+py -3.12 skill\cli.py run-status `
+  --run-dir D:\path\to\one-run
+```
+
+`checkpoint.json` 是状态事实来源；如果 `summary.json` 与 checkpoint 不一致，命令会明确报告 mismatch，不会静默覆盖。完整命令合同、输出字段和 reference workflow 说明见 `skill/references/operations.md`。
