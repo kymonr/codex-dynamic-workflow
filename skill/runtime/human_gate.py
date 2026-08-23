@@ -1,7 +1,9 @@
-"""Run-scoped, immutable human decision records for Workflow IR v3.
+"""Run-scoped, atomic human decision records for Workflow IR v3.
 
-A gate decision is data only.  It cannot expand scope, grant credentials, or
-authorize external, destructive, Git, publication, or deployment effects.
+A gate decision is data only. ``actor`` and ``source`` are audit metadata, not
+an authenticated identity or authorization grant. A decision cannot expand
+scope, grant credentials, or authorize external, destructive, Git,
+publication, or deployment effects.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import stat
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -27,6 +30,7 @@ MAX_PROMPT_CHARS = 4000
 MAX_OPTIONS = 8
 MAX_ACTOR_CHARS = 128
 MAX_NOTE_CHARS = 2000
+MAX_RECORD_BYTES = 64 * 1024
 RECORD_KEYS = {
     "gate_version",
     "node_id",
@@ -41,10 +45,20 @@ RECORD_KEYS = {
     "opened_at",
     "updated_at",
 }
+DECISION_RECORD_KEYS = {
+    "gate_version",
+    "node_id",
+    "input_identity",
+    "decision",
+    "actor",
+    "source",
+    "note",
+    "decided_at",
+}
 
 
 class HumanGateError(RuntimeError):
-    """A human gate record is invalid, stale, or immutable."""
+    """A human gate record is invalid, stale, unsafe, or immutable."""
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -196,58 +210,183 @@ def validate_gate_record(raw: Any) -> dict[str, Any]:
     }
 
 
+def validate_gate_decision_record(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise HumanGateError("gate decision record must be an object")
+    unknown = sorted(set(raw) - DECISION_RECORD_KEYS)
+    missing = sorted(DECISION_RECORD_KEYS - set(raw))
+    if unknown:
+        raise HumanGateError(
+            f"gate decision record has unknown keys: {unknown}"
+        )
+    if missing:
+        raise HumanGateError(
+            f"gate decision record is missing keys: {missing}"
+        )
+    if raw.get("gate_version") != GATE_VERSION:
+        raise HumanGateError("unsupported gate decision record version")
+    node_id = _validate_node_id(raw.get("node_id"))
+    input_identity = _validate_identity(raw.get("input_identity"))
+    decision = raw.get("decision")
+    if not isinstance(decision, str) or not OPTION_RE.fullmatch(decision):
+        raise HumanGateError("gate decision value is invalid")
+    actor = _validate_actor(raw.get("actor"))
+    source = raw.get("source")
+    if source not in DECISION_SOURCES:
+        raise HumanGateError("gate source must be user or host")
+    note = _validate_note(raw.get("note"))
+    decided_at = raw.get("decided_at")
+    if not isinstance(decided_at, str) or not decided_at:
+        raise HumanGateError("gate decided_at must be non-empty")
+    return {
+        "gate_version": GATE_VERSION,
+        "node_id": node_id,
+        "input_identity": input_identity,
+        "decision": decision,
+        "actor": actor,
+        "source": source,
+        "note": note,
+        "decided_at": decided_at,
+    }
+
+
+def _is_reparse(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        if callable(is_junction) and is_junction():
+            return True
+        attrs = getattr(path.lstat(), "st_file_attributes", 0)
+        flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        return bool(flag and attrs & flag)
+    except OSError as exc:
+        raise HumanGateError(f"cannot inspect gate path {path}: {exc}") from exc
+
+
 class HumanGateStore:
-    """Persist exact gate records below one Workflow IR run directory."""
+    """Persist exact gate contracts and decisions below one run directory."""
 
     def __init__(self, run_dir: Path, limits: RuntimeLimits) -> None:
         self.run_dir = run_dir.resolve()
         self.root = self.run_dir / "human-gates"
         self.limits = limits
 
+    def _assert_safe_root(self) -> None:
+        if not self.run_dir.is_dir() or _is_reparse(self.run_dir):
+            raise HumanGateError("run directory is not a safe directory")
+        if self.root.exists() or self.root.is_symlink():
+            if not self.root.is_dir() or _is_reparse(self.root):
+                raise HumanGateError(
+                    "human-gates path cannot be a symlink, junction, or file"
+                )
+
+    def _ensure_root(self) -> None:
+        self._assert_safe_root()
+        self.root.mkdir(parents=False, exist_ok=True)
+        self._assert_safe_root()
+
     def path_for(self, node_id: str) -> Path:
         node_id = _validate_node_id(node_id)
-        path = (self.root / f"{node_id}.json").resolve()
-        if not path.is_relative_to(self.root.resolve()):
-            raise HumanGateError("gate path escapes the run-scoped gate root")
-        return path
+        self._assert_safe_root()
+        return self.root / f"{node_id}.json"
 
-    def _write(self, record: Mapping[str, Any]) -> dict[str, Any]:
-        normalized = validate_gate_record(dict(record))
-        path = self.path_for(normalized["node_id"])
+    def decision_path_for(self, node_id: str) -> Path:
+        node_id = _validate_node_id(node_id)
+        self._assert_safe_root()
+        return self.root / f"{node_id}.decision.json"
+
+    def _exclusive_write(
+        self, path: Path, record: Mapping[str, Any], label: str
+    ) -> None:
         payload = json.dumps(
-            normalized, ensure_ascii=False, indent=2, allow_nan=False
+            dict(record), ensure_ascii=False, indent=2, allow_nan=False
         ).encode("utf-8")
+        if len(payload) > MAX_RECORD_BYTES:
+            raise HumanGateError(
+                f"{label} exceeds {MAX_RECORD_BYTES} bytes"
+            )
+        self._ensure_root()
         enforce_projected_write(
             self.run_dir,
             path,
             len(payload),
             self.limits.max_run_artifact_bytes,
-            "human gate record write",
+            label,
+            temporary_copy=False,
         )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.parent.is_symlink():
-            raise HumanGateError("human-gates directory cannot be a symlink")
-        temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        binary_flag = getattr(os, "O_BINARY", 0)
+        temporary = path.with_name(
+            f".{path.name}.{secrets.token_hex(8)}.tmp"
+        )
+        descriptor = os.open(temporary, flags | binary_flag, 0o600)
         try:
-            temporary.write_bytes(payload)
-            os.replace(temporary, path)
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor = -1
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Publish a fully written inode under the terminal path. Hard-link
+            # creation is exclusive: an existing decision is never replaced.
+            os.link(temporary, path)
         finally:
+            if descriptor >= 0:
+                os.close(descriptor)
             temporary.unlink(missing_ok=True)
         enforce_run_limit(self.run_dir, self.limits.max_run_artifact_bytes)
-        return normalized
+
+    def _read_json(self, path: Path, label: str) -> Any:
+        if not path.is_file() or _is_reparse(path):
+            raise HumanGateError(f"{label} does not exist or is unsafe")
+        try:
+            size = path.stat().st_size
+            if size > MAX_RECORD_BYTES:
+                raise HumanGateError(
+                    f"{label} exceeds {MAX_RECORD_BYTES} bytes"
+                )
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HumanGateError(f"cannot read {label}: {exc}") from exc
 
     def load(self, node_id: str) -> dict[str, Any]:
-        path = self.path_for(node_id)
-        if not path.is_file() or path.is_symlink():
-            raise HumanGateError(f"gate record does not exist or is unsafe: {node_id}")
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HumanGateError(f"cannot read gate record {node_id}: {exc}") from exc
-        record = validate_gate_record(raw)
-        if record["node_id"] != node_id:
-            raise HumanGateError("gate record node_id does not match its path")
-        return record
+        node_id = _validate_node_id(node_id)
+        contract_path = self.path_for(node_id)
+        contract = validate_gate_record(
+            self._read_json(contract_path, f"gate contract {node_id}")
+        )
+        if contract["node_id"] != node_id:
+            raise HumanGateError("gate contract node_id does not match its path")
+        if contract["status"] != "waiting":
+            raise HumanGateError(
+                "gate contract is immutable and must remain in waiting form"
+            )
+
+        decision_path = self.decision_path_for(node_id)
+        if not decision_path.exists() and not decision_path.is_symlink():
+            return contract
+        decision = validate_gate_decision_record(
+            self._read_json(decision_path, f"gate decision {node_id}")
+        )
+        if decision["node_id"] != node_id:
+            raise HumanGateError("gate decision node_id does not match its path")
+        if decision["input_identity"] != contract["input_identity"]:
+            raise HumanGateError("gate decision identity does not match contract")
+        if decision["decision"] not in contract["options"]:
+            raise HumanGateError("gate decision is not an allowed option")
+
+        merged = dict(contract)
+        merged.update(
+            {
+                "status": "decided",
+                "decision": decision["decision"],
+                "actor": decision["actor"],
+                "source": decision["source"],
+                "note": decision["note"],
+                "updated_at": decision["decided_at"],
+            }
+        )
+        return validate_gate_record(merged)
 
     def open_gate(
         self,
@@ -261,8 +400,25 @@ class HumanGateStore:
         prompt = _validate_prompt(prompt)
         options = _validate_options(options)
         input_identity = _validate_identity(input_identity)
+        timestamp = now_iso()
+        waiting = {
+            "gate_version": GATE_VERSION,
+            "node_id": node_id,
+            "prompt": prompt,
+            "options": options,
+            "status": "waiting",
+            "input_identity": input_identity,
+            "decision": None,
+            "actor": None,
+            "source": None,
+            "note": None,
+            "opened_at": timestamp,
+            "updated_at": timestamp,
+        }
         path = self.path_for(node_id)
-        if path.exists():
+        try:
+            self._exclusive_write(path, waiting, "human gate contract write")
+        except FileExistsError:
             record = self.load(node_id)
             expected = (prompt, options, input_identity)
             observed = (
@@ -272,26 +428,10 @@ class HumanGateStore:
             )
             if observed != expected:
                 raise HumanGateError(
-                    "existing gate record is bound to different inputs or options"
+                    "existing gate contract is bound to different inputs or options"
                 )
             return record
-        timestamp = now_iso()
-        return self._write(
-            {
-                "gate_version": GATE_VERSION,
-                "node_id": node_id,
-                "prompt": prompt,
-                "options": options,
-                "status": "waiting",
-                "input_identity": input_identity,
-                "decision": None,
-                "actor": None,
-                "source": None,
-                "note": None,
-                "opened_at": timestamp,
-                "updated_at": timestamp,
-            }
-        )
+        return validate_gate_record(waiting)
 
     def decide(
         self,
@@ -328,18 +468,35 @@ class HumanGateStore:
                 return record
             raise HumanGateError("terminal gate decisions are immutable")
 
-        decided = dict(record)
-        decided.update(requested)
-        decided["status"] = "decided"
-        decided["updated_at"] = now_iso()
-        return self._write(decided)
+        decision_record = {
+            "gate_version": GATE_VERSION,
+            "node_id": node_id,
+            "input_identity": expected_input_identity,
+            **requested,
+            "decided_at": now_iso(),
+        }
+        decision_path = self.decision_path_for(node_id)
+        try:
+            self._exclusive_write(
+                decision_path,
+                validate_gate_decision_record(decision_record),
+                "human gate decision write",
+            )
+        except FileExistsError:
+            existing_record = self.load(node_id)
+            existing = {key: existing_record[key] for key in requested}
+            if existing == requested:
+                return existing_record
+            raise HumanGateError("terminal gate decisions are immutable")
+        return self.load(node_id)
 
     def list_records(self) -> list[dict[str, Any]]:
+        self._assert_safe_root()
         if not self.root.exists():
             return []
-        if not self.root.is_dir() or self.root.is_symlink():
-            raise HumanGateError("human-gates path is not a safe directory")
         records = []
         for path in sorted(self.root.glob("*.json")):
+            if path.name.endswith(".decision.json"):
+                continue
             records.append(self.load(path.stem))
         return records

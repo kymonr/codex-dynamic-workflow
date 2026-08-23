@@ -28,6 +28,11 @@ NODE_KINDS = {
     "human_gate",
 }
 EXECUTABLE_NODE_KINDS = {"agent", "map", "verify", "reduce", "conditional", "human_gate"}
+DEPENDENCY_POLICIES = {"all_succeeded", "join"}
+DEFAULT_DEPENDENCY_POLICY = "all_succeeded"
+JOIN_DEPENDENCY_POLICY = "join"
+TOKEN_BUDGET_MODE = "advisory"
+TIMEOUT_SCOPE = "per_agent"
 AGENT_PROFILES = {"spark", "luna", "sol"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 NODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
@@ -42,7 +47,7 @@ TOP_KEYS = {
     "limits",
     "nodes",
 }
-NODE_KEYS = {"id", "kind", "depends_on", "config"}
+NODE_KEYS = {"id", "kind", "depends_on", "dependency_policy", "config"}
 LIMIT_KEYS = {
     "max_result_bytes",
     "max_log_bytes",
@@ -461,6 +466,7 @@ def _validate_control_flow_references(nodes: list[dict[str, Any]]) -> None:
                 f"node {node['id']} cannot consume {source_kind} node {source}"
             )
 
+    branch_owners: dict[str, str] = {}
     for node in nodes:
         if node["kind"] != "conditional":
             continue
@@ -494,6 +500,16 @@ def _validate_control_flow_references(nodes: list[dict[str, Any]]) -> None:
                 raise WorkflowIRValidationError(
                     f"conditional branch target {target} must directly depend on {node['id']}"
                 )
+            if by_id[target]["dependency_policy"] == JOIN_DEPENDENCY_POLICY:
+                raise WorkflowIRValidationError(
+                    f"conditional branch target {target} cannot use dependency_policy=join"
+                )
+            owner = branch_owners.get(target)
+            if owner is not None and owner != node["id"]:
+                raise WorkflowIRValidationError(
+                    f"conditional branch target {target} is already owned by {owner}"
+                )
+            branch_owners[target] = node["id"]
 
 
 def validate_workflow_ir(raw: Any) -> dict[str, Any]:
@@ -559,6 +575,18 @@ def validate_workflow_ir(raw: Any) -> dict[str, Any]:
             raise WorkflowIRValidationError(
                 f"{where}.depends_on contains duplicates"
             )
+        dependency_policy = raw_node.get(
+            "dependency_policy", DEFAULT_DEPENDENCY_POLICY
+        )
+        if dependency_policy not in DEPENDENCY_POLICIES:
+            raise WorkflowIRValidationError(
+                f"{where}.dependency_policy must be one of "
+                f"{sorted(DEPENDENCY_POLICIES)}"
+            )
+        if dependency_policy == JOIN_DEPENDENCY_POLICY and len(depends_on) < 2:
+            raise WorkflowIRValidationError(
+                f"{where}.dependency_policy=join requires at least two dependencies"
+            )
         config = raw_node.get("config", {})
         if not isinstance(config, dict):
             raise WorkflowIRValidationError(f"{where}.config must be an object")
@@ -587,6 +615,7 @@ def validate_workflow_ir(raw: Any) -> dict[str, Any]:
                 "id": node_id,
                 "kind": kind,
                 "depends_on": list(depends_on),
+                "dependency_policy": dependency_policy,
                 "config": normalized_config,
             }
         )

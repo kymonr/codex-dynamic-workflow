@@ -155,6 +155,54 @@ def _validate_runtime_contract(root: Path, policy: dict[str, Any], errors: list[
             errors.append(
                 "policy Workflow IR executable_node_kinds disagrees with runtime"
             )
+        control_flow = ir_policy.get("control_flow")
+        if not isinstance(control_flow, dict):
+            errors.append("policy workflow_ir.control_flow table is missing")
+        else:
+            dependency_policies = control_flow.get("dependency_policies")
+            if (
+                not isinstance(dependency_policies, list)
+                or set(dependency_policies)
+                != workflow_ir_module.DEPENDENCY_POLICIES
+            ):
+                errors.append(
+                    "policy dependency_policies disagrees with runtime"
+                )
+            if (
+                control_flow.get("default_dependency_policy")
+                != workflow_ir_module.DEFAULT_DEPENDENCY_POLICY
+            ):
+                errors.append(
+                    "policy default_dependency_policy disagrees with runtime"
+                )
+            if (
+                control_flow.get("token_budget_mode")
+                != workflow_ir_module.TOKEN_BUDGET_MODE
+            ):
+                errors.append("policy token_budget_mode disagrees with runtime")
+            if (
+                control_flow.get("timeout_scope")
+                != workflow_ir_module.TIMEOUT_SCOPE
+            ):
+                errors.append("policy timeout_scope disagrees with runtime")
+
+
+def _expected_capability_matrix(policy: dict[str, Any]) -> str:
+    ir_policy = policy.get("workflow_ir")
+    if not isinstance(ir_policy, dict):
+        return ""
+    validated = ir_policy.get("validated_node_kinds")
+    executable = ir_policy.get("executable_node_kinds")
+    if not isinstance(validated, list) or not isinstance(executable, list):
+        return ""
+    executable_set = set(executable)
+    validated_only = [item for item in validated if item not in executable_set]
+    executable_text = ", ".join(f"`{item}`" for item in executable)
+    validated_only_text = ", ".join(f"`{item}`" for item in validated_only)
+    return (
+        f"Executable node kinds: {executable_text}.\n"
+        f"Validated-only node kinds: {validated_only_text}."
+    )
 
 
 def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[str]) -> None:
@@ -188,6 +236,28 @@ def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[s
         for token in ("skill/cli.py", "checkpoint.json", "events.jsonl", "Workflow IR v3"):
             if token not in readme:
                 errors.append(f"README.md must document {token}")
+
+    capability_matrix = _expected_capability_matrix(policy)
+    for relative in (
+        "README.md",
+        "skill/references/workflow-ir.md",
+        "skill/references/cli-runner.md",
+    ):
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"capability surface is missing: {relative}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not capability_matrix or capability_matrix not in text:
+            errors.append(
+                f"{relative} lacks the policy-derived Workflow IR capability matrix"
+            )
+        for stale in (
+            "`loop`、`conditional` 和 `human_gate` 仍会被严格校验",
+            "`loop`、`conditional` 和 `human_gate` 仍只验证、不执行",
+        ):
+            if stale in text:
+                errors.append(f"{relative} contains stale capability text")
 
     cli_doc = root / "skill" / "references" / "cli-runner.md"
     if cli_doc.is_file():

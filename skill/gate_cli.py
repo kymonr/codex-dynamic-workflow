@@ -95,8 +95,17 @@ def build_parser() -> argparse.ArgumentParser:
     decide.add_argument("--run-dir", required=True)
     decide.add_argument("--node-id", required=True)
     decide.add_argument("--decision", required=True)
-    decide.add_argument("--actor", required=True)
-    decide.add_argument("--source", required=True, choices=["user", "host"])
+    decide.add_argument(
+        "--actor",
+        required=True,
+        help="unauthenticated audit label for the decision submitter",
+    )
+    decide.add_argument(
+        "--source",
+        required=True,
+        choices=["user", "host"],
+        help="audit provenance label; this is not authentication",
+    )
     decide.add_argument("--expected-input-identity", required=True)
     decide.add_argument("--note", default=None)
     return parser

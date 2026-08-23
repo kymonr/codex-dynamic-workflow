@@ -81,6 +81,12 @@ verify_manifest_version = 1
 verification_verdicts = ["accept", "reject", "unknown"]
 resume_reuses_succeeded_children = true
 semantic_reject_is_data = true
+dependency_policies = ["all_succeeded", "join"]
+default_dependency_policy = "all_succeeded"
+skipped_propagates_by_default = true
+join_requires_succeeded_dependency = true
+token_budget_mode = "advisory"
+timeout_scope = "per_agent"
 
 [workflow_ir.conditional]
 expression_language = false
@@ -95,4 +101,7 @@ status_values = ["waiting", "decided"]
 decision_sources = ["user", "host"]
 input_identity = "sha256"
 terminal_decision_immutable = true
+decision_write_mode = "exclusive_create"
+decision_record_suffix = ".decision.json"
+actor_source_are_authentication = false
 grants_authority = false

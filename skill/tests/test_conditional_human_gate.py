@@ -105,6 +105,7 @@ def conditional_ir(*, pointer: str = "/verification_passed") -> dict[str, Any]:
                 "id": "join",
                 "kind": "agent",
                 "depends_on": ["then-task", "else-task"],
+                "dependency_policy": "join",
                 "config": {
                     "profile": "luna",
                     "prompt": "JOIN",

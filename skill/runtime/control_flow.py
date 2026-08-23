@@ -37,7 +37,11 @@ from .limits import (
 )
 from .state_store import RunStateStore, now_iso
 from .workflow_ir import (
+    DEFAULT_DEPENDENCY_POLICY,
     EXECUTABLE_NODE_KINDS,
+    JOIN_DEPENDENCY_POLICY,
+    TIMEOUT_SCOPE,
+    TOKEN_BUDGET_MODE,
     VERIFICATION_RESULT_SCHEMA,
     validate_workflow_ir,
 )
@@ -50,7 +54,6 @@ AgentExecutor = Callable[
 SUCCESS = "succeeded"
 SKIPPED = "skipped"
 WAITING = "waiting"
-SATISFIED_DEPENDENCY_STATES = {SUCCESS, SKIPPED}
 TERMINAL_STATES = {
     SUCCESS,
     SKIPPED,
@@ -161,6 +164,9 @@ def _base_node_entry(node: dict[str, Any]) -> dict[str, Any]:
         "kind": node["kind"],
         "status": "pending",
         "depends_on": list(node["depends_on"]),
+        "dependency_policy": node.get(
+            "dependency_policy", DEFAULT_DEPENDENCY_POLICY
+        ),
         "started": None,
         "finished": None,
         "output": None,
@@ -360,6 +366,10 @@ class TrustedControlFlowScheduler:
             "claimed_agent_count": len(self.claimed_agents),
             "max_agents": self.max_agents,
             "max_concurrency": self.max_concurrency,
+            "budget_semantics": {
+                "max_tokens": TOKEN_BUDGET_MODE,
+                "timeouts": TIMEOUT_SCOPE,
+            },
             "limits": self.limits.to_dict(),
             "nodes": ordered,
         }
@@ -1091,7 +1101,8 @@ class TrustedControlFlowScheduler:
                     for node_id, state in list(self.states.items()):
                         if state != "pending":
                             continue
-                        dependencies = self.node_by_id[node_id]["depends_on"]
+                        node = self.node_by_id[node_id]
+                        dependencies = node["depends_on"]
                         failed = [
                             dependency
                             for dependency in dependencies
@@ -1111,16 +1122,81 @@ class TrustedControlFlowScheduler:
                             )
                             propagated = True
                             changed = True
+                            continue
 
-                ready = [
-                    node_id
-                    for node_id in self.node_order
-                    if self.states[node_id] == "pending"
-                    and all(
-                        self.states[dependency] in SATISFIED_DEPENDENCY_STATES
-                        for dependency in self.node_by_id[node_id]["depends_on"]
+                        skipped = [
+                            dependency
+                            for dependency in dependencies
+                            if self.states[dependency] == SKIPPED
+                        ]
+                        if not skipped:
+                            continue
+                        policy = node.get(
+                            "dependency_policy", DEFAULT_DEPENDENCY_POLICY
+                        )
+                        dependency_states = [
+                            self.states[dependency] for dependency in dependencies
+                        ]
+                        all_resolved = all(
+                            dependency_state in {SUCCESS, SKIPPED}
+                            for dependency_state in dependency_states
+                        )
+                        join_has_success = any(
+                            dependency_state == SUCCESS
+                            for dependency_state in dependency_states
+                        )
+                        if policy == JOIN_DEPENDENCY_POLICY and (
+                            not all_resolved or join_has_success
+                        ):
+                            continue
+                        self.states[node_id] = SKIPPED
+                        entry = self.entries[node_id]
+                        entry["status"] = SKIPPED
+                        entry["error"] = (
+                            "upstream branch was skipped: " + ", ".join(skipped)
+                        )
+                        entry["finished"] = now_iso()
+                        self.state_store.append_event(
+                            "workflow.node.skipped",
+                            {
+                                "node_id": node_id,
+                                "dependencies": skipped,
+                                "reason": "upstream_skipped",
+                            },
+                        )
+                        propagated = True
+                        changed = True
+
+                ready = []
+                for node_id in self.node_order:
+                    if self.states[node_id] != "pending":
+                        continue
+                    node = self.node_by_id[node_id]
+                    dependencies = node["depends_on"]
+                    dependency_states = [
+                        self.states[dependency] for dependency in dependencies
+                    ]
+                    policy = node.get(
+                        "dependency_policy", DEFAULT_DEPENDENCY_POLICY
                     )
-                ]
+                    if policy == JOIN_DEPENDENCY_POLICY:
+                        is_ready = (
+                            all(
+                                dependency_state in {SUCCESS, SKIPPED}
+                                for dependency_state in dependency_states
+                            )
+                            and any(
+                                dependency_state == SUCCESS
+                                for dependency_state in dependency_states
+                            )
+                        )
+                    else:
+                        is_ready = all(
+                            dependency_state == SUCCESS
+                            for dependency_state in dependency_states
+                        )
+                    if is_ready:
+                        ready.append(node_id)
                 while ready and len(running) < self.max_concurrency:
                     node_id = ready.pop(0)
                     self.states[node_id] = "running"
@@ -1146,7 +1222,7 @@ class TrustedControlFlowScheduler:
                         try:
                             entry = completed.result()
                         except Exception as exc:
-                            entry = _base_entry(self.node_by_id[node_id])
+                            entry = _base_node_entry(self.node_by_id[node_id])
                             entry["status"] = "failed"
                             entry["error"] = (
                                 f"runtime internal error: {type(exc).__name__}: {exc}"
