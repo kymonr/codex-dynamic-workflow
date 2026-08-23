@@ -28,6 +28,10 @@ def main(argv: list[str] | None = None) -> int:
         from ops_cli import main as ops_main
 
         return ops_main(arguments)
+    if arguments and arguments[0] in {"preset-list", "preset-ir"}:
+        from swarm_presets import main as preset_main
+
+        return preset_main(arguments)
 
     from runner import main as legacy_main
 
