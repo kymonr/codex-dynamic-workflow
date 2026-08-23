@@ -57,13 +57,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Reconstruct verified repair script
+      - name: Apply and verify fixed repair payload
+        id: repair
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           EXPECTED_SHA256: "0e0e5e78b8f3dd186c11b66cc3914d37772ba2f8348f66522ae38e3d6bf23e00"
         run: |
-          python - <<'PY'
+          set +e
+          {
+            python - <<'PY'
           from __future__ import annotations
 
           import base64
@@ -126,19 +130,59 @@ jobs:
           target.write_bytes(script)
           print(f"reconstructed {target} ({len(script)} bytes, sha256={actual_sha256})")
           PY
+            python .github/scripts/repair_pr15.py
+            python -m compileall -q skill
+            python skill/scripts/check_policy_consistency.py --json
+            python skill/scripts/routing_smoke.py
+            python -m unittest discover -s skill/tests -v
+            git diff --check
+          } 2>&1 | tee /tmp/pr15-repair.log
+          status=${PIPESTATUS[0]}
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+          exit 0
 
-      - name: Apply and verify PR15 hardening
-        shell: bash
+      - name: Report repair failure to PR
+        if: steps.repair.outputs.status != '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -euo pipefail
-          python .github/scripts/repair_pr15.py
-          python -m compileall -q skill
-          python skill/scripts/check_policy_consistency.py --json
-          python skill/scripts/routing_smoke.py
-          python -m unittest discover -s skill/tests -v
-          git diff --check
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          log = Path("/tmp/pr15-repair.log")
+          tail = log.read_text(encoding="utf-8", errors="replace")[-18000:] if log.is_file() else "missing repair log"
+          body = (
+              "<!-- pr15-repair-diagnostic -->\n"
+              "PR15 hardening repair failed.\n"
+              f"Run: {os.environ['RUN_URL']}\n\n"
+              "```text\n" + tail + "\n```"
+          )
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['REPOSITORY']}/issues/15/comments",
+              data=json.dumps({"body": body}).encode("utf-8"),
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30):
+              pass
+          PY
+
+      - name: Stop after reported failure
+        if: steps.repair.outputs.status != '0'
+        run: exit 1
 
       - name: Commit verified code-only repair
+        if: steps.repair.outputs.status == '0'
         shell: bash
         run: |
           set -euo pipefail
