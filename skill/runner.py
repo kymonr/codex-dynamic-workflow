@@ -941,6 +941,11 @@ def build_cmd(
         "-c",
         f"model_reasoning_effort={route['effort']}",
     ]
+    if os.name == "nt":
+        # Ignoring user config also removes [windows].sandbox.  Without an
+        # explicit backend, Windows rejects restricted read-only commands
+        # before the sandbox can launch them.
+        command += ["-c", "windows.sandbox=elevated"]
     if route.get("tier"):
         command += ["-c", f"service_tier={route['tier']}"]
     command += [

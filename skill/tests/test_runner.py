@@ -219,6 +219,41 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(command[-1], "-")
         self.assertNotIn("inspect", command)
 
+    def test_windows_command_restores_sandbox_backend_after_ignoring_config(
+        self,
+    ) -> None:
+        with mock.patch.object(runner.os, "name", "nt"):
+            command = runner.build_cmd(
+                ["codex.exe"],
+                str(self.workdir),
+                self.base / "out.json",
+                self.base / "schema.json",
+                role_configs()["luna"],
+            )
+
+        joined = " ".join(command)
+        self.assertIn("--ignore-user-config", command)
+        self.assertIn("-s read-only", joined)
+        self.assertIn("windows.sandbox=elevated", command)
+        self.assertNotIn("workspace-write", joined)
+        self.assertNotIn("disk-full-read-access", joined)
+        self.assertNotIn("danger-full-access", joined)
+        self.assertNotIn("dangerously-bypass", joined)
+
+    def test_non_windows_command_does_not_select_windows_sandbox_backend(
+        self,
+    ) -> None:
+        with mock.patch.object(runner.os, "name", "posix"):
+            command = runner.build_cmd(
+                ["codex"],
+                str(self.workdir),
+                self.base / "out.json",
+                self.base / "schema.json",
+                role_configs()["luna"],
+            )
+
+        self.assertNotIn("windows.sandbox=elevated", command)
+
     def test_child_environment_is_an_allowlist(self) -> None:
         old_values = {
             key: os.environ.get(key)
