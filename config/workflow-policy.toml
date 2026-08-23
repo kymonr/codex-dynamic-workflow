@@ -30,7 +30,7 @@ current_version = 3
 static_execution_version = 2
 control_flow_runtime_version = 3
 validated_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
-executable_node_kinds = ["agent"]
+executable_node_kinds = ["agent", "map", "verify", "reduce"]
 
 [routes.spark]
 agent_type = "spark"
@@ -71,3 +71,13 @@ native = false
 model = "xai/grok-4.6"
 requires_explicit_user_request = true
 requires_separate_visible_task = true
+
+[workflow_ir.control_flow]
+trusted_runtime = true
+arbitrary_code_execution = false
+source_reference_mode = "exact_node_id"
+map_manifest_version = 1
+verify_manifest_version = 1
+verification_verdicts = ["accept", "reject", "unknown"]
+resume_reuses_succeeded_children = true
+semantic_reject_is_data = true

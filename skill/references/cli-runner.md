@@ -122,3 +122,7 @@ Static `agent`-only IR can be shown as compiled v2 with `--emit-v2`. Dynamic con
 ## Terminal behavior
 
 There is no transient same-route retry, prompt replay, regex retry classification, or automatic model upgrade. Nonzero exits, rate limits, timeouts, `needs_escalation`, permanent failures, artifact-limit violations, and ambiguous failures terminate the node and return evidence to root. Unrelated DAG branches continue; descendants of a non-success node are blocked. Cancellation and hard safety timeouts remain resource/termination controls.
+
+## Workflow IR control-flow commands
+
+使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent → map → verify → reduce` 控制流。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。

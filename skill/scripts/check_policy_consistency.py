@@ -32,6 +32,7 @@ REQUIRED_RUNTIME_FILES = (
     "skill/runtime/artifacts.py",
     "skill/runtime/state_store.py",
     "skill/runtime/workflow_ir.py",
+    "skill/runtime/control_flow.py",
     "skill/references/workflow-ir.md",
 )
 PERSONAL_PATH_PATTERNS = (
@@ -141,10 +142,13 @@ def _validate_runtime_contract(root: Path, policy: dict[str, Any], errors: list[
         if not isinstance(policy_kinds, list) or set(policy_kinds) != workflow_ir_module.NODE_KINDS:
             errors.append("policy Workflow IR node kinds disagree with runtime")
         executable = ir_policy.get("executable_node_kinds")
-        if executable != ["agent"]:
+        if (
+            not isinstance(executable, list)
+            or len(executable) != len(set(executable))
+            or set(executable) != workflow_ir_module.EXECUTABLE_NODE_KINDS
+        ):
             errors.append(
-                "Workflow IR executable_node_kinds must remain ['agent'] until "
-                "the trusted control-flow runtime lands"
+                "policy Workflow IR executable_node_kinds disagrees with runtime"
             )
 
 

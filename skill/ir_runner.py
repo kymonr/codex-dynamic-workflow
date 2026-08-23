@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""CLI adapter for the trusted Workflow IR v3 control-flow runtime."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+try:  # Package import from repository root.
+    from skill import runner as legacy
+    from skill.runtime.artifacts import ArtifactStore
+    from skill.runtime.control_flow import (
+        ControlFlowError,
+        TrustedControlFlowScheduler,
+    )
+    from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
+    from skill.runtime.workflow_ir import (
+        WorkflowIRValidationError,
+        validate_workflow_ir,
+    )
+except ModuleNotFoundError:  # Executed from the installed skill directory.
+    import runner as legacy
+    from runtime.artifacts import ArtifactStore
+    from runtime.control_flow import ControlFlowError, TrustedControlFlowScheduler
+    from runtime.limits import ArtifactLimitError, RuntimeLimits
+    from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
+
+
+def _load_json(path: str | Path) -> Any:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControlFlowError(f"cannot read Workflow IR {path}: {exc}") from exc
+
+
+def _add_safety_args(parser: argparse.ArgumentParser, *, include_spec: bool) -> None:
+    if include_spec:
+        parser.add_argument("--spec", required=True, help="Workflow IR v3 JSON file")
+    parser.add_argument(
+        "--allowed-root",
+        action="append",
+        required=True,
+        help="IR workdir must be inside this root; repeatable",
+    )
+    parser.add_argument(
+        "--allow-sensitive-path",
+        action="append",
+        default=[],
+        help="exact workdir-relative false-positive exception; repeatable",
+    )
+    parser.add_argument(
+        "--ack-external-model-export",
+        action="store_true",
+        help="root agent already evaluated this explicit CLI export boundary",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="trusted Dynamic Workflow IR v3 read-only runtime"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run = subparsers.add_parser(
+        "run-ir", help="execute trusted agent/map/verify/reduce Workflow IR"
+    )
+    _add_safety_args(run, include_spec=True)
+    run.add_argument("--run-dir", default=None, help="test/custom-root run directory")
+
+    resume = subparsers.add_parser(
+        "resume-ir", help="resume a trusted Workflow IR run from checkpoint"
+    )
+    _add_safety_args(resume, include_spec=False)
+    resume.add_argument("--run-dir", required=True, help="existing IR run directory")
+    return parser
+
+
+def _normalize_ir(
+    raw: Any,
+    *,
+    allowed_roots: list[str],
+    allowed_sensitive_paths: list[str],
+    codex_home: Path,
+) -> tuple[dict[str, Any], RuntimeLimits]:
+    ir = validate_workflow_ir(raw)
+    normalized_workdir = legacy._check_workdir_safe(
+        ir["workdir"],
+        allowed_roots,
+        codex_home=codex_home,
+        allowed_sensitive_paths=allowed_sensitive_paths,
+    )
+    ir["workdir"] = normalized_workdir
+    try:
+        limits = RuntimeLimits.from_mapping(ir.get("limits"))
+    except ValueError as exc:
+        raise ControlFlowError(f"invalid Workflow IR limits: {exc}") from exc
+    # Persist the fully resolved values so resume cannot silently inherit a
+    # different environment budget.
+    ir["limits"] = limits.to_dict()
+    return ir, limits
+
+
+async def _run(
+    ir: dict[str, Any],
+    run_dir: Path,
+    *,
+    resume: bool,
+    codex_prefix: list[str],
+    role_configs: dict[str, dict[str, Any]],
+    preflight: dict[str, Any],
+    limits: RuntimeLimits,
+) -> dict[str, Any]:
+    adapter_store = ArtifactStore(run_dir, limits)
+    cancel_path = run_dir / "CANCEL"
+
+    async def execute_agent(
+        task: dict[str, Any],
+        results: dict[str, Any],
+        prior_entry: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return await legacy._execute_task(
+            task,
+            run_dir=run_dir,
+            workdir=ir["workdir"],
+            results=results,
+            role_configs=role_configs,
+            codex_prefix=codex_prefix,
+            preflight=preflight,
+            cancel_path=cancel_path,
+            soft_timeout=ir["budgets"]["soft_timeout_seconds"],
+            hard_timeout=ir["budgets"]["hard_timeout_seconds"],
+            artifact_store=adapter_store,
+            limits=limits,
+            prior_entry=prior_entry,
+        )
+
+    scheduler = TrustedControlFlowScheduler(
+        ir,
+        run_dir,
+        execute_agent=execute_agent,
+        limits=limits,
+    )
+    return await scheduler.run(resume=resume)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if not args.ack_external_model_export:
+        print(
+            "无法开跑: 缺少 --ack-external-model-export；仅在明确选择 CLI runtime 后添加",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        resume = args.command == "resume-ir"
+        run_dir = Path(args.run_dir).expanduser().resolve() if resume else None
+        raw = _load_json(
+            run_dir / "workflow-ir.resolved.json" if resume else args.spec
+        )
+        codex_home = legacy.resolve_codex_home()
+        ir, limits = _normalize_ir(
+            raw,
+            allowed_roots=args.allowed_root,
+            allowed_sensitive_paths=args.allow_sensitive_path,
+            codex_home=codex_home,
+        )
+        role_configs = legacy.resolve_role_configs(codex_home)
+        codex_prefix, codex_identity = legacy.resolve_codex_prefix()
+        preflight = {
+            "ack_external_model_export": True,
+            "allowed_roots": [
+                str(Path(root).expanduser().resolve()) for root in args.allowed_root
+            ],
+            "allowed_sensitive_paths": list(args.allow_sensitive_path),
+            "codex_home": str(codex_home),
+            **codex_identity,
+        }
+        runs_root = legacy._runs_root()
+        legacy._prepare_run_root(runs_root, ir, codex_home)
+        if resume:
+            assert run_dir is not None
+            if not run_dir.is_relative_to(runs_root):
+                raise ControlFlowError(
+                    f"resume run directory must be below {runs_root}"
+                )
+        else:
+            run_dir = legacy._select_run_dir(
+                runs_root, ir["name"], args.run_dir
+            )
+        summary = asyncio.run(
+            _run(
+                ir,
+                run_dir,
+                resume=resume,
+                codex_prefix=codex_prefix,
+                role_configs=role_configs,
+                preflight=preflight,
+                limits=limits,
+            )
+        )
+    except (
+        ControlFlowError,
+        WorkflowIRValidationError,
+        ArtifactLimitError,
+        legacy.WorkflowError,
+        ValueError,
+    ) as exc:
+        print(f"Workflow IR runtime failed: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print(
+            "已中断；运行目录会保留，可检查 checkpoint.json 后显式 resume-ir",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(
+        f"== 完成: {summary['succeeded_count']}/{summary['total']} nodes succeeded; "
+        f"agents={summary['claimed_agent_count']}/{summary['max_agents']}; "
+        f"详情 {Path(summary['run_dir']) / 'summary.json'} =="
+    )
+    return 0 if summary["all_succeeded"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

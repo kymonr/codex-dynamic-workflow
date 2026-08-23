@@ -130,3 +130,9 @@ python3.12 -m unittest discover -s skill/tests -v
 GitHub Actions 会在 Windows 和 Linux 的 Python 3.12 上运行编译检查、policy consistency、routing smoke 和完整离线单元测试。
 
 离线路由 smoke 只能验证 evaluator 和静态路由合同，不能证明某次任务实际使用了哪个模型、推理强度或 service tier。运行态身份应以新任务产生的原生结构化元数据为准。`routing_smoke.py --live` 会创建真实任务，只应在得到明确授权并指定 case 时使用。
+
+## Trusted Workflow IR 控制流
+
+Workflow IR v3 可通过 `skill/cli.py run-ir` 执行可信的只读 `agent`、`map`、`verify` 和 `reduce` 节点，并用 `resume-ir` 从 checkpoint 显式恢复。动态 child、manifest、事件和结果均受既有资源预算与内容寻址 artifact 边界约束。
+
+`loop`、`conditional` 和 `human_gate` 仍会被严格校验，但当前不会执行或静默降级。IR 本身不是授权，不能扩大写入、凭据、发布或破坏性权限。

@@ -5,8 +5,8 @@ Workflow IR v3 是面向后续 Claude 风格 Dynamic Workflow Runtime 的声明�
 ## 当前边界
 
 - IR 版本固定为整数 `3`。
-- 当前能够直接编译执行的子集只有静态 `agent` 节点，编译目标是现有只读 v2 DAG。
-- `map`、`verify`、`loop`、`reduce`、`conditional` 和 `human_gate` 已有版本化语法与校验，但本阶段只报告为“需要 v3 控制流 runtime”，不会静默退化成普通 agent 或固定 DAG。
+- 静态 `agent` 节点仍可编译为现有只读 v2 DAG。
+- Workflow IR v3 可信 runtime 现可执行 `agent`、`map`、`verify` 与 `reduce`；`loop`、`conditional` 和 `human_gate` 仍只验证、不执行。
 - 所有 writer、外部状态、凭据、commit、push、merge、deploy 和破坏性权限仍受 Dynamic Workflow 的既有授权规则约束；IR 本身不是授权。
 
 ## 示例
@@ -70,3 +70,12 @@ py -3.12 skill\cli.py validate-ir --spec workflow-v3.json --emit-v2
 3. 外层依赖图必须无环；循环只允许由显式 `loop` 节点在自身版本化配置内表达。
 4. 动态节点不会被自动展开、重试或降级；直到对应 runtime 实现完成前，它们只通过校验并明确报告不可执行。
 5. 未来 IR 变更通过新的整数版本演进，不在 v3 下悄悄改变现有字段含义。
+
+## Trusted map → verify → reduce runtime
+
+v3 runner 只解释声明式数据，不执行工作流提供的 Python、JavaScript、Shell 或 selector 表达式。动态来源必须是 exact node ID，并同时列入 `depends_on`。
+
+- `map` 从前置 `agent` 或 `reduce` 的有限 JSON 数组展开稳定 child ID，并受 `item_limit`、`max_agents` 与全局并发预算约束。
+- `verify` 只能消费 map manifest，每个 verifier 固定返回 `accept | reject | unknown`、summary 和 evidence。语义 reject 是数据，不伪装成进程失败。
+- `reduce` 只能消费声明依赖中的 map/verify manifest；大型输入通过内容寻址 artifact reference 传递。
+- `checkpoint.json` 保存动态 child、claimed agents 与 artifact identity；`resume-ir` 复用已成功 child，只重排确认中断的 running 工作。
