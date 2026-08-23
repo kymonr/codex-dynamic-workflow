@@ -117,8 +117,21 @@ python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" validate-ir `
   --spec D:\path\workflow-v3.json
 ```
 
-Static `agent`-only IR can be shown as compiled v2 with `--emit-v2`. Dynamic control-flow nodes are versioned and validated but are not silently executed until the v3 scheduler implements them. See `workflow-ir.md`.
+Static `agent`-only IR can be shown as compiled v2 with `--emit-v2`. The trusted v3 scheduler capability is policy-derived:
+
+Executable node kinds: `agent`, `map`, `verify`, `reduce`, `conditional`, `human_gate`.
+Validated-only node kinds: `loop`.
+
+`max_tokens` remains advisory because usage may be unavailable from CLI logs. Soft and hard timeout fields apply per agent process, not to the whole workflow wall clock. See `workflow-ir.md`.
 
 ## Terminal behavior
 
 There is no transient same-route retry, prompt replay, regex retry classification, or automatic model upgrade. Nonzero exits, rate limits, timeouts, `needs_escalation`, permanent failures, artifact-limit violations, and ambiguous failures terminate the node and return evidence to root. Unrelated DAG branches continue; descendants of a non-success node are blocked. Cancellation and hard safety timeouts remain resource/termination controls.
+
+## Workflow IR control-flow commands
+
+使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent → map → verify → reduce → conditional → human_gate` 控制流。未选分支默认向后传播 `skipped`；只有显式 `dependency_policy: "join"` 且至少一个依赖成功时才允许汇合。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。
+
+## Condition and human-gate commands
+
+`condition-evaluate` 只预览受限条件，不推进 checkpoint。`gate-status` 查看 run-scoped gate；`gate-decide` 必须提供 node、decision、actor、`user|host` source 与 expected input identity。decision 通过 exclusive-create 原子写入，冲突决定不能覆盖；actor/source 只是未经认证的审计标签。gate 命令不调用模型，且不会扩展授权。waiting run 的 `run-ir` 返回 paused，之后显式执行 `resume-ir`。

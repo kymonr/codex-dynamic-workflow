@@ -1,13 +1,33 @@
 #!/usr/bin/env python3
-"""Portable entry point for the explicit Dynamic Workflow CLI runner."""
+"""Portable entry point for Dynamic Workflow CLI runtimes."""
 
 from __future__ import annotations
+
+import sys
 
 from platform_paths import apply_runtime_defaults
 
 apply_runtime_defaults()
 
-from runner import main  # noqa: E402  (defaults must be applied before import)
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] in {"run-ir", "resume-ir"}:
+        from ir_runner import main as ir_main
+
+        return ir_main(arguments)
+    if arguments and arguments[0] in {
+        "condition-evaluate",
+        "gate-status",
+        "gate-decide",
+    }:
+        from gate_cli import main as gate_main
+
+        return gate_main(arguments)
+
+    from runner import main as legacy_main
+
+    return legacy_main(arguments)
 
 
 if __name__ == "__main__":
