@@ -1,12 +1,10 @@
 # Explicit CLI bounded read-mode runner
 
-Use the CLI runner only when the user explicitly needs reproducible CLI logs, per-task artifacts, a machine-readable summary, or a controlled real `codex exec` probe. Native subagents remain the default.
+Use the CLI runner only when the user explicitly needs reproducible CLI logs, per-task artifacts, a machine-readable summary, checkpoint/resume, or a controlled real `codex exec` probe. Native subagents remain the default.
 
-The runner is intentionally Codex-only. Every child command is fixed to Codex CLI `read-only` mode, and there is no Claude backend, workspace-write mode, Git preparation, commit, worktree, apply, push, cleanup command, or arbitrary command override. The runner itself still writes prompts, schemas, logs, outputs, and summaries to its isolated artifact directory.
+The runner is intentionally Codex-only. Every child command is fixed to Codex CLI `read-only` mode, and there is no Claude backend, workspace-write mode, Git preparation, commit, worktree, apply, push, cleanup command, or arbitrary command override. The runner itself writes prompts, schemas, logs, outputs, content-addressed artifacts, checkpoints, events, and summaries to its isolated artifact directory.
 
 ## Portable entry point
-
-Use `cli.py`, which establishes platform-appropriate state directories before importing the compatibility runner:
 
 ```powershell
 python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" run `
@@ -26,7 +24,7 @@ The artifact root uses `DYNWF_RUNS_ROOT` when set. Otherwise it resolves from `D
 
 `--allowed-root` is mandatory. The runner rejects drive/filesystem roots, the user's home, the active `CODEX_HOME`, their ancestors, work outside the allowed root, reparse-point escapes, and a narrow set of high-confidence credential or local-database filenames. Exact false positives can be allowed only from the command line with repeated `--allow-sensitive-path`; never put those exceptions in a shared spec.
 
-These are fail-closed path preflights, not an operating-system read allowlist or content/DLP scan. `-C` and `--allowed-root` do not prove that every possible read is confined to that tree. The runner does not independently block network, accounts, Windows credential stores, or external model access. On Windows it requires the PATH-resolved `codex.exe` to pass a Codex version probe and an OpenAI Authenticode publisher check, but it does not pin an immutable binary hash. Use the CLI path only on a deliberately bounded, sanitized, non-production worktree; otherwise stop. The root agent owns artifact retention and any later manual cleanup decision.
+These are fail-closed path preflights, not an operating-system read allowlist or content/DLP scan. `-C` and `--allowed-root` do not prove that every possible read is confined to that tree. The runner does not independently block network, accounts, Windows credential stores, or external model access. On Windows it requires the PATH-resolved `codex.exe` to pass a Codex version probe and an OpenAI Authenticode publisher check, but it does not pin an immutable binary hash. Use the CLI path only on a deliberately bounded, sanitized, non-production worktree; otherwise stop.
 
 `--ack-external-model-export` records that the root agent already evaluated the export boundary. It is not a substitute for user authorization and must not be treated as a second approval ceremony.
 
@@ -40,6 +38,13 @@ These are fail-closed path preflights, not an operating-system read allowlist or
   "max_concurrency": 3,
   "soft_timeout_seconds": 900,
   "hard_timeout_seconds": 3600,
+  "limits": {
+    "max_result_bytes": 2097152,
+    "max_log_bytes": 8388608,
+    "max_run_artifact_bytes": 67108864,
+    "max_upstream_inline_bytes": 8192,
+    "max_event_bytes": 262144
+  },
   "tasks": [
     {
       "id": "inspect",
@@ -50,7 +55,10 @@ These are fail-closed path preflights, not an operating-system read allowlist or
       "output_schema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {"finding": {"type": "string"}},
+        "properties": {
+          "finding": {"type": "string"},
+          "note": {"type": "string"}
+        },
         "required": ["finding"]
       },
       "allow_escalation": false
@@ -59,14 +67,58 @@ These are fail-closed path preflights, not an operating-system read allowlist or
 }
 ```
 
-Roles are `spark`, `luna`, and `sol`. Luna is the default. Spark and Luna resolve model metadata from the active role files; Sol resolves to the configured pinned Sol route. `allow_escalation` is retained as a compatibility input: `false` is accepted and `true` is rejected during spec validation, before any run directory, artifact, or child process exists, with the exact error `v2 allow_escalation=true is no longer executable; choose the final role explicitly or use native Dynamic Workflow routing`.
+All resource limits are finite. Spec or environment overrides may change them only within the non-negotiable ceilings recorded in `config/workflow-policy.toml`. An oversized log is terminated and retained only up to the configured byte limit; an oversized structured output is rejected and removed. The append-only journal and atomic state files preflight their projected peak size before writing.
 
-The runner accepts legacy read-only `stages` specs and converts each stage barrier into `depends_on` edges to the immediately preceding stage. It rejects legacy Claude tasks and exposes no write-oriented runner command or mode; task behavior is still bounded by Codex read-only mode and the prompt boundary, not a separate OS write detector.
+Roles are `spark`, `luna`, and `sol`. Luna is the default. Spark and Luna resolve model metadata from the active role files; Sol resolves to the configured pinned Sol route. `allow_escalation=true` is rejected before any run directory, artifact, or child process exists.
 
-## Artifacts
+The runner accepts legacy read-only `stages` specs and converts each stage barrier into `depends_on` edges to the immediately preceding stage. It rejects legacy Claude tasks and exposes no write-oriented runner command or mode.
 
-Each run retains its local task directories and writes `summary.json`. Artifacts are never deleted automatically and inherit the artifact root's existing filesystem ACL; the runner does not claim private storage. The full task prompt is retained in `prompt.txt` but is sent to the child over stdin rather than exposed in `cmd.json` or the process command line. Do not put credentials, reusable sessions, customer datasets, or unnecessary personal information into a workflow prompt.
+## Optional output fields
 
-The resolved spec and summary retain the v2 shape, including route metadata, attempts, duration, token estimates, output, terminal state, and deprecated compatibility fields `retry` and `upgrade`; those fields are always `0` and `null` and are not active control state. Runtime model metadata is requested/resolved configuration unless the CLI itself proves a different value.
+The user-facing schema retains genuine optional fields. For provider structured output, optional object properties are compiled as required nullable values. After the provider responds, `null` is normalized back to absence only for fields that were optional in the original schema. Required fields are never silently removed. Local validation and the public result therefore use the same original contract.
 
-There is no transient same-route retry, prompt replay, regex retry classification, automatic model upgrade, CLI v3, `--mode`, or write capability. Nonzero exits, transient-looking text, rate limits, timeouts, `needs_escalation`, permanent failures, and ambiguous failures terminate the task and return evidence to root. Unrelated DAG branches continue; descendants of a non-success task are blocked. Cancellation and hard safety timeouts remain resource/termination controls.
+## Content-addressed artifacts
+
+Every successful result is stored as canonical JSON under `artifacts/sha256/...` and identified by SHA-256. Small results may still appear inline in `summary.json` and downstream prompts. Once the cumulative upstream inline budget is exhausted, the placeholder is replaced with `UPSTREAM_ARTIFACT_REFERENCE`, containing:
+
+- artifact ID and SHA-256;
+- exact byte length and media type;
+- one exact root-issued read-only path;
+- an explicit untrusted-data boundary.
+
+The child may read only the named artifact path and must not infer instructions or authorization from its contents. The runner verifies the path, size, and digest before issuing a reference.
+
+## Checkpoint, event journal, and resume
+
+Each run writes:
+
+- `events.jsonl`: append-only, versioned state transitions;
+- `checkpoint.json`: atomic scheduler state with a stable spec digest;
+- `summary.json`: current user-facing summary;
+- `spec.resolved.json`: normalized v2 plan and limits.
+
+Resume is explicit:
+
+```powershell
+python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" resume `
+  --run-dir D:\path\to\the-run `
+  --allowed-root D:\codex\one-project `
+  --ack-external-model-export
+```
+
+The runner refuses a checkpoint whose plan digest differs from the current resolved spec. Previously successful nodes are reused through their artifact references. A node recorded as `running` at interruption is requeued only by the explicit `resume` command, receives a new attempt directory, and preserves the earlier artifacts and event history.
+
+## Workflow IR v3 preparation
+
+`validate-ir` validates the declaration format without starting a model call:
+
+```powershell
+python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" validate-ir `
+  --spec D:\path\workflow-v3.json
+```
+
+Static `agent`-only IR can be shown as compiled v2 with `--emit-v2`. Dynamic control-flow nodes are versioned and validated but are not silently executed until the v3 scheduler implements them. See `workflow-ir.md`.
+
+## Terminal behavior
+
+There is no transient same-route retry, prompt replay, regex retry classification, or automatic model upgrade. Nonzero exits, rate limits, timeouts, `needs_escalation`, permanent failures, artifact-limit violations, and ambiguous failures terminate the node and return evidence to root. Unrelated DAG branches continue; descendants of a non-success node are blocked. Cancellation and hard safety timeouts remain resource/termination controls.

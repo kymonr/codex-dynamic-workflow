@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate that role files and public routing surfaces match workflow-policy.toml."""
+"""Validate repository roles, runtime limits, Workflow IR, and public docs."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -24,13 +25,19 @@ PUBLIC_SURFACES = (
     "integration/AGENTS.dynamic-workflow.md",
     "skill/agents/openai.yaml",
 )
+REQUIRED_RUNTIME_FILES = (
+    "skill/runtime/__init__.py",
+    "skill/runtime/limits.py",
+    "skill/runtime/schema_contract.py",
+    "skill/runtime/artifacts.py",
+    "skill/runtime/state_store.py",
+    "skill/runtime/workflow_ir.py",
+    "skill/references/workflow-ir.md",
+)
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"[A-Za-z]:[/\\]Users[/\\][^/\\\s]+", re.IGNORECASE),
     re.compile(r"[A-Za-z]:[/\\](?:Node\.js|\.codex-tmp)(?:[/\\]|$)", re.IGNORECASE),
 )
-# runner.py keeps its historical constant for direct-import compatibility. The
-# supported CLI entry point sets DYNWF_RUNS_ROOT before importing runner.py.
-LEGACY_PATH_EXCEPTIONS = {"skill/runner.py"}
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -38,8 +45,172 @@ def _load_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
-def _expected_tier(value: str) -> str | None:
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load module {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _expected_tier(value: Any) -> str | None:
     return None if value == "inherit" else value
+
+
+def _validate_roles(root: Path, policy: dict[str, Any], errors: list[str]) -> None:
+    routes = policy.get("routes")
+    if not isinstance(routes, dict):
+        errors.append("policy routes table is missing")
+        return
+
+    for route_name, relative in ROLE_FILES.items():
+        route_policy = routes.get(route_name)
+        if not isinstance(route_policy, dict):
+            errors.append(f"policy route is missing: {route_name}")
+            continue
+        role_path = root / relative
+        if not role_path.is_file():
+            errors.append(f"role file is missing: {relative}")
+            continue
+        role = _load_toml(role_path)
+        expected = {
+            "name": route_policy.get("agent_type"),
+            "model": route_policy.get("model"),
+            "model_reasoning_effort": route_policy.get("effort"),
+            "service_tier": _expected_tier(route_policy.get("tier")),
+        }
+        for key, value in expected.items():
+            actual = role.get(key)
+            if actual != value:
+                errors.append(
+                    f"{relative}: {key}={actual!r}, policy requires {value!r}"
+                )
+
+
+def _validate_runtime_contract(root: Path, policy: dict[str, Any], errors: list[str]) -> None:
+    for relative in REQUIRED_RUNTIME_FILES:
+        if not (root / relative).is_file():
+            errors.append(f"runtime foundation file is missing: {relative}")
+
+    limits_path = root / "skill" / "runtime" / "limits.py"
+    workflow_ir_path = root / "skill" / "runtime" / "workflow_ir.py"
+    if not limits_path.is_file() or not workflow_ir_path.is_file():
+        return
+
+    try:
+        limits_module = _load_module("dynamic_workflow_policy_limits", limits_path)
+        workflow_ir_module = _load_module(
+            "dynamic_workflow_policy_ir", workflow_ir_path
+        )
+    except Exception as exc:  # pragma: no cover - surfaced in CI diagnostics
+        errors.append(f"cannot import runtime contract modules: {exc}")
+        return
+
+    limits_policy = policy.get("limits")
+    if not isinstance(limits_policy, dict):
+        errors.append("policy limits table is missing")
+    else:
+        defaults = limits_policy.get("defaults")
+        ceilings = limits_policy.get("hard_ceiling")
+        if not isinstance(defaults, dict):
+            errors.append("policy limits.defaults table is missing")
+        else:
+            runtime_defaults = limits_module.RuntimeLimits().to_dict()
+            if defaults != runtime_defaults:
+                errors.append(
+                    "policy limits.defaults disagrees with RuntimeLimits defaults: "
+                    f"policy={defaults!r} runtime={runtime_defaults!r}"
+                )
+        if not isinstance(ceilings, dict):
+            errors.append("policy limits.hard_ceiling table is missing")
+        elif ceilings != limits_module.HARD_CEILINGS:
+            errors.append(
+                "policy limits.hard_ceiling disagrees with runtime ceilings: "
+                f"policy={ceilings!r} runtime={limits_module.HARD_CEILINGS!r}"
+            )
+
+    ir_policy = policy.get("workflow_ir")
+    if not isinstance(ir_policy, dict):
+        errors.append("policy workflow_ir table is missing")
+    else:
+        if ir_policy.get("current_version") != workflow_ir_module.IR_VERSION:
+            errors.append("policy Workflow IR current_version disagrees with runtime")
+        policy_kinds = ir_policy.get("validated_node_kinds")
+        if not isinstance(policy_kinds, list) or set(policy_kinds) != workflow_ir_module.NODE_KINDS:
+            errors.append("policy Workflow IR node kinds disagree with runtime")
+        executable = ir_policy.get("executable_node_kinds")
+        if executable != ["agent"]:
+            errors.append(
+                "Workflow IR executable_node_kinds must remain ['agent'] until "
+                "the trusted control-flow runtime lands"
+            )
+
+
+def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[str]) -> None:
+    openai_path = root / "skill" / "agents" / "openai.yaml"
+    if openai_path.is_file():
+        openai_yaml = openai_path.read_text(encoding="utf-8")
+        implicit_value = str(bool(policy.get("allow_implicit_invocation"))).lower()
+        if f"allow_implicit_invocation: {implicit_value}" not in openai_yaml:
+            errors.append(
+                "skill/agents/openai.yaml allow_implicit_invocation disagrees with policy"
+            )
+    else:
+        errors.append("skill/agents/openai.yaml is missing")
+
+    route_tokens = {"spark": "Spark", "luna": "Luna", "sol": "Sol"}
+    for relative in PUBLIC_SURFACES:
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"public routing surface is missing: {relative}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for route, token in route_tokens.items():
+            if token not in text:
+                errors.append(f"{relative} does not mention policy route {route}")
+        if "Grok" not in text:
+            errors.append(f"{relative} does not state the explicit Grok boundary")
+
+    readme_path = root / "README.md"
+    if readme_path.is_file():
+        readme = readme_path.read_text(encoding="utf-8")
+        for token in ("skill/cli.py", "checkpoint.json", "events.jsonl", "Workflow IR v3"):
+            if token not in readme:
+                errors.append(f"README.md must document {token}")
+
+    cli_doc = root / "skill" / "references" / "cli-runner.md"
+    if cli_doc.is_file():
+        text = cli_doc.read_text(encoding="utf-8")
+        for token in (
+            "max_result_bytes",
+            "UPSTREAM_ARTIFACT_REFERENCE",
+            "checkpoint.json",
+            "events.jsonl",
+            "validate-ir",
+        ):
+            if token not in text:
+                errors.append(f"skill/references/cli-runner.md must document {token}")
+
+
+def _validate_repository_paths(root: Path, errors: list[str]) -> None:
+    for path in root.rglob("*"):
+        if not path.is_file() or ".git" in path.parts:
+            continue
+        if path.suffix.lower() not in {
+            ".md",
+            ".py",
+            ".toml",
+            ".yaml",
+            ".yml",
+            ".json",
+        }:
+            continue
+        relative = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(pattern.search(text) for pattern in PERSONAL_PATH_PATTERNS):
+            errors.append(f"{relative} contains a machine-specific absolute path")
 
 
 def validate_repository(root: Path) -> tuple[list[str], list[str]]:
@@ -57,32 +228,7 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
     if policy.get("workflow_name") != "dynamic-workflow":
         errors.append("workflow_name must be dynamic-workflow")
 
-    routes = policy.get("routes")
-    if not isinstance(routes, dict):
-        return (errors + ["policy routes table is missing"], warnings)
-
-    for route_name, relative in ROLE_FILES.items():
-        route_policy = routes.get(route_name)
-        if not isinstance(route_policy, dict):
-            errors.append(f"policy route is missing: {route_name}")
-            continue
-        role_path = root / relative
-        if not role_path.is_file():
-            errors.append(f"role file is missing: {relative}")
-            continue
-        role = _load_toml(role_path)
-        expected = {
-            "name": route_policy.get("agent_type"),
-            "model": route_policy.get("model"),
-            "model_reasoning_effort": route_policy.get("effort"),
-            "service_tier": _expected_tier(str(route_policy.get("tier"))),
-        }
-        for key, value in expected.items():
-            actual = role.get(key)
-            if actual != value:
-                errors.append(
-                    f"{relative}: {key}={actual!r}, policy requires {value!r}"
-                )
+    _validate_roles(root, policy, errors)
 
     enabled_grok = root / "config" / "agents" / "grok_writer.toml"
     disabled_grok = root / "config" / "agents" / "grok_writer.toml.disabled"
@@ -91,59 +237,9 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
     if not disabled_grok.is_file():
         errors.append("grok_writer.toml.disabled rollback reference is missing")
 
-    openai_yaml = (root / "skill" / "agents" / "openai.yaml").read_text(
-        encoding="utf-8"
-    )
-    implicit_value = str(bool(policy.get("allow_implicit_invocation"))).lower()
-    if f"allow_implicit_invocation: {implicit_value}" not in openai_yaml:
-        errors.append(
-            "skill/agents/openai.yaml allow_implicit_invocation disagrees with policy"
-        )
-
-    route_tokens = {
-        "spark": "Spark",
-        "luna": "Luna",
-        "sol": "Sol",
-    }
-    for relative in PUBLIC_SURFACES:
-        path = root / relative
-        if not path.is_file():
-            errors.append(f"public routing surface is missing: {relative}")
-            continue
-        text = path.read_text(encoding="utf-8")
-        for route, token in route_tokens.items():
-            if token not in text:
-                errors.append(f"{relative} does not mention policy route {route}")
-        if "Grok" not in text:
-            errors.append(f"{relative} does not state the explicit Grok boundary")
-
-    for path in root.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
-            continue
-        relative = path.relative_to(root).as_posix()
-        if path.suffix.lower() not in {
-            ".md",
-            ".py",
-            ".toml",
-            ".yaml",
-            ".yml",
-            ".json",
-        }:
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        matches = [pattern.pattern for pattern in PERSONAL_PATH_PATTERNS if pattern.search(text)]
-        if not matches:
-            continue
-        message = f"{relative} contains a machine-specific absolute path"
-        if relative in LEGACY_PATH_EXCEPTIONS:
-            warnings.append(message + "; use skill/cli.py so the portable env default wins")
-        else:
-            errors.append(message)
-
-    readme = (root / "README.md").read_text(encoding="utf-8")
-    if "skill/cli.py" not in readme and "skill\\cli.py" not in readme:
-        errors.append("README.md must document skill/cli.py as the portable CLI entry point")
-
+    _validate_runtime_contract(root, policy, errors)
+    _validate_public_surfaces(root, policy, errors)
+    _validate_repository_paths(root, errors)
     return errors, warnings
 
 
@@ -159,11 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     errors, warnings = validate_repository(args.root)
-    payload = {
-        "ok": not errors,
-        "errors": errors,
-        "warnings": warnings,
-    }
+    payload = {"ok": not errors, "errors": errors, "warnings": warnings}
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
