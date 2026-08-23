@@ -255,6 +255,7 @@ def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[s
         for stale in (
             "`loop`、`conditional` 和 `human_gate` 仍会被严格校验",
             "`loop`、`conditional` 和 `human_gate` 仍只验证、不执行",
+            "在 v3 控制流 runtime 完成前不会被静默执行或降级",
         ):
             if stale in text:
                 errors.append(f"{relative} contains stale capability text")
