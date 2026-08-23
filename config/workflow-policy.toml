@@ -1,0 +1,52 @@
+version = 1
+workflow_name = "dynamic-workflow"
+default_shape = "execute"
+allow_implicit_invocation = true
+single_native_writer = true
+native_grok_route = false
+
+[paths]
+state_home_env = "DYNWF_HOME"
+runs_root_env = "DYNWF_RUNS_ROOT"
+worktree_root_env = "DYNWF_WORKTREE_ROOT"
+app_dir_name = "codex-dynamic-workflow"
+
+[routes.spark]
+agent_type = "spark"
+model = "gpt-5.3-codex-spark"
+effort = "high"
+tier = "inherit"
+access = "read_only"
+max_nested_depth = 0
+
+[routes.luna]
+agent_type = "luna"
+model = "gpt-5.6-luna"
+effort = "max"
+tier = "fast"
+access = "read_or_scoped_writer"
+max_nested_depth = 0
+
+[routes.sol]
+agent_type = "sol"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+tier = "default"
+access = "read_or_scoped_writer"
+max_nested_depth = 1
+nested_route = "luna"
+
+[routes.reviewer]
+agent_type = "dynamic_workflow_sol_reviewer"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+tier = "inherit"
+access = "read_only"
+max_nested_depth = 0
+
+[explicit_grok_task]
+enabled = true
+native = false
+model = "xai/grok-4.6"
+requires_explicit_user_request = true
+requires_separate_visible_task = true

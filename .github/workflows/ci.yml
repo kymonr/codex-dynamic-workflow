@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master, "codex/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contracts:
+    name: Python 3.12 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python sources
+        run: python -m compileall -q skill
+
+      - name: Validate routing policy consistency
+        run: python skill/scripts/check_policy_consistency.py --json
+
+      - name: Run offline routing smoke
+        run: python skill/scripts/routing_smoke.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s skill/tests -v
