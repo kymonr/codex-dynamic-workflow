@@ -39,20 +39,22 @@ jobs:
   pr15-hardening-repair:
     name: PR15 hardening repair
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/codex/trusted-ir-conditional-human-gate' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 15 &&
       github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      issues: write
+      issues: read
       pull-requests: read
+    env:
+      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.TARGET_BRANCH }}
 
       - uses: actions/setup-python@v5
         with:
@@ -65,8 +67,7 @@ jobs:
           PR_NUMBER: "15"
           EXPECTED_SHA256: "0e0e5e78b8f3dd186c11b66cc3914d37772ba2f8348f66522ae38e3d6bf23e00"
         run: |
-          set -o pipefail
-          python - <<'PY' 2>&1 | tee "${RUNNER_TEMP}/reconstruct.log"
+          python - <<'PY'
           from __future__ import annotations
 
           import base64
@@ -78,29 +79,23 @@ jobs:
           import urllib.request
           from pathlib import Path
 
-          repository = os.environ["REPOSITORY"]
-          token = os.environ["GITHUB_TOKEN"]
-          pr_number = os.environ["PR_NUMBER"]
-          expected_sha256 = os.environ["EXPECTED_SHA256"]
-          comments: list[dict[str, object]] = []
+          comments = []
           page = 1
           while True:
               url = (
-                  f"https://api.github.com/repos/{repository}/issues/"
-                  f"{pr_number}/comments?per_page=100&page={page}"
+                  f"https://api.github.com/repos/{os.environ['REPOSITORY']}/issues/"
+                  f"{os.environ['PR_NUMBER']}/comments?per_page=100&page={page}"
               )
               request = urllib.request.Request(
                   url,
                   headers={
-                      "Authorization": f"Bearer {token}",
+                      "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
                       "Accept": "application/vnd.github+json",
                       "X-GitHub-Api-Version": "2022-11-28",
                   },
               )
               with urllib.request.urlopen(request, timeout=30) as response:
                   batch = json.load(response)
-              if not isinstance(batch, list):
-                  raise RuntimeError("GitHub comments response is not a list")
               comments.extend(batch)
               if len(batch) < 100:
                   break
@@ -110,193 +105,46 @@ jobs:
               r"<!-- pr15-repair-payload:(\d+)/5 -->\s*([A-Za-z0-9+/=]+)\s*$",
               re.DOTALL,
           )
-          parts: dict[int, str] = {}
+          parts = {}
           for comment in comments:
               body = comment.get("body")
-              if not isinstance(body, str):
-                  continue
-              match = pattern.fullmatch(body.strip())
-              if not match:
-                  continue
-              index = int(match.group(1))
-              if index in parts:
-                  raise RuntimeError(f"duplicate repair payload part {index}")
-              parts[index] = match.group(2)
-
+              match = pattern.fullmatch(body.strip()) if isinstance(body, str) else None
+              if match:
+                  index = int(match.group(1))
+                  if index in parts:
+                      raise RuntimeError(f"duplicate payload part {index}")
+                  parts[index] = match.group(2)
           if set(parts) != set(range(1, 6)):
-              raise RuntimeError(
-                  f"repair payload is incomplete: found {sorted(parts)}"
-              )
+              raise RuntimeError(f"incomplete payload: {sorted(parts)}")
+
           encoded = "".join(parts[index] for index in range(1, 6))
           script = gzip.decompress(base64.b64decode(encoded, validate=True))
-          actual_sha256 = hashlib.sha256(script).hexdigest()
-          if actual_sha256 != expected_sha256:
-              raise RuntimeError(
-                  f"repair script digest mismatch: {actual_sha256}"
-              )
+          digest = hashlib.sha256(script).hexdigest()
+          if digest != os.environ["EXPECTED_SHA256"]:
+              raise RuntimeError(f"repair digest mismatch: {digest}")
           target = Path(".github/scripts/repair_pr15.py")
           target.parent.mkdir(parents=True, exist_ok=True)
           target.write_bytes(script)
-          print(f"reconstructed {target} ({len(script)} bytes, sha256={actual_sha256})")
+          print(f"reconstructed {target}, sha256={digest}")
           PY
 
-      - name: Apply PR15 hardening patch
+      - name: Apply hardening patch
+        run: python .github/scripts/repair_pr15.py
+
+      - name: Validate patched tree
         run: |
-          set -o pipefail
-          python .github/scripts/repair_pr15.py 2>&1 | tee "${RUNNER_TEMP}/apply.log"
-
-      - name: Compile Python sources
-        run: |
-          set -o pipefail
-          python -m compileall -q skill 2>&1 | tee "${RUNNER_TEMP}/compile.log"
-
-      - name: Validate routing policy consistency
-        run: |
-          set -o pipefail
-          python skill/scripts/check_policy_consistency.py --json 2>&1 | tee "${RUNNER_TEMP}/policy.log"
-
-      - name: Run offline routing smoke
-        run: |
-          set -o pipefail
-          python skill/scripts/routing_smoke.py 2>&1 | tee "${RUNNER_TEMP}/smoke.log"
-
-      - name: Run unit tests
-        run: |
-          set -o pipefail
-          python -m unittest discover -s skill/tests -v 2>&1 | tee "${RUNNER_TEMP}/tests.log"
-
-      - name: Capture repair evidence
-        if: always()
-        run: |
-          evidence="${RUNNER_TEMP}/pr15-hardening-evidence"
-          mkdir -p "$evidence"
-          git diff --binary > "$evidence/pr15-hardening.patch"
-          git status --short > "$evidence/git-status.txt"
-          git diff --stat > "$evidence/diff-stat.txt"
-
-      - name: Upload repair evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr15-hardening-evidence
-          path: ${{ runner.temp }}/pr15-hardening-evidence
-          if-no-files-found: error
-
-      - name: Report repair diagnostics
-        if: always()
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: "15"
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          python - <<'PY'
-          from __future__ import annotations
-
-          import json
-          import os
-          import subprocess
-          import urllib.request
-          from pathlib import Path
-
-          runner_temp = Path(os.environ["RUNNER_TEMP"])
-          sections = []
-          for name in ("reconstruct", "apply", "compile", "policy", "smoke", "tests"):
-              path = runner_temp / f"{name}.log"
-              if not path.is_file():
-                  continue
-              text = path.read_text(encoding="utf-8", errors="replace")
-              sections.append(f"[{name}]\n{text[-3500:]}")
-          diagnostics = "\n\n".join(sections)[-18000:]
-          git_status = subprocess.run(
-              ["git", "status", "--short"],
-              check=False,
-              capture_output=True,
-              text=True,
-          ).stdout[-4000:]
-          body = (
-              "<!-- pr15-repair-diagnostic -->\n"
-              f"run_id={os.environ.get('GITHUB_RUN_ID')}\n"
-              f"status={os.environ['JOB_STATUS']}\n\n"
-              "```text\n"
-              f"{diagnostics}\n\n[git status]\n{git_status}\n"
-              "```"
-          )
-          payload = json.dumps({"body": body}).encode("utf-8")
-          url = (
-              f"https://api.github.com/repos/{os.environ['REPOSITORY']}/issues/"
-              f"{os.environ['PR_NUMBER']}/comments"
-          )
-          request = urllib.request.Request(
-              url,
-              data=payload,
-              method="POST",
-              headers={
-                  "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-                  "Accept": "application/vnd.github+json",
-                  "Content-Type": "application/json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              result = json.load(response)
-          print(f"posted repair diagnostics comment {result.get('id')}")
-          PY
+          python -m compileall -q skill
+          python skill/scripts/check_policy_consistency.py --json
+          python skill/scripts/routing_smoke.py
+          python -m unittest discover -s skill/tests -v
+          git diff --check
 
       - name: Restore canonical CI and remove temporary machinery
         run: |
           rm -f .github/scripts/repair_pr15.py
           rmdir .github/scripts 2>/dev/null || true
           rm -f .github/workflows/pr15-hardening-repair.yml
-          cat > .github/workflows/ci.yml <<'CANONICAL_CI'
-          name: CI
-
-          on:
-            push:
-              branches: [master, "codex/**"]
-            pull_request:
-
-          permissions:
-            contents: read
-
-          jobs:
-            offline-contracts:
-              name: Python 3.12 / __MATRIX_OS__
-              runs-on: __MATRIX_OS__
-              strategy:
-                fail-fast: false
-                matrix:
-                  os: [ubuntu-latest, windows-latest]
-
-              steps:
-                - uses: actions/checkout@v4
-
-                - uses: actions/setup-python@v5
-                  with:
-                    python-version: "3.12"
-
-                - name: Compile Python sources
-                  run: python -m compileall -q skill
-
-                - name: Validate routing policy consistency
-                  run: python skill/scripts/check_policy_consistency.py --json
-
-                - name: Run offline routing smoke
-                  run: python skill/scripts/routing_smoke.py
-
-                - name: Run unit tests
-                  run: python -m unittest discover -s skill/tests -v
-          CANONICAL_CI
-          python - <<'PY'
-          from pathlib import Path
-          path = Path(".github/workflows/ci.yml")
-          text = path.read_text(encoding="utf-8")
-          path.write_text(
-              text.replace("__MATRIX_OS__", "$" + "{{ matrix.os }}"),
-              encoding="utf-8",
-          )
-          PY
+          git show 0d36f3d356d654104d54e49b3f8bebf2747022a6:.github/workflows/ci.yml > .github/workflows/ci.yml
           git diff --check
 
       - name: Commit and push verified repair
@@ -305,4 +153,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "fix: harden conditional and human gate runtime"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"
