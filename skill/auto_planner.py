@@ -13,7 +13,10 @@ import argparse
 import asyncio
 import contextlib
 import hashlib
+import io
 import json
+import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -48,6 +51,24 @@ PLANNER_TASK_ID = "select-preset"
 MAX_SELECTION_FILE_BYTES = 1024 * 1024
 MAX_TEXT_CHARS = 4_000
 MAX_LIST_ITEMS = 16
+SELECTION_RECORD_VERSION = 1
+SELECTION_RECORD_KEYS = frozenset(
+    {"record_version", "selection", "host_binding"}
+)
+HOST_BINDING_KEYS = frozenset(
+    {
+        "objective",
+        "workdir",
+        "max_agents",
+        "max_concurrency",
+        "allowed_presets",
+        "parameter_digest",
+        "selection_digest",
+        "workflow_ir_digest",
+    }
+)
+PRESET_SEMANTIC_OBJECTIVE = "__auto_planner_v1_preset_contract_objective__"
+PRESET_SEMANTIC_WORKDIR = "/__auto_planner_v1_preset_contract_workdir__"
 
 PLANNER_LIMITS = {
     "max_result_bytes": 256 * 1024,
@@ -182,6 +203,18 @@ def _registry_entries() -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for name in sorted(known):
         definition = swarm_presets.PRESETS[name]
+        try:
+            semantic_ir = swarm_presets.render_preset(
+                name,
+                objective=PRESET_SEMANTIC_OBJECTIVE,
+                workdir=PRESET_SEMANTIC_WORKDIR,
+                max_agents=64,
+                max_concurrency=swarm_presets.MAX_PRESET_CONCURRENCY,
+            )
+        except Exception as exc:
+            raise AutoPlannerError(
+                f"preset {name} semantic contract unavailable: {exc}"
+            ) from exc
         entries.append(
             {
                 "name": name,
@@ -190,6 +223,7 @@ def _registry_entries() -> list[dict[str, Any]]:
                 "use_when": list(PRESET_GUIDANCE[name]["use_when"]),
                 "avoid_when": list(PRESET_GUIDANCE[name]["avoid_when"]),
                 "compiler": "swarm_presets.render_preset",
+                "semantic_digest": _digest(semantic_ir),
                 "read_only": True,
                 "human_gate": True,
             }
@@ -218,8 +252,10 @@ def _registry_payload() -> dict[str, Any]:
 
 def _normalize_allowed_presets(raw: Sequence[str] | None) -> tuple[str, ...]:
     known = tuple(sorted(swarm_presets.PRESETS))
-    if not raw:
+    if raw is None:
         return known
+    if not raw:
+        raise AutoPlannerError("allowed presets must contain at least one preset")
     if any(not isinstance(item, str) or not item.strip() for item in raw):
         raise AutoPlannerError("allowed presets must be non-empty strings")
     cleaned = [item.strip() for item in raw]
@@ -267,12 +303,19 @@ def _planner_context(
         raise AutoPlannerError(
             "no allowed preset fits max_agents; increase the host budget or change the allowlist"
         )
+    eligible_digests = {
+        entry["name"]: entry["semantic_digest"]
+        for entry in registry["presets"]
+        if entry["name"] in eligible
+    }
     contract_payload = {
         "registry_version": REGISTRY_VERSION,
         "registry_digest": registry_digest,
         "adapter_version": ADAPTER_VERSION,
         "action": PLANNER_ACTION,
+        "requested_presets": list(requested),
         "eligible_presets": eligible,
+        "eligible_preset_semantic_digests": eligible_digests,
         "max_agents": maximum_agents,
         "max_concurrency": concurrency,
     }
@@ -293,13 +336,17 @@ def _parameter_digest(
     objective: str,
     workdir: str,
 ) -> str:
+    # ``workdir`` remains a compatibility-only keyword for callers.  It is
+    # deliberately excluded from the model-visible digest and is bound later
+    # in the host-owned saved selection record.
+    _ = workdir
     return _digest(
         {
             "contract_digest": context.contract_digest,
             "objective": objective,
-            "workdir": workdir,
             "max_agents": context.max_agents,
             "max_concurrency": context.max_concurrency,
+            "requested_presets": list(context.requested_presets),
             "eligible_presets": list(context.eligible_presets),
         }
     )
@@ -451,10 +498,7 @@ def _validate_selection(
         raise AutoPlannerError(
             f"planner selection keys mismatch: missing={missing} unknown={unknown}"
         )
-    if (
-        isinstance(raw["registry_version"], bool)
-        or raw["registry_version"] != REGISTRY_VERSION
-    ):
+    if type(raw["registry_version"]) is not int or raw["registry_version"] != REGISTRY_VERSION:
         raise AutoPlannerError("planner registry_version mismatch")
     for key, expected in (
         ("registry_digest", context.registry_digest),
@@ -534,6 +578,84 @@ def _validate_selection(
     }
 
 
+def _build_selection_record(
+    selection: Mapping[str, Any],
+    *,
+    objective: str,
+    workdir: str,
+    context: PlannerContext,
+    parameter_digest: str,
+    workflow_ir_digest: str,
+) -> dict[str, Any]:
+    """Create the closed host-owned replay record written after validation."""
+
+    return {
+        "record_version": SELECTION_RECORD_VERSION,
+        "selection": dict(selection),
+        "host_binding": {
+            "objective": objective,
+            "workdir": workdir,
+            "max_agents": context.max_agents,
+            "max_concurrency": context.max_concurrency,
+            "allowed_presets": list(context.requested_presets),
+            "parameter_digest": parameter_digest,
+            "selection_digest": _digest(selection),
+            "workflow_ir_digest": workflow_ir_digest,
+        },
+    }
+
+
+def _validate_selection_record(
+    raw: Any,
+    *,
+    objective: str,
+    workdir: str,
+    context: PlannerContext,
+    parameter_digest: str,
+) -> tuple[dict[str, Any], str]:
+    if not isinstance(raw, dict) or set(raw) != SELECTION_RECORD_KEYS:
+        unknown = sorted(set(raw) - SELECTION_RECORD_KEYS) if isinstance(raw, dict) else []
+        missing = sorted(SELECTION_RECORD_KEYS - set(raw)) if isinstance(raw, dict) else sorted(SELECTION_RECORD_KEYS)
+        raise AutoPlannerError(
+            f"saved planner selection record keys mismatch: missing={missing} unknown={unknown}"
+        )
+    if type(raw["record_version"]) is not int or raw["record_version"] != SELECTION_RECORD_VERSION:
+        raise AutoPlannerError("saved planner selection record_version mismatch")
+    binding = raw["host_binding"]
+    if not isinstance(binding, dict) or set(binding) != HOST_BINDING_KEYS:
+        unknown = sorted(set(binding) - HOST_BINDING_KEYS) if isinstance(binding, dict) else []
+        missing = sorted(HOST_BINDING_KEYS - set(binding)) if isinstance(binding, dict) else sorted(HOST_BINDING_KEYS)
+        raise AutoPlannerError(
+            f"saved planner host_binding keys mismatch: missing={missing} unknown={unknown}"
+        )
+    if binding["objective"] != objective:
+        raise AutoPlannerError("saved planner objective binding mismatch")
+    if binding["workdir"] != workdir:
+        raise AutoPlannerError("saved planner workdir binding mismatch")
+    if type(binding["max_agents"]) is not int or binding["max_agents"] != context.max_agents:
+        raise AutoPlannerError("saved planner max_agents binding mismatch")
+    if type(binding["max_concurrency"]) is not int or binding["max_concurrency"] != context.max_concurrency:
+        raise AutoPlannerError("saved planner max_concurrency binding mismatch")
+    if binding["allowed_presets"] != list(context.requested_presets):
+        raise AutoPlannerError("saved planner allowlist binding mismatch")
+    if binding["parameter_digest"] != parameter_digest:
+        raise AutoPlannerError("saved planner parameter_digest binding mismatch")
+    selection = _validate_selection(
+        raw["selection"],
+        context,
+        parameter_digest=parameter_digest,
+    )
+    if binding["selection_digest"] != _digest(selection):
+        raise AutoPlannerError("saved planner selection_digest binding mismatch")
+    workflow_ir_digest = binding["workflow_ir_digest"]
+    if (
+        not isinstance(workflow_ir_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", workflow_ir_digest) is None
+    ):
+        raise AutoPlannerError("saved planner workflow_ir_digest binding is invalid")
+    return selection, workflow_ir_digest
+
+
 def _compile_selection(
     selection: Mapping[str, Any],
     *,
@@ -541,6 +663,22 @@ def _compile_selection(
     workdir: str,
     context: PlannerContext,
 ) -> dict[str, Any]:
+    try:
+        current_context = _planner_context(
+            max_agents=context.max_agents,
+            max_concurrency=context.max_concurrency,
+            allowed_presets=context.requested_presets,
+        )
+    except AutoPlannerError:
+        raise
+    if (
+        current_context.registry_digest != context.registry_digest
+        or current_context.contract_digest != context.contract_digest
+    ):
+        raise AutoPlannerError(
+            "preset registry or semantic contract changed after planner selection"
+        )
+    context = current_context
     selected = selection["selected_preset"]
     workflow_ir = swarm_presets.render_preset(
         selected,
@@ -580,7 +718,7 @@ def _compile_selection(
         },
         "safety": {
             "model_generated_dag": False,
-            "target_workdir_read_during_planning": False,
+            "target_workdir_read_during_planning": "unknown",
             "access": "read_only",
             "hidden_retry": False,
             "automatic_model_upgrade": False,
@@ -616,8 +754,6 @@ def _load_selection_file(path: str | Path) -> Any:
         raise
     except (OSError, json.JSONDecodeError) as exc:
         raise AutoPlannerError(f"cannot read selection file {source}: {exc}") from exc
-    if isinstance(value, dict) and "selection" in value:
-        return value["selection"]
     return value
 
 
@@ -625,7 +761,7 @@ def _contract_output(context: PlannerContext) -> dict[str, Any]:
     registry = _registry_payload()
     schema_template = _selection_schema(
         context,
-        parameter_digest="<bound-to-objective-workdir-and-host-parameters>",
+        parameter_digest="<bound-to-objective-and-host-parameters>",
     )
     schema_template["properties"]["parameter_digest"] = {"type": "string"}
     return {
@@ -645,7 +781,11 @@ def _contract_output(context: PlannerContext) -> dict[str, Any]:
             "max_agents": context.max_agents,
             "max_concurrency": context.max_concurrency,
             "objective": {"sent_to_model": True},
-            "workdir": {"sent_to_model": False, "read_during_planning": False},
+            "workdir": {
+                "sent_to_model": False,
+                "path_metadata_checked_before_run": True,
+                "read_during_planning": "unknown",
+            },
         },
         "selection_schema_template": schema_template,
         "adapter_contract": {
@@ -720,24 +860,171 @@ def _selection_from_summary(
             f"planner task did not succeed: status={entry.get('status')!r} error={entry.get('error')!r}"
         )
     reference = entry.get("output_artifact")
-    if not isinstance(reference, dict):
-        raise PlannerExecutionError("planner task is missing its output artifact")
+    _validate_selection_artifact_reference(reference, run_dir=run_dir)
     value = ArtifactStore(run_dir, limits).load_json(reference)
     if not isinstance(value, dict):
         raise PlannerExecutionError("planner output artifact must contain an object")
     return value, entry
 
 
+def _validate_selection_artifact_reference(
+    reference: Any,
+    *,
+    run_dir: Path,
+) -> None:
+    expected_reference_keys = {"$artifact"}
+    if not isinstance(reference, dict) or set(reference) != expected_reference_keys:
+        raise PlannerExecutionError("planner selection artifact reference shape is invalid")
+    metadata = reference["$artifact"]
+    expected_metadata_keys = {
+        "version",
+        "id",
+        "sha256",
+        "path",
+        "bytes",
+        "media_type",
+        "task_id",
+    }
+    if not isinstance(metadata, dict) or set(metadata) != expected_metadata_keys:
+        raise PlannerExecutionError("planner selection artifact metadata keys are invalid")
+    if type(metadata["version"]) is not int or metadata["version"] != 1:
+        raise PlannerExecutionError("planner selection artifact version is invalid")
+    digest = metadata["sha256"]
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise PlannerExecutionError("planner selection artifact sha256 is invalid")
+    if metadata["id"] != f"sha256:{digest}":
+        raise PlannerExecutionError("planner selection artifact id is invalid")
+    if type(metadata["bytes"]) is not int or metadata["bytes"] < 0:
+        raise PlannerExecutionError("planner selection artifact bytes is invalid")
+    if metadata["media_type"] != "application/json":
+        raise PlannerExecutionError("planner selection artifact media_type is invalid")
+    if metadata["task_id"] != PLANNER_TASK_ID:
+        raise PlannerExecutionError("planner selection artifact task_id is invalid")
+    raw_path = metadata["path"]
+    expected_relative = f"artifacts/sha256/{digest[:2]}/{digest}.json"
+    if not isinstance(raw_path, str) or raw_path != expected_relative:
+        raise PlannerExecutionError("planner selection artifact path is invalid")
+    candidate = (run_dir.resolve() / Path(raw_path)).resolve()
+    expected = (run_dir.resolve() / Path(expected_relative)).resolve()
+    if candidate != expected or not candidate.is_relative_to(run_dir.resolve() / "artifacts"):
+        raise PlannerExecutionError("planner selection artifact path is not canonical")
+
+
+def _canonical_path_without_reparse(value: str, *, label: str) -> Path:
+    lexical = Path(value).expanduser()
+    try:
+        legacy._assert_no_reparse_components(lexical, label)
+        resolved = lexical.resolve(strict=False)
+    except (legacy.SpecError, OSError, RuntimeError, ValueError) as exc:
+        raise AutoPlannerError(f"cannot safely resolve {label}: {exc}") from exc
+    try:
+        legacy._assert_no_reparse_components(resolved, label)
+    except legacy.SpecError as exc:
+        raise AutoPlannerError(f"cannot safely resolve {label}: {exc}") from exc
+    return resolved
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    try:
+        return (
+            first == second
+            or first.is_relative_to(second)
+            or second.is_relative_to(first)
+        )
+    except ValueError:
+        return False
+
+
+def _path_variants(path_text: str, resolved: Path) -> set[str]:
+    values = {path_text, str(resolved)}
+    variants: set[str] = set()
+    for value in values:
+        normalized = value.replace("\\", "/").rstrip("/").casefold()
+        if len(normalized) >= 4:
+            variants.add(normalized)
+            variants.add(normalized.replace("/", "\\"))
+    return variants
+
+
+def _preflight_planner_paths(
+    *,
+    objective: str,
+    workdir: str,
+    requested_run_dir: str | None,
+) -> tuple[str, Path]:
+    """Validate planner output/temp paths before creating any planner files."""
+
+    target = _canonical_path_without_reparse(workdir, label="workdir")
+    if not target.is_dir():
+        raise AutoPlannerError(f"workdir must be an existing directory: {target}")
+    objective_normalized = objective.replace("\\", "/").casefold()
+    if any(
+        variant in objective_normalized
+        for variant in _path_variants(workdir, target)
+    ):
+        raise AutoPlannerError(
+            "objective must not contain the target workdir or a path variant"
+        )
+
+    configured_runs_root = os.environ.get("DYNWF_RUNS_ROOT")
+    runs_root = _canonical_path_without_reparse(
+        configured_runs_root or str(legacy._runs_root()),
+        label="planner runs root",
+    )
+    if _paths_overlap(target, runs_root):
+        raise AutoPlannerError("planner runs root cannot overlap workdir")
+
+    requested: Path | None = None
+    if requested_run_dir is not None:
+        requested = _canonical_path_without_reparse(
+            requested_run_dir,
+            label="requested planner run directory",
+        )
+        if not requested.is_relative_to(runs_root):
+            raise AutoPlannerError(
+                f"requested planner run directory must be inside {runs_root}"
+            )
+        if _paths_overlap(target, requested):
+            raise AutoPlannerError(
+                "requested planner run directory cannot overlap workdir"
+            )
+
+    temp_root = _canonical_path_without_reparse(
+        tempfile.gettempdir(),
+        label="planner temporary root",
+    )
+    # A temporary workspace is created as a child of this root.  Reject a
+    # target that contains the temporary root; a normal target below the OS
+    # temp root remains disjoint from a sibling temporary workspace.
+    if temp_root == target or temp_root.is_relative_to(target):
+        raise AutoPlannerError("planner temporary workspace would overlap workdir")
+    return str(target), runs_root
+
+
+def _assert_workspace_disjoint(target: str, workspace: Path) -> None:
+    target_path = _canonical_path_without_reparse(target, label="workdir")
+    workspace_path = _canonical_path_without_reparse(
+        str(workspace),
+        label="planner temporary workspace",
+    )
+    if _paths_overlap(target_path, workspace_path):
+        raise AutoPlannerError("planner temporary workspace cannot overlap workdir")
+
+
 def _write_evidence(
     *,
     run_dir: Path,
     limits: RuntimeLimits,
-    selection: Mapping[str, Any],
+    selection_record: Mapping[str, Any],
     compiled: Mapping[str, Any],
     result: Mapping[str, Any],
 ) -> None:
     for name, value, label in (
-        ("planner-selection.validated.json", selection, "validated planner selection"),
+        (
+            "planner-selection.validated.json",
+            selection_record,
+            "validated planner selection record",
+        ),
         ("workflow-ir.declared.json", compiled["workflow_ir"], "declared Workflow IR"),
         ("auto-plan.json", result, "Auto Planner result"),
     ):
@@ -757,6 +1044,11 @@ def _run_auto_plan(
     context: PlannerContext,
     requested_run_dir: str | None,
 ) -> dict[str, Any]:
+    workdir, runs_root = _preflight_planner_paths(
+        objective=objective,
+        workdir=workdir,
+        requested_run_dir=requested_run_dir,
+    )
     parameter_digest = _parameter_digest(
         context,
         objective=objective,
@@ -769,6 +1061,7 @@ def _run_auto_plan(
     try:
         with tempfile.TemporaryDirectory(prefix="dynwf-auto-planner-v1-") as temporary:
             workspace = Path(temporary).resolve()
+            _assert_workspace_disjoint(workdir, workspace)
             spec = _planner_spec(
                 objective=objective,
                 context=context,
@@ -778,13 +1071,24 @@ def _run_auto_plan(
             )
             spec["preflight"].update(codex_identity)
             spec["preflight"]["ack_external_model_export"] = True
-            runs_root = legacy._runs_root()
             legacy._prepare_run_root(runs_root, spec, codex_home)
             run_dir = legacy._select_run_dir(
                 runs_root,
                 PLANNER_RUN_NAME,
                 requested_run_dir,
             )
+            run_dir = _canonical_path_without_reparse(
+                str(run_dir),
+                label="selected planner run directory",
+            )
+            if not run_dir.is_relative_to(runs_root):
+                raise AutoPlannerError(
+                    f"selected planner run directory must be inside {runs_root}"
+                )
+            if _paths_overlap(Path(workdir), run_dir):
+                raise AutoPlannerError(
+                    "selected planner run directory cannot overlap workdir"
+                )
             # Keep stdout as a single machine-readable result. Runner progress is
             # still visible on stderr and retained in the ordinary run evidence.
             with contextlib.redirect_stdout(sys.stderr):
@@ -797,7 +1101,13 @@ def _run_auto_plan(
                         resume=False,
                     )
                 )
-    except (legacy.WorkflowError, legacy.SpecError, ArtifactLimitError, ValueError) as exc:
+    except (
+        legacy.WorkflowError,
+        legacy.SpecError,
+        ArtifactLimitError,
+        OSError,
+        ValueError,
+    ) as exc:
         raise PlannerExecutionError(str(exc)) from exc
 
     limits = RuntimeLimits.from_mapping(spec["limits"])
@@ -817,6 +1127,14 @@ def _run_auto_plan(
             objective=objective,
             workdir=workdir,
             context=context,
+        )
+        selection_record = _build_selection_record(
+            selection,
+            objective=objective,
+            workdir=workdir,
+            context=context,
+            parameter_digest=parameter_digest,
+            workflow_ir_digest=compiled["workflow_ir_digest"],
         )
     except AutoPlannerError as exc:
         raise PlannerExecutionError(
@@ -843,7 +1161,8 @@ def _run_auto_plan(
             "output_artifact": entry.get("output_artifact"),
             "workspace_ephemeral": True,
             "target_workdir_sent_to_planner": False,
-            "target_workdir_read_during_planning": False,
+            "target_workdir_path_metadata_checked_by_host": True,
+            "target_workdir_read_during_planning": "unknown",
         },
         "selection": selection,
         "adapter": {
@@ -854,7 +1173,7 @@ def _run_auto_plan(
     _write_evidence(
         run_dir=run_dir,
         limits=limits,
-        selection=selection,
+        selection_record=selection_record,
         compiled=compiled,
         result=result,
     )
@@ -916,7 +1235,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_utf8_stdio() -> None:
+    """Use UTF-8 on real Windows streams without disturbing test redirects."""
+
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.StringIO):
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="strict")
+            except (OSError, ValueError):
+                # Captured or host-provided streams may not permit reconfigure;
+                # leave them untouched rather than replacing the stream.
+                continue
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     if args.command == "auto-plan" and not args.ack_external_model_export:
         print(
@@ -943,15 +1279,20 @@ def main(argv: list[str] | None = None) -> int:
                 label="workdir",
                 maximum=swarm_presets.MAX_WORKDIR_CHARS,
             )
-            parameter_digest = _parameter_digest(
-                context,
-                objective=objective,
-                workdir=workdir,
-            )
             if args.command == "auto-plan-apply":
-                selection = _validate_selection(
-                    _load_selection_file(args.selection),
+                workdir = str(
+                    _canonical_path_without_reparse(workdir, label="workdir")
+                )
+                parameter_digest = _parameter_digest(
                     context,
+                    objective=objective,
+                    workdir=workdir,
+                )
+                selection, expected_workflow_ir_digest = _validate_selection_record(
+                    _load_selection_file(args.selection),
+                    objective=objective,
+                    workdir=workdir,
+                    context=context,
                     parameter_digest=parameter_digest,
                 )
                 compiled = _compile_selection(
@@ -960,6 +1301,10 @@ def main(argv: list[str] | None = None) -> int:
                     workdir=workdir,
                     context=context,
                 )
+                if compiled["workflow_ir_digest"] != expected_workflow_ir_digest:
+                    raise AutoPlannerError(
+                        "saved planner workflow_ir_digest binding mismatch"
+                    )
                 result = {
                     "operation": "auto-plan-apply",
                     "model_calls": 0,

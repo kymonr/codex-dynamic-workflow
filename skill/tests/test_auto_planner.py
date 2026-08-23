@@ -90,6 +90,40 @@ def valid_selection(
     }
 
 
+def selection_record(
+    planner_context,
+    *,
+    objective: str,
+    workdir: str,
+    selected: str = "design-swarm",
+) -> dict:
+    selection = valid_selection(
+        planner_context,
+        objective=objective,
+        workdir=workdir,
+        selected=selected,
+    )
+    parameter_digest = auto_planner._parameter_digest(
+        planner_context,
+        objective=objective,
+        workdir=workdir,
+    )
+    compiled = auto_planner._compile_selection(
+        selection,
+        objective=objective,
+        workdir=workdir,
+        context=planner_context,
+    )
+    return auto_planner._build_selection_record(
+        selection,
+        objective=objective,
+        workdir=workdir,
+        context=planner_context,
+        parameter_digest=parameter_digest,
+        workflow_ir_digest=compiled["workflow_ir_digest"],
+    )
+
+
 class AutoPlannerContractTests(unittest.TestCase):
     def test_contract_is_deterministic_zero_model_and_zero_write(self) -> None:
         first = auto_planner._contract_output(context())
@@ -122,6 +156,100 @@ class AutoPlannerContractTests(unittest.TestCase):
             context(max_agents=18, max_concurrency=8)
         with self.assertRaisesRegex(auto_planner.AutoPlannerError, "between 1 and 10"):
             context(max_agents=24, max_concurrency=11)
+
+    def test_explicit_empty_allowlist_fails_closed(self) -> None:
+        with self.assertRaisesRegex(auto_planner.AutoPlannerError, "at least one"):
+            auto_planner._planner_context(
+                max_agents=24,
+                max_concurrency=8,
+                allowed_presets=[],
+            )
+
+    def test_parameter_digest_does_not_disclose_or_bind_workdir(self) -> None:
+        planner_context = context()
+        first = auto_planner._parameter_digest(
+            planner_context,
+            objective="Review a bounded repository",
+            workdir=r"C:\private\first",
+        )
+        second = auto_planner._parameter_digest(
+            planner_context,
+            objective="Review a bounded repository",
+            workdir=r"C:\private\second",
+        )
+        self.assertEqual(first, second)
+
+    def test_requested_allowlist_changes_contract_digest(self) -> None:
+        all_presets = context()
+        design_only = auto_planner._planner_context(
+            max_agents=24,
+            max_concurrency=8,
+            allowed_presets=["design-swarm"],
+        )
+        self.assertNotEqual(all_presets.contract_digest, design_only.contract_digest)
+
+    def test_semantic_preset_drift_invalidates_compile(self) -> None:
+        planner_context = context()
+        objective = "Design a bounded API"
+        workdir = "/bounded/work"
+        selection = auto_planner._validate_selection(
+            valid_selection(planner_context, objective=objective, workdir=workdir),
+            planner_context,
+            parameter_digest=auto_planner._parameter_digest(
+                planner_context, objective=objective, workdir=workdir
+            ),
+        )
+        original_render = swarm_presets.render_preset
+
+        def drifted_render(*args, **kwargs):
+            rendered = original_render(*args, **kwargs)
+            if kwargs.get("objective") == auto_planner.PRESET_SEMANTIC_OBJECTIVE:
+                rendered["nodes"][0]["config"]["prompt"] += " semantic drift"
+            return rendered
+
+        with mock.patch.object(auto_planner.swarm_presets, "render_preset", drifted_render):
+            with self.assertRaisesRegex(auto_planner.AutoPlannerError, "semantic contract changed"):
+                auto_planner._compile_selection(
+                    selection,
+                    objective=objective,
+                    workdir=workdir,
+                    context=planner_context,
+                )
+
+    def test_selection_artifact_metadata_is_strict(self) -> None:
+        digest = "a" * 64
+        reference = {
+            "$artifact": {
+                "version": 1,
+                "id": f"sha256:{digest}",
+                "sha256": digest,
+                "path": f"artifacts/sha256/aa/{digest}.json",
+                "bytes": 12,
+                "media_type": "application/json",
+                "task_id": auto_planner.PLANNER_TASK_ID,
+            }
+        }
+        auto_planner._validate_selection_artifact_reference(
+            reference,
+            run_dir=Path(self.temp.name if hasattr(self, "temp") else "/tmp"),
+        )
+        for field, value in (
+            ("version", 1.0),
+            ("bytes", True),
+            ("sha256", "A" * 64),
+            ("id", "sha256:" + "b" * 64),
+            ("media_type", "text/plain"),
+            ("task_id", "other-task"),
+            ("path", "artifacts/sha256/aa/other.json"),
+        ):
+            candidate = json.loads(json.dumps(reference))
+            candidate["$artifact"][field] = value
+            with self.subTest(field=field):
+                with self.assertRaises(auto_planner.PlannerExecutionError):
+                    auto_planner._validate_selection_artifact_reference(
+                        candidate,
+                        run_dir=Path("/tmp"),
+                    )
 
     def test_registry_guidance_drift_fails_closed(self) -> None:
         guidance = dict(auto_planner.PRESET_GUIDANCE)
@@ -278,14 +406,16 @@ class AutoPlannerCliTests(unittest.TestCase):
 
     def test_auto_plan_apply_is_zero_model_and_does_not_touch_workdir(self) -> None:
         planner_context = context()
-        objective = "Design a bounded workflow"
-        selection = valid_selection(
+        objective = "设计一个 bounded workflow 🧪"
+        record = selection_record(
             planner_context,
             objective=objective,
             workdir=str(self.target),
         )
         selection_path = self.root / "selection.json"
-        selection_path.write_text(json.dumps(selection), encoding="utf-8")
+        selection_path.write_text(
+            json.dumps(record, ensure_ascii=False), encoding="utf-8"
+        )
         with contextlib.redirect_stdout(io.StringIO()) as output:
             code = auto_planner.main(
                 [
@@ -307,6 +437,8 @@ class AutoPlannerCliTests(unittest.TestCase):
         self.assertFalse(self.target.exists())
         self.assertEqual(result["workflow_ir"]["workdir"], str(self.target))
         self.assertEqual(result["workflow_ir"]["name"], "design-swarm")
+        self.assertIn("设计", output.getvalue())
+        self.assertIn("🧪", output.getvalue())
         self.assertTrue(ops_cli._plan_preview(result["workflow_ir"])["execution_supported"])
 
     def test_auto_plan_requires_explicit_export_ack_before_any_run(self) -> None:
@@ -324,8 +456,215 @@ class AutoPlannerCliTests(unittest.TestCase):
         self.assertFalse(self.runs_root.exists())
         self.assertFalse(self.target.exists())
 
+    def test_auto_plan_apply_rejects_open_or_mutated_saved_record(self) -> None:
+        planner_context = context()
+        objective = "Design a bounded workflow"
+        record = selection_record(
+            planner_context,
+            objective=objective,
+            workdir=str(self.target),
+        )
+        candidates = []
+        extra = json.loads(json.dumps(record))
+        extra["unexpected"] = True
+        candidates.append(extra)
+        float_version = json.loads(json.dumps(record))
+        float_version["record_version"] = 1.0
+        candidates.append(float_version)
+        mutated = json.loads(json.dumps(record))
+        mutated["host_binding"]["workdir"] = str(self.root / "other-target")
+        candidates.append(mutated)
+        changed_selection = json.loads(json.dumps(record))
+        changed_selection["selection"]["selected_preset"] = "ultra-review"
+        for considered in changed_selection["selection"]["considered_presets"]:
+            considered["fit"] = (
+                "best" if considered["preset"] == "ultra-review" else "possible"
+            )
+        candidates.append(changed_selection)
+        changed_ir_digest = json.loads(json.dumps(record))
+        changed_ir_digest["host_binding"]["workflow_ir_digest"] = "f" * 64
+        candidates.append(changed_ir_digest)
+        for index, candidate in enumerate(candidates):
+            with self.subTest(index=index):
+                path = self.root / f"selection-{index}.json"
+                path.write_text(json.dumps(candidate), encoding="utf-8")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    code = auto_planner.main(
+                        [
+                            "auto-plan-apply",
+                            "--selection",
+                            str(path),
+                            "--objective",
+                            objective,
+                            "--workdir",
+                            str(self.target),
+                        ]
+                    )
+                self.assertEqual(code, 1)
+        path = self.root / "selection-cross-allowlist.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = auto_planner.main(
+                [
+                    "auto-plan-apply",
+                    "--selection",
+                    str(path),
+                    "--objective",
+                    objective,
+                    "--workdir",
+                    str(self.target),
+                    "--allow-preset",
+                    "design-swarm",
+                ]
+            )
+        self.assertEqual(code, 1)
+
+    def test_auto_plan_apply_rejects_parameter_conditional_ir_drift(self) -> None:
+        planner_context = context()
+        objective = "Design a bounded workflow"
+        record = selection_record(
+            planner_context,
+            objective=objective,
+            workdir=str(self.target),
+        )
+        selection_path = self.root / "selection-conditional-drift.json"
+        selection_path.write_text(json.dumps(record), encoding="utf-8")
+        original_render = swarm_presets.render_preset
+
+        def conditionally_drifted_render(*args, **kwargs):
+            rendered = original_render(*args, **kwargs)
+            if kwargs.get("objective") == objective:
+                rendered["nodes"][0]["config"]["prompt"] += " conditional drift"
+            return rendered
+
+        with mock.patch.object(
+            auto_planner.swarm_presets,
+            "render_preset",
+            conditionally_drifted_render,
+        ):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                with contextlib.redirect_stderr(io.StringIO()) as error:
+                    code = auto_planner.main(
+                        [
+                            "auto-plan-apply",
+                            "--selection",
+                            str(selection_path),
+                            "--objective",
+                            objective,
+                            "--workdir",
+                            str(self.target),
+                        ]
+                    )
+        self.assertEqual(code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("workflow_ir_digest binding mismatch", error.getvalue())
+
+    def test_auto_plan_apply_normalizes_relative_workdir_for_replay(self) -> None:
+        planner_context = context()
+        objective = "Design a bounded workflow"
+        absolute_target = (self.root / "relative-target").resolve()
+        record = selection_record(
+            planner_context,
+            objective=objective,
+            workdir=str(absolute_target),
+        )
+        selection_path = self.root / "selection-relative.json"
+        selection_path.write_text(json.dumps(record), encoding="utf-8")
+        with contextlib.chdir(self.root):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                code = auto_planner.main(
+                    [
+                        "auto-plan-apply",
+                        "--selection",
+                        str(selection_path),
+                        "--objective",
+                        objective,
+                        "--workdir",
+                        "relative-target",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["workflow_ir"]["workdir"], str(absolute_target))
+
+    def test_auto_plan_rejects_output_or_target_overlap_before_run(self) -> None:
+        objective = "AUTO_TEST_REVIEW inspect an existing pull request"
+        self.target.mkdir()
+        patches = self._planner_patches()
+        with mock.patch.dict(
+            os.environ,
+            {"DYNWF_RUNS_ROOT": str(self.target)},
+            clear=False,
+        ), patches[0], patches[1], patches[2]:
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = auto_planner.main(
+                    [
+                        "auto-plan",
+                        "--objective",
+                        objective,
+                        "--workdir",
+                        str(self.target),
+                        "--ack-external-model-export",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        self.assertEqual(list(self.target.iterdir()), [])
+
+    def test_auto_plan_rejects_objective_containing_target_path(self) -> None:
+        objective = f"AUTO_TEST_REVIEW inspect {self.target}"
+        self.target.mkdir()
+        patches = self._planner_patches()
+        with mock.patch.dict(
+            os.environ,
+            {"DYNWF_RUNS_ROOT": str(self.runs_root)},
+            clear=False,
+        ), patches[0], patches[1], patches[2]:
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = auto_planner.main(
+                    [
+                        "auto-plan",
+                        "--objective",
+                        objective,
+                        "--workdir",
+                        str(self.target),
+                        "--run-dir",
+                        str(self.runs_root / "planner-review"),
+                        "--ack-external-model-export",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        self.assertFalse(self.runs_root.exists())
+        self.assertEqual(list(self.target.iterdir()), [])
+
+    def test_auto_plan_rejects_regular_file_workdir_before_run(self) -> None:
+        file_target = self.root / "not-a-directory.txt"
+        file_target.write_text("unchanged", encoding="utf-8")
+        patches = self._planner_patches()
+        with mock.patch.dict(
+            os.environ,
+            {"DYNWF_RUNS_ROOT": str(self.runs_root)},
+            clear=False,
+        ), patches[0], patches[1], patches[2]:
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = auto_planner.main(
+                    [
+                        "auto-plan",
+                        "--objective",
+                        "AUTO_TEST_REVIEW inspect an existing pull request",
+                        "--workdir",
+                        str(file_target),
+                        "--run-dir",
+                        str(self.runs_root / "planner-review"),
+                        "--ack-external-model-export",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        self.assertEqual(file_target.read_text(encoding="utf-8"), "unchanged")
+        self.assertFalse(self.runs_root.exists())
+
     def test_one_luna_selection_compiles_ultra_review_without_target_access(self) -> None:
         run_dir = self.runs_root / "planner-review"
+        self.target.mkdir()
         patches = self._planner_patches()
         with mock.patch.dict(
             os.environ,
@@ -354,17 +693,23 @@ class AutoPlannerCliTests(unittest.TestCase):
         self.assertEqual(result["selection"]["selected_preset"], "ultra-review")
         self.assertEqual(result["workflow_ir"]["name"], "ultra-review")
         self.assertFalse(result["planner"]["target_workdir_sent_to_planner"])
-        self.assertFalse(result["planner"]["target_workdir_read_during_planning"])
+        self.assertTrue(
+            result["planner"]["target_workdir_path_metadata_checked_by_host"]
+        )
+        self.assertEqual(
+            result["planner"]["target_workdir_read_during_planning"],
+            "unknown",
+        )
         self.assertEqual(result["planner"]["attempt_count"], 1)
         self.assertEqual(result["planner"]["retry"], 0)
         self.assertIsNone(result["planner"]["upgrade"])
-        self.assertFalse(self.target.exists())
+        self.assertEqual(list(self.target.iterdir()), [])
         self.assertEqual(result["writes"], [str(run_dir.resolve())])
         self.assertTrue((run_dir / "planner-selection.validated.json").is_file())
         self.assertTrue((run_dir / "workflow-ir.declared.json").is_file())
         self.assertTrue((run_dir / "auto-plan.json").is_file())
         summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-        self.assertEqual(summary["succeeded"], 1)
+        self.assertEqual(summary["succeeded_count"], 1)
         self.assertEqual(len(summary["tasks"]), 1)
         self.assertEqual(summary["tasks"][0]["id"], auto_planner.PLANNER_TASK_ID)
         self.assertEqual(len(summary["tasks"][0]["attempts"]), 1)
@@ -380,7 +725,12 @@ class AutoPlannerCliTests(unittest.TestCase):
         self.assertNotIn("danger-full-access", joined)
 
     def test_invalid_or_escalated_planner_output_is_not_compiled(self) -> None:
-        for marker in ("AUTO_TEST_INVALID_CONSIDERED", "AUTO_TEST_NEEDS_ESCALATION"):
+        self.target.mkdir()
+        for marker in (
+            "AUTO_TEST_INVALID_CONSIDERED",
+            "AUTO_TEST_NEEDS_ESCALATION",
+            "AUTO_TEST_UNKNOWN_ROUTE",
+        ):
             with self.subTest(marker=marker):
                 run_dir = self.runs_root / marker.lower()
                 patches = self._planner_patches()
@@ -406,7 +756,7 @@ class AutoPlannerCliTests(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertEqual(output.getvalue(), "")
                 self.assertFalse((run_dir / "workflow-ir.declared.json").exists())
-                self.assertFalse(self.target.exists())
+                self.assertEqual(list(self.target.iterdir()), [])
 
 
 if __name__ == "__main__":

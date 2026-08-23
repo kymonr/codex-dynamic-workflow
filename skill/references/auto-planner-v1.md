@@ -46,7 +46,7 @@ The registry is built from `swarm_presets.PRESETS` and additional versioned sele
 - deterministic compiler identity;
 - read-only and human-gate properties.
 
-Registry guidance must cover the preset registry exactly. Missing or extra guidance fails closed. A SHA-256 registry digest and a context-specific contract digest bind the selection.
+Registry guidance must cover the preset registry exactly. Missing or extra guidance fails closed. A SHA-256 registry digest and a context-specific contract digest bind the selection. Each registry entry includes a fixed-sentinel semantic digest of the actual `swarm_presets.render_preset` output, so changes to a preset's DAG, prompts, schemas, profiles, budgets, or limits invalidate old selections. The requested allowlist is part of the contract. An omitted allowlist means all three presets; an explicitly empty allowlist is rejected.
 
 ## Parameter contract
 
@@ -58,7 +58,7 @@ The host owns:
 - preset allowlist;
 - permissions, models, timeouts, artifact limits, prompts, schemas, and workflow nodes.
 
-The model never receives the target workdir and the planner workspace is an empty temporary directory. An opaque parameter digest binds objective, workdir, budgets, and the eligible preset set without disclosing the workdir to the model.
+The model never receives the target workdir and the planner workspace is an empty temporary directory. An opaque parameter digest binds objective, budgets, the requested allowlist, and the eligible preset set without disclosing the workdir to the model. Before a planner run, the host requires an existing target directory, canonicalizes the target and every planner output boundary, rejects reparse components, verifies run-directory containment, rejects target/output overlap, and rejects objective text containing target path variants.
 
 Objective text is JSON encoded and its braces are neutralized before entering the planner prompt. Text such as `{{result:other-node}}` remains untrusted data and cannot become a result placeholder.
 
@@ -78,6 +78,8 @@ The selection must:
 - make `selected_preset` equal to that candidate;
 - echo exact registry, contract, and parameter digests;
 - return bounded rationale, signals, and uncertainty.
+
+After validation, the host writes `planner-selection.validated.json` as the strict record below. The record has exactly `record_version`, `selection`, and `host_binding` keys; `host_binding` has exactly `objective`, `workdir`, `max_agents`, `max_concurrency`, `allowed_presets`, `parameter_digest`, `selection_digest`, and `workflow_ir_digest`. `auto-plan-apply` accepts only this closed record, requires every input and selection binding to match, recompiles the preset, and requires the actual Workflow IR digest to equal the original host compilation. Unknown siblings, selection changes, parameter-dependent compiler drift, and mutated bindings are rejected; the record's `workdir` is host-owned and was never supplied by the model.
 
 Unknown keys, stale digests, duplicate candidates, missing candidates, multiple best candidates, or any model-authored graph fail closed.
 
@@ -99,12 +101,12 @@ The adapter then runs the production Workflow IR validator and `plan-ir` project
 - `workflow-ir.declared.json`;
 - `auto-plan.json`.
 
-The target workdir is neither read nor written during planning. The output reports one model call, the planner attempt metadata, selection, adapter digests, and generated IR.
+Before planning, the host resolves target path metadata for safety and boundary checks; it does not intentionally read target contents. The target argument is not sent to the planner and no target write path exists. Because the runtime does not audit filesystem reads by the child process, `target_workdir_read_during_planning` is reported as `unknown` rather than claiming an unobserved fact. The output reports one model call, the planner attempt metadata, selection, adapter digests, and generated IR.
 
 Exit codes:
 
 - `0`: contract, deterministic apply, or one-agent plan completed;
-- `1`: invalid host input, stale/invalid saved selection, or missing export acknowledgement;
-- `2`: planner process failure, escalation, malformed model output, semantic selection failure, or interruption.
+- `1`: semantic host input failure, stale/invalid saved selection, or missing export acknowledgement;
+- `2`: command-line usage/type error, planner process failure, escalation, malformed model output, semantic selection failure, or interruption.
 
-Auto Planner v1 does not execute `loop`, perform workspace/Git writes, hide retries, upgrade models, merge, release, or deploy.
+Auto Planner v1 does not execute `loop`, write the target workdir or Git state, hide retries, upgrade models, merge, release, or deploy. It writes only the bounded planner run evidence and uses an ephemeral planner workspace.

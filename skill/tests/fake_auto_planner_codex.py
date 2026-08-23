@@ -27,28 +27,62 @@ def main() -> int:
         print("unknown Auto Planner prompt", file=sys.stderr)
         return 7
 
-    eligible = json.loads(field(prompt, "ELIGIBLE_PRESETS_JSON"))
-    if not isinstance(eligible, list) or not eligible:
+    known_presets = {"design-swarm", "repo-sweep", "ultra-review"}
+    try:
+        eligible = json.loads(field(prompt, "ELIGIBLE_PRESETS_JSON"))
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"eligible preset fixture is malformed: {exc}", file=sys.stderr)
+        return 8
+    if (
+        not isinstance(eligible, list)
+        or not eligible
+        or any(not isinstance(item, str) or item not in known_presets for item in eligible)
+        or len(eligible) != len(set(eligible))
+    ):
         print("eligible preset fixture is malformed", file=sys.stderr)
         return 8
-    registry_version = int(field(prompt, "REGISTRY_VERSION"))
+    registry_version_text = field(prompt, "REGISTRY_VERSION")
+    if not re.fullmatch(r"[0-9]+", registry_version_text):
+        print("registry version fixture is malformed", file=sys.stderr)
+        return 8
+    registry_version = int(registry_version_text)
     registry_digest = field(prompt, "REGISTRY_DIGEST")
     contract_digest = field(prompt, "CONTRACT_DIGEST")
     parameter_digest = field(prompt, "PARAMETER_DIGEST")
 
-    if "AUTO_TEST_NEEDS_ESCALATION" in prompt:
+    markers = set(re.findall(r"\bAUTO_TEST_[A-Z0-9_]+\b", prompt))
+    known_markers = {
+        "AUTO_TEST_DESIGN",
+        "AUTO_TEST_REVIEW",
+        "AUTO_TEST_SWEEP",
+        "AUTO_TEST_INVALID_CONSIDERED",
+        "AUTO_TEST_NEEDS_ESCALATION",
+    }
+    unknown_markers = sorted(markers - known_markers)
+    if unknown_markers:
+        print(f"unknown fixture route: {unknown_markers}", file=sys.stderr)
+        return 9
+    if len(markers) != 1:
+        print("fixture objective must select exactly one explicit route", file=sys.stderr)
+        return 9
+    marker = next(iter(markers))
+    if marker == "AUTO_TEST_NEEDS_ESCALATION":
         envelope = {
             "workflow_status": "needs_escalation",
             "reason": "fixture requested planner escalation",
             "result": {},
         }
     else:
-        preferred = "design-swarm"
-        if "AUTO_TEST_REVIEW" in prompt:
-            preferred = "ultra-review"
-        elif "AUTO_TEST_SWEEP" in prompt:
-            preferred = "repo-sweep"
-        selected = preferred if preferred in eligible else eligible[0]
+        preferred = {
+            "AUTO_TEST_DESIGN": "design-swarm",
+            "AUTO_TEST_REVIEW": "ultra-review",
+            "AUTO_TEST_SWEEP": "repo-sweep",
+            "AUTO_TEST_INVALID_CONSIDERED": "design-swarm",
+        }[marker]
+        if preferred not in eligible:
+            print(f"fixture route preset is not eligible: {preferred}", file=sys.stderr)
+            return 9
+        selected = preferred
         considered = [
             {
                 "preset": name,
@@ -57,7 +91,7 @@ def main() -> int:
             }
             for name in eligible
         ]
-        if "AUTO_TEST_INVALID_CONSIDERED" in prompt:
+        if marker == "AUTO_TEST_INVALID_CONSIDERED":
             considered = considered[:-1]
         result = {
             "registry_version": registry_version,
