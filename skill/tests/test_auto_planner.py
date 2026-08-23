@@ -97,6 +97,16 @@ def selection_record(
     workdir: str,
     selected: str = "design-swarm",
 ) -> dict:
+    # Production auto-plan canonicalizes the target before compiling and
+    # persisting its replay record.  Mirror that boundary here because Windows
+    # hosted runners can expose %TEMP% through an 8.3 alias that Path.resolve()
+    # expands during auto-plan-apply.
+    workdir = str(
+        auto_planner._canonical_path_without_reparse(
+            workdir,
+            label="test workdir",
+        )
+    )
     selection = valid_selection(
         planner_context,
         objective=objective,
@@ -435,7 +445,10 @@ class AutoPlannerCliTests(unittest.TestCase):
         self.assertEqual(result["writes"], [])
         self.assertEqual(result["target_writes"], [])
         self.assertFalse(self.target.exists())
-        self.assertEqual(result["workflow_ir"]["workdir"], str(self.target))
+        self.assertEqual(
+            result["workflow_ir"]["workdir"],
+            record["host_binding"]["workdir"],
+        )
         self.assertEqual(result["workflow_ir"]["name"], "design-swarm")
         self.assertIn("设计", output.getvalue())
         self.assertIn("🧪", output.getvalue())
