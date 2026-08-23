@@ -271,7 +271,7 @@ class SwarmPresetRuntimeE2ETests(unittest.IsolatedAsyncioTestCase):
             "review-gate",
             decision=decision,
             actor="offline-e2e",
-            source="test",
+            source="host",
             expected_input_identity=waiting["input_identity"],
             note="preset runtime E2E",
         )
