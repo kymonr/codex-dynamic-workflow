@@ -40,6 +40,16 @@ def main(argv: list[str] | None = None) -> int:
         from auto_planner import main as auto_plan_main
 
         return auto_plan_main(arguments)
+    if arguments and arguments[0] in {
+        "writer-plan",
+        "writer-run",
+        "writer-status",
+        "writer-export",
+        "writer-cleanup",
+    }:
+        from writer_cli import main as writer_main
+
+        return writer_main(arguments)
 
     from runner import main as legacy_main
 
