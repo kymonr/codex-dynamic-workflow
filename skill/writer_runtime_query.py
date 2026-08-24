@@ -1,0 +1,192 @@
+"""Read-only Worktree Writer v1 status/export and explicit cleanup."""
+
+try:
+    from skill.writer_runtime_base import *
+    from skill.writer_runtime_candidate import *
+except ModuleNotFoundError:
+    from writer_runtime_base import *
+    from writer_runtime_candidate import *
+
+
+def _run_fingerprint(run_dir: Path) -> str:
+    records: list[dict[str, Any]] = []
+    for path in sorted(run_dir.rglob("*"), key=lambda item: item.as_posix().casefold()):
+        relative = path.relative_to(run_dir).as_posix()
+        if path.is_symlink():
+            records.append({"path": relative, "type": "symlink"})
+        elif path.is_dir():
+            records.append({"path": relative, "type": "directory"})
+        elif path.is_file():
+            records.append(
+                {
+                    "path": relative,
+                    "type": "file",
+                    "bytes": path.stat().st_size,
+                    "sha256": sha256_file(path),
+                    "mtime_ns": path.stat().st_mtime_ns,
+                }
+            )
+        else:
+            records.append({"path": relative, "type": "other"})
+    return canonical_digest(records)
+
+
+def status_writer(run_dir: str | Path) -> dict[str, Any]:
+    root = canonical_directory(run_dir, label="writer run directory")
+    before = _run_fingerprint(root)
+    checkpoint = _load_json_file(root / "checkpoint.json", label="writer checkpoint")
+    summary = _load_json_file(root / "summary.json", label="writer summary")
+    if not isinstance(checkpoint, dict) or checkpoint.get("runtime") != "worktree-writer-v1":
+        raise WriterRuntimeError("writer checkpoint runtime identity is invalid")
+    sequence = checkpoint.get("event_sequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+        raise WriterRuntimeError("writer checkpoint event_sequence is invalid")
+    store = RunStateStore(
+        root,
+        max_event_bytes=WRITER_LIMITS.max_event_bytes,
+        max_run_artifact_bytes=WRITER_LIMITS.max_run_artifact_bytes,
+    )
+    events = store.validate_journal(expected_sequence=sequence)
+    if summary != _public_summary(checkpoint):
+        raise WriterRuntimeError("writer summary does not match checkpoint")
+    state = checkpoint.get("state")
+    terminal = checkpoint.get("terminal")
+    if not isinstance(terminal, bool) or (terminal and state not in TERMINAL_STATES):
+        raise WriterRuntimeError("writer terminal state is invalid")
+    candidate = checkpoint.get("candidate")
+    if candidate is not None:
+        if not isinstance(candidate, dict):
+            raise WriterRuntimeError("writer candidate checkpoint is malformed")
+        package_path = Path(candidate["candidate_package_path"])
+        patch_path = Path(candidate["patch_path"])
+        if not package_path.is_relative_to(root) or not patch_path.is_relative_to(root):
+            raise WriterRuntimeError("writer candidate evidence escapes run directory")
+        if sha256_file(package_path) != candidate["candidate_package_sha256"]:
+            raise WriterRuntimeError("writer candidate package digest mismatch")
+        if sha256_file(patch_path) != candidate["patch_sha256"]:
+            raise WriterRuntimeError("writer patch digest mismatch")
+        candidate_package = _load_json_file(package_path, label="candidate package")
+        basis = dict(candidate_package)
+        revision = basis.pop("candidate_revision", None)
+        basis_digest = basis.pop("revision_basis_digest", None)
+        computed = canonical_digest(basis)
+        if basis_digest != computed or revision != f"sha256:{computed}":
+            raise WriterRuntimeError("candidate revision binding is invalid")
+        for item in candidate_package.get("files", []):
+            stored = root / item["stored_path"]
+            if not stored.is_file() or sha256_file(stored) != item["sha256"]:
+                raise WriterRuntimeError(f"candidate file evidence mismatch: {item.get('path')}")
+    after = _run_fingerprint(root)
+    if before != after:
+        raise WriterRuntimeError("writer-status modified the run directory")
+    return {
+        "operation": "writer-status",
+        "model_calls": 0,
+        "writes": [],
+        "run_dir": str(root),
+        "run_fingerprint": before,
+        "event_sequence": sequence,
+        "events": len(events),
+        "summary": summary,
+        "integrity": "match",
+    }
+
+
+def export_writer(run_dir: str | Path) -> dict[str, Any]:
+    status = status_writer(run_dir)
+    root = Path(status["run_dir"])
+    candidate = status["summary"].get("candidate")
+    if not isinstance(candidate, dict):
+        raise WriterRuntimeError("writer run has no captured candidate")
+    package = _load_json_file(Path(candidate["candidate_package_path"]), label="candidate package")
+    patch = Path(candidate["patch_path"]).read_text(encoding="utf-8", errors="strict")
+    files = []
+    for item in package["files"]:
+        payload = (root / item["stored_path"]).read_bytes()
+        files.append(
+            {
+                "path": item["path"],
+                "bytes": len(payload),
+                "sha256": sha256_bytes(payload),
+                "content_base64": base64.b64encode(payload).decode("ascii"),
+            }
+        )
+    return {
+        "operation": "writer-export",
+        "model_calls": 0,
+        "writes": [],
+        "candidate_package": package,
+        "patch": patch,
+        "files": files,
+        "run_fingerprint": status["run_fingerprint"],
+    }
+
+
+def cleanup_writer(
+    *,
+    run_dir: str | Path,
+    expected_run_id: str,
+    expected_package_digest: str,
+    ack_delete_isolated_worktree: bool,
+) -> dict[str, Any]:
+    if not ack_delete_isolated_worktree:
+        raise WriterRuntimeError(
+            "writer-cleanup requires --ack-delete-isolated-worktree"
+        )
+    status = status_writer(run_dir)
+    root = Path(status["run_dir"])
+    checkpoint = _load_json_file(root / "checkpoint.json", label="writer checkpoint")
+    if checkpoint.get("run_id") != expected_run_id:
+        raise WriterRuntimeError("writer cleanup run identity mismatch")
+    if checkpoint.get("package_digest") != expected_package_digest:
+        raise WriterRuntimeError("writer cleanup package digest mismatch")
+    if checkpoint.get("state") not in TERMINAL_STATES or not checkpoint.get("terminal"):
+        raise WriterRuntimeError("writer cleanup requires a terminal run")
+    if checkpoint.get("active_process_pid") is not None:
+        raise WriterRuntimeError("writer cleanup refuses an active process")
+    if checkpoint.get("candidate") is None:
+        raise WriterRuntimeError("writer cleanup requires captured candidate evidence")
+    canonical = repository_root(checkpoint["canonical_repository"])
+    current = repository_snapshot(canonical)
+    expected = checkpoint.get("canonical_post_create_snapshot")
+    if not isinstance(expected, dict):
+        raise WriterRuntimeError("writer cleanup lacks canonical identity evidence")
+    _canonical_core_unchanged(expected, current)
+    worktree = Path(checkpoint["worktree_path"]).resolve(strict=True)
+    lock_path = Path(checkpoint["lock_path"])
+    lock = _lock_record(lock_path)
+    if (
+        lock["run_id"] != expected_run_id
+        or lock["package_digest"] != expected_package_digest
+        or Path(lock["worktree_path"]).resolve(strict=True) != worktree
+        or Path(lock["repository"]).resolve(strict=True) != canonical
+    ):
+        raise WriterRuntimeError("writer cleanup lock/worktree identity mismatch")
+    run_git(canonical, ["worktree", "remove", "--force", str(worktree)])
+    if worktree.exists():
+        raise WriterRuntimeError("Git reported cleanup success but worktree still exists")
+    lock_path.unlink()
+    store = RunStateStore(
+        root,
+        max_event_bytes=WRITER_LIMITS.max_event_bytes,
+        max_run_artifact_bytes=WRITER_LIMITS.max_run_artifact_bytes,
+    )
+    checkpoint["cleanup"] = {"cleaned": True, "cleaned_at": now_iso()}
+    store.append_event(
+        "writer.worktree.cleaned",
+        {"run_id": expected_run_id, "worktree_path": str(worktree)},
+    )
+    store.write_checkpoint(checkpoint)
+    atomic_write_json(root / "summary.json", _public_summary(checkpoint))
+    return {
+        "operation": "writer-cleanup",
+        "model_calls": 0,
+        "run_id": expected_run_id,
+        "package_digest": expected_package_digest,
+        "worktree_deleted": True,
+        "lock_deleted": True,
+        "run_evidence_deleted": False,
+    }
+
+
+__all__ = ["status_writer", "export_writer", "cleanup_writer"]
