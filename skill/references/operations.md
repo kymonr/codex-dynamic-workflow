@@ -21,14 +21,15 @@ The JSON result includes:
 - node kind, dependencies and `dependency_policy`;
 - bounded condition and human-gate contracts;
 - prompt length, digest and a short preview instead of full prompt duplication;
-- static, map-child and verifier-child agent-claim projections;
+- static, map-child, verifier-child, and bounded-loop-child agent-claim projections;
 - executable and validated-only node kinds;
 - current resolved artifact limits;
-- warnings for advisory token budgets and per-agent timeout scope.
+- warnings for advisory token budgets, per-agent timeout scope, and an optional absolute whole-workflow deadline.
 
 `plan-ir` deliberately does **not** run allowed-root, sensitive-path, Codex executable identity or external-model export preflight. It never touches the declared `workdir`. A successful preview therefore proves that the declaration is structurally valid, not that `run-ir` is authorized or safe to start on the named path.
 
-The reference workflow exercises the complete currently executable set:
+The reference workflow exercises the complete currently executable non-loop
+control-flow set:
 
 ```text
 agent → map → verify → reduce → conditional
@@ -42,6 +43,9 @@ agent → map → verify → reduce → conditional
                               └─ record-rejected → finalize-rejected
 ```
 
+Use `examples/bounded-design-convergence.workflow-ir.json` for the separate
+Bounded Loop v1 execution path.
+
 The closeout paths are explicit and mutually exclusive. Both record nodes
 depend on `choose-gate-outcome`, `review-gate`, and `summarize-audit`; their
 prompts must carry both `{{result:review-gate}}` and
@@ -54,7 +58,7 @@ enum, required, and `additionalProperties: false` schema keywords. An
 unselected record and its finalizer propagate `skipped`; they are not executed
 and therefore do not create task directories.
 
-Replace the example `workdir` with one deliberately sanitized repository before running it. `loop` remains validated-only and is not silently executed.
+Replace the example `workdir` with one deliberately sanitized repository before running it. Only complete Bounded Loop v1 instances are executable; legacy `loop` declarations remain instance-level validated-only and are explicitly rejected. A declared `workflow_timeout_seconds` is an absolute deadline that survives resume and includes human-gate pause time.
 
 ## Run status
 

@@ -18,13 +18,20 @@ try:  # Package import from repository root.
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
     from skill.runtime.workflow_ir import (
         WorkflowIRValidationError,
+        executable_bounded_loops,
+        project_agent_claims,
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Installed skill directory.
     import runner as legacy
     from runtime.human_gate import HumanGateError, HumanGateStore
     from runtime.limits import ArtifactLimitError, RuntimeLimits
-    from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
+    from runtime.workflow_ir import (
+        WorkflowIRValidationError,
+        executable_bounded_loops,
+        project_agent_claims,
+        validate_workflow_ir,
+    )
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 PROMPT_PREVIEW_CHARS = 160
@@ -143,7 +150,11 @@ def _prompt_metadata(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _node_preview(node: dict[str, Any]) -> dict[str, Any]:
+def _node_preview(
+    node: dict[str, Any],
+    *,
+    executable_loop_ids: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     config = node["config"]
     preview: dict[str, Any] = {
         "id": node["id"],
@@ -205,9 +216,24 @@ def _node_preview(node: dict[str, Any]) -> dict[str, Any]:
             }
         )
     elif kind == "loop":
+        is_executable = node["id"] in executable_loop_ids
         preview.update(
             {
+                "executable_contract": (
+                    "bounded-loop-v1" if is_executable else None
+                ),
+                "initial_source": (
+                    node["depends_on"][0]
+                    if is_executable and len(node["depends_on"]) == 1
+                    else None
+                ),
+                "loop_claim_upper_bound": (
+                    config["max_iterations"] * len(config["body"])
+                    if is_executable
+                    else 0
+                ),
                 "max_iterations": config["max_iterations"],
+                "no_progress_limit": config.get("no_progress_limit"),
                 "body": list(config["body"]),
                 "stop_when": config["stop_when"],
             }
@@ -216,31 +242,7 @@ def _node_preview(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _agent_claim_projection(ir: dict[str, Any]) -> dict[str, Any]:
-    by_id = {node["id"]: node for node in ir["nodes"]}
-    static_claims = sum(
-        node["kind"] in {"agent", "reduce"} for node in ir["nodes"]
-    )
-    map_claims = sum(
-        node["config"]["item_limit"]
-        for node in ir["nodes"]
-        if node["kind"] == "map"
-    )
-    verify_claims = 0
-    for node in ir["nodes"]:
-        if node["kind"] != "verify":
-            continue
-        target = by_id[node["config"]["target"]]
-        verify_claims += target["config"]["item_limit"]
-    upper_bound = static_claims + map_claims + verify_claims
-    max_agents = ir["budgets"]["max_agents"]
-    return {
-        "static_agent_claims": static_claims,
-        "map_child_upper_bound": map_claims,
-        "verify_child_upper_bound": verify_claims,
-        "total_upper_bound": upper_bound,
-        "max_agents": max_agents,
-        "upper_bound_within_budget": upper_bound <= max_agents,
-    }
+    return dict(project_agent_claims(ir))
 
 
 def _plan_preview(raw: Any) -> dict[str, Any]:
@@ -251,19 +253,29 @@ def _plan_preview(raw: Any) -> dict[str, Any]:
         raise OpsCommandError(f"invalid Workflow IR limits: {exc}") from exc
 
     projection = _agent_claim_projection(ir)
+    executable_loop_ids = set(
+        executable_bounded_loops(ir["nodes"], ir["budgets"])
+    )
     unsupported = list(ir["execution"]["unsupported_node_kinds"])
     warnings = [
         "budgets.max_tokens is advisory; missing CLI usage cannot enforce a hard stop",
-        "soft_timeout_seconds and hard_timeout_seconds are per-agent, not whole-workflow wall-clock limits",
         "plan-ir does not run allowed-root, sensitive-path, Codex identity, or external-model export preflight",
     ]
+    if "workflow_timeout_seconds" in ir["budgets"]:
+        warnings.append(
+            "workflow_timeout_seconds is an absolute whole-workflow deadline; per-agent soft/hard timeouts are capped by its remaining time"
+        )
+    else:
+        warnings.append(
+            "soft_timeout_seconds and hard_timeout_seconds are per-agent, not whole-workflow wall-clock limits"
+        )
     if unsupported:
         warnings.append(
             "validated-only node kinds prevent execution: " + ", ".join(unsupported)
         )
     if not projection["upper_bound_within_budget"]:
         warnings.append(
-            "dynamic expansion upper bound exceeds max_agents; runtime will fail closed if actual expansion reaches the bound"
+            "agent claim projection exceeds max_agents; run-ir rejects the current plan before any dispatch"
         )
 
     return {
@@ -279,14 +291,27 @@ def _plan_preview(raw: Any) -> dict[str, Any]:
             "performed": False,
             "required_before_run": True,
         },
-        "execution_supported": not unsupported,
+        "execution_supported": (
+            not unsupported and projection["upper_bound_within_budget"]
+        ),
+        "execution_blockers": (
+            []
+            if projection["upper_bound_within_budget"]
+            else ["agent_claim_projection_exceeds_max_agents"]
+        ),
         "execution": ir["execution"],
         "budgets": ir["budgets"],
         "declared_limits": ir["limits"],
         "resolved_limits": resolved_limits,
         "agent_claim_projection": projection,
         "topological_order": _topological_order(ir["nodes"]),
-        "nodes": [_node_preview(node) for node in ir["nodes"]],
+        "nodes": [
+            _node_preview(
+                node,
+                executable_loop_ids=executable_loop_ids,
+            )
+            for node in ir["nodes"]
+        ],
         "warnings": warnings,
     }
 

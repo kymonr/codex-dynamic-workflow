@@ -2,7 +2,7 @@
 
 本文件定义 Workflow IR v3 中 `loop` 的第一版可信执行合同。它是有限、只读、可恢复的收敛循环，不执行模型生成的 Python、JavaScript、Shell、表达式、选择器或 DAG。
 
-在实现和 RC 完成前，`loop` 仍保持 validated-only；本合同不得被文档描述为已经可执行。
+完整满足本合同的 `loop` 实例现可由可信 runtime 执行。旧式或不完整的 `loop` 声明仍只在声明层通过校验，并在执行前被明确拒绝；runtime 不会静默迁移这些声明。
 
 ## 目标
 

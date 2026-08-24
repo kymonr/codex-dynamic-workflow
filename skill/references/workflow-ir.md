@@ -6,11 +6,15 @@ Workflow IR v3 是面向后续 Claude 风格 Dynamic Workflow Runtime 的声明�
 
 - IR 版本固定为整数 `3`。
 - 静态 `agent` 节点仍可编译为现有只读 v2 DAG。
-- Workflow IR v3 可信 runtime 现可执行 `agent`、`map`、`verify`、`reduce`、`conditional` 与 `human_gate`；`loop` 只验证、不执行。
-- `max_tokens` 是 advisory 字段；soft/hard timeout 是 per-agent 进程边界，而不是 whole-workflow 墙钟上限。
+- Workflow IR v3 可信 runtime 可执行 `agent`、`map`、`verify`、`reduce`、`conditional`、`human_gate`，以及满足 Bounded Loop v1 完整合同的 `loop` 实例。
+- `max_tokens` 是 advisory 字段；soft/hard timeout 仍是 per-agent 进程边界。可选的 `workflow_timeout_seconds` 是额外的 whole-workflow 绝对上界。
 
-Executable node kinds: `agent`, `map`, `verify`, `reduce`, `conditional`, `human_gate`.
-Validated-only node kinds: `loop`.
+Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `conditional`, `human_gate`.
+Validated-only node kinds: none.
+
+Only `loop` instances that fully satisfy the Bounded Loop v1 contract are executable. Legacy `loop` declarations remain instance-level validated-only and are explicitly rejected at execution.
+
+- 旧式或不完整的 `loop` 声明仍可通过声明级格式校验，但不会进入 executable 集合，也不会被静默迁移。完整实例合同见 [Bounded Loop v1](bounded-loop-v1.md)。
 - 所有 writer、外部状态、凭据、commit、push、merge、deploy 和破坏性权限仍受 Dynamic Workflow 的既有授权规则约束；IR 本身不是授权。
 
 ## 示例
@@ -74,6 +78,12 @@ py -3.12 skill\cli.py validate-ir --spec workflow-v3.json --emit-v2
 3. 外层依赖图必须无环；循环只允许由显式 `loop` 节点在自身版本化配置内表达。
 4. 仅处于 validated-only 集合的节点不会被自动执行、重试或降级；runner 会明确报告不可执行。
 5. 未来 IR 变更通过新的整数版本演进，不在 v3 下悄悄改变现有字段含义。
+
+## Bounded Loop v1 与 workflow deadline
+
+Bounded Loop v1 只接受 2..8 个顺序 `agent` 模板。每个模板必须使用 `{{loop_state}}`，最后一个模板必须返回固定 verifier Schema，`stop_when` 必须为 `verification_accept`。宿主根据候选输出的 canonical SHA-256 判断停滞；模型不能提供任意表达式或覆盖停止判断。
+
+`budgets.workflow_timeout_seconds` 可选，范围为 60..172800 秒。运行时在首次执行时持久化绝对 deadline；`resume-ir` 复用同一值，human gate 暂停时间计入。每个 agent 的实际可用时间不超过 per-agent timeout 与 whole-workflow 剩余时间中的较小值。省略该字段时，旧 IR 的 normalized shape 与 canonical digest 保持不变。
 
 ## Trusted map → verify → reduce runtime
 

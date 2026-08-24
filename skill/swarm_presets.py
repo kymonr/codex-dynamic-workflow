@@ -12,10 +12,15 @@ from typing import Any, Callable, Mapping
 try:  # Package import from repository root.
     from skill.runtime.workflow_ir import (
         WorkflowIRValidationError,
+        project_agent_claims,
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Installed skill directory.
-    from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
+    from runtime.workflow_ir import (
+        WorkflowIRValidationError,
+        project_agent_claims,
+        validate_workflow_ir,
+    )
 
 
 DEFAULT_MAX_AGENTS = 24
@@ -875,30 +880,7 @@ PRESETS: dict[str, PresetDefinition] = {
 
 
 def _projection(ir: Mapping[str, Any]) -> dict[str, int | bool]:
-    nodes = list(ir["nodes"])
-    by_id = {node["id"]: node for node in nodes}
-    static = sum(node["kind"] in {"agent", "reduce"} for node in nodes)
-    mapped = sum(
-        node["config"]["item_limit"]
-        for node in nodes
-        if node["kind"] == "map"
-    )
-    verified = 0
-    for node in nodes:
-        if node["kind"] != "verify":
-            continue
-        target = by_id[node["config"]["target"]]
-        verified += target["config"]["item_limit"]
-    total = static + mapped + verified
-    maximum = ir["budgets"]["max_agents"]
-    return {
-        "static_agent_claims": static,
-        "map_child_upper_bound": mapped,
-        "verify_child_upper_bound": verified,
-        "total_upper_bound": total,
-        "max_agents": maximum,
-        "upper_bound_within_budget": total <= maximum,
-    }
+    return project_agent_claims(ir)
 
 
 def _prompt_for_node(node: Mapping[str, Any]) -> str:

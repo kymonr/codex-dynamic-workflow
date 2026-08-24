@@ -25,6 +25,16 @@ PUBLIC_SURFACES = (
     "integration/AGENTS.dynamic-workflow.md",
     "skill/agents/openai.yaml",
 )
+CAPABILITY_SURFACES = (
+    "README.md",
+    "skill/references/workflow-ir.md",
+    "skill/references/cli-runner.md",
+)
+BOUNDED_LOOP_CAPABILITY_QUALIFIER = (
+    "Only `loop` instances that fully satisfy the Bounded Loop v1 contract are "
+    "executable. Legacy `loop` declarations remain instance-level validated-only "
+    "and are explicitly rejected at execution."
+)
 REQUIRED_RUNTIME_FILES = (
     "skill/runtime/__init__.py",
     "skill/runtime/limits.py",
@@ -35,7 +45,9 @@ REQUIRED_RUNTIME_FILES = (
     "skill/runtime/control_flow.py",
     "skill/runtime/condition.py",
     "skill/runtime/human_gate.py",
+    "skill/runtime/deadline.py",
     "skill/references/workflow-ir.md",
+    "skill/references/bounded-loop-v1.md",
 )
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"[A-Za-z]:[/\\]Users[/\\][^/\\\s]+", re.IGNORECASE),
@@ -144,12 +156,16 @@ def _validate_runtime_contract(root: Path, policy: dict[str, Any], errors: list[
         if ir_policy.get("current_version") != workflow_ir_module.IR_VERSION:
             errors.append("policy Workflow IR current_version disagrees with runtime")
         policy_kinds = ir_policy.get("validated_node_kinds")
-        if not isinstance(policy_kinds, list) or set(policy_kinds) != workflow_ir_module.NODE_KINDS:
+        if (
+            not isinstance(policy_kinds, list)
+            or policy_kinds != list(workflow_ir_module.NODE_KIND_ORDER)
+            or set(policy_kinds) != workflow_ir_module.NODE_KINDS
+        ):
             errors.append("policy Workflow IR node kinds disagree with runtime")
         executable = ir_policy.get("executable_node_kinds")
         if (
             not isinstance(executable, list)
-            or len(executable) != len(set(executable))
+            or executable != list(workflow_ir_module.EXECUTABLE_NODE_KIND_ORDER)
             or set(executable) != workflow_ir_module.EXECUTABLE_NODE_KINDS
         ):
             errors.append(
@@ -185,6 +201,37 @@ def _validate_runtime_contract(root: Path, policy: dict[str, Any], errors: list[
                 != workflow_ir_module.TIMEOUT_SCOPE
             ):
                 errors.append("policy timeout_scope disagrees with runtime")
+        _validate_bounded_loop_contract(ir_policy, workflow_ir_module, errors)
+
+
+def _validate_bounded_loop_contract(
+    ir_policy: dict[str, Any], workflow_ir_module: Any, errors: list[str]
+) -> None:
+    policy_contract = ir_policy.get("bounded_loop")
+    runtime_contract = getattr(workflow_ir_module, "BOUNDED_LOOP_CONTRACT", None)
+    if not isinstance(policy_contract, dict):
+        errors.append("policy workflow_ir.bounded_loop table is missing")
+        return
+    if not isinstance(runtime_contract, dict):
+        errors.append("runtime BOUNDED_LOOP_CONTRACT is missing")
+        return
+    if policy_contract != runtime_contract:
+        errors.append(
+            "policy workflow_ir.bounded_loop disagrees with runtime contract: "
+            f"policy={policy_contract!r} runtime={runtime_contract!r}"
+        )
+
+    optional_ranges = getattr(workflow_ir_module, "OPTIONAL_BUDGET_RANGES", {})
+    runtime_timeout_range = optional_ranges.get("workflow_timeout_seconds")
+    policy_timeout_range = (
+        policy_contract.get("workflow_timeout_min_seconds"),
+        policy_contract.get("workflow_timeout_max_seconds"),
+    )
+    if policy_timeout_range != runtime_timeout_range:
+        errors.append(
+            "policy bounded-loop workflow timeout range disagrees with "
+            "OPTIONAL_BUDGET_RANGES"
+        )
 
 
 def _expected_capability_matrix(policy: dict[str, Any]) -> str:
@@ -198,7 +245,11 @@ def _expected_capability_matrix(policy: dict[str, Any]) -> str:
     executable_set = set(executable)
     validated_only = [item for item in validated if item not in executable_set]
     executable_text = ", ".join(f"`{item}`" for item in executable)
-    validated_only_text = ", ".join(f"`{item}`" for item in validated_only)
+    validated_only_text = (
+        ", ".join(f"`{item}`" for item in validated_only)
+        if validated_only
+        else "none"
+    )
     return (
         f"Executable node kinds: {executable_text}.\n"
         f"Validated-only node kinds: {validated_only_text}."
@@ -237,28 +288,7 @@ def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[s
             if token not in readme:
                 errors.append(f"README.md must document {token}")
 
-    capability_matrix = _expected_capability_matrix(policy)
-    for relative in (
-        "README.md",
-        "skill/references/workflow-ir.md",
-        "skill/references/cli-runner.md",
-    ):
-        path = root / relative
-        if not path.is_file():
-            errors.append(f"capability surface is missing: {relative}")
-            continue
-        text = path.read_text(encoding="utf-8")
-        if not capability_matrix or capability_matrix not in text:
-            errors.append(
-                f"{relative} lacks the policy-derived Workflow IR capability matrix"
-            )
-        for stale in (
-            "`loop`、`conditional` 和 `human_gate` 仍会被严格校验",
-            "`loop`、`conditional` 和 `human_gate` 仍只验证、不执行",
-            "在 v3 控制流 runtime 完成前不会被静默执行或降级",
-        ):
-            if stale in text:
-                errors.append(f"{relative} contains stale capability text")
+    _validate_capability_surfaces(root, policy, errors)
 
     cli_doc = root / "skill" / "references" / "cli-runner.md"
     if cli_doc.is_file():
@@ -272,6 +302,33 @@ def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[s
         ):
             if token not in text:
                 errors.append(f"skill/references/cli-runner.md must document {token}")
+
+
+def _validate_capability_surfaces(
+    root: Path, policy: dict[str, Any], errors: list[str]
+) -> None:
+    capability_matrix = _expected_capability_matrix(policy)
+    for relative in CAPABILITY_SURFACES:
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"capability surface is missing: {relative}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not capability_matrix or capability_matrix not in text:
+            errors.append(
+                f"{relative} lacks the policy-derived Workflow IR capability matrix"
+            )
+        if BOUNDED_LOOP_CAPABILITY_QUALIFIER not in text:
+            errors.append(
+                f"{relative} lacks the bounded-loop instance-level qualifier"
+            )
+        for stale in (
+            "`loop`、`conditional` 和 `human_gate` 仍会被严格校验",
+            "`loop`、`conditional` 和 `human_gate` 仍只验证、不执行",
+            "在 v3 控制流 runtime 完成前不会被静默执行或降级",
+        ):
+            if stale in text:
+                errors.append(f"{relative} contains stale capability text")
 
 
 def _validate_repository_paths(root: Path, errors: list[str]) -> None:

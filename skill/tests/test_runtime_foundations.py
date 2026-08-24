@@ -153,6 +153,28 @@ class ArtifactTests(unittest.TestCase):
                 ):
                     store.load_json(reference)
 
+    def test_strict_artifact_identity_binds_task_id_id_path_and_media(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ArtifactStore(
+                Path(temporary), RuntimeLimits.from_mapping({})
+            )
+            reference = store.put_json("expected", {"value": "ok"})
+            self.assertEqual(
+                store.load_json(reference, expected_task_id="expected"),
+                {"value": "ok"},
+            )
+            mutations = {
+                "task": {"task_id": "other"},
+                "id": {"id": "sha256:" + "0" * 64},
+                "path": {"path": "artifacts/sha256/00/" + "0" * 64 + ".json"},
+                "media": {"media_type": "text/plain"},
+            }
+            for label, changed in mutations.items():
+                candidate = json.loads(json.dumps(reference))
+                candidate["$artifact"].update(changed)
+                with self.subTest(label=label), self.assertRaises(ArtifactLimitError):
+                    store.load_json(candidate, expected_task_id="expected")
+
 
 class StateStoreTests(unittest.TestCase):
     def test_checkpoint_and_events_are_versioned(self) -> None:
@@ -185,6 +207,61 @@ class StateStoreTests(unittest.TestCase):
             with self.assertRaises(ArtifactLimitError):
                 store.append_event("large.event", {"payload": "y" * 300})
             self.assertFalse((run_dir / "events.jsonl").exists())
+            self.assertEqual(store.sequence, 0)
+
+    def test_failed_event_append_rolls_back_sequence_and_journal_validates_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary)
+            store = RunStateStore(run_dir, max_event_bytes=160)
+            with self.assertRaises(ValueError):
+                store.append_event("too.large", {"payload": "x" * 500})
+            self.assertEqual(store.sequence, 0)
+            event = store.append_event("valid", {})
+            self.assertEqual(event["sequence"], 1)
+            checkpoint = store.write_checkpoint({"runtime": "fixture"})
+            self.assertEqual(
+                len(
+                    store.validate_journal(
+                        expected_sequence=checkpoint["event_sequence"]
+                    )
+                ),
+                1,
+            )
+            events_path = run_dir / "events.jsonl"
+            tampered = json.loads(events_path.read_text(encoding="utf-8"))
+            tampered["sequence"] = 2
+            events_path.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not continuous"):
+                store.validate_journal(expected_sequence=1)
+
+    def test_checkpoint_reserved_fields_cannot_be_overridden_by_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = RunStateStore(Path(temporary), max_event_bytes=1024)
+            event = store.append_event("valid", {})
+            checkpoint = store.write_checkpoint(
+                {
+                    "checkpoint_version": 999,
+                    "event_sequence": 999,
+                    "updated_at": "attacker-controlled",
+                    "runtime": "fixture",
+                }
+            )
+            self.assertEqual(checkpoint["checkpoint_version"], 1)
+            self.assertEqual(checkpoint["event_sequence"], event["sequence"])
+            self.assertNotEqual(checkpoint["updated_at"], "attacker-controlled")
+            self.assertEqual(store.load_checkpoint(), checkpoint)
+
+    def test_journal_rejects_boolean_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary)
+            store = RunStateStore(run_dir, max_event_bytes=1024)
+            event = store.append_event("valid", {})
+            event["sequence"] = True
+            (run_dir / "events.jsonl").write_text(
+                json.dumps(event) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "not continuous"):
+                store.validate_journal(expected_sequence=1)
 
     def test_spec_digest_ignores_mutable_preflight(self) -> None:
         base = {
