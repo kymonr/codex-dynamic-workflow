@@ -1,4 +1,4 @@
-"""Native Codex process adapter for one writer or one reviewer attempt."""
+"""Native Codex process adapter for one writer or one fresh reviewer attempt."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,15 +42,9 @@ class ProcessRoute:
     sandbox: str
 
 
-WRITER_ROUTE = ProcessRoute(
-    "luna", WRITER_MODEL, WRITER_EFFORT, WRITER_TIER, "workspace-write"
-)
+WRITER_ROUTE = ProcessRoute("luna", WRITER_MODEL, WRITER_EFFORT, WRITER_TIER, "workspace-write")
 REVIEWER_ROUTE = ProcessRoute(
-    "dynamic_workflow_sol_reviewer",
-    REVIEWER_MODEL,
-    REVIEWER_EFFORT,
-    None,
-    "read-only",
+    "dynamic_workflow_sol_reviewer", REVIEWER_MODEL, REVIEWER_EFFORT, None, "read-only"
 )
 
 
@@ -58,10 +53,7 @@ def writer_output_schema() -> dict[str, Any]:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "status": {
-                "type": "string",
-                "enum": ["completed", "needs_escalation"],
-            },
+            "status": {"type": "string", "enum": ["completed", "needs_escalation"]},
             "summary": {"type": "string"},
             "reported_effects": {
                 "type": "array",
@@ -70,29 +62,16 @@ def writer_output_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                     "properties": {
                         "path": {"type": "string"},
-                        "action": {
-                            "type": "string",
-                            "enum": ["create", "modify"],
-                        },
+                        "action": {"type": "string", "enum": ["create", "modify"]},
                     },
                     "required": ["path", "action"],
                 },
             },
-            "verification_notes": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "limitations": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
+            "verification_notes": {"type": "array", "items": {"type": "string"}},
+            "limitations": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
-            "status",
-            "summary",
-            "reported_effects",
-            "verification_notes",
-            "limitations",
+            "status", "summary", "reported_effects", "verification_notes", "limitations"
         ],
     }
 
@@ -135,6 +114,14 @@ def _build_command(
         "approval_policy=never",
         "-c",
         "features.multi_agent=false",
+        "-c",
+        "agents.enabled=false",
+        "-c",
+        "features.shell_tool=false",
+        "-c",
+        "features.code_mode=false",
+        "-c",
+        "web_search=disabled",
     ]
     if os.name == "nt":
         command += ["-c", "windows.sandbox=elevated"]
@@ -183,6 +170,7 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> str | None:
 
 
 def probe_codex_capabilities(codex_prefix: Sequence[str]) -> dict[str, Any]:
+    env = legacy._sanitized_child_env()
     try:
         result = subprocess.run(
             [*codex_prefix, "exec", "--help"],
@@ -191,32 +179,53 @@ def probe_codex_capabilities(codex_prefix: Sequence[str]) -> dict[str, Any]:
             stderr=subprocess.PIPE,
             timeout=30,
             check=False,
-            env=legacy._sanitized_child_env(),
+            env=env,
+        )
+        features = subprocess.run(
+            [*codex_prefix, "features", "list"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise WriterProcessError(
-            f"cannot probe Codex exec capabilities: {exc}"
-        ) from exc
-    help_text = (result.stdout + b"\n" + result.stderr).decode(
-        "utf-8", errors="replace"
-    )
+        raise WriterProcessError(f"cannot probe Codex capabilities: {exc}") from exc
+    help_text = (result.stdout + b"\n" + result.stderr).decode("utf-8", errors="replace")
+    feature_text = (features.stdout + b"\n" + features.stderr).decode("utf-8", errors="replace")
     required = [
-        "--ephemeral",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--output-schema",
-        "--skip-git-repo-check",
+        "--ephemeral", "--ignore-user-config", "--ignore-rules",
+        "--output-schema", "--skip-git-repo-check",
     ]
+    required_features = ["shell_tool", "multi_agent", "code_mode"]
     missing = [flag for flag in required if flag not in help_text]
-    if result.returncode != 0 or missing:
+    missing_features = [name for name in required_features if name not in feature_text]
+    if (
+        result.returncode != 0
+        or features.returncode != 0
+        or missing
+        or missing_features
+    ):
         raise WriterProcessError(
-            "Codex exec capability probe failed: "
-            f"exit={result.returncode} missing={missing}"
+            "Codex capability probe failed: "
+            f"exec_exit={result.returncode} features_exit={features.returncode} "
+            f"missing_flags={missing} missing_features={missing_features}"
         )
     return {
-        "exit_code": result.returncode,
+        "exec_help_exit_code": result.returncode,
+        "features_list_exit_code": features.returncode,
         "required_flags": required,
+        "required_features": required_features,
         "missing": [],
+        "command_policy": {
+            "shell_tool": "disabled",
+            "code_mode": "disabled",
+            "multi_agent": "disabled",
+            "web_search": "disabled",
+            "network": "disabled",
+            "writer_edit_tool": "apply_patch_only",
+        },
     }
 
 
@@ -231,7 +240,7 @@ def run_codex_attempt(
     codex_prefix: Sequence[str] | None = None,
     codex_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run exactly one native Codex attempt and retain host evidence."""
+    """Run exactly one native Codex attempt and return host-observed evidence."""
 
     attempt_dir.mkdir(parents=True, exist_ok=False)
     cwd = cwd.resolve(strict=True)
@@ -248,9 +257,7 @@ def run_codex_attempt(
     log_path = attempt_dir / "agent.log"
     command_path = attempt_dir / "cmd.json"
 
-    _write_utf8(
-        prompt_path, prompt, maximum=MAX_PROMPT_BYTES, label="prompt"
-    )
+    _write_utf8(prompt_path, prompt, maximum=MAX_PROMPT_BYTES, label="prompt")
     _write_utf8(
         schema_path,
         json.dumps(schema, ensure_ascii=False, indent=2),
@@ -292,9 +299,7 @@ def run_codex_attempt(
                 start_new_session=start_new_session,
             )
         except OSError as exc:
-            raise WriterProcessError(
-                f"cannot start native Codex process: {exc}"
-            ) from exc
+            raise WriterProcessError(f"cannot start native Codex process: {exc}") from exc
         try:
             assert process.stdin is not None
             process.stdin.write(prompt.encode("utf-8"))
@@ -304,23 +309,17 @@ def run_codex_attempt(
                 if log_path.stat().st_size > MAX_LOG_BYTES:
                     cleanup = _kill_tree(process)
                     raise WriterProcessError(
-                        f"Codex log exceeded {MAX_LOG_BYTES} bytes; "
-                        f"cleanup={cleanup}"
+                        f"Codex log exceeded {MAX_LOG_BYTES} bytes; cleanup={cleanup}"
                     )
-                if (
-                    output_path.exists()
-                    and output_path.stat().st_size > MAX_OUTPUT_BYTES
-                ):
+                if output_path.exists() and output_path.stat().st_size > MAX_OUTPUT_BYTES:
                     cleanup = _kill_tree(process)
                     raise WriterProcessError(
-                        f"Codex output exceeded {MAX_OUTPUT_BYTES} bytes; "
-                        f"cleanup={cleanup}"
+                        f"Codex output exceeded {MAX_OUTPUT_BYTES} bytes; cleanup={cleanup}"
                     )
                 if time.monotonic() >= deadline:
                     cleanup = _kill_tree(process)
                     raise WriterProcessError(
-                        f"Codex attempt timed out after {timeout_seconds}s; "
-                        f"cleanup={cleanup}"
+                        f"Codex attempt timed out after {timeout_seconds}s; cleanup={cleanup}"
                     )
                 time.sleep(0.1)
         except BaseException:
@@ -330,22 +329,18 @@ def run_codex_attempt(
     duration = round(time.monotonic() - started, 3)
     exit_code = process.returncode
     if exit_code != 0:
-        tail = log_path.read_bytes()[-4000:].decode(
-            "utf-8", errors="replace"
-        )
+        tail = log_path.read_bytes()[-4000:].decode("utf-8", errors="replace")
         raise WriterProcessError(f"Codex exec exited {exit_code}: {tail}")
     try:
         raw = output_path.read_bytes()
     except OSError as exc:
         raise WriterProcessError(f"Codex output file is missing: {exc}") from exc
     if len(raw) > MAX_OUTPUT_BYTES:
-        raise WriterProcessError("Codex output exceeds the result limit")
+        raise WriterProcessError("Codex output exceeds the bounded result limit")
     try:
         output = json.loads(raw.decode("utf-8", errors="strict"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise WriterProcessError(
-            f"Codex output is not strict UTF-8 JSON: {exc}"
-        ) from exc
+        raise WriterProcessError(f"Codex output is not strict UTF-8 JSON: {exc}") from exc
     if not isinstance(output, dict):
         raise WriterProcessError("Codex structured output must be an object")
     return {
