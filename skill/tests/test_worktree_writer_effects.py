@@ -62,6 +62,8 @@ class WriterEffectsTests(unittest.TestCase):
         git(self.root, "init")
         git(self.root, "config", "user.email", "fixture@example.invalid")
         git(self.root, "config", "user.name", "Fixture")
+        git(self.root, "config", "core.autocrlf", "false")
+        git(self.root, "config", "core.eol", "lf")
         git(self.root, "remote", "add", "origin", "https://github.com/owner/repo.git")
         (self.root / "base.txt").write_text("base\n", encoding="utf-8")
         git(self.root, "add", "base.txt")
