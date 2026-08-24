@@ -6,7 +6,11 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from pathlib import Path
+
+
+SLOW_FIXTURE_SECONDS = 0.05
 
 
 def option(name: str) -> str:
@@ -37,12 +41,92 @@ def _has_upstream(prompt: str, task_id: str) -> bool:
     )
 
 
+def _loop_scenario(prompt: str, marker: str) -> tuple[str, int]:
+    match = re.search(
+        rf"\b{re.escape(marker)}\s+scenario=([a-z_]+)\s+ITER=(\d+)\b",
+        prompt,
+    )
+    if match is None:
+        raise ValueError(f"malformed {marker} marker")
+    if "<BOUNDED_LOOP_HOST_RESULTS_V1>" not in prompt:
+        raise ValueError(f"{marker} is missing host result marker")
+    return match.group(1), int(match.group(2))
+
+
 def main() -> int:
     output_path = Path(option("-o"))
     prompt_arg = sys.argv[sys.argv.index("--") + 1]
     prompt = sys.stdin.read() if prompt_arg == "-" else prompt_arg
 
-    if "IR_DISCOVER" in prompt:
+    if "BOUNDED_LOOP_INITIAL" in prompt:
+        result = "initial-fixture"
+    elif "BOUNDED_LOOP_REVISE" in prompt:
+        try:
+            scenario, iteration = _loop_scenario(prompt, "BOUNDED_LOOP_REVISE")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if scenario not in {
+            "reject_accept",
+            "unknown",
+            "identical_candidate",
+            "slow_deadline",
+            "interrupt",
+        }:
+            print(f"unknown bounded loop scenario: {scenario}", file=sys.stderr)
+            return 2
+        if scenario == "interrupt":
+            _write_envelope(
+                output_path,
+                status="needs_escalation",
+                result="",
+                reason="offline bounded loop interrupt fixture",
+            )
+            return 0
+        if scenario == "slow_deadline":
+            time.sleep(SLOW_FIXTURE_SECONDS)
+        candidate = (
+            "identical-candidate"
+            if scenario == "identical_candidate"
+            else f"candidate-{iteration}"
+        )
+        changes = (
+            ["identical-change"]
+            if scenario == "identical_candidate"
+            else [f"iteration-{iteration}"]
+        )
+        result = {"candidate": candidate, "changes": changes}
+    elif "BOUNDED_LOOP_VERIFY" in prompt:
+        try:
+            scenario, iteration = _loop_scenario(prompt, "BOUNDED_LOOP_VERIFY")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if scenario == "slow_deadline":
+            time.sleep(SLOW_FIXTURE_SECONDS)
+        if scenario == "unknown":
+            verdict = "unknown"
+        elif scenario in {"identical_candidate", "slow_deadline"}:
+            verdict = "reject"
+        elif scenario == "reject_accept":
+            verdict = "reject" if iteration == 1 else "accept"
+        elif scenario == "interrupt":
+            _write_envelope(
+                output_path,
+                status="needs_escalation",
+                result="",
+                reason="offline bounded loop interrupt fixture",
+            )
+            return 0
+        else:
+            print(f"unknown bounded loop scenario: {scenario}", file=sys.stderr)
+            return 2
+        result = {
+            "verdict": verdict,
+            "summary": f"bounded-loop-{scenario}-{iteration}",
+            "evidence": ["offline bounded loop fixture"],
+        }
+    elif "IR_DISCOVER" in prompt:
         result = [{"name": "alpha"}, {"name": "beta"}]
     elif "IR_MAP" in prompt:
         result = {"finding": "mapped"}

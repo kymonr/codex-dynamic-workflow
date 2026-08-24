@@ -66,7 +66,7 @@ py -3.12 skill\cli.py resume `
 py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
 ```
 
-当前静态 `agent` 节点仍可编译成 v2 只读 DAG；v3 可信控制流 runtime 可执行 `agent`、`map`、`verify`、`reduce`、`conditional` 与 `human_gate`，`loop` 仅验证、不执行，也不会被静默降级。详细合同见 `skill/references/workflow-ir.md`。
+当前静态 `agent` 节点仍可编译成 v2 只读 DAG。v3 可信控制流 runtime 支持满足 Bounded Loop v1 完整合同的受限 `loop`；旧式或不完整的 `loop` 声明仍只在声明层通过校验，执行时会被明确拒绝，不会被静默迁移。详细合同见 `skill/references/workflow-ir.md` 与 `skill/references/bounded-loop-v1.md`。
 
 ## 仓库结构
 
@@ -133,12 +133,14 @@ GitHub Actions 会在 Windows 和 Linux 的 Python 3.12 上运行编译检查、
 
 ## Trusted Workflow IR 控制流
 
-Workflow IR v3 可通过 `skill/cli.py run-ir` 执行可信的只读 `agent`、`map`、`verify`、`reduce`、`conditional` 和 `human_gate` 节点，并用 `resume-ir` 从 checkpoint 显式恢复。动态 child、manifest、事件和结果均受既有资源预算与内容寻址 artifact 边界约束。
+Workflow IR v3 可通过 `skill/cli.py run-ir` 执行可信的只读 `agent`、`map`、`verify`、`loop`、`reduce`、`conditional` 和 `human_gate` 节点，并用 `resume-ir` 从 checkpoint 显式恢复。动态 child、manifest、事件和结果均受既有资源预算与内容寻址 artifact 边界约束。
 
-Executable node kinds: `agent`, `map`, `verify`, `reduce`, `conditional`, `human_gate`.
-Validated-only node kinds: `loop`.
+Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `conditional`, `human_gate`.
+Validated-only node kinds: none.
 
-`max_tokens` 目前是 advisory 预算字段，因为 Codex CLI usage 仍来自可能缺失的日志数据；它不是硬停止条件。`soft_timeout_seconds` 与 `hard_timeout_seconds` 作用于每个 agent 进程，而不是整个 workflow 的墙钟时间。IR 本身不是授权，不能扩大写入、凭据、发布或破坏性权限。
+Only `loop` instances that fully satisfy the Bounded Loop v1 contract are executable. Legacy `loop` declarations remain instance-level validated-only and are explicitly rejected at execution.
+
+`max_tokens` 目前是 advisory 预算字段，因为 Codex CLI usage 仍来自可能缺失的日志数据；它不是硬停止条件。`soft_timeout_seconds` 与 `hard_timeout_seconds` 继续作用于每个 agent 进程。可选的 `workflow_timeout_seconds` 另外建立 whole-workflow 绝对 deadline；`resume-ir` 不会重置该 deadline，human gate 暂停时间也计入。IR 本身不是授权，不能扩大写入、凭据、发布或破坏性权限。
 
 ## Conditional 与 Human Gate
 

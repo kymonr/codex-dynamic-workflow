@@ -119,10 +119,12 @@ python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" validate-ir `
 
 Static `agent`-only IR can be shown as compiled v2 with `--emit-v2`. The trusted v3 scheduler capability is policy-derived:
 
-Executable node kinds: `agent`, `map`, `verify`, `reduce`, `conditional`, `human_gate`.
-Validated-only node kinds: `loop`.
+Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `conditional`, `human_gate`.
+Validated-only node kinds: none.
 
-`max_tokens` remains advisory because usage may be unavailable from CLI logs. Soft and hard timeout fields apply per agent process, not to the whole workflow wall clock. See `workflow-ir.md`.
+Only `loop` instances that fully satisfy the Bounded Loop v1 contract are executable. Legacy `loop` declarations remain instance-level validated-only and are explicitly rejected at execution.
+
+`max_tokens` remains advisory because usage may be unavailable from CLI logs. Soft and hard timeout fields continue to apply per agent process. Optional `workflow_timeout_seconds` adds an absolute whole-workflow deadline that survives resume and includes human-gate pause time. See `workflow-ir.md` and `bounded-loop-v1.md`.
 
 ## Terminal behavior
 
@@ -130,7 +132,7 @@ There is no transient same-route retry, prompt replay, regex retry classificatio
 
 ## Workflow IR control-flow commands
 
-使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent → map → verify → reduce → conditional → human_gate` 控制流。未选分支默认向后传播 `skipped`；只有显式 `dependency_policy: "join"` 且至少一个依赖成功时才允许汇合。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。
+使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent`、`map`、`verify`、Bounded Loop v1、`reduce`、`conditional` 与 `human_gate` 控制流。未选分支默认向后传播 `skipped`；只有显式 `dependency_policy: "join"` 且至少一个依赖成功时才允许汇合。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。
 
 ## Condition and human-gate commands
 

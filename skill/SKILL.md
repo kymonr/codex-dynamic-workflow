@@ -46,7 +46,7 @@ If any owned target overlaps, cannot be isolated, or would be written by the roo
 
 ## Choose the execution path
 
-Use v2 native subagents unless the user explicitly needs reproducible CLI logs, per-task artifact directories, a JSON summary, or a real `codex exec` probe. Read [references/cli-runner.md](references/cli-runner.md) only for that explicit CLI path.
+Use v2 native subagents unless the user explicitly needs reproducible CLI logs, per-task artifact directories, a JSON summary, or a real `codex exec` probe. Read [references/cli-runner.md](references/cli-runner.md) only for that explicit CLI path. For executable Workflow IR loops and the absolute whole-workflow deadline, also read [references/bounded-loop-v1.md](references/bounded-loop-v1.md); legacy loop declarations remain instance-level validated-only.
 
 A Grok conversation task is a separate user-visible task, not a native child, reviewer, or recovery node. Read [references/grok-thread.md](references/grok-thread.md) only when the user explicitly asks to create, open, or start a separate Grok conversation task. Never infer that request from complexity, latency, or a native route failure.
 

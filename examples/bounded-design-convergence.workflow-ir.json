@@ -1,0 +1,121 @@
+{
+  "version": 3,
+  "name": "bounded-design-convergence",
+  "mode": "workflow",
+  "objective": "以有限修订和独立验证收敛一个只读设计候选",
+  "workdir": "D:\\replace-with-sanitized-repository",
+  "budgets": {
+    "max_agents": 8,
+    "max_concurrency": 2,
+    "max_iterations": 3,
+    "max_tokens": 200000,
+    "soft_timeout_seconds": 900,
+    "hard_timeout_seconds": 3600
+  },
+  "limits": {
+    "max_result_bytes": 2097152,
+    "max_log_bytes": 8388608,
+    "max_run_artifact_bytes": 67108864,
+    "max_upstream_inline_bytes": 8192,
+    "max_event_bytes": 262144
+  },
+  "nodes": [
+    {
+      "id": "initial-design",
+      "kind": "agent",
+      "depends_on": [],
+      "config": {
+        "profile": "luna",
+        "access": "read_only",
+        "route_reason": "create one bounded initial candidate",
+        "prompt": "只读形成一个结构化初始设计候选，不修改仓库。",
+        "output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "candidate": {"type": "string"},
+            "risks": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["candidate", "risks"]
+        }
+      }
+    },
+    {
+      "id": "converge-design",
+      "kind": "loop",
+      "depends_on": ["initial-design"],
+      "config": {
+        "max_iterations": 3,
+        "body": ["revise-template", "verify-template"],
+        "stop_when": "verification_accept"
+      }
+    },
+    {
+      "id": "revise-template",
+      "kind": "agent",
+      "depends_on": ["converge-design"],
+      "config": {
+        "profile": "luna",
+        "access": "read_only",
+        "route_reason": "bounded loop revision template",
+        "prompt": "根据以下受限循环状态修订候选，不修改仓库：{{loop_state}}。当前迭代：{{iteration}}。",
+        "output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "candidate": {"type": "string"},
+            "changes": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["candidate", "changes"]
+        }
+      }
+    },
+    {
+      "id": "verify-template",
+      "kind": "agent",
+      "depends_on": ["converge-design"],
+      "config": {
+        "profile": "luna",
+        "access": "read_only",
+        "route_reason": "independent bounded loop verifier template",
+        "prompt": "独立验证本轮候选，只根据证据返回 accept、reject 或 unknown：{{loop_state}}。当前迭代：{{iteration}}。",
+        "output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": ["accept", "reject", "unknown"]
+            },
+            "summary": {"type": "string"},
+            "evidence": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
+          },
+          "required": ["verdict", "summary", "evidence"]
+        }
+      }
+    },
+    {
+      "id": "final-report",
+      "kind": "agent",
+      "depends_on": ["converge-design"],
+      "config": {
+        "profile": "sol",
+        "access": "read_only",
+        "route_reason": "final bounded convergence report",
+        "prompt": "根据已收敛的 loop manifest 形成最终报告：{{result:converge-design}}",
+        "output_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "summary": {"type": "string"},
+            "evidence": {"type": "array", "items": {"type": "string"}}
+          },
+          "required": ["summary", "evidence"]
+        }
+      }
+    }
+  ]
+}

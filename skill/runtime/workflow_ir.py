@@ -2,14 +2,17 @@
 
 The IR is data, never authorization or executable source code. The trusted
 runtime supports read-only ``agent``, ``map``, ``verify``, ``reduce``,
-``conditional`` and ``human_gate`` nodes. ``loop`` remains versioned and
-validated but non-executable until its bounded iteration contract lands.
+``conditional`` and ``human_gate`` nodes, plus loop declarations that satisfy
+the complete Bounded Loop v1 contract. Legacy loop declarations remain
+validated-only and are never silently migrated.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-from typing import Any
+from typing import Any, Mapping
 
 try:
     from .condition import ConditionValidationError, validate_condition
@@ -18,7 +21,7 @@ except ImportError:  # Standalone policy-contract import.
 
 IR_VERSION = 3
 IR_MODES = {"direct", "delegate", "workflow"}
-NODE_KINDS = {
+NODE_KIND_ORDER = (
     "agent",
     "map",
     "verify",
@@ -26,13 +29,32 @@ NODE_KINDS = {
     "reduce",
     "conditional",
     "human_gate",
-}
-EXECUTABLE_NODE_KINDS = {"agent", "map", "verify", "reduce", "conditional", "human_gate"}
+)
+NODE_KINDS = set(NODE_KIND_ORDER)
+EXECUTABLE_NODE_KIND_ORDER = NODE_KIND_ORDER
+EXECUTABLE_NODE_KINDS = set(EXECUTABLE_NODE_KIND_ORDER)
 DEPENDENCY_POLICIES = {"all_succeeded", "join"}
 DEFAULT_DEPENDENCY_POLICY = "all_succeeded"
 JOIN_DEPENDENCY_POLICY = "join"
 TOKEN_BUDGET_MODE = "advisory"
 TIMEOUT_SCOPE = "per_agent"
+BOUNDED_LOOP_CONTRACT: dict[str, Any] = {
+    "contract_version": 1,
+    "body_kind": "agent_templates",
+    "body_min": 2,
+    "body_max": 8,
+    "stop_when": "verification_accept",
+    "no_progress": "canonical_sha256",
+    "no_progress_default": 1,
+    "no_progress_min": 1,
+    "no_progress_max": 5,
+    "resume_reuses_succeeded_steps": True,
+    "deadline_mode": "absolute_epoch",
+    "workflow_timeout_min_seconds": 60,
+    "workflow_timeout_max_seconds": 172_800,
+    "pause_counts_against_deadline": True,
+    "arbitrary_expression": False,
+}
 AGENT_PROFILES = {"spark", "luna", "sol"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 NODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
@@ -70,6 +92,12 @@ BUDGET_RANGES = {
     "max_tokens": (1, 20_000_000),
     "soft_timeout_seconds": (30, 7200),
     "hard_timeout_seconds": (60, 86400),
+}
+OPTIONAL_BUDGET_RANGES = {
+    "workflow_timeout_seconds": (
+        BOUNDED_LOOP_CONTRACT["workflow_timeout_min_seconds"],
+        BOUNDED_LOOP_CONTRACT["workflow_timeout_max_seconds"],
+    ),
 }
 
 VERIFICATION_RESULT_SCHEMA: dict[str, Any] = {
@@ -115,7 +143,9 @@ def _validate_budgets(raw: Any) -> dict[str, int]:
         raw = {}
     if not isinstance(raw, dict):
         raise WorkflowIRValidationError("budgets must be an object")
-    unknown = sorted(set(raw) - set(BUDGET_DEFAULTS))
+    unknown = sorted(
+        set(raw) - set(BUDGET_DEFAULTS) - set(OPTIONAL_BUDGET_RANGES)
+    )
     if unknown:
         raise WorkflowIRValidationError(f"unknown budget keys: {unknown}")
     budgets: dict[str, int] = {}
@@ -124,6 +154,11 @@ def _validate_budgets(raw: Any) -> dict[str, int]:
         budgets[key] = _integer(
             raw.get(key, default), f"budgets.{key}", minimum, maximum
         )
+    for key, (minimum, maximum) in OPTIONAL_BUDGET_RANGES.items():
+        if key in raw:
+            budgets[key] = _integer(
+                raw[key], f"budgets.{key}", minimum, maximum
+            )
     if budgets["hard_timeout_seconds"] < budgets["soft_timeout_seconds"] * 2:
         raise WorkflowIRValidationError(
             "hard_timeout_seconds must be at least twice soft_timeout_seconds"
@@ -307,14 +342,19 @@ def _validate_reserved_config(
     kind: str, config: dict[str, Any], where: str
 ) -> dict[str, Any]:
     if kind == "loop":
-        allowed = {"max_iterations", "body", "stop_when"}
+        allowed = {
+            "max_iterations",
+            "no_progress_limit",
+            "body",
+            "stop_when",
+        }
         unknown = sorted(set(config) - allowed)
         if unknown:
             raise WorkflowIRValidationError(
                 f"{where} has unknown keys: {unknown}"
             )
         iterations = _integer(
-            config.get("max_iterations", 3),
+            config.get("max_iterations", BUDGET_DEFAULTS["max_iterations"]),
             f"{where}.max_iterations",
             1,
             20,
@@ -330,11 +370,19 @@ def _validate_reserved_config(
             config.get("stop_when", "iteration_limit"),
             f"{where}.stop_when",
         )
-        return {
+        normalized = {
             "max_iterations": iterations,
             "body": list(body),
             "stop_when": stop_when,
         }
+        if "no_progress_limit" in config:
+            normalized["no_progress_limit"] = _integer(
+                config["no_progress_limit"],
+                f"{where}.no_progress_limit",
+                BOUNDED_LOOP_CONTRACT["no_progress_min"],
+                BOUNDED_LOOP_CONTRACT["no_progress_max"],
+            )
+        return normalized
     if kind == "conditional":
         allowed = {"condition", "then", "else"}
         unknown = sorted(set(config) - allowed)
@@ -512,6 +560,250 @@ def _validate_control_flow_references(nodes: list[dict[str, Any]]) -> None:
             branch_owners[target] = node["id"]
 
 
+def bounded_loop_child_id(
+    loop_node_id: str,
+    iteration: int,
+    step_index: int,
+    template_node_id: str,
+) -> str:
+    """Derive one stable, Windows-safe Bounded Loop child identity."""
+
+    payload = json.dumps(
+        [loop_node_id, iteration, step_index, template_node_id],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    domain = b"dynamic-workflow/bounded-loop-child/v1\0"
+    return hashlib.sha256(domain + payload).hexdigest()[:40]
+
+
+def bounded_loop_state_id(
+    loop_node_id: str,
+    iteration: int,
+    step_index: int,
+    template_node_id: str,
+) -> str:
+    """Derive a state-input identity in a domain distinct from child IDs."""
+
+    payload = json.dumps(
+        [loop_node_id, iteration, step_index, template_node_id],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    domain = b"dynamic-workflow/bounded-loop-state/v1\0"
+    return hashlib.sha256(domain + payload).hexdigest()[:40]
+
+
+def _bounded_loop_contract_errors(
+    nodes: list[dict[str, Any]],
+    budgets: Mapping[str, int],
+) -> dict[str, list[str]]:
+    """Return per-loop contract failures without persisting analysis metadata."""
+
+    by_id = {node["id"]: node for node in nodes}
+    loop_nodes = [node for node in nodes if node["kind"] == "loop"]
+    owners: dict[str, list[str]] = {}
+    for loop in loop_nodes:
+        for template_id in loop["config"]["body"]:
+            owners.setdefault(template_id.casefold(), []).append(loop["id"])
+
+    conditional_targets = {
+        target.casefold()
+        for node in nodes
+        if node["kind"] == "conditional"
+        for target in node["config"]["then"] + node["config"]["else"]
+    }
+    source_ids = {
+        source.casefold()
+        for node in nodes
+        for source in (
+            [node["config"]["over"]]
+            if node["kind"] in {"map", "reduce"}
+            else [node["config"]["target"]]
+            if node["kind"] == "verify"
+            else []
+        )
+    }
+    dependents: dict[str, list[str]] = {}
+    for node in nodes:
+        for dependency in node["depends_on"]:
+            dependents.setdefault(dependency.casefold(), []).append(node["id"])
+
+    errors: dict[str, list[str]] = {}
+    reserved_ids = {node["id"].casefold() for node in nodes}
+    generated_ids: set[str] = set()
+    for loop in loop_nodes:
+        loop_id = loop["id"]
+        config = loop["config"]
+        current: list[str] = []
+        required_stop = BOUNDED_LOOP_CONTRACT["stop_when"]
+        if config["stop_when"] != required_stop:
+            current.append(f"stop_when must equal {required_stop}")
+        if len(loop["depends_on"]) != 1:
+            current.append("depends_on must contain exactly one initial result")
+        body = config["body"]
+        folded_body = [template_id.casefold() for template_id in body]
+        body_min = BOUNDED_LOOP_CONTRACT["body_min"]
+        body_max = BOUNDED_LOOP_CONTRACT["body_max"]
+        if not body_min <= len(body) <= body_max:
+            current.append(
+                f"body must contain {body_min}..{body_max} template node ids"
+            )
+        if len(folded_body) != len(set(folded_body)):
+            current.append("body template ids must be case-insensitively unique")
+        if config["max_iterations"] > budgets["max_iterations"]:
+            current.append("max_iterations exceeds budgets.max_iterations")
+
+        for template_id in body:
+            template = by_id.get(template_id)
+            if template is None:
+                current.append(f"body template does not exist: {template_id}")
+                continue
+            if template["kind"] != "agent":
+                current.append(f"body template must be agent: {template_id}")
+                continue
+            if template["depends_on"] != [loop_id]:
+                current.append(
+                    f"body template {template_id} must depend exactly on {loop_id}"
+                )
+            prompt = template["config"]["prompt"]
+            if "{{loop_state}}" not in prompt:
+                current.append(
+                    f"body template {template_id} prompt must contain {{{{loop_state}}}}"
+                )
+            declared_tokens = set(re.findall(r"\{\{[^{}]*\}\}", prompt))
+            unexpected_placeholders = sorted(
+                declared_tokens - {"{{loop_state}}", "{{iteration}}"}
+            )
+            if unexpected_placeholders:
+                current.append(
+                    f"body template {template_id} has unsupported placeholders: "
+                    f"{unexpected_placeholders}"
+                )
+            if len(set(owners.get(template_id.casefold(), []))) != 1:
+                current.append(
+                    f"body template {template_id} must be owned by exactly one loop"
+                )
+            if template_id.casefold() in conditional_targets:
+                current.append(
+                    f"body template {template_id} cannot be a conditional target"
+                )
+            if template_id.casefold() in source_ids:
+                current.append(
+                    f"body template {template_id} cannot be a map/verify/reduce source"
+                )
+            external = [
+                node_id
+                for node_id in dependents.get(template_id.casefold(), [])
+                if node_id.casefold() != loop_id.casefold()
+            ]
+            if external:
+                current.append(
+                    f"body template {template_id} has external dependents: {sorted(external)}"
+                )
+
+        if body:
+            verifier = by_id.get(body[-1])
+            if (
+                verifier is None
+                or verifier["kind"] != "agent"
+                or verifier["config"].get("output_schema")
+                != VERIFICATION_RESULT_SCHEMA
+            ):
+                current.append("final body template must use the fixed verifier schema")
+
+        if not current:
+            local_ids: set[str] = set()
+            for iteration in range(1, config["max_iterations"] + 1):
+                for step_index, template_id in enumerate(body):
+                    child_id = bounded_loop_child_id(
+                        loop_id, iteration, step_index, template_id
+                    )
+                    state_id = bounded_loop_state_id(
+                        loop_id, iteration, step_index, template_id
+                    )
+                    for identity, label in (
+                        (child_id, "child"),
+                        (state_id, "state input"),
+                    ):
+                        folded = identity.casefold()
+                        if (
+                            folded in reserved_ids
+                            or folded in generated_ids
+                            or folded in local_ids
+                        ):
+                            current.append(
+                                f"deterministic {label} id collides under case-insensitive semantics"
+                            )
+                        local_ids.add(folded)
+            generated_ids.update(local_ids)
+        errors[loop_id] = current
+    return errors
+
+
+def executable_bounded_loops(
+    nodes: list[dict[str, Any]], budgets: Mapping[str, int]
+) -> dict[str, tuple[str, ...]]:
+    """Return executable loop/template ownership as ephemeral runtime data."""
+
+    failures = _bounded_loop_contract_errors(nodes, budgets)
+    return {
+        node["id"]: tuple(node["config"]["body"])
+        for node in nodes
+        if node["kind"] == "loop" and not failures[node["id"]]
+    }
+
+
+def project_agent_claims(ir: Mapping[str, Any]) -> dict[str, int | bool]:
+    """Compute the shared conservative agent-claim projection."""
+
+    nodes = list(ir["nodes"])
+    budgets = ir["budgets"]
+    by_id = {node["id"]: node for node in nodes}
+    loops = executable_bounded_loops(nodes, budgets)
+    template_ids = {
+        template_id.casefold()
+        for body in loops.values()
+        for template_id in body
+    }
+    static = sum(
+        node["kind"] in {"agent", "reduce"}
+        and node["id"].casefold() not in template_ids
+        for node in nodes
+    )
+    mapped = sum(
+        node["config"]["item_limit"]
+        for node in nodes
+        if node["kind"] == "map"
+    )
+    verified = sum(
+        by_id[node["config"]["target"]]["config"]["item_limit"]
+        for node in nodes
+        if node["kind"] == "verify"
+    )
+    loop_children = sum(
+        by_id[loop_id]["config"]["max_iterations"] * len(body)
+        for loop_id, body in loops.items()
+    )
+    total = static + mapped + verified + loop_children
+    maximum = budgets["max_agents"]
+    projection: dict[str, int | bool] = {
+        "static_agent_claims": static,
+        "map_child_upper_bound": mapped,
+        "verify_child_upper_bound": verified,
+    }
+    if loops:
+        projection["loop_child_upper_bound"] = loop_children
+    projection.update(
+        {
+            "total_upper_bound": total,
+            "max_agents": maximum,
+            "upper_bound_within_budget": total <= maximum,
+        }
+    )
+    return projection
+
+
 def validate_workflow_ir(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise WorkflowIRValidationError("Workflow IR must be an object")
@@ -622,8 +914,22 @@ def validate_workflow_ir(raw: Any) -> dict[str, Any]:
 
     _validate_dag(nodes)
     _validate_control_flow_references(nodes)
+    bounded_loops = executable_bounded_loops(nodes, budgets)
+    bounded_templates = {
+        template_id.casefold()
+        for body in bounded_loops.values()
+        for template_id in body
+    }
+    for node in nodes:
+        if node["kind"] == "loop" and node["id"] in bounded_loops:
+            node["config"].setdefault(
+                "no_progress_limit",
+                BOUNDED_LOOP_CONTRACT["no_progress_default"],
+            )
     direct_agents = sum(
-        node["kind"] in {"agent", "reduce"} for node in nodes
+        node["kind"] in {"agent", "reduce"}
+        and node["id"].casefold() not in bounded_templates
+        for node in nodes
     )
     if direct_agents > budgets["max_agents"]:
         raise WorkflowIRValidationError(
@@ -638,15 +944,24 @@ def validate_workflow_ir(raw: Any) -> dict[str, Any]:
         "budgets": budgets,
         "limits": limits,
         "nodes": nodes,
-        "execution": analyze_execution_support(nodes),
+        "execution": analyze_execution_support(nodes, budgets),
     }
 
 
-def analyze_execution_support(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+def analyze_execution_support(
+    nodes: list[dict[str, Any]],
+    budgets: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
     dynamic = sorted({node["kind"] for node in nodes if node["kind"] != "agent"})
-    unsupported = sorted(
-        {node["kind"] for node in nodes if node["kind"] not in EXECUTABLE_NODE_KINDS}
-    )
+    unsupported_kinds = {
+        node["kind"] for node in nodes if node["kind"] not in EXECUTABLE_NODE_KINDS
+    }
+    if any(node["kind"] == "loop" for node in nodes):
+        if budgets is None or any(
+            _bounded_loop_contract_errors(nodes, budgets).values()
+        ):
+            unsupported_kinds.add("loop")
+    unsupported = sorted(unsupported_kinds)
     return {
         "static_v2_compilable": not dynamic,
         "trusted_runtime_executable": not unsupported,

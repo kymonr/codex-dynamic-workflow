@@ -30,7 +30,7 @@ current_version = 3
 static_execution_version = 2
 control_flow_runtime_version = 3
 validated_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
-executable_node_kinds = ["agent", "map", "verify", "reduce", "conditional", "human_gate"]
+executable_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
 
 [routes.spark]
 agent_type = "spark"
@@ -87,6 +87,23 @@ skipped_propagates_by_default = true
 join_requires_succeeded_dependency = true
 token_budget_mode = "advisory"
 timeout_scope = "per_agent"
+
+[workflow_ir.bounded_loop]
+contract_version = 1
+body_kind = "agent_templates"
+body_min = 2
+body_max = 8
+stop_when = "verification_accept"
+no_progress = "canonical_sha256"
+no_progress_default = 1
+no_progress_min = 1
+no_progress_max = 5
+resume_reuses_succeeded_steps = true
+deadline_mode = "absolute_epoch"
+workflow_timeout_min_seconds = 60
+workflow_timeout_max_seconds = 172800
+pause_counts_against_deadline = true
+arbitrary_expression = false
 
 [workflow_ir.conditional]
 expression_language = false

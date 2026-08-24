@@ -17,6 +17,7 @@ try:  # Package import from repository root.
         ControlFlowError,
         TrustedControlFlowScheduler,
     )
+    from skill.runtime.deadline import DeadlineClock
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
     from skill.runtime.workflow_ir import (
         WorkflowIRValidationError,
@@ -26,6 +27,7 @@ except ModuleNotFoundError:  # Executed from the installed skill directory.
     import runner as legacy
     from runtime.artifacts import ArtifactStore
     from runtime.control_flow import ControlFlowError, TrustedControlFlowScheduler
+    from runtime.deadline import DeadlineClock
     from runtime.limits import ArtifactLimitError, RuntimeLimits
     from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
 
@@ -61,19 +63,29 @@ def _add_safety_args(parser: argparse.ArgumentParser, *, include_spec: bool) -> 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="trusted Dynamic Workflow IR v3 read-only runtime"
+        description=(
+            "trusted Dynamic Workflow IR v3 read-only runtime with Bounded Loop "
+            "v1 and an optional absolute whole-workflow deadline"
+        )
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser(
         "run-ir",
-        help="execute trusted agent/map/verify/reduce/conditional/human_gate IR",
+        help=(
+            "execute trusted agent/map/verify/bounded-loop/reduce/conditional/"
+            "human_gate IR with an optional absolute workflow deadline"
+        ),
     )
     _add_safety_args(run, include_spec=True)
     run.add_argument("--run-dir", default=None, help="test/custom-root run directory")
 
     resume = subparsers.add_parser(
-        "resume-ir", help="resume a trusted Workflow IR run from checkpoint"
+        "resume-ir",
+        help=(
+            "resume a trusted Workflow IR run from checkpoint without resetting "
+            "its absolute workflow deadline"
+        ),
     )
     _add_safety_args(resume, include_spec=False)
     resume.add_argument("--run-dir", required=True, help="existing IR run directory")
@@ -185,6 +197,7 @@ async def _run(
     role_configs: dict[str, dict[str, Any]],
     preflight: dict[str, Any],
     limits: RuntimeLimits,
+    clock: DeadlineClock | None = None,
 ) -> dict[str, Any]:
     adapter_store = ArtifactStore(run_dir, limits)
     cancel_path = run_dir / "CANCEL"
@@ -194,8 +207,27 @@ async def _run(
         results: dict[str, Any],
         prior_entry: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        legacy_task = dict(task)
+        runtime = legacy_task.pop("_runtime", None)
+        soft_timeout = ir["budgets"]["soft_timeout_seconds"]
+        hard_timeout = ir["budgets"]["hard_timeout_seconds"]
+        if runtime is not None:
+            if (
+                not isinstance(runtime, dict)
+                or set(runtime)
+                != {"soft_timeout_seconds", "hard_timeout_seconds"}
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or value <= 0
+                    for value in runtime.values()
+                )
+            ):
+                raise ControlFlowError("invalid private agent runtime metadata")
+            soft_timeout = runtime["soft_timeout_seconds"]
+            hard_timeout = runtime["hard_timeout_seconds"]
         return await legacy._execute_task(
-            task,
+            legacy_task,
             run_dir=run_dir,
             workdir=ir["workdir"],
             results=results,
@@ -203,8 +235,8 @@ async def _run(
             codex_prefix=codex_prefix,
             preflight=preflight,
             cancel_path=cancel_path,
-            soft_timeout=ir["budgets"]["soft_timeout_seconds"],
-            hard_timeout=ir["budgets"]["hard_timeout_seconds"],
+            soft_timeout=soft_timeout,
+            hard_timeout=hard_timeout,
             artifact_store=adapter_store,
             limits=limits,
             prior_entry=prior_entry,
@@ -215,6 +247,7 @@ async def _run(
         run_dir,
         execute_agent=execute_agent,
         limits=limits,
+        clock=clock,
     )
     return await scheduler.run(resume=resume)
 

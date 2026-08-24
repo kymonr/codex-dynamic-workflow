@@ -176,6 +176,10 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertEqual(
             result["execution"]["unsupported_node_kinds"], ["loop"]
         )
+        loop = next(node for node in result["nodes"] if node["kind"] == "loop")
+        self.assertIsNone(loop["executable_contract"])
+        self.assertIsNone(loop["initial_source"])
+        self.assertEqual(loop["loop_claim_upper_bound"], 0)
 
     def test_reference_workflow_is_valid_and_within_agent_budget(self) -> None:
         example = (

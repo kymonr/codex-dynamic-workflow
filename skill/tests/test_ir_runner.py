@@ -5,8 +5,10 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -18,7 +20,7 @@ if str(SKILL_DIR) not in sys.path:
 import ir_runner
 from runtime.limits import RuntimeLimits
 from runtime.human_gate import HumanGateStore
-from runtime.workflow_ir import validate_workflow_ir
+from runtime.workflow_ir import VERIFICATION_RESULT_SCHEMA, validate_workflow_ir
 
 WorkflowIRValidationError = ir_runner.WorkflowIRValidationError
 
@@ -134,6 +136,97 @@ def role_configs() -> dict:
             "source": "fixture",
         },
     }
+
+
+def bounded_loop_adapter_ir(
+    workdir: Path,
+    limits: RuntimeLimits,
+    scenario: str,
+    *,
+    max_iterations: int = 2,
+) -> dict:
+    return validate_workflow_ir(
+        {
+            "version": 3,
+            "name": f"ir-bounded-loop-{scenario.replace('_', '-')}",
+            "mode": "workflow",
+            "objective": "exercise one strict offline bounded-loop marker",
+            "workdir": str(workdir),
+            "budgets": {
+                "max_agents": 1 + max_iterations * 2,
+                "max_concurrency": 1,
+                "max_iterations": max_iterations,
+                "max_tokens": 100000,
+                "soft_timeout_seconds": 30,
+                "hard_timeout_seconds": 60,
+            },
+            "limits": limits.to_dict(),
+            "nodes": [
+                {
+                    "id": "initial",
+                    "kind": "agent",
+                    "depends_on": [],
+                    "config": {
+                        "profile": "luna",
+                        "prompt": "BOUNDED_LOOP_INITIAL",
+                        "access": "read_only",
+                    },
+                },
+                {
+                    "id": "converge",
+                    "kind": "loop",
+                    "depends_on": ["initial"],
+                    "config": {
+                        "max_iterations": max_iterations,
+                        "no_progress_limit": 1,
+                        "body": ["revise-template", "verify-template"],
+                        "stop_when": "verification_accept",
+                    },
+                },
+                {
+                    "id": "revise-template",
+                    "kind": "agent",
+                    "depends_on": ["converge"],
+                    "config": {
+                        "profile": "luna",
+                        "prompt": (
+                            "BOUNDED_LOOP_REVISE "
+                            f"scenario={scenario} "
+                            "ITER={{iteration}} STATE={{loop_state}}"
+                        ),
+                        "access": "read_only",
+                        "output_schema": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "candidate": {"type": "string"},
+                                "changes": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["candidate", "changes"],
+                        },
+                    },
+                },
+                {
+                    "id": "verify-template",
+                    "kind": "agent",
+                    "depends_on": ["converge"],
+                    "config": {
+                        "profile": "luna",
+                        "prompt": (
+                            "BOUNDED_LOOP_VERIFY "
+                            f"scenario={scenario} "
+                            "ITER={{iteration}} STATE={{loop_state}}"
+                        ),
+                        "access": "read_only",
+                        "output_schema": VERIFICATION_RESULT_SCHEMA,
+                    },
+                },
+            ],
+        }
+    )
 
 
 class WorkflowIRRunnerIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -540,6 +633,250 @@ class WorkflowIRRunnerIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.run_dir / "artifacts").is_dir())
         task_dirs = list((self.run_dir / "tasks").iterdir())
         self.assertEqual(len(task_dirs), 6)
+
+    async def test_bounded_loop_pipeline_uses_strict_offline_markers(self) -> None:
+        ir = validate_workflow_ir(
+            {
+                "version": 3,
+                "name": "ir-bounded-loop-adapter-test",
+                "mode": "workflow",
+                "objective": "exercise bounded loop through the existing adapter",
+                "workdir": str(self.workdir),
+                "budgets": {
+                    "max_agents": 5,
+                    "max_concurrency": 1,
+                    "max_iterations": 2,
+                    "max_tokens": 100000,
+                    "soft_timeout_seconds": 30,
+                    "hard_timeout_seconds": 60,
+                },
+                "limits": self.limits.to_dict(),
+                "nodes": [
+                    {
+                        "id": "initial",
+                        "kind": "agent",
+                        "depends_on": [],
+                        "config": {
+                            "profile": "luna",
+                            "prompt": "BOUNDED_LOOP_INITIAL",
+                            "access": "read_only",
+                        },
+                    },
+                    {
+                        "id": "converge",
+                        "kind": "loop",
+                        "depends_on": ["initial"],
+                        "config": {
+                            "max_iterations": 2,
+                            "no_progress_limit": 1,
+                            "body": ["revise-template", "verify-template"],
+                            "stop_when": "verification_accept",
+                        },
+                    },
+                    {
+                        "id": "revise-template",
+                        "kind": "agent",
+                        "depends_on": ["converge"],
+                        "config": {
+                            "profile": "luna",
+                            "prompt": "BOUNDED_LOOP_REVISE scenario=reject_accept ITER={{iteration}} STATE={{loop_state}}",
+                            "access": "read_only",
+                            "output_schema": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "candidate": {"type": "string"},
+                                    "changes": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                },
+                                "required": ["candidate", "changes"],
+                            },
+                        },
+                    },
+                    {
+                        "id": "verify-template",
+                        "kind": "agent",
+                        "depends_on": ["converge"],
+                        "config": {
+                            "profile": "luna",
+                            "prompt": "BOUNDED_LOOP_VERIFY scenario=reject_accept ITER={{iteration}} STATE={{loop_state}}",
+                            "access": "read_only",
+                            "output_schema": VERIFICATION_RESULT_SCHEMA,
+                        },
+                    },
+                ],
+            }
+        )
+        run_dir = self.base / "runs" / "bounded-loop"
+        summary = await ir_runner._run(
+            ir,
+            run_dir,
+            resume=False,
+            codex_prefix=[sys.executable, str(FAKE_IR_CODEX)],
+            role_configs=role_configs(),
+            preflight={
+                "ack_external_model_export": True,
+                "allowed_roots": [str(self.workdir.parent)],
+                "allowed_sensitive_paths": [],
+                "codex_home": str(self.codex_home),
+                "codex_executable": str(FAKE_IR_CODEX),
+                "codex_version": "offline-fixture",
+                "codex_signature_status": "not_applicable",
+                "codex_signer_subject": None,
+            },
+            limits=self.limits,
+        )
+        loop = next(node for node in summary["nodes"] if node["id"] == "converge")
+        self.assertEqual(loop["status"], "succeeded")
+        self.assertEqual(loop["completed_iterations"], 2)
+        self.assertEqual(loop["stop_reason"], "verification_accept")
+        self.assertEqual(summary["claimed_agent_count"], 5)
+        self.assertFalse((run_dir / "tasks" / "revise-template").exists())
+        self.assertFalse((run_dir / "tasks" / "verify-template").exists())
+
+    async def test_strict_fake_bounded_loop_scenario_matrix(self) -> None:
+        cases = {
+            "reject_accept": {
+                "iterations": 2,
+                "status": "succeeded",
+                "stop_reason": "verification_accept",
+                "completed": 2,
+                "claims": 5,
+            },
+            "unknown": {
+                "iterations": 2,
+                "status": "needs_escalation",
+                "stop_reason": "verification_unknown",
+                "completed": 1,
+                "claims": 3,
+            },
+            "identical_candidate": {
+                "iterations": 2,
+                "status": "needs_escalation",
+                "stop_reason": "no_progress",
+                "completed": 2,
+                "claims": 5,
+            },
+            # This marker deliberately waits for a bounded 50ms in the fake
+            # subprocess. It proves strict marker routing only; real deadline
+            # cancellation is covered with injected clocks/executors elsewhere.
+            "slow_deadline": {
+                "iterations": 1,
+                "status": "needs_escalation",
+                "stop_reason": "iteration_limit",
+                "completed": 1,
+                "claims": 3,
+            },
+            "interrupt": {
+                "iterations": 2,
+                "status": "needs_escalation",
+                "stop_reason": "step_needs_escalation",
+                "completed": 0,
+                "claims": 2,
+            },
+        }
+        for scenario, expected in cases.items():
+            with self.subTest(scenario=scenario):
+                ir = bounded_loop_adapter_ir(
+                    self.workdir,
+                    self.limits,
+                    scenario,
+                    max_iterations=expected["iterations"],
+                )
+                run_dir = self.base / "runs" / f"bounded-loop-{scenario}"
+                summary = await ir_runner._run(
+                    ir,
+                    run_dir,
+                    resume=False,
+                    codex_prefix=[sys.executable, str(FAKE_IR_CODEX)],
+                    role_configs=role_configs(),
+                    preflight={
+                        "ack_external_model_export": True,
+                        "allowed_roots": [str(self.workdir.parent)],
+                        "allowed_sensitive_paths": [],
+                        "codex_home": str(self.codex_home),
+                        "codex_executable": str(FAKE_IR_CODEX),
+                        "codex_version": "offline-fixture",
+                        "codex_signature_status": "not_applicable",
+                        "codex_signer_subject": None,
+                    },
+                    limits=self.limits,
+                )
+                loop = next(
+                    node for node in summary["nodes"] if node["id"] == "converge"
+                )
+                self.assertEqual(loop["status"], expected["status"])
+                self.assertEqual(loop["stop_reason"], expected["stop_reason"])
+                self.assertEqual(loop["completed_iterations"], expected["completed"])
+                self.assertEqual(summary["claimed_agent_count"], expected["claims"])
+                events = [
+                    json.loads(line)
+                    for line in (run_dir / "events.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                self.assertFalse(
+                    any(
+                        event["type"] == "workflow.deadline.exceeded"
+                        for event in events
+                    )
+                )
+                if scenario == "interrupt":
+                    child = next(iter(loop["children"].values()))
+                    self.assertEqual(child["status"], "needs_escalation")
+                    self.assertIn("offline bounded loop interrupt fixture", child["error"])
+
+    def test_strict_fake_slow_marker_is_bounded_and_unknown_marker_exits_two(self) -> None:
+        slow_output = self.base / "slow-envelope.json"
+        slow_prompt = (
+            "BOUNDED_LOOP_REVISE scenario=slow_deadline ITER=1\n"
+            "<BOUNDED_LOOP_HOST_RESULTS_V1>"
+        )
+        started = time.monotonic()
+        slow = subprocess.run(
+            [
+                sys.executable,
+                str(FAKE_IR_CODEX),
+                "-o",
+                str(slow_output),
+                "--",
+                slow_prompt,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(slow.returncode, 0, slow.stdout + slow.stderr)
+        self.assertGreaterEqual(elapsed, 0.045)
+        slow_envelope = json.loads(slow_output.read_text(encoding="utf-8"))
+        self.assertEqual(slow_envelope["workflow_status"], "ok")
+        self.assertEqual(slow_envelope["result"]["candidate"], "candidate-1")
+
+        unknown_output = self.base / "unknown-envelope.json"
+        unknown = subprocess.run(
+            [
+                sys.executable,
+                str(FAKE_IR_CODEX),
+                "-o",
+                str(unknown_output),
+                "--",
+                (
+                    "BOUNDED_LOOP_REVISE scenario=not_registered ITER=1\n"
+                    "<BOUNDED_LOOP_HOST_RESULTS_V1>"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        self.assertEqual(unknown.returncode, 2)
+        self.assertIn("unknown bounded loop scenario", unknown.stderr)
+        self.assertFalse(unknown_output.exists())
 
 
 if __name__ == "__main__":
