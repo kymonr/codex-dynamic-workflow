@@ -43,6 +43,8 @@ class Fixture:
         git(self.repo, "init")
         git(self.repo, "config", "user.email", "fixture@example.invalid")
         git(self.repo, "config", "user.name", "Fixture")
+        git(self.repo, "config", "core.autocrlf", "false")
+        git(self.repo, "config", "core.eol", "lf")
         git(self.repo, "remote", "add", "origin", "https://github.com/owner/repo.git")
         (self.repo / "check.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
         git(self.repo, "add", "check.py")
