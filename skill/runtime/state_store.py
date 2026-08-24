@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .limits import ArtifactLimitError, directory_size, enforce_projected_write
+from .path_safety import assert_safe_descendant
 
 CHECKPOINT_VERSION = 1
 EVENT_VERSION = 1
@@ -67,6 +68,12 @@ class RunStateStore:
         self.sequence = self._existing_sequence()
 
     def _existing_sequence(self) -> int:
+        assert_safe_descendant(
+            self.run_dir, self.checkpoint_path, label="checkpoint read"
+        )
+        assert_safe_descendant(
+            self.run_dir, self.events_path, label="event journal read"
+        )
         if self.checkpoint_path.is_file():
             try:
                 checkpoint = json.loads(
@@ -101,6 +108,9 @@ class RunStateStore:
     def append_event(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not event_type or not isinstance(event_type, str):
             raise ValueError("event_type must be a non-empty string")
+        assert_safe_descendant(
+            self.run_dir, self.events_path, label="event journal append"
+        )
         previous_sequence = self.sequence
         original_size = (
             self.events_path.stat().st_size if self.events_path.is_file() else 0
@@ -123,6 +133,9 @@ class RunStateStore:
                     f"{len(encoded)}"
                 )
             self.events_path.parent.mkdir(parents=True, exist_ok=True)
+            assert_safe_descendant(
+                self.run_dir, self.events_path, label="event journal append"
+            )
             if self.max_run_artifact_bytes is not None:
                 enforce_projected_write(
                     self.run_dir,
@@ -154,6 +167,9 @@ class RunStateStore:
     ) -> list[dict[str, Any]]:
         """Strictly validate the append-only journal and its checkpoint tail."""
 
+        assert_safe_descendant(
+            self.run_dir, self.events_path, label="event journal validation"
+        )
         if not self.events_path.is_file():
             if expected_sequence in (None, 0):
                 return []
@@ -204,6 +220,9 @@ class RunStateStore:
         return events
 
     def write_checkpoint(self, payload: dict[str, Any]) -> dict[str, Any]:
+        assert_safe_descendant(
+            self.run_dir, self.checkpoint_path, label="checkpoint write"
+        )
         checkpoint = {
             **payload,
             "checkpoint_version": CHECKPOINT_VERSION,
@@ -224,11 +243,17 @@ class RunStateStore:
         temporary = self.checkpoint_path.with_suffix(
             self.checkpoint_path.suffix + ".tmp"
         )
+        assert_safe_descendant(
+            self.run_dir, temporary, label="checkpoint temporary write"
+        )
         temporary.write_bytes(encoded)
         os.replace(temporary, self.checkpoint_path)
         return checkpoint
 
     def load_checkpoint(self) -> dict[str, Any]:
+        assert_safe_descendant(
+            self.run_dir, self.checkpoint_path, label="checkpoint read"
+        )
         try:
             checkpoint = json.loads(
                 self.checkpoint_path.read_text(encoding="utf-8")

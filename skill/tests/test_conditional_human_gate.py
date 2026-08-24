@@ -21,7 +21,7 @@ from runtime.condition import (
     evaluate_condition,
     validate_condition,
 )
-from runtime.control_flow import TrustedControlFlowScheduler
+from runtime.control_flow import ControlFlowError, TrustedControlFlowScheduler
 from runtime.human_gate import HumanGateError, HumanGateStore
 from runtime.limits import RuntimeLimits
 from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
@@ -387,6 +387,107 @@ class HumanGateSchedulerTests(unittest.IsolatedAsyncioTestCase):
         ).run(resume=True)
         self.assertTrue(resumed["paused"])
         self.assertEqual(resumed["waiting_count"], 1)
+
+    async def test_succeeded_gate_is_revalidated_on_terminal_resume(self) -> None:
+        run_dir = self.base / "gate-decision-revalidation"
+        await TrustedControlFlowScheduler(
+            gate_ir(),
+            run_dir,
+            execute_agent=FakeExecutor(),
+            limits=self.limits,
+        ).run()
+        store = HumanGateStore(run_dir, self.limits)
+        waiting = store.load("approval")
+        store.decide(
+            "approval",
+            decision="approve",
+            actor="fixture-user",
+            source="user",
+            expected_input_identity=waiting["input_identity"],
+        )
+        completed = await TrustedControlFlowScheduler(
+            gate_ir(),
+            run_dir,
+            execute_agent=FakeExecutor(),
+            limits=self.limits,
+        ).run(resume=True)
+        self.assertTrue(completed["all_succeeded"])
+
+        store.decision_path_for("approval").unlink()
+        executor = FakeExecutor()
+        with self.assertRaisesRegex(ControlFlowError, "no terminal decision"):
+            await TrustedControlFlowScheduler(
+                gate_ir(),
+                run_dir,
+                execute_agent=executor,
+                limits=self.limits,
+            ).run(resume=True)
+        self.assertEqual(executor.calls, [])
+
+    async def test_succeeded_gate_rejects_replaced_decision_and_identity(self) -> None:
+        for tamper in ("decision", "identity"):
+            with self.subTest(tamper=tamper):
+                run_dir = self.base / f"gate-{tamper}-tamper"
+                await TrustedControlFlowScheduler(
+                    gate_ir(),
+                    run_dir,
+                    execute_agent=FakeExecutor(),
+                    limits=self.limits,
+                ).run()
+                store = HumanGateStore(run_dir, self.limits)
+                waiting = store.load("approval")
+                store.decide(
+                    "approval",
+                    decision="approve",
+                    actor="fixture-user",
+                    source="user",
+                    expected_input_identity=waiting["input_identity"],
+                )
+                completed = await TrustedControlFlowScheduler(
+                    gate_ir(),
+                    run_dir,
+                    execute_agent=FakeExecutor(),
+                    limits=self.limits,
+                ).run(resume=True)
+                self.assertTrue(completed["all_succeeded"])
+
+                decision_path = store.decision_path_for("approval")
+                decision = json.loads(decision_path.read_text(encoding="utf-8"))
+                if tamper == "decision":
+                    decision["decision"] = "reject"
+                    expected_error = "decision evidence disagrees"
+                else:
+                    contract_path = store.path_for("approval")
+                    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+                    contract["input_identity"] = "f" * 64
+                    decision["input_identity"] = "f" * 64
+                    contract_path.write_text(
+                        json.dumps(contract, ensure_ascii=False), encoding="utf-8"
+                    )
+                    expected_error = "contract identity is invalid"
+                decision_path.write_text(
+                    json.dumps(decision, ensure_ascii=False), encoding="utf-8"
+                )
+                before = {
+                    path.relative_to(run_dir): path.read_bytes()
+                    for path in run_dir.rglob("*")
+                    if path.is_file()
+                }
+                executor = FakeExecutor()
+                with self.assertRaisesRegex(ControlFlowError, expected_error):
+                    await TrustedControlFlowScheduler(
+                        gate_ir(),
+                        run_dir,
+                        execute_agent=executor,
+                        limits=self.limits,
+                    ).run(resume=True)
+                after = {
+                    path.relative_to(run_dir): path.read_bytes()
+                    for path in run_dir.rglob("*")
+                    if path.is_file()
+                }
+                self.assertEqual(executor.calls, [])
+                self.assertEqual(after, before)
 
     def test_gate_identity_and_terminal_decision_are_fail_closed(self) -> None:
         run_dir = self.base / "records"

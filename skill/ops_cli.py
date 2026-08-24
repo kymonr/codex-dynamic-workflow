@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 try:  # Package import from repository root.
+    from skill.platform_paths import configure_utf8_stdio
     from skill import runner as legacy
     from skill.runtime.human_gate import HumanGateError, HumanGateStore
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
@@ -23,6 +24,7 @@ try:  # Package import from repository root.
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Installed skill directory.
+    from platform_paths import configure_utf8_stdio
     import runner as legacy
     from runtime.human_gate import HumanGateError, HumanGateStore
     from runtime.limits import ArtifactLimitError, RuntimeLimits
@@ -544,6 +546,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan-ir":

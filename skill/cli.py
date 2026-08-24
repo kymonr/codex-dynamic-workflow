@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import sys
 
-from platform_paths import apply_runtime_defaults
+from platform_paths import apply_runtime_defaults, configure_utf8_stdio
 
 apply_runtime_defaults()
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] in {"run-ir", "resume-ir"}:
         from ir_runner import main as ir_main
