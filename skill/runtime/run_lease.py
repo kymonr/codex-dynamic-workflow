@@ -7,7 +7,12 @@ import threading
 from pathlib import Path
 from typing import BinaryIO
 
-from .path_safety import UnsafeRunPathError, assert_safe_descendant, is_reparse
+from .path_safety import (
+    UnsafeRunPathError,
+    assert_safe_descendant,
+    canonical_runtime_path,
+    is_reparse,
+)
 
 
 class RunLeaseError(RuntimeError):
@@ -19,7 +24,7 @@ _PROCESS_LEASES_LOCK = threading.Lock()
 
 
 def lease_path_for(run_dir: Path) -> Path:
-    run_dir = Path(os.path.abspath(os.fspath(run_dir)))
+    run_dir = canonical_runtime_path(run_dir, label="run directory")
     return run_dir.with_name(f".{run_dir.name}.lease")
 
 
@@ -27,7 +32,9 @@ class RunLease:
     """Hold one advisory lock until the workflow invocation returns."""
 
     def __init__(self, run_dir: Path) -> None:
-        self.path = lease_path_for(run_dir)
+        self.path = canonical_runtime_path(
+            lease_path_for(run_dir), label="run lease path"
+        )
         self._key = os.path.normcase(str(self.path))
         self._handle: BinaryIO | None = None
 

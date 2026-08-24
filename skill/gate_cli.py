@@ -19,7 +19,10 @@ try:  # Package import from repository root.
     )
     from skill.runtime.human_gate import HumanGateError, HumanGateStore
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
-    from skill.runtime.path_safety import assert_safe_run_tree
+    from skill.runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
 except ModuleNotFoundError:  # Installed skill directory.
     from platform_paths import configure_utf8_stdio
     import runner as legacy
@@ -30,7 +33,10 @@ except ModuleNotFoundError:  # Installed skill directory.
     )
     from runtime.human_gate import HumanGateError, HumanGateStore
     from runtime.limits import ArtifactLimitError, RuntimeLimits
-    from runtime.path_safety import assert_safe_run_tree
+    from runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 
@@ -48,8 +54,12 @@ def _load_json(path: str | Path) -> Any:
 
 
 def _run_context(run_dir: str | Path) -> tuple[Path, HumanGateStore]:
-    candidate = Path(run_dir).expanduser().absolute()
-    runs_root = legacy._runs_root().resolve()
+    candidate = canonical_runtime_path(
+        Path(run_dir).expanduser(), label="gate run directory"
+    )
+    runs_root = canonical_runtime_path(
+        legacy._runs_root(), label="runs root"
+    )
     if not candidate.is_relative_to(runs_root):
         raise HumanGateError(f"gate run directory must be below {runs_root}")
     if not candidate.is_dir():

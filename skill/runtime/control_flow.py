@@ -41,6 +41,7 @@ from .path_safety import (
     UnsafeRunPathError,
     assert_safe_descendant,
     assert_safe_run_tree,
+    canonical_runtime_path,
 )
 from .run_lease import RunLease, RunLeaseError
 from .state_store import RunStateStore, now_iso
@@ -287,7 +288,9 @@ class TrustedControlFlowScheduler:
                 f"{self.claim_projection['max_agents']}"
             )
 
-        self.run_dir = Path(os.path.abspath(os.fspath(run_dir)))
+        self.run_dir = canonical_runtime_path(
+            run_dir, label="run directory"
+        )
         self.execute_agent = execute_agent
         self.limits = limits
         self.node_by_id = {node["id"]: node for node in self.ir["nodes"]}

@@ -20,7 +20,10 @@ try:  # Package import from repository root.
     )
     from skill.runtime.deadline import DeadlineClock
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
-    from skill.runtime.path_safety import assert_safe_run_tree
+    from skill.runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
     from skill.runtime.workflow_ir import (
         WorkflowIRValidationError,
         validate_workflow_ir,
@@ -32,7 +35,10 @@ except ModuleNotFoundError:  # Executed from the installed skill directory.
     from runtime.control_flow import ControlFlowError, TrustedControlFlowScheduler
     from runtime.deadline import DeadlineClock
     from runtime.limits import ArtifactLimitError, RuntimeLimits
-    from runtime.path_safety import assert_safe_run_tree
+    from runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
     from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
 
 
@@ -268,8 +274,17 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         resume = args.command == "resume-ir"
-        runs_root = legacy._runs_root()
-        run_dir = Path(args.run_dir).expanduser().absolute() if resume else None
+        runs_root = canonical_runtime_path(
+            legacy._runs_root(), label="runs root"
+        )
+        run_dir = (
+            canonical_runtime_path(
+                Path(args.run_dir).expanduser(),
+                label="resume run directory",
+            )
+            if resume
+            else None
+        )
         if resume:
             assert run_dir is not None
             if not run_dir.is_relative_to(runs_root):

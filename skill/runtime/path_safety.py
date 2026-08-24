@@ -45,6 +45,44 @@ def _absolute(path: Path) -> Path:
     return Path(os.path.abspath(os.fspath(path)))
 
 
+def _assert_existing_components_are_not_reparse(
+    path: Path,
+    *,
+    label: str,
+) -> None:
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current = current / part
+        if not lexists(current):
+            break
+        if is_reparse(current):
+            raise UnsafeRunPathError(
+                f"{label} traverses a symlink, junction, or reparse point: "
+                f"{current}"
+            )
+
+
+def canonical_runtime_path(path: Path, *, label: str) -> Path:
+    """Return one alias-normalized identity without trusting reparse paths.
+
+    Existing components are checked before and after ``resolve(strict=False)``.
+    On Windows this expands 8.3 aliases such as ``RUNNER~1`` to the same long
+    identity used by ``Path.resolve()``, while the pre-check prevents
+    canonicalization from silently following an existing reparse component.
+    """
+
+    lexical = _absolute(path)
+    _assert_existing_components_are_not_reparse(lexical, label=label)
+    try:
+        canonical = lexical.resolve(strict=False)
+    except OSError as exc:
+        raise UnsafeRunPathError(
+            f"cannot canonicalize {label} {lexical}: {exc}"
+        ) from exc
+    _assert_existing_components_are_not_reparse(canonical, label=label)
+    return canonical
+
+
 def assert_safe_descendant(
     run_dir: Path,
     candidate: Path,
@@ -53,8 +91,10 @@ def assert_safe_descendant(
 ) -> None:
     """Reject existing reparse components without resolving through them."""
 
-    root = _absolute(run_dir)
-    path = _absolute(candidate)
+    root = canonical_runtime_path(
+        run_dir, label="run directory"
+    )
+    path = canonical_runtime_path(candidate, label=label)
     if path != root and not path.is_relative_to(root):
         raise UnsafeRunPathError(f"{label} escapes run directory: {path}")
 
@@ -90,7 +130,9 @@ def assert_safe_descendant(
 def assert_safe_run_tree(run_dir: Path) -> None:
     """Reject every existing reparse descendant of *run_dir*."""
 
-    root = _absolute(run_dir)
+    root = canonical_runtime_path(
+        run_dir, label="run directory"
+    )
     assert_safe_descendant(root, root, label="run directory")
     if not root.is_dir():
         raise UnsafeRunPathError(f"run directory does not exist: {root}")
