@@ -19,7 +19,11 @@ from runtime.artifacts import ArtifactStore
 from runtime.control_flow import ControlFlowError, TrustedControlFlowScheduler
 from runtime.human_gate import HumanGateStore
 from runtime.limits import ArtifactLimitError, RuntimeLimits, directory_size
-from runtime.path_safety import UnsafeRunPathError, assert_safe_run_tree
+from runtime.path_safety import (
+    UnsafeRunPathError,
+    assert_safe_run_tree,
+    canonical_runtime_path,
+)
 from runtime.run_lease import RunLease, RunLeaseError
 from runtime.state_store import RunStateStore
 
@@ -247,6 +251,9 @@ class RuntimeReparseTests(unittest.TestCase):
             run_dir = Path(temporary) / "run"
             unsafe = run_dir / "tasks" / "only"
             unsafe.mkdir(parents=True)
+            unsafe = canonical_runtime_path(
+                unsafe, label="simulated unsafe descendant"
+            )
             with mock.patch(
                 "runtime.path_safety.is_reparse",
                 side_effect=lambda path: Path(path) == unsafe,

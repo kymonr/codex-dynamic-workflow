@@ -6,13 +6,18 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SKILL = Path(__file__).resolve().parents[1]
 if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
 import runner
-from runtime.path_safety import canonical_runtime_path
+from runtime.path_safety import (
+    UnsafeRunPathError,
+    assert_safe_run_tree,
+    canonical_runtime_path,
+)
 from runtime.run_lease import lease_path_for
 
 
@@ -64,6 +69,33 @@ class WindowsPathIdentityTests(unittest.TestCase):
                     {"workdir": str(workdir)},
                     codex_home,
                 )
+
+    def test_recursive_reparse_scan_uses_canonical_alias_identity(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="runtime reparse identity "
+        ) as raw:
+            long_root = Path(raw).resolve()
+            short_root = short_alias(long_root)
+            unsafe = long_root / "tasks" / "only"
+            unsafe.mkdir(parents=True)
+            observed: list[Path] = []
+
+            def simulated_reparse(path: Path) -> bool:
+                candidate = Path(path)
+                observed.append(candidate)
+                return candidate == unsafe
+
+            with mock.patch(
+                "runtime.path_safety.is_reparse",
+                side_effect=simulated_reparse,
+            ):
+                with self.assertRaisesRegex(
+                    UnsafeRunPathError, "reparse point"
+                ):
+                    assert_safe_run_tree(short_root)
+
+            self.assertIn(unsafe, observed)
+            self.assertNotIn(short_root / "tasks" / "only", observed)
 
 
 if __name__ == "__main__":
