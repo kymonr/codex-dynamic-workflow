@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "name": "bounded-documentation-change",
+  "objective": "在隔离 worktree 中为 Worktree Writer v1 增加一份有界使用说明，只修改明确授权的文档文件，不修改 canonical checkout。",
+  "base": {
+    "repository_full_name": "kymonr/codex-dynamic-workflow",
+    "expected_head_sha": "REPLACE_WITH_40_LOWERCASE_HEX",
+    "expected_tree_sha": "REPLACE_WITH_40_LOWERCASE_HEX"
+  },
+  "authority": {
+    "owned_targets": [
+      "skill/references/worktree-writer-usage.md"
+    ],
+    "allowed_actions": [
+      "create",
+      "modify"
+    ]
+  },
+  "limits": {
+    "max_changed_files": 1,
+    "max_patch_bytes": 262144,
+    "max_created_file_bytes": 131072,
+    "max_total_candidate_bytes": 524288
+  },
+  "verification": {
+    "required_verification_ids": [
+      "policy-consistency"
+    ],
+    "commands": [
+      {
+        "id": "policy-consistency",
+        "argv": [
+          "python",
+          "skill/scripts/check_policy_consistency.py",
+          "--json"
+        ],
+        "timeout_seconds": 120
+      }
+    ]
+  }
+}

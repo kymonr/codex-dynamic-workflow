@@ -15,6 +15,7 @@ from .limits import (
     enforce_projected_write,
     enforce_run_limit,
 )
+from .path_safety import UnsafeRunPathError, assert_safe_descendant
 
 ARTIFACT_REFERENCE_KEY = "$artifact"
 ARTIFACT_VERSION = 1
@@ -41,9 +42,15 @@ class ArtifactStore:
     """Store JSON values below one run directory using SHA-256 identities."""
 
     def __init__(self, run_dir: Path, limits: RuntimeLimits) -> None:
-        self.run_dir = run_dir.resolve()
+        self.run_dir = Path(os.path.abspath(os.fspath(run_dir)))
         self.root = self.run_dir / "artifacts"
         self.limits = limits
+
+    def _assert_safe(self, path: Path, label: str) -> None:
+        try:
+            assert_safe_descendant(self.run_dir, path, label=label)
+        except UnsafeRunPathError as exc:
+            raise ArtifactLimitError(str(exc)) from exc
 
     def put_json(self, task_id: str, value: Any) -> dict[str, Any]:
         payload = canonical_json_bytes(value)
@@ -55,9 +62,11 @@ class ArtifactStore:
         digest = hashlib.sha256(payload).hexdigest()
         relative = Path("artifacts") / "sha256" / digest[:2] / f"{digest}.json"
         target = self.run_dir / relative
+        self._assert_safe(target, "result artifact write")
         created = False
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
+            self._assert_safe(target, "result artifact write")
             enforce_projected_write(
                 self.run_dir,
                 target,
@@ -68,6 +77,7 @@ class ArtifactStore:
             temporary = target.with_name(
                 f".{target.name}.{secrets.token_hex(6)}.tmp"
             )
+            self._assert_safe(temporary, "result artifact temporary write")
             temporary.write_bytes(payload)
             os.replace(temporary, target)
             created = True
@@ -157,6 +167,7 @@ class ArtifactStore:
         candidate = (self.run_dir / Path(raw_path)).resolve()
         if not candidate.is_relative_to(self.root.resolve()):
             raise ArtifactLimitError("artifact reference escapes the artifact root")
+        self._assert_safe(self.run_dir / Path(raw_path), "artifact read")
         if not candidate.is_file() or candidate.is_symlink():
             raise ArtifactLimitError(f"artifact is missing or unsafe: {candidate}")
         expected_size = metadata.get("bytes")

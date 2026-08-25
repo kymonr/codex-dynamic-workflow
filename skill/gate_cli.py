@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 try:  # Package import from repository root.
+    from skill.platform_paths import configure_utf8_stdio
     from skill import runner as legacy
     from skill.runtime.condition import (
         ConditionValidationError,
@@ -18,7 +19,12 @@ try:  # Package import from repository root.
     )
     from skill.runtime.human_gate import HumanGateError, HumanGateStore
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
+    from skill.runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
 except ModuleNotFoundError:  # Installed skill directory.
+    from platform_paths import configure_utf8_stdio
     import runner as legacy
     from runtime.condition import (
         ConditionValidationError,
@@ -27,6 +33,10 @@ except ModuleNotFoundError:  # Installed skill directory.
     )
     from runtime.human_gate import HumanGateError, HumanGateStore
     from runtime.limits import ArtifactLimitError, RuntimeLimits
+    from runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 
@@ -44,12 +54,17 @@ def _load_json(path: str | Path) -> Any:
 
 
 def _run_context(run_dir: str | Path) -> tuple[Path, HumanGateStore]:
-    candidate = Path(run_dir).expanduser().resolve()
-    runs_root = legacy._runs_root().resolve()
+    candidate = canonical_runtime_path(
+        Path(run_dir).expanduser(), label="gate run directory"
+    )
+    runs_root = canonical_runtime_path(
+        legacy._runs_root(), label="runs root"
+    )
     if not candidate.is_relative_to(runs_root):
         raise HumanGateError(f"gate run directory must be below {runs_root}")
     if not candidate.is_dir():
         raise HumanGateError(f"gate run directory does not exist: {candidate}")
+    assert_safe_run_tree(candidate)
     if not (candidate / "workflow-ir.resolved.json").is_file():
         raise HumanGateError("gate run directory lacks workflow-ir.resolved.json")
     if not (candidate / "checkpoint.json").is_file():
@@ -112,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
         if args.command == "condition-evaluate":

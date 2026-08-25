@@ -13,7 +13,6 @@ import argparse
 import asyncio
 import contextlib
 import hashlib
-import io
 import json
 import os
 import re
@@ -24,6 +23,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 try:  # Package import from repository root.
+    from skill.platform_paths import configure_utf8_stdio
     from skill import ops_cli
     from skill import runner as legacy
     from skill import swarm_presets
@@ -34,6 +34,7 @@ try:  # Package import from repository root.
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Executed from the installed skill directory.
+    from platform_paths import configure_utf8_stdio
     import ops_cli
     import runner as legacy
     import swarm_presets
@@ -1235,24 +1236,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _configure_utf8_stdio() -> None:
-    """Use UTF-8 on real Windows streams without disturbing test redirects."""
-
-    for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.StringIO):
-            continue
-        reconfigure = getattr(stream, "reconfigure", None)
-        if callable(reconfigure):
-            try:
-                reconfigure(encoding="utf-8", errors="strict")
-            except (OSError, ValueError):
-                # Captured or host-provided streams may not permit reconfigure;
-                # leave them untouched rather than replacing the stream.
-                continue
-
-
 def main(argv: list[str] | None = None) -> int:
-    _configure_utf8_stdio()
+    configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     if args.command == "auto-plan" and not args.ack_external_model_export:
         print(

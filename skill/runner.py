@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 try:  # Imported from repository root / tests.
-    from skill.platform_paths import default_runs_root
+    from skill.platform_paths import configure_utf8_stdio, default_runs_root
     from skill.runtime.artifacts import (
         ArtifactStore,
         choose_public_output,
@@ -45,6 +45,13 @@ try:  # Imported from repository root / tests.
         trim_file_to_run_limit,
         truncate_file,
     )
+    from skill.runtime.path_safety import (
+        UnsafeRunPathError,
+        assert_safe_descendant,
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
+    from skill.runtime.run_lease import RunLease, RunLeaseError
     from skill.runtime.schema_contract import (
         build_envelope_schema as _runtime_build_envelope_schema,
         compile_provider_schema,
@@ -63,7 +70,7 @@ try:  # Imported from repository root / tests.
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Executed as ``python skill/runner.py``.
-    from platform_paths import default_runs_root
+    from platform_paths import configure_utf8_stdio, default_runs_root
     from runtime.artifacts import (
         ArtifactStore,
         choose_public_output,
@@ -79,6 +86,13 @@ except ModuleNotFoundError:  # Executed as ``python skill/runner.py``.
         trim_file_to_run_limit,
         truncate_file,
     )
+    from runtime.path_safety import (
+        UnsafeRunPathError,
+        assert_safe_descendant,
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
+    from runtime.run_lease import RunLease, RunLeaseError
     from runtime.schema_contract import (
         build_envelope_schema as _runtime_build_envelope_schema,
         compile_provider_schema,
@@ -99,7 +113,7 @@ except ModuleNotFoundError:  # Executed as ``python skill/runner.py``.
 
 
 VERSION = 2
-DEFAULT_RUNS_ROOT = default_runs_root().resolve()
+DEFAULT_RUNS_ROOT = default_runs_root().absolute()
 DEFAULT_MAX_CONCURRENCY = 3
 HARD_MAX_CONCURRENCY = 8
 HARD_MAX_TASKS = 24
@@ -1087,7 +1101,9 @@ def _write_generated_bytes(
     limits: RuntimeLimits,
     label: str,
 ) -> None:
+    assert_safe_descendant(run_dir, path, label=label)
     path.parent.mkdir(parents=True, exist_ok=True)
+    assert_safe_descendant(run_dir, path, label=label)
     enforce_projected_write(
         run_dir,
         path,
@@ -1096,6 +1112,7 @@ def _write_generated_bytes(
         label,
     )
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+    assert_safe_descendant(run_dir, temporary, label=f"{label} temporary")
     try:
         temporary.write_bytes(payload)
         os.replace(temporary, path)
@@ -1140,6 +1157,29 @@ def _extract_tokens(log_path: Path) -> int | None:
         if values:
             return max(values)
     return None
+
+
+async def _cancelled_process_outcome(
+    proc: asyncio.subprocess.Process,
+    *,
+    started: float,
+    soft_reported: bool,
+    hard_extended: bool,
+) -> dict[str, Any]:
+    """Clean up one spawned process and retain any cleanup uncertainty."""
+
+    _clear_current_cancellation()
+    cleanup_error = await _kill_tree(proc)
+    return {
+        "exit_code": None,
+        "cancelled": True,
+        "externally_cancelled": True,
+        "timed_out": False,
+        "soft_reported": soft_reported,
+        "hard_extended": hard_extended,
+        "duration_s": round(time.monotonic() - started, 3),
+        "cleanup_error": cleanup_error,
+    }
 
 
 async def _wait_for_process(
@@ -1257,18 +1297,12 @@ async def _wait_for_process(
                         "cleanup_error": cleanup_error,
                     }
     except asyncio.CancelledError:
-        _clear_current_cancellation()
-        cleanup_error = await _kill_tree(proc)
-        return {
-            "exit_code": None,
-            "cancelled": True,
-            "externally_cancelled": True,
-            "timed_out": False,
-            "soft_reported": soft_reported,
-            "hard_extended": extended,
-            "duration_s": round(time.monotonic() - started, 3),
-            "cleanup_error": cleanup_error,
-        }
+        return await _cancelled_process_outcome(
+            proc,
+            started=started,
+            soft_reported=soft_reported,
+            hard_extended=extended,
+        )
     finally:
         if not waiter.done():
             waiter.cancel()
@@ -1307,8 +1341,10 @@ async def _run_attempt(
     hard_timeout: int,
     limits: RuntimeLimits,
 ) -> dict[str, Any]:
+    assert_safe_descendant(run_dir, task_dir, label="task directory")
     attempt_dir = task_dir / f"attempt-{attempt_number:02d}-{role}"
     attempt_dir.mkdir(parents=True, exist_ok=False)
+    assert_safe_descendant(run_dir, attempt_dir, label="attempt directory")
     try:
         await asyncio.to_thread(
             _check_workdir_safe,
@@ -1420,6 +1456,7 @@ async def _run_attempt(
                     "tier": route.get("tier"),
                     "attempt_dir": str(attempt_dir),
                 }
+            outcome: dict[str, Any] | None = None
             try:
                 assert proc.stdin is not None
                 proc.stdin.write(prompt.encode("utf-8"))
@@ -1427,21 +1464,18 @@ async def _run_attempt(
                 proc.stdin.close()
                 await proc.stdin.wait_closed()
             except (BrokenPipeError, ConnectionResetError):
+                # The child may close stdin before consuming the full prompt.
+                # Continue into process reconciliation instead of leaving
+                # ``outcome`` undefined.
                 pass
             except asyncio.CancelledError:
-                _clear_current_cancellation()
-                cleanup_error = await _kill_tree(proc)
-                outcome = {
-                    "exit_code": None,
-                    "cancelled": True,
-                    "externally_cancelled": True,
-                    "timed_out": False,
-                    "soft_reported": False,
-                    "hard_extended": False,
-                    "duration_s": round(time.monotonic() - started, 3),
-                    "cleanup_error": cleanup_error,
-                }
-            else:
+                outcome = await _cancelled_process_outcome(
+                    proc,
+                    started=started,
+                    soft_reported=False,
+                    hard_extended=False,
+                )
+            if outcome is None:
                 outcome = await _wait_for_process(
                     proc,
                     task_id=task["id"],
@@ -1645,7 +1679,9 @@ async def _execute_task(
     entry["status"] = "running"
     entry["error"] = None
     task_dir = run_dir / "tasks" / task["id"]
+    assert_safe_descendant(run_dir, task_dir, label="task directory")
     task_dir.mkdir(parents=True, exist_ok=True)
+    assert_safe_descendant(run_dir, task_dir, label="task directory")
     entry["task_dir"] = str(task_dir)
     attempt_number = _next_attempt_number(task_dir, entry)
     try:
@@ -1791,19 +1827,43 @@ async def run_workflow(
     *,
     resume: bool = False,
 ) -> dict[str, Any]:
+    try:
+        with RunLease(run_dir):
+            return await _run_workflow_under_lease(
+                spec,
+                run_dir,
+                codex_prefix,
+                role_configs,
+                resume=resume,
+            )
+    except (RunLeaseError, UnsafeRunPathError) as exc:
+        raise WorkflowError(str(exc)) from exc
+
+
+async def _run_workflow_under_lease(
+    spec: dict[str, Any],
+    run_dir: Path,
+    codex_prefix: list[str],
+    role_configs: dict[str, dict[str, Any]],
+    *,
+    resume: bool = False,
+) -> dict[str, Any]:
     if any(task.get("allow_escalation") is True for task in spec.get("tasks", [])):
         raise SpecError(ESCALATION_DISABLED_ERROR)
 
     spec = dict(spec)
     limits = RuntimeLimits.from_mapping(spec.get("limits"))
     spec["limits"] = limits.to_dict()
-    run_dir = run_dir.resolve()
+    run_dir = canonical_runtime_path(
+        run_dir, label="run directory"
+    )
 
     if resume:
         if not run_dir.is_dir():
             raise WorkflowError(f"resume run directory does not exist: {run_dir}")
         if not (run_dir / "tasks").is_dir():
             raise WorkflowError(f"resume run directory is incomplete: {run_dir}")
+        assert_safe_run_tree(run_dir)
     else:
         try:
             run_dir.mkdir(parents=True, exist_ok=False)
@@ -1812,6 +1872,7 @@ async def run_workflow(
             raise WorkflowError(f"运行目录已存在，拒绝覆盖: {run_dir}") from exc
         except OSError as exc:
             raise WorkflowError(f"无法创建运行目录 {run_dir}: {exc}") from exc
+        assert_safe_run_tree(run_dir)
         _write_generated_text(
             run_dir / "spec.resolved.json",
             json.dumps(spec, ensure_ascii=False, indent=2),
@@ -2019,7 +2080,11 @@ async def run_workflow(
                     snapshot()
             elif any(state == "pending" for state in states.values()):
                 raise WorkflowError("DAG 调度器无 ready/running 节点；规格可能损坏")
-    except BaseException:
+    except BaseException as interruption:
+        if isinstance(interruption, asyncio.CancelledError):
+            # Mandatory child cleanup and the terminal snapshot must finish
+            # before the original cancellation is re-raised to the caller.
+            _clear_current_cancellation()
         if running:
             running_items = list(running.items())
             for _, running_task in running_items:
@@ -2064,34 +2129,60 @@ async def run_workflow(
 
 def _runs_root() -> Path:
     configured = os.environ.get("DYNWF_RUNS_ROOT")
-    return Path(configured).expanduser().resolve() if configured else DEFAULT_RUNS_ROOT
+    candidate = (
+        Path(configured).expanduser()
+        if configured
+        else DEFAULT_RUNS_ROOT
+    )
+    try:
+        return canonical_runtime_path(candidate, label="runs root")
+    except UnsafeRunPathError as exc:
+        raise WorkflowError(str(exc)) from exc
 
 
 def _prepare_run_root(root: Path, spec: dict[str, Any], codex_home: Path) -> None:
-    root = root.resolve()
+    try:
+        root = canonical_runtime_path(root, label="运行产物根")
+        workdir = canonical_runtime_path(
+            Path(spec["workdir"]), label="workdir"
+        )
+    except UnsafeRunPathError as exc:
+        raise WorkflowError(str(exc)) from exc
     if root == Path(root.anchor):
         raise WorkflowError(f"运行产物根不能是盘符根: {root}")
     home = Path.home().resolve()
+    codex_home = codex_home.resolve(strict=False)
     if root == home or home.is_relative_to(root):
         raise WorkflowError(f"运行产物根不能是用户主目录或其上层: {root}")
     if root == codex_home or root.is_relative_to(codex_home) or codex_home.is_relative_to(root):
         raise WorkflowError(f"运行产物根不能与 CODEX_HOME 重叠: {root}")
     if any(part.casefold() in SENSITIVE_DIR_NAMES for part in root.parts):
         raise WorkflowError(f"运行产物根不能位于敏感配置目录: {root}")
-    workdir = Path(spec["workdir"]).resolve()
     if root == workdir or root.is_relative_to(workdir) or workdir.is_relative_to(root):
         raise WorkflowError(f"运行产物根不能与 workdir 重叠: {root}")
-    _assert_no_reparse_components(root, "运行产物根")
+    try:
+        assert_safe_descendant(root, root, label="运行产物根")
+    except UnsafeRunPathError as exc:
+        raise WorkflowError(str(exc)) from exc
     root.mkdir(parents=True, exist_ok=True)
     if _is_reparse(root):
         raise WorkflowError(f"运行产物根不能是重解析点: {root}")
 
 
 def _select_run_dir(root: Path, name: str, requested: str | None) -> Path:
+    try:
+        root = canonical_runtime_path(root, label="runs root")
+    except UnsafeRunPathError as exc:
+        raise WorkflowError(str(exc)) from exc
     if requested:
         if not os.environ.get("DYNWF_RUNS_ROOT") and os.environ.get("DYNWF_TEST_MODE") != "1":
             raise WorkflowError("生产默认模式不接受 --run-dir；请让 runner 自动生成")
-        candidate = Path(requested).expanduser().resolve()
+        try:
+            candidate = canonical_runtime_path(
+                Path(requested).expanduser(), label="requested run directory"
+            )
+        except UnsafeRunPathError as exc:
+            raise WorkflowError(str(exc)) from exc
         if not candidate.is_relative_to(root):
             raise WorkflowError(f"--run-dir 必须位于 {root} 下")
         return candidate
@@ -2163,7 +2254,17 @@ def _raw_v2_from_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
 def _prepare_runtime_spec(args: argparse.Namespace, codex_home: Path) -> tuple[dict[str, Any], Path, bool]:
     resume = args.command == "resume"
     if resume:
-        run_dir = Path(args.run_dir).expanduser().resolve()
+        try:
+            run_dir = canonical_runtime_path(
+                Path(args.run_dir).expanduser(),
+                label="resume run directory",
+            )
+        except UnsafeRunPathError as exc:
+            raise WorkflowError(str(exc)) from exc
+        runs_root = _runs_root()
+        if not run_dir.is_relative_to(runs_root):
+            raise WorkflowError(f"resume run directory must be below {runs_root}")
+        assert_safe_run_tree(run_dir)
         resolved = _load_json(run_dir / "spec.resolved.json")
         raw = _raw_v2_from_resolved(resolved)
     else:
@@ -2179,6 +2280,7 @@ def _prepare_runtime_spec(args: argparse.Namespace, codex_home: Path) -> tuple[d
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     if args.command == "validate-ir":
         try:

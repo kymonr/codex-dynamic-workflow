@@ -506,56 +506,148 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry["final_role"], "spark")
         self.assertEqual(len(entry["attempts"]), 1)
 
-    async def test_cancellation_writes_terminal_summary(self) -> None:
-        run_dir = self.base / "run-cancelled"
-        async def successful_cleanup(proc) -> None:
-            proc.kill()
-            await proc.wait()
-            return None
+    async def _cancel_workflow_at_phase(
+        self,
+        *,
+        phase: str,
+        cleanup_error: str | None,
+        run_name: str,
+    ) -> dict:
+        if phase not in {"stdin_drain", "stdin_wait_closed", "process_wait"}:
+            raise AssertionError(f"unknown cancellation phase: {phase}")
 
-        with mock.patch.object(runner, "_kill_tree", new=successful_cleanup):
+        phase_entered = asyncio.Event()
+        hold_phase = asyncio.Event()
+        cleanup_calls = 0
+
+        class ControlledStdin:
+            def __init__(self) -> None:
+                self.closed = False
+                self.payload = b""
+
+            def write(self, payload: bytes) -> None:
+                self.payload = payload
+
+            async def drain(self) -> None:
+                if phase == "stdin_drain":
+                    phase_entered.set()
+                    await hold_phase.wait()
+
+            def close(self) -> None:
+                self.closed = True
+
+            async def wait_closed(self) -> None:
+                if not self.closed:
+                    raise AssertionError("stdin wait_closed called before close")
+                if phase == "stdin_wait_closed":
+                    phase_entered.set()
+                    await hold_phase.wait()
+
+        class ControlledProcess:
+            pid = 4242
+
+            def __init__(self) -> None:
+                self.stdin = ControlledStdin()
+                self.killed = False
+
+            def kill(self) -> None:
+                self.killed = True
+
+            async def wait(self) -> int:
+                if phase == "process_wait":
+                    phase_entered.set()
+                await hold_phase.wait()
+                return 0
+
+        process = ControlledProcess()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return process
+
+        async def controlled_cleanup(proc):
+            nonlocal cleanup_calls
+            self.assertIs(proc, process)
+            cleanup_calls += 1
+            return cleanup_error
+
+        run_dir = self.base / f"run-{run_name}"
+        with (
+            mock.patch.object(
+                runner.asyncio,
+                "create_subprocess_exec",
+                new=fake_create_subprocess_exec,
+            ),
+            mock.patch.object(runner, "_kill_tree", new=controlled_cleanup),
+        ):
             workflow = asyncio.create_task(
                 runner.run_workflow(
-                    self.spec([task("sleep", "FAKE_SLEEP")], "cancelled-run"),
+                    self.spec([task("sleep", "FAKE_SLEEP")], run_name),
                     run_dir,
                     self.prefix,
                     role_configs(),
                 )
             )
-            await asyncio.sleep(0.5)
+            await asyncio.wait_for(phase_entered.wait(), timeout=5)
             workflow.cancel()
             with self.assertRaises(asyncio.CancelledError):
-                await workflow
-        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+                await asyncio.wait_for(workflow, timeout=5)
+
+        self.assertEqual(cleanup_calls, 1)
+        summary = json.loads(
+            (run_dir / "summary.json").read_text(encoding="utf-8")
+        )
         self.assertIsNotNone(summary["finished"])
-        self.assertEqual(summary["tasks"][0]["status"], "cancelled")
+        self.assertEqual(len(summary["tasks"][0]["attempts"]), 1)
+        return summary
+
+    async def test_cancellation_writes_terminal_summary(self) -> None:
+        summary = await self._cancel_workflow_at_phase(
+            phase="process_wait",
+            cleanup_error=None,
+            run_name="cancelled-run",
+        )
+        entry = summary["tasks"][0]
+        self.assertEqual(entry["status"], "cancelled")
+        self.assertEqual(entry["attempts"][0]["status"], "cancelled")
+        self.assertEqual(entry["error"], "runner cancellation")
 
     async def test_cancellation_cleanup_failure_is_failed_in_summary(self) -> None:
-        run_dir = self.base / "run-cancelled-cleanup-failure"
+        cleanup_error = "process-tree cleanup unconfirmed: fixture"
+        summary = await self._cancel_workflow_at_phase(
+            phase="process_wait",
+            cleanup_error=cleanup_error,
+            run_name="cancelled-cleanup-failure",
+        )
+        entry = summary["tasks"][0]
+        self.assertEqual(entry["status"], "failed")
+        self.assertEqual(entry["attempts"][0]["status"], "failed")
+        self.assertEqual(entry["error"], cleanup_error)
 
-        async def failed_cleanup(proc) -> str:
-            proc.kill()
-            await proc.wait()
-            return "process-tree cleanup unconfirmed: fixture"
+    async def test_stdin_drain_cleanup_failure_is_failed_in_summary(self) -> None:
+        cleanup_error = "process-tree cleanup unconfirmed: stdin drain"
+        summary = await self._cancel_workflow_at_phase(
+            phase="stdin_drain",
+            cleanup_error=cleanup_error,
+            run_name="cancelled-during-stdin-drain",
+        )
+        entry = summary["tasks"][0]
+        self.assertEqual(entry["status"], "failed")
+        self.assertEqual(entry["attempts"][0]["status"], "failed")
+        self.assertEqual(entry["error"], cleanup_error)
 
-        with mock.patch.object(runner, "_kill_tree", new=failed_cleanup):
-            workflow = asyncio.create_task(
-                runner.run_workflow(
-                    self.spec([task("sleep", "FAKE_SLEEP")], "cancelled-cleanup-failure"),
-                    run_dir,
-                    self.prefix,
-                    role_configs(),
-                )
-            )
-            await asyncio.sleep(0.5)
-            workflow.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await workflow
-
-        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-        self.assertIsNotNone(summary["finished"])
-        self.assertEqual(summary["tasks"][0]["status"], "failed")
-        self.assertIn("process-tree cleanup unconfirmed", summary["tasks"][0]["error"])
+    async def test_stdin_wait_closed_cleanup_failure_is_failed_in_summary(
+        self,
+    ) -> None:
+        cleanup_error = "process-tree cleanup unconfirmed: stdin wait_closed"
+        summary = await self._cancel_workflow_at_phase(
+            phase="stdin_wait_closed",
+            cleanup_error=cleanup_error,
+            run_name="cancelled-during-stdin-wait-closed",
+        )
+        entry = summary["tasks"][0]
+        self.assertEqual(entry["status"], "failed")
+        self.assertEqual(entry["attempts"][0]["status"], "failed")
+        self.assertEqual(entry["error"], cleanup_error)
 
 
 if __name__ == "__main__":

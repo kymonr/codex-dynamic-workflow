@@ -12,6 +12,12 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+SKILL_DIR = Path(__file__).resolve().parents[1]
+if str(SKILL_DIR) not in sys.path:
+    sys.path.insert(0, str(SKILL_DIR))
+
+from platform_paths import configure_utf8_stdio
+
 ROLE_FILES = {
     "spark": "config/agents/spark.toml",
     "luna": "config/agents/luna.toml",
@@ -381,6 +387,7 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root",

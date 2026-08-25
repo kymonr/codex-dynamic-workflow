@@ -12,6 +12,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+try:
+    from .path_safety import UnsafeRunPathError, assert_safe_descendant, is_reparse
+except ImportError:  # Standalone contract import used by policy consistency.
+    from path_safety import UnsafeRunPathError, assert_safe_descendant, is_reparse
+
 MIB = 1024 * 1024
 
 DEFAULT_MAX_RESULT_BYTES = 2 * MIB
@@ -116,6 +121,10 @@ def directory_size(root: Path, *, ceiling: int | None = None) -> int:
     When ``ceiling`` is provided the scan stops as soon as the total exceeds it.
     """
 
+    try:
+        assert_safe_descendant(root, root, label="run artifact tree")
+    except UnsafeRunPathError as exc:
+        raise ArtifactLimitError(str(exc)) from exc
     if not root.exists():
         return 0
     total = 0
@@ -128,14 +137,19 @@ def directory_size(root: Path, *, ceiling: int | None = None) -> int:
             continue
         for entry in entries:
             try:
-                if entry.is_symlink():
-                    total += entry.lstat().st_size
-                elif entry.is_dir():
+                if is_reparse(entry):
+                    raise ArtifactLimitError(
+                        "run artifact tree contains a symlink, junction, or "
+                        f"reparse point: {entry}"
+                    )
+                if entry.is_dir():
                     stack.append(entry)
                 else:
                     total += entry.stat().st_size
             except FileNotFoundError:
                 continue
+            except UnsafeRunPathError as exc:
+                raise ArtifactLimitError(str(exc)) from exc
             if ceiling is not None and total > ceiling:
                 return total
     return total

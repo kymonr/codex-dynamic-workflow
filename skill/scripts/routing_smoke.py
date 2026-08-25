@@ -19,11 +19,18 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+SKILL_DIR = Path(__file__).resolve().parents[1]
+if str(SKILL_DIR) not in sys.path:
+    sys.path.insert(0, str(SKILL_DIR))
+
+from platform_paths import configure_utf8_stdio
 
 
 _MARKER = re.compile(
@@ -1383,6 +1390,7 @@ def _emit(result: dict[str, Any], as_json: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     parser = _parser()
     args = parser.parse_args(argv)
     if not 1 <= args.timeout_seconds <= 1800:

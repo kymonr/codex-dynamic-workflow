@@ -84,3 +84,17 @@ def apply_runtime_defaults(env: MutableMapping[str, str] | None = None) -> dict[
         RUNS_ROOT_ENV: env[RUNS_ROOT_ENV],
         WORKTREE_ROOT_ENV: env[WORKTREE_ROOT_ENV],
     }
+
+
+def configure_utf8_stdio() -> None:
+    """Make real CLI streams UTF-8 without replacing captured test streams."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="strict")
+        except (OSError, ValueError):
+            # Embedded hosts and captured streams may forbid reconfiguration.
+            continue

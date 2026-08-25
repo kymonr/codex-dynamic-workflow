@@ -13,11 +13,11 @@ import json
 import os
 import re
 import secrets
-import stat
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .limits import RuntimeLimits, enforce_projected_write, enforce_run_limit
+from .path_safety import is_reparse as _is_reparse
 from .state_store import now_iso
 
 GATE_VERSION = 1
@@ -250,25 +250,11 @@ def validate_gate_decision_record(raw: Any) -> dict[str, Any]:
     }
 
 
-def _is_reparse(path: Path) -> bool:
-    try:
-        if path.is_symlink():
-            return True
-        is_junction = getattr(path, "is_junction", None)
-        if callable(is_junction) and is_junction():
-            return True
-        attrs = getattr(path.lstat(), "st_file_attributes", 0)
-        flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-        return bool(flag and attrs & flag)
-    except OSError as exc:
-        raise HumanGateError(f"cannot inspect gate path {path}: {exc}") from exc
-
-
 class HumanGateStore:
     """Persist exact gate contracts and decisions below one run directory."""
 
     def __init__(self, run_dir: Path, limits: RuntimeLimits) -> None:
-        self.run_dir = run_dir.resolve()
+        self.run_dir = Path(os.path.abspath(os.fspath(run_dir)))
         self.root = self.run_dir / "human-gates"
         self.limits = limits
 

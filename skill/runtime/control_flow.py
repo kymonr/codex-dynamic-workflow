@@ -37,6 +37,13 @@ from .limits import (
     enforce_projected_write,
     enforce_run_limit,
 )
+from .path_safety import (
+    UnsafeRunPathError,
+    assert_safe_descendant,
+    assert_safe_run_tree,
+    canonical_runtime_path,
+)
+from .run_lease import RunLease, RunLeaseError
 from .state_store import RunStateStore, now_iso
 from .workflow_ir import (
     DEFAULT_DEPENDENCY_POLICY,
@@ -153,6 +160,7 @@ def _bounded_json_write(
     limits: RuntimeLimits,
     label: str,
 ) -> None:
+    assert_safe_descendant(run_dir, path, label=label)
     payload = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
     enforce_projected_write(
         run_dir,
@@ -162,7 +170,9 @@ def _bounded_json_write(
         label,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
+    assert_safe_descendant(run_dir, path, label=label)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+    assert_safe_descendant(run_dir, temporary, label=f"{label} temporary")
     try:
         temporary.write_bytes(payload)
         os.replace(temporary, path)
@@ -278,7 +288,9 @@ class TrustedControlFlowScheduler:
                 f"{self.claim_projection['max_agents']}"
             )
 
-        self.run_dir = run_dir.resolve()
+        self.run_dir = canonical_runtime_path(
+            run_dir, label="run directory"
+        )
         self.execute_agent = execute_agent
         self.limits = limits
         self.node_by_id = {node["id"]: node for node in self.ir["nodes"]}
@@ -393,6 +405,11 @@ class TrustedControlFlowScheduler:
             # when the following snapshot fails. Resume reconstructs the same guard
             # from the durable journal.
             self.completed_node_events.add(node_id)
+            # Publish the terminal entry and state as one snapshot.  A crash after
+            # the durable event must never leave checkpoint.states at ``running``
+            # while checkpoint.entries already contains a terminal result.
+            self.entries[node_id] = entry
+            self.states[node_id] = entry["status"]
             try:
                 self._snapshot_locked()
             except Exception:
@@ -1929,6 +1946,47 @@ class TrustedControlFlowScheduler:
             raise ControlFlowError(
                 f"successful node {node_id} public output disagrees with artifact"
             )
+        if self.node_by_id[node_id]["kind"] == "human_gate":
+            try:
+                record = self.gate_store.load(node_id)
+            except HumanGateError as exc:
+                raise ControlFlowError(
+                    f"successful human gate {node_id} record is invalid: {exc}"
+                ) from exc
+            if record["status"] != "decided":
+                raise ControlFlowError(
+                    f"successful human gate {node_id} has no terminal decision"
+                )
+            node = self.node_by_id[node_id]
+            expected_identity = compute_gate_input_identity(
+                node_id,
+                node["config"]["prompt"],
+                node["config"]["options"],
+                self._gate_dependency_payload(node),
+            )
+            if (
+                record["prompt"] != node["config"]["prompt"]
+                or record["options"] != node["config"]["options"]
+                or record["input_identity"] != expected_identity
+            ):
+                raise ControlFlowError(
+                    f"successful human gate {node_id} contract identity is invalid"
+                )
+            manifest = {
+                "gate_version": record["gate_version"],
+                "kind": "human_gate",
+                "node_id": node_id,
+                "input_identity": record["input_identity"],
+                "decision": record["decision"],
+                "actor": record["actor"],
+                "source": record["source"],
+                "note": record["note"],
+            }
+            if value != manifest or entry.get("gate") != record:
+                raise ControlFlowError(
+                    f"successful human gate {node_id} decision evidence disagrees "
+                    "with its artifact or checkpoint"
+                )
         agent_entry = entry.get("agent_entry")
         if self.node_by_id[node_id]["kind"] in {"agent", "reduce"}:
             if not isinstance(agent_entry, dict):
@@ -2833,6 +2891,21 @@ class TrustedControlFlowScheduler:
         }
 
     async def run(self, *, resume: bool = False) -> dict[str, Any]:
+        try:
+            with RunLease(self.run_dir):
+                # Construction is intentionally read-only and may precede another
+                # process releasing the lease. Refresh journal sequence only after
+                # exclusivity is established.
+                self.state_store = RunStateStore(
+                    self.run_dir,
+                    max_event_bytes=self.limits.max_event_bytes,
+                    max_run_artifact_bytes=self.limits.max_run_artifact_bytes,
+                )
+                return await self._run_under_lease(resume=resume)
+        except (RunLeaseError, UnsafeRunPathError) as exc:
+            raise ControlFlowError(str(exc)) from exc
+
+    async def _run_under_lease(self, *, resume: bool = False) -> dict[str, Any]:
         if resume:
             if not self.run_dir.is_dir():
                 raise ControlFlowError(
@@ -2842,6 +2915,7 @@ class TrustedControlFlowScheduler:
                 raise ControlFlowError(
                     "CANCEL marker is present; remove it only after reviewing the run"
                 )
+            assert_safe_run_tree(self.run_dir)
             self._restore()
             if self.pending_deadline_event_reconciliation is not None:
                 await self._record_deadline_exceeded(
@@ -2872,6 +2946,7 @@ class TrustedControlFlowScheduler:
                 raise ControlFlowError(
                     f"run directory already exists: {self.run_dir}"
                 ) from exc
+            assert_safe_run_tree(self.run_dir)
             self.started = now_iso()
             workflow_timeout = self.ir["budgets"].get(
                 "workflow_timeout_seconds"

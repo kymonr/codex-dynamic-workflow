@@ -10,12 +10,14 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 try:  # Package import from repository root.
+    from skill.platform_paths import configure_utf8_stdio
     from skill.runtime.workflow_ir import (
         WorkflowIRValidationError,
         project_agent_claims,
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Installed skill directory.
+    from platform_paths import configure_utf8_stdio
     from runtime.workflow_ir import (
         WorkflowIRValidationError,
         project_agent_claims,
@@ -1126,6 +1128,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
         if args.command == "preset-list":

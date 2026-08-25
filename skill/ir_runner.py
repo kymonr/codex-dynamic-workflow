@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 try:  # Package import from repository root.
+    from skill.platform_paths import configure_utf8_stdio
     from skill import runner as legacy
     from skill.runtime.artifacts import ArtifactStore
     from skill.runtime.control_flow import (
@@ -19,16 +20,25 @@ try:  # Package import from repository root.
     )
     from skill.runtime.deadline import DeadlineClock
     from skill.runtime.limits import ArtifactLimitError, RuntimeLimits
+    from skill.runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
     from skill.runtime.workflow_ir import (
         WorkflowIRValidationError,
         validate_workflow_ir,
     )
 except ModuleNotFoundError:  # Executed from the installed skill directory.
+    from platform_paths import configure_utf8_stdio
     import runner as legacy
     from runtime.artifacts import ArtifactStore
     from runtime.control_flow import ControlFlowError, TrustedControlFlowScheduler
     from runtime.deadline import DeadlineClock
     from runtime.limits import ArtifactLimitError, RuntimeLimits
+    from runtime.path_safety import (
+        assert_safe_run_tree,
+        canonical_runtime_path,
+    )
     from runtime.workflow_ir import WorkflowIRValidationError, validate_workflow_ir
 
 
@@ -253,6 +263,7 @@ async def _run(
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     if not args.ack_external_model_export:
         print(
@@ -263,7 +274,24 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         resume = args.command == "resume-ir"
-        run_dir = Path(args.run_dir).expanduser().resolve() if resume else None
+        runs_root = canonical_runtime_path(
+            legacy._runs_root(), label="runs root"
+        )
+        run_dir = (
+            canonical_runtime_path(
+                Path(args.run_dir).expanduser(),
+                label="resume run directory",
+            )
+            if resume
+            else None
+        )
+        if resume:
+            assert run_dir is not None
+            if not run_dir.is_relative_to(runs_root):
+                raise ControlFlowError(
+                    f"resume run directory must be below {runs_root}"
+                )
+            assert_safe_run_tree(run_dir)
         raw = _load_json(
             run_dir / "workflow-ir.resolved.json" if resume else args.spec
         )
@@ -290,14 +318,9 @@ def main(argv: list[str] | None = None) -> int:
             "codex_home": str(codex_home),
             **codex_identity,
         }
-        runs_root = legacy._runs_root()
         legacy._prepare_run_root(runs_root, ir, codex_home)
         if resume:
             assert run_dir is not None
-            if not run_dir.is_relative_to(runs_root):
-                raise ControlFlowError(
-                    f"resume run directory must be below {runs_root}"
-                )
         else:
             run_dir = legacy._select_run_dir(
                 runs_root, ir["name"], args.run_dir
