@@ -186,6 +186,55 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.SpecError, "不支持"):
             self.validate(raw)
 
+    def test_array_cardinality_schema_contract_is_strict(self) -> None:
+        valid_schema = {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {"type": "string"},
+        }
+        validated = self.validate(
+            self.raw([task("one", "inspect", output_schema=valid_schema)])
+        )
+        self.assertEqual(
+            validated["tasks"][0]["output_schema"]["minItems"], 2
+        )
+        self.assertEqual(
+            validated["tasks"][0]["output_schema"]["maxItems"], 4
+        )
+
+        for key, value in (
+            ("minItems", True),
+            ("maxItems", False),
+            ("minItems", -1),
+            ("maxItems", "4"),
+        ):
+            with self.subTest(key=key, value=value):
+                invalid_schema = {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 4,
+                    "items": {"type": "string"},
+                }
+                invalid_schema[key] = value
+                with self.assertRaisesRegex(runner.SpecError, key):
+                    self.validate(
+                        self.raw(
+                            [task("one", "inspect", output_schema=invalid_schema)]
+                        )
+                    )
+
+        reversed_schema = {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 4,
+            "items": {"type": "string"},
+        }
+        with self.assertRaisesRegex(runner.SpecError, "minItems"):
+            self.validate(
+                self.raw([task("one", "inspect", output_schema=reversed_schema)])
+            )
+
     def test_role_files_resolve_luna_fast(self) -> None:
         (self.codex_home / "agents" / "spark.toml").write_text(
             'model="gpt-5.3-codex-spark"\nmodel_reasoning_effort="high"\n',

@@ -140,9 +140,26 @@ def validate_instance(value: Any, schema: dict[str, Any], path: str = "$") -> li
                 if extras:
                     problems.append(f"{path} 含额外字段: {extras}")
 
-    if isinstance(value, list) and isinstance(schema.get("items"), dict):
-        for index, item in enumerate(value):
-            problems.extend(validate_instance(item, schema["items"], f"{path}[{index}]"))
+    if isinstance(value, list):
+        min_items = schema.get("minItems")
+        if (
+            isinstance(min_items, int)
+            and not isinstance(min_items, bool)
+            and len(value) < min_items
+        ):
+            problems.append(f"{path} 数组项数少于 minItems {min_items}")
+        max_items = schema.get("maxItems")
+        if (
+            isinstance(max_items, int)
+            and not isinstance(max_items, bool)
+            and len(value) > max_items
+        ):
+            problems.append(f"{path} 数组项数超过 maxItems {max_items}")
+        if isinstance(schema.get("items"), dict):
+            for index, item in enumerate(value):
+                problems.extend(
+                    validate_instance(item, schema["items"], f"{path}[{index}]")
+                )
     return problems
 
 

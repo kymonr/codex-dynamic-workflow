@@ -223,6 +223,8 @@ SUPPORTED_SCHEMA_KEYS = {
     "additionalProperties",
     "items",
     "anyOf",
+    "minItems",
+    "maxItems",
 }
 
 
@@ -519,6 +521,16 @@ def _validate_schema_contract(schema: dict[str, Any], where: str, depth: int = 0
         not isinstance(schema["enum"], list) or not schema["enum"]
     ):
         raise SpecError(f"{where}.enum 必须是非空数组")
+    for cardinality_key in ("minItems", "maxItems"):
+        if cardinality_key in schema:
+            cardinality = schema[cardinality_key]
+            if not _is_int(cardinality) or cardinality < 0:
+                raise SpecError(
+                    f"{where}.{cardinality_key} 必须是大于等于 0 的整数"
+                )
+    if "minItems" in schema and "maxItems" in schema:
+        if schema["minItems"] > schema["maxItems"]:
+            raise SpecError(f"{where}.minItems 不能大于 maxItems")
     properties = schema.get("properties")
     if properties is not None:
         if not isinstance(properties, dict) or any(

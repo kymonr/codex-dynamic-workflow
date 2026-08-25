@@ -71,6 +71,20 @@ class SchemaContractTests(unittest.TestCase):
         self.assertEqual(normalized, {"name": None})
         self.assertTrue(validate_instance(normalized, schema))
 
+    def test_array_cardinality_is_preserved_and_enforced(self) -> None:
+        schema = {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {"type": "string"},
+        }
+        provider = build_envelope_schema(schema)["properties"]["result"]
+        self.assertEqual(provider["minItems"], 2)
+        self.assertEqual(provider["maxItems"], 3)
+        self.assertTrue(validate_instance(["one"], schema))
+        self.assertTrue(validate_instance(["one", "two", "three", "four"], schema))
+        self.assertEqual(validate_instance(["one", "two"], schema), [])
+
 
 class ArtifactTests(unittest.TestCase):
     def test_large_upstream_value_becomes_content_addressed_reference(self) -> None:

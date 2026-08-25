@@ -164,6 +164,8 @@ def _design_synthesis_schema() -> dict[str, Any]:
 def _review_assignment_schema() -> dict[str, Any]:
     return {
         "type": "array",
+        "minItems": 7,
+        "maxItems": 7,
         "items": _strict_object(
             {
                 "dimension": {"type": "string"},
@@ -632,7 +634,8 @@ def _build_ultra_review(
                 f"{objective_block}\n"
                 "Return exactly seven independent review assignments that collectively "
                 "cover correctness, security, state/recovery, concurrency/races, data "
-                "contracts, error handling, performance, and test coverage."
+                "contracts, and error handling. Combine performance and test/CI evidence "
+                "into one assignment so the final assignment covers both dimensions."
             ),
             output_schema=_review_assignment_schema(),
         ),
