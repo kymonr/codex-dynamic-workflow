@@ -84,6 +84,40 @@ class SchemaContractTests(unittest.TestCase):
         self.assertTrue(validate_instance(["one"], schema))
         self.assertTrue(validate_instance(["one", "two", "three", "four"], schema))
         self.assertEqual(validate_instance(["one", "two"], schema), [])
+        self.assertEqual(validate_instance(["one", "two", "three"], schema), [])
+
+    def test_array_cardinality_validator_rejects_invalid_declarations(self) -> None:
+        for key, value in (
+            ("minItems", "2"),
+            ("maxItems", "3"),
+            ("minItems", True),
+            ("maxItems", False),
+            ("minItems", -1),
+            ("maxItems", -1),
+        ):
+            with self.subTest(key=key, value=value):
+                schema = {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 3,
+                    "items": {"type": "string"},
+                }
+                schema[key] = value
+                problems = validate_instance([], schema)
+                self.assertTrue(problems)
+                self.assertTrue(
+                    any("必须是大于等于 0 的整数" in problem for problem in problems)
+                )
+
+        reversed_schema = {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 3,
+            "items": {"type": "string"},
+        }
+        problems = validate_instance([], reversed_schema)
+        self.assertTrue(problems)
+        self.assertTrue(any("不能大于 maxItems" in problem for problem in problems))
 
 
 class ArtifactTests(unittest.TestCase):

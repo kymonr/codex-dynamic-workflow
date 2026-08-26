@@ -79,7 +79,7 @@ def main() -> int:
             _write_envelope(
                 output_path,
                 status="needs_escalation",
-                result="",
+                result={"candidate": "", "changes": []},
                 reason="offline bounded loop interrupt fixture",
             )
             return 0
@@ -114,7 +114,11 @@ def main() -> int:
             _write_envelope(
                 output_path,
                 status="needs_escalation",
-                result="",
+                result={
+                    "verdict": "unknown",
+                    "summary": "offline bounded loop interrupt fixture",
+                    "evidence": [],
+                },
                 reason="offline bounded loop interrupt fixture",
             )
             return 0

@@ -1601,6 +1601,18 @@ async def _run_attempt(
         }
     if not isinstance(envelope, dict):
         return {**base, "status": "failed", "transient": False, "error": "output envelope 不是对象"}
+    envelope_problems = _validate_instance(
+        envelope,
+        build_envelope_schema(task["output_schema"]),
+    )
+    if envelope_problems:
+        return {
+            **base,
+            "status": "failed",
+            "transient": False,
+            "error": "output envelope schema mismatch: "
+            + "; ".join(envelope_problems[:8]),
+        }
     workflow_status = envelope.get("workflow_status")
     reason = envelope.get("reason")
     if workflow_status not in {"ok", "needs_escalation"} or not isinstance(reason, str):
@@ -1612,7 +1624,11 @@ async def _run_attempt(
             "transient": False,
             "error": reason or "child requested capability escalation",
         }
-    result_schema = task["output_schema"] or {"type": "string"}
+    result_schema = (
+        task["output_schema"]
+        if task["output_schema"] is not None
+        else {"type": "string"}
+    )
     result = normalize_provider_result(envelope.get("result"), result_schema)
     problems = _validate_instance(result, result_schema)
     if problems:

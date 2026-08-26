@@ -100,6 +100,33 @@ def _json_type_matches(value: Any, expected: str) -> bool:
 
 def validate_instance(value: Any, schema: dict[str, Any], path: str = "$") -> list[str]:
     problems: list[str] = []
+    min_items = schema.get("minItems")
+    min_items_valid = True
+    if "minItems" in schema and (
+        not isinstance(min_items, int)
+        or isinstance(min_items, bool)
+        or min_items < 0
+    ):
+        problems.append(f"{path} minItems 必须是大于等于 0 的整数")
+        min_items_valid = False
+    max_items = schema.get("maxItems")
+    max_items_valid = True
+    if "maxItems" in schema and (
+        not isinstance(max_items, int)
+        or isinstance(max_items, bool)
+        or max_items < 0
+    ):
+        problems.append(f"{path} maxItems 必须是大于等于 0 的整数")
+        max_items_valid = False
+    if (
+        "minItems" in schema
+        and "maxItems" in schema
+        and min_items_valid
+        and max_items_valid
+        and min_items > max_items
+    ):
+        problems.append(f"{path} minItems 不能大于 maxItems")
+
     if "enum" in schema and value not in schema["enum"]:
         problems.append(f"{path} 不在 enum 中")
         return problems
@@ -141,14 +168,12 @@ def validate_instance(value: Any, schema: dict[str, Any], path: str = "$") -> li
                     problems.append(f"{path} 含额外字段: {extras}")
 
     if isinstance(value, list):
-        min_items = schema.get("minItems")
         if (
             isinstance(min_items, int)
             and not isinstance(min_items, bool)
             and len(value) < min_items
         ):
             problems.append(f"{path} 数组项数少于 minItems {min_items}")
-        max_items = schema.get("maxItems")
         if (
             isinstance(max_items, int)
             and not isinstance(max_items, bool)

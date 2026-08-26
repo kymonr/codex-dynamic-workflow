@@ -493,6 +493,131 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
+    async def _run_attempt_with_envelope(
+        self,
+        envelope: dict,
+        *,
+        output_schema: dict | None,
+        name: str,
+    ) -> dict:
+        run_dir = self.base / f"run-{name}"
+        task_dir = run_dir / "tasks" / "contract"
+        task_dir.mkdir(parents=True)
+        codex_home = self.base / f"codex-home-{name}"
+        codex_home.mkdir()
+        fixture = task("contract", "offline envelope", output_schema=output_schema)
+        limits = runner.RuntimeLimits.from_mapping({})
+        preflight = {
+            "allowed_roots": [str(self.workdir)],
+            "allowed_sensitive_paths": [],
+            "codex_home": str(codex_home),
+        }
+
+        class FakeStdin:
+            def write(self, payload: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+            async def wait_closed(self) -> None:
+                return None
+
+        class FakeProcess:
+            stdin = FakeStdin()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return FakeProcess()
+
+        async def fake_wait_for_process(proc, **kwargs):
+            kwargs["output_path"].write_text(
+                json.dumps(envelope), encoding="utf-8"
+            )
+            return {
+                "exit_code": 0,
+                "duration_s": 0.0,
+                "soft_reported": False,
+                "hard_extended": False,
+                "cancelled": False,
+                "timed_out": False,
+            }
+
+        with (
+            mock.patch.object(
+                runner.asyncio,
+                "create_subprocess_exec",
+                new=fake_create_subprocess_exec,
+            ),
+            mock.patch.object(
+                runner,
+                "_wait_for_process",
+                new=fake_wait_for_process,
+            ),
+        ):
+            return await runner._run_attempt(
+                fixture,
+                role="luna",
+                route=role_configs()["luna"],
+                attempt_number=1,
+                task_dir=task_dir,
+                run_dir=run_dir,
+                workdir=str(self.workdir),
+                resolved_prompt=fixture["prompt"],
+                codex_prefix=["fixture-codex"],
+                preflight=preflight,
+                cancel_path=run_dir / "CANCEL",
+                soft_timeout=30,
+                hard_timeout=60,
+                limits=limits,
+            )
+
+    async def test_empty_result_schema_stays_unconstrained_in_local_execution(
+        self,
+    ) -> None:
+        attempt = await self._run_attempt_with_envelope(
+            {
+                "workflow_status": "ok",
+                "reason": "fixture success",
+                "result": {"arbitrary": True},
+            },
+            output_schema={},
+            name="empty-schema",
+        )
+
+        self.assertEqual(attempt["status"], "succeeded")
+        self.assertEqual(attempt["output"], {"arbitrary": True})
+        schema_path = Path(attempt["attempt_dir"]) / "schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertEqual(schema["properties"]["result"], {})
+
+    async def test_local_envelope_requires_result_before_escalation_shortcut(
+        self,
+    ) -> None:
+        escalation = await self._run_attempt_with_envelope(
+            {
+                "workflow_status": "needs_escalation",
+                "reason": "fixture escalation",
+            },
+            output_schema={},
+            name="missing-escalation-result",
+        )
+        self.assertEqual(escalation["status"], "failed")
+        self.assertIn("缺少 required", escalation["error"])
+
+        default_schema = await self._run_attempt_with_envelope(
+            {
+                "workflow_status": "ok",
+                "reason": "fixture missing result",
+            },
+            output_schema=None,
+            name="missing-default-result",
+        )
+        self.assertEqual(default_schema["status"], "failed")
+        self.assertIn("缺少 required", default_schema["error"])
+
     async def test_failure_blocks_descendants_but_not_independent_branches(self) -> None:
         tasks = [
             task("fail", "FAKE_FAIL_PERMANENT"),

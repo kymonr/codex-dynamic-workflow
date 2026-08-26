@@ -309,7 +309,9 @@ class BoundedLoopRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(child["input_artifact"])
             self.assertIsNotNone(child["output_artifact"])
 
-    async def test_partial_resume_does_not_replay_successful_step(self) -> None:
+    async def test_partial_resume_refuses_ambiguous_running_step_without_replay(
+        self,
+    ) -> None:
         raw = bounded_ir()
         run_dir = self.base / "resume"
         first = LoopExecutor(["accept"], interrupt_verifier_once=True)
@@ -321,7 +323,11 @@ class BoundedLoopRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(asyncio.CancelledError):
             await scheduler.run()
-        checkpoint = json.loads((run_dir / "checkpoint.json").read_text(encoding="utf-8"))
+        checkpoint_path = run_dir / "checkpoint.json"
+        events_path = run_dir / "events.jsonl"
+        checkpoint_bytes = checkpoint_path.read_bytes()
+        events_bytes = events_path.read_bytes()
+        checkpoint = json.loads(checkpoint_bytes)
         interrupted_summary = json.loads(
             (run_dir / "summary.json").read_text(encoding="utf-8")
         )
@@ -363,7 +369,7 @@ class BoundedLoopRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         interrupted_events = [
             json.loads(line)
-            for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            for line in events_bytes.decode("utf-8").splitlines()
         ]
         self.assertEqual(
             [event["sequence"] for event in interrupted_events],
@@ -385,38 +391,22 @@ class BoundedLoopRuntimeTests(unittest.IsolatedAsyncioTestCase):
             execute_agent=second,
             limits=self.limits,
         )
-        summary = await resumed.run(resume=True)
-        self.assertTrue(summary["all_succeeded"])
-        self.assertNotIn("initial", second.calls)
-        self.assertNotIn(succeeded_id, second.calls)
-        self.assertIn(running_id, second.calls)
-        loop = next(node for node in summary["nodes"] if node["id"] == "converge")
-        self.assertEqual(loop["children"][running_id]["resume_count"], 1)
-        self.assertEqual(loop["children"][succeeded_id]["resume_count"], 0)
-        self.assertEqual(loop["resume_count"], 1)
+        with self.assertRaisesRegex(ControlFlowError, "ambiguous.*replay"):
+            await resumed.run(resume=True)
+        self.assertEqual(second.calls, [])
+        self.assertEqual(checkpoint_path.read_bytes(), checkpoint_bytes)
+        self.assertEqual(events_path.read_bytes(), events_bytes)
         self.assertEqual(resolved_path.read_bytes(), resolved_bytes)
         self.assertEqual(
             hashlib.sha256(resolved_path.read_bytes()).hexdigest(),
             resolved_digest,
         )
         self.assertEqual(resolved_path.stat().st_mtime_ns, resolved_mtime)
-        final_checkpoint = json.loads(
-            (run_dir / "checkpoint.json").read_text(encoding="utf-8")
-        )
-        final_summary = json.loads(
-            (run_dir / "summary.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(final_checkpoint["ir_digest"], canonical_ir_digest)
-        self.assertEqual(final_summary["ir_digest"], canonical_ir_digest)
-        final_events = [
-            json.loads(line)
-            for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
-        ]
-        self.assertEqual(
-            [event["sequence"] for event in final_events],
-            list(range(1, len(final_events) + 1)),
-        )
-        self.assertEqual(final_checkpoint["event_sequence"], len(final_events))
+        current_children = json.loads(checkpoint_path.read_bytes())["entries"][
+            "converge"
+        ]["children"]
+        self.assertEqual(current_children[succeeded_id]["status"], "succeeded")
+        self.assertEqual(current_children[running_id]["status"], "running")
 
     async def test_loop_substitution_exposes_only_host_selected_results(self) -> None:
         raw = bounded_ir(max_iterations=2, max_agents=7)
