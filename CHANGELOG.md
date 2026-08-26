@@ -4,7 +4,7 @@
 
 ## [1.0.0-rc.1] - Unreleased
 
-这是首个发布候选。它冻结当前 `master` 的 Dynamic Workflow v1 功能面，用于隔离安装、真实业务仓库只读试运行和受限 Writer 候选验证；在这些发布门完成前，不创建稳定版 `v1.0.0`。
+这是首个发布候选。它冻结当前 `master` 的 Dynamic Workflow v1 功能面，用于隔离安装、对 Dynamic Workflow 自身精确 RC Head 的只读自审，以及在确有 verifier 支持的小范围问题时生成受限 Writer 候选；在这些发布门完成前，不创建稳定版 `v1.0.0`。外部业务仓库的 dogfooding 属于可选验证，不是本版本的发布依赖、合并门或 tag 门。
 
 ### Added
 
@@ -24,6 +24,8 @@
 - reference repository audit 使用显式 accepted/rejected record 与分支专属 closeout，避免把 `depends_on` 误当作数据注入。
 - `resume-ir` 将 `execution` 视为可信 resolved artifact 的派生元数据，重新计算并严格比较后再恢复。
 - public Python CLI 入口在 Windows 非 UTF-8 主机编码下统一配置 UTF-8 stdout/stderr。
+- Ultra Review 的 scope discovery 通过 `minItems=7` / `maxItems=7` 强制恰好七个 assignment，同时保持 `review-findings.item_limit=7`、投影 `23 / 24` 和 `max_concurrency=8`。
+- map、verify 与 bounded-loop 的 child 恢复路径在采用持久化结果前重新校验声明 Schema、身份、artifact 和 lifecycle 状态。
 
 ### Security and integrity
 
@@ -32,6 +34,8 @@
 - gate waiting contract 不可变；terminal decision 使用独立 exclusive-create record，并绑定 input identity。
 - completion state、checkpoint、summary、events 和 artifact path/size/SHA/task identity 交叉校验。
 - 取消发生在 stdin drain、stdin close 或 process wait 时，进程树 cleanup uncertainty 会稳定保留为 terminal failure。
+- Provider output envelope 在采纳前整体校验；map manifest 的版本、节点、连续 index、child ID、artifact 和 public output identity 在 verifier 派发前 fail-closed 复核。
+- 并行 child 组发生异常时会取消并收口 sibling，避免留下未解释的 `running` 状态。
 - Writer package 使用封闭 Schema、canonical digest、精确 owned targets、create/modify-only authority 和单 Writer lock。
 - Writer 结果由宿主读取真实 Git/filesystem effects；拒绝 unowned、delete、rename、mode、binary/NUL、LFS、symlink/reparse、submodule/gitlink、Git metadata 和 candidate 外部效应。
 - Reviewer 只消费冻结 candidate，不能写入或自动触发修复循环。
@@ -59,10 +63,12 @@
 
 ### Release gates still open
 
-- 启用并验证 `master` 分支保护及必需的 Windows/Ubuntu CI checks。
+- 验证 `master` 分支保护及必需的 Windows/Ubuntu CI checks。
 - 审计并保全旧的本地工作区未提交修改。
 - 建立跟踪正式 `master` 的全新干净本地 checkout。
 - 在隔离的 `CODEX_HOME` 中安装并验证本候选。
-- 对 `kymonr/shopee-order-collector` 的精确候选分支运行一次只读 `ultra-review` 或 `repo-sweep`。
-- 仅在人工选定一个低风险改动后，运行一次 create/modify-only Writer candidate；人工确认前不应用。
+- 对 PR #27 的精确当前 Head 运行一次只读 Dynamic Workflow self-review，并在 `review-gate=waiting` 停止；不写 gate decision，不 resume。
+- 仅当 self-review 产生 verifier 支持、低风险且可用 1–2 个 owned targets 修复的问题时，运行一次 Dynamic Workflow 自身的 create/modify-only Writer candidate；没有合适 finding 时以 `WRITER_CANDIDATE_NOT_JUSTIFIED` 正常关闭该门，不制造无价值改动。
+- 若生成 candidate，由用户人工查看 patch、验证和 reviewer 结论后单独决定 apply、fix-first、rethink 或 discard；人工确认前不应用。
+- 外部仓库审查仅为可选 dogfooding，必须使用独立授权、身份、数据和 Writer 合同，不能阻塞本 RC。
 - 完成稳定观察期后，再决定是否发布 `v1.0.0`。
