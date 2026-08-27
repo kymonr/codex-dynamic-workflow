@@ -43,6 +43,40 @@ class SimpleSwarmContractTests(unittest.TestCase):
             skill,
         )
 
+    def test_default_prompt_does_not_over_split_one_branch(self) -> None:
+        prompt = (ROOT / "skill" / "agents" / "openai.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "When at least two useful non-overlapping branches are ready",
+            prompt,
+        )
+        self.assertIn(
+            "When only one bounded branch is useful",
+            prompt,
+        )
+        self.assertIn("dispatch one child only if", prompt)
+        self.assertIn("keep that single branch at root", prompt)
+        self.assertNotIn(
+            "Simple Swarm as the default: split ordinary work into 2–6",
+            prompt,
+        )
+
+    def test_scoped_writer_keeps_path_and_isolation_authority(self) -> None:
+        work_package = (
+            ROOT / "skill" / "references" / "work-package.md"
+        ).read_text(encoding="utf-8")
+        for token in (
+            "root-normalized absolute literal paths",
+            "An unnormalizable or unmatched target is out of scope",
+            "Adjacent files are excluded unless root separately assigns them",
+            "disjoint closed `owned_targets`",
+            "including temporary artifacts",
+            "separate worktrees",
+            "reads back actual effects",
+        ):
+            self.assertIn(token, work_package)
+
     def test_simple_swarm_packet_stays_compact(self) -> None:
         contract = (
             ROOT / "skill" / "references" / "simple-swarm.md"

@@ -44,9 +44,11 @@ Add one closed authority manifest:
 }
 ```
 
-`delete` and `external_write` are observable effect classes, never grantable child actions. If either is observed, stop and return control to root.
+`owned_targets` are unique. File targets are root-normalized absolute literal paths; non-file targets are exact root-issued identifiers. An unnormalizable or unmatched target is out of scope. Adjacent files are excluded unless root separately assigns them within the user's authorized scope. Reads are evidence, not effects. Grantable child actions are exactly `create`, `modify`, and `execute`.
 
-Tell the writer unrelated edits may exist and must be preserved. Root must not write the same targets concurrently.
+`delete` and `external_write` are observable effect classes, never grantable child actions. If either is observed, stop and return control to root. Root reads back actual effects and reconciles them against the authority manifest and live state before acceptance.
+
+Tell the writer unrelated edits may exist and must be preserved. Only one native writer is active by default, and root must not write the same targets concurrently. If a user-requested Grok conversation task writes beside the native writer, both need disjoint closed `owned_targets`—including temporary artifacts—and separate worktrees under [worktree-parallel-dispatch.md](worktree-parallel-dispatch.md). If ownership overlaps or isolation is unavailable, serialize the writers.
 
 Worktree Writer v1 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v1.md](worktree-writer-v1.md).
 

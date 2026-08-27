@@ -1,6 +1,6 @@
 interface:
   display_name: "Dynamic Workflow"
   short_description: "Default to a lightweight Simple Swarm; use managed and writer modes only when needed"
-  default_prompt: "Use $dynamic-workflow with Simple Swarm as the default: split ordinary work into 2–6 narrow non-overlapping native subagent branches, keep root integration and final verification, use Spark or Explorer for narrow read-only work, Luna for ordinary work, Sol for complex or high-impact branches, and enable Managed Workflow or Writer Workflow only when explicitly needed or authorized. Keep Grok outside native routing unless I explicitly request a separate visible task."
+  default_prompt: "Use $dynamic-workflow with Simple Swarm as the default. When at least two useful non-overlapping branches are ready, split them into 2–6 narrow native subagent branches. When only one bounded branch is useful, dispatch one child only if the user explicitly requested Dynamic Workflow or a subagent; otherwise keep that single branch at root. Keep trivial or serial work at root. Keep root integration and final verification, use Spark or Explorer for narrow read-only work, Luna for ordinary work, Sol for complex or high-impact branches, and enable Managed Workflow or Writer Workflow only when explicitly needed or authorized. Keep Grok outside native routing unless I explicitly request a separate visible task."
 policy:
   allow_implicit_invocation: true

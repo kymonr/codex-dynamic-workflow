@@ -33,10 +33,14 @@ if str(SKILL_DIR) not in sys.path:
 from platform_paths import configure_utf8_stdio
 
 
-_MARKER = re.compile(
-    r"Workflow: dynamic-workflow(?: \((local|parallel|audit|full|execute)\))?"
-)
-_VALID_MODES = {None, "execute"}
+_MARKER = re.compile(r"Workflow: dynamic-workflow")
+_ORCHESTRATION_MODE_LINE = re.compile(r"Mode:\s*(\S.*)")
+_VALID_PROTOCOL_MODES = (None, "execute")
+_VALID_ORCHESTRATION_MODES = {
+    "simple-swarm",
+    "managed-workflow",
+    "writer-workflow",
+}
 _TOOL_CALL_TYPES = {
     "collaboration_tool_call",
     "function_call",
@@ -52,6 +56,7 @@ class SmokeCase:
     workflow: bool
     routes: tuple[str, ...]
     mode: str | None
+    orchestration_mode: str | None = None
     reviewer_min: int = 0
     reviewer_max: int = 0
 
@@ -88,7 +93,13 @@ class Observation:
     structured_selection_count: int = 0
     structured_selection_modes: list[str] = field(default_factory=list)
     invalid_selection_mode_count: int = 0
+    structured_orchestration_modes: list[str] = field(default_factory=list)
     commentary_selection_count: int = 0
+    commentary_orchestration_modes: list[str] = field(default_factory=list)
+    visible_orchestration_mode_count: int = 0
+    untrusted_orchestration_mode_count: int = 0
+    untrusted_orchestration_modes: list[str] = field(default_factory=list)
+    invalid_orchestration_mode_count: int = 0
     commentary_marker_modes: list[str] = field(default_factory=list)
     visible_marker_count: int = 0
     untrusted_marker_count: int = 0
@@ -111,6 +122,7 @@ CASES: dict[str, SmokeCase] = {
         workflow=True,
         routes=("Luna",),
         mode="execute",
+        orchestration_mode="simple-swarm",
     ),
     "implicit-luna": SmokeCase(
         name="implicit-luna",
@@ -121,6 +133,7 @@ CASES: dict[str, SmokeCase] = {
         workflow=True,
         routes=("Luna", "Luna"),
         mode="execute",
+        orchestration_mode="simple-swarm",
     ),
     "implicit-single-negative": SmokeCase(
         name="implicit-single-negative",
@@ -141,6 +154,7 @@ CASES: dict[str, SmokeCase] = {
         workflow=True,
         routes=("Luna", "Luna", "Luna"),
         mode="execute",
+        orchestration_mode="simple-swarm",
     ),
     "simple-negative": SmokeCase(
         name="simple-negative",
@@ -168,6 +182,7 @@ CASES: dict[str, SmokeCase] = {
         workflow=True,
         routes=("Explorer",),
         mode="execute",
+        orchestration_mode="simple-swarm",
     ),
     "complex-sol": SmokeCase(
         name="complex-sol",
@@ -178,6 +193,7 @@ CASES: dict[str, SmokeCase] = {
         workflow=True,
         routes=("Sol",),
         mode="execute",
+        orchestration_mode="simple-swarm",
         reviewer_min=0,
         reviewer_max=0,
     ),
@@ -190,6 +206,7 @@ CASES: dict[str, SmokeCase] = {
         workflow=True,
         routes=("Luna",),
         mode="execute",
+        orchestration_mode="simple-swarm",
     ),
 }
 
@@ -376,10 +393,25 @@ def _tool_dispatch(item: dict[str, Any]) -> Dispatch | None:
 def _marker_modes(text: str) -> list[str]:
     modes: list[str] = []
     for line in text.splitlines():
-        match = _MARKER.fullmatch(line.strip())
-        if match:
-            modes.append(match.group(1) or "execute")
+        if _MARKER.fullmatch(line.strip()):
+            modes.append("execute")
     return modes
+
+
+def _orchestration_modes(text: str) -> tuple[list[str], int]:
+    modes: list[str] = []
+    invalid = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("Mode:"):
+            continue
+        match = _ORCHESTRATION_MODE_LINE.fullmatch(stripped)
+        value = match.group(1).strip() if match else ""
+        if value in _VALID_ORCHESTRATION_MODES:
+            modes.append(value)
+        else:
+            invalid += 1
+    return modes, invalid
 
 
 def observe_jsonl(transcript: str) -> Observation:
@@ -480,12 +512,21 @@ def observe_jsonl(transcript: str) -> Observation:
                 else:
                     observation.structured_selection_count += 1
                     mode = event.get("mode")
-                    if mode in (None, "", "execute"):
+                    if mode in _VALID_PROTOCOL_MODES or mode == "":
                         observation.structured_selection_modes.append("execute")
-                    elif isinstance(mode, str) and mode in {"local", "parallel", "audit", "full"}:
-                        observation.invalid_selection_mode_count += 1
                     else:
                         observation.invalid_selection_mode_count += 1
+                    orchestration_mode = event.get("orchestration_mode")
+                    if orchestration_mode not in (None, ""):
+                        if (
+                            isinstance(orchestration_mode, str)
+                            and orchestration_mode in _VALID_ORCHESTRATION_MODES
+                        ):
+                            observation.structured_orchestration_modes.append(
+                                orchestration_mode
+                            )
+                        else:
+                            observation.invalid_orchestration_mode_count += 1
             continue
         if event_type == "subagent.dispatched":
             remember_context(event)
@@ -537,7 +578,10 @@ def observe_jsonl(transcript: str) -> Observation:
                 and isinstance(item.get("text"), str)
             ):
                 modes = _marker_modes(item["text"])
-                if modes:
+                orchestration_modes, invalid_orchestration = (
+                    _orchestration_modes(item["text"])
+                )
+                if modes or orchestration_modes or invalid_orchestration:
                     remember_context(event, item)
                     channels = {
                         str(value).casefold()
@@ -552,20 +596,37 @@ def observe_jsonl(transcript: str) -> Observation:
                         or event.get("channel")
                         or ""
                     ).casefold()
-                    if not require_active(event_type, line_number):
-                        observation.untrusted_marker_modes.extend(modes)
-                        observation.untrusted_marker_count += len(modes)
-                    elif (
-                        len(channels) == 1
+                    trusted = (
+                        require_active(event_type, line_number)
+                        and len(channels) == 1
                         and channel == "commentary"
                         and not dispatch_seen
-                    ):
+                    )
+                    if trusted:
                         observation.commentary_marker_modes.extend(modes)
                         observation.commentary_selection_count += len(modes)
                         observation.visible_marker_count += len(modes)
+                        observation.commentary_orchestration_modes.extend(
+                            orchestration_modes
+                        )
+                        observation.visible_orchestration_mode_count += len(
+                            orchestration_modes
+                        )
+                        observation.invalid_orchestration_mode_count += (
+                            invalid_orchestration
+                        )
                     else:
                         observation.untrusted_marker_modes.extend(modes)
                         observation.untrusted_marker_count += len(modes)
+                        observation.untrusted_orchestration_modes.extend(
+                            orchestration_modes
+                        )
+                        observation.untrusted_orchestration_mode_count += (
+                            len(orchestration_modes) + invalid_orchestration
+                        )
+                        observation.invalid_orchestration_mode_count += (
+                            invalid_orchestration
+                        )
             candidate = _tool_dispatch(item)
             if candidate is not None:
                 remember_context(event, item)
@@ -857,6 +918,21 @@ def evaluate_transcript(
             else None
         )
     )
+    orchestration_mode_conflict = (
+        len(observation.structured_orchestration_modes) == 1
+        and len(observation.commentary_orchestration_modes) == 1
+        and observation.structured_orchestration_modes[0]
+        != observation.commentary_orchestration_modes[0]
+    )
+    observed_orchestration_mode = (
+        observation.structured_orchestration_modes[0]
+        if len(observation.structured_orchestration_modes) == 1
+        else (
+            observation.commentary_orchestration_modes[0]
+            if len(observation.commentary_orchestration_modes) == 1
+            else None
+        )
+    )
 
     if observation.invalid_lines:
         status = "unknown"
@@ -892,6 +968,9 @@ def evaluate_transcript(
         elif observation.invalid_selection_mode_count:
             status = "fail"
             reason = "structured workflow selection used a retired outer mode"
+        elif observation.invalid_orchestration_mode_count:
+            status = "fail"
+            reason = "an invalid orchestration mode was reported"
         elif selection_count == 0:
             status = "unknown"
             reason = "structured or typed pre-dispatch selection provenance is missing"
@@ -904,12 +983,24 @@ def evaluate_transcript(
         elif observation.untrusted_marker_count:
             status = "fail"
             reason = "final or untyped prose must not supply or repeat the marker"
+        elif observation.visible_orchestration_mode_count != 1:
+            status = "fail"
+            reason = "one pre-dispatch commentary orchestration mode is required"
+        elif observation.untrusted_orchestration_mode_count:
+            status = "fail"
+            reason = "final or late prose must not supply or repeat the orchestration mode"
         elif mode_conflict:
             status = "fail"
             reason = "structured selection and commentary marker modes conflict"
         elif observed_mode != case.mode:
             status = "fail"
             reason = "observed outer mode does not match the case contract"
+        elif orchestration_mode_conflict:
+            status = "fail"
+            reason = "structured and visible orchestration modes conflict"
+        elif observed_orchestration_mode != case.orchestration_mode:
+            status = "fail"
+            reason = "observed orchestration mode does not match the case contract"
         elif "UNKNOWN" in observed_routes:
             status = "unknown"
             reason = "a structured dispatch lacks a resolvable route"
@@ -937,6 +1028,9 @@ def evaluate_transcript(
     elif (
         selection_count
         or marker_count
+        or observation.visible_orchestration_mode_count
+        or observation.untrusted_orchestration_mode_count
+        or observation.invalid_orchestration_mode_count
         or observation.late_selection_count
         or observation.dispatches
         or observation.reviewers
@@ -997,6 +1091,7 @@ def evaluate_transcript(
             "workflow": case.workflow,
             "routes": list(case.routes),
             "mode": case.mode or "execute",
+            "orchestration_mode": case.orchestration_mode,
             "reviewer_min": case.reviewer_min,
             "reviewer_max": case.reviewer_max,
         },
@@ -1012,6 +1107,7 @@ def evaluate_transcript(
             "sequence_errors": observation.sequence_errors,
             "selection_count": selection_count,
             "mode": observed_mode,
+            "orchestration_mode": observed_orchestration_mode,
             "structured_selection_count": (
                 observation.structured_selection_count
             ),
@@ -1026,6 +1122,24 @@ def evaluate_transcript(
             ),
             "invalid_selection_mode_count": (
                 observation.invalid_selection_mode_count
+            ),
+            "structured_orchestration_modes": (
+                observation.structured_orchestration_modes
+            ),
+            "commentary_orchestration_modes": (
+                observation.commentary_orchestration_modes
+            ),
+            "visible_orchestration_mode_count": (
+                observation.visible_orchestration_mode_count
+            ),
+            "untrusted_orchestration_mode_count": (
+                observation.untrusted_orchestration_mode_count
+            ),
+            "untrusted_orchestration_modes": (
+                observation.untrusted_orchestration_modes
+            ),
+            "invalid_orchestration_mode_count": (
+                observation.invalid_orchestration_mode_count
             ),
             "visible_marker_count": observation.visible_marker_count,
             "untrusted_marker_count": (
@@ -1067,6 +1181,9 @@ def _synthetic_transcript(case: SmokeCase) -> str:
                 "type": "workflow.selected",
                 "skill": "dynamic-workflow",
                 "mode": case.mode or "execute",
+                "orchestration_mode": (
+                    case.orchestration_mode or "simple-swarm"
+                ),
             }
         )
         events.append(
@@ -1076,7 +1193,10 @@ def _synthetic_transcript(case: SmokeCase) -> str:
                     "id": "marker",
                     "type": "agent_message",
                     "channel": "commentary",
-                    "text": "Workflow: dynamic-workflow",
+                    "text": (
+                        "Workflow: dynamic-workflow\n"
+                        f"Mode: {case.orchestration_mode or 'simple-swarm'}"
+                    ),
                 },
             }
         )
@@ -1174,14 +1294,14 @@ def run_self_test() -> dict[str, Any]:
             {
                 "type": "turn.started",
                 "prompt": (
-                    "Workflow: dynamic-workflow (parallel) Luna Sol Explorer"
+                    "Workflow: dynamic-workflow\nMode: simple-swarm\nLuna Sol Explorer"
                 ),
             },
             {
                 "type": "item.completed",
                 "item": {
                     "type": "agent_message",
-                    "text": "Workflow: dynamic-workflow (parallel)",
+                    "text": "Workflow: dynamic-workflow\nMode: simple-swarm",
                 },
             },
             {"type": "turn.completed"},
