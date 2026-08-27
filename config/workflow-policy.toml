@@ -1,9 +1,22 @@
 version = 1
 workflow_name = "dynamic-workflow"
-default_shape = "execute"
+default_shape = "simple_swarm"
 allow_implicit_invocation = true
 single_native_writer = true
 native_grok_route = false
+
+[simple_swarm]
+implicit_min_ready_branches = 2
+default_max_children = 6
+hard_max_children = 8
+typical_max_primary_files_per_branch = 3
+max_objectives_per_branch = 1
+max_wait_timeouts = 2
+default_read_only = true
+nested_delegation = false
+root_duplicates_active_scope = false
+managed_workflow_auto_trigger = false
+worktree_writer_auto_trigger = false
 
 [paths]
 state_home_env = "DYNWF_HOME"

@@ -6,7 +6,7 @@
       "id": 1,
       "name": "implicit-natural-language-luna-branches",
       "prompt": "帮我分别查清登录失败和库存同步变慢的原因，各自给出证据，最后统一告诉我结论，不要修改。",
-      "expected_output": "Infer two substantive independently verifiable lanes without requiring the word parallel, select Dynamic Workflow, emit the workflow marker once, and route both ordinary read-only branches to Luna."
+      "expected_output": "Select Simple Swarm, split the two independent read-only investigations into two narrow Luna branches, and keep root integration and final verification."
     },
     {
       "id": 2,
@@ -42,19 +42,19 @@
       "id": 7,
       "name": "sol-single-level-nesting",
       "prompt": "让 Sol 处理复杂架构并按需继续拆助手。",
-      "expected_output": "Allow at most one nested Luna/max/fast layer with none or finite context, and forbid those Luna helpers from spawning."
+      "expected_output": "Route the explicit Sol branch directly. Simple Swarm forbids nested delegation; select Managed Workflow first if a one-layer Luna decomposition is genuinely required."
     },
     {
       "id": 8,
       "name": "execute-path-and-optional-independent-review",
       "prompt": "分别判断：A，普通多分支只读调查；B，用户明确要求一个全新独立代理做最终验收。",
-      "expected_output": "There are no local/parallel/audit/full outer modes. A uses the execute path with per-branch routing. B is the independent-review exception and dispatches exactly one fresh dedicated reviewer."
+      "expected_output": "A uses lightweight Simple Swarm with narrow branches. B is the explicit independent-review exception and dispatches exactly one fresh dedicated reviewer; neither case implies Managed Workflow."
     },
     {
       "id": 9,
       "name": "access-based-large-ordinary-work",
       "prompt": "这个改动涉及很多文件：普通实现、测试和文档核对可以拆开，结论最后统一整合；没有架构、安全、最终裁决或难回滚决定。判断如何委派。",
-      "expected_output": "Select Dynamic Workflow when the lanes pass the dispatch guard, route ordinary analysis, verification, and the ordinary scoped writer branch to Luna, and do not select Sol or create a Grok conversation task from file or branch count alone."
+      "expected_output": "Select Simple Swarm, route ordinary read-only and scoped implementation lanes independently, keep at most one active native writer, and do not select Managed Workflow, Sol, or Grok from file count alone."
     },
     {
       "id": 10,
@@ -114,7 +114,7 @@
       "id": 19,
       "name": "event-driven-native-coordination",
       "prompt": "三个 native 子代理仍在运行，当前没有新的完成、异常或 mailbox 事件。判断是否应反复 list_agents 加短 wait。",
-      "expected_output": "Use one bounded event-driven wait. Call list_agents only for explicit inventory, after a mailbox or state-change event, or to reconcile ambiguous status; do not use list-plus-short-wait polling."
+      "expected_output": "Use one bounded event-driven wait. After the first timeout request one partial result or progress signal, then wait once more; if the second wait still yields no useful delivery and blocks completion, close and re-split or return the scope to root. Do not poll repeatedly."
     },
     {
       "id": 20,
@@ -132,13 +132,13 @@
       "id": 22,
       "name": "root-lane-plus-one-luna-auto-trigger",
       "prompt": "只读核对一份失败日志的证据，同时由主线程结合当前规则判断证据是否充分、形成修复建议并负责最终验证；不要修改。",
-      "expected_output": "Select Dynamic Workflow as soon as the separately deliverable log-inspection branch qualifies, route that ordinary branch to Luna, and keep final judgment and integration at root without requiring the root work to qualify as a second independent lane."
+      "expected_output": "Keep the single implicit substantive branch at root because implicit Simple Swarm requires at least two useful child branches; root integration is not counted as a second child lane."
     },
     {
       "id": 23,
       "name": "implicit-single-qualified-governance-check",
       "prompt": "请只读检查 AGENTS.md 中关于工作线分配的规则，结合当前可用配置判断一个普通、低风险、可独立验证的检查任务应该如何执行，以及哪些情况属于例外，最后给出统一结论；不要修改任何文件。",
-      "expected_output": "Treat the bounded rule-and-configuration inspection as one substantive separately deliverable ordinary branch, select Dynamic Workflow without asking for a second qualifying lane, route the inspection to Luna, and retain synthesis and final verification at root."
+      "expected_output": "Keep this single implicit governance inspection at root. Dispatch one child only if the user explicitly invokes $dynamic-workflow or asks for a subagent."
     },
     {
       "id": 24,
@@ -150,7 +150,7 @@
       "id": 25,
       "name": "single-log-evidence-analysis-positive",
       "prompt": "只读梳理支付超时日志的时间线和调用链，输出证据矩阵；主线程判断证据是否充分、给出修复建议并负责最终验证。",
-      "expected_output": "Select Dynamic Workflow because the log investigation is a substantive separately deliverable ordinary branch, route it to Luna, and keep evidence sufficiency, repair judgment, integration, and final verification at root."
+      "expected_output": "Keep the single implicit log-analysis branch at root; an explicit subagent request may route it to Luna, but implicit Simple Swarm requires at least two useful child branches."
     },
     {
       "id": 26,
@@ -162,7 +162,7 @@
       "id": 27,
       "name": "luna-ordinary-sol-complex-writer-routing",
       "prompt": "分别判断三个普通分支：A，只读调查并规划；B，跨模块行为修改，必须理解调用链并修改多个相关文件；C，未指定代理，一个短小、边界清楚、低风险且可本地验证的单文件修改。",
-      "expected_output": "Route A to Luna read_only, B to Sol as the sole active native writer because it requires complex cross-module reasoning and nontrivial behavior change, and C to Luna as the sole writer because it is ordinary bounded work; root retains scope, effect readback, tests, and final acceptance."
+      "expected_output": "Use Simple Swarm for the three lanes, keep A read-only, and serialize the two writing branches so only one native writer is active: Sol for the complex cross-module change and Luna for the later bounded single-file change. Root retains effects and acceptance."
     },
     {
       "id": 28,
@@ -186,7 +186,7 @@
       "id": 31,
       "name": "healthy-long-running-child-is-not-interrupted",
       "prompt": "一个子代理已正常运行 20 分钟，没有错误、越权或模型不匹配，但暂时没有新的进度消息；主线程已经有部分证据。判断下一步。",
-      "expected_output": "Continue with an event-driven bounded wait and user updates; elapsed time, silence, or partial root evidence does not authorize interrupting prompts or closing the running child."
+      "expected_output": "In Simple Swarm, treat a 20-minute silent child as an over-broad branch: after one progress request and a second bounded wait, close and re-split or return scope to root if it blocks completion. Only Managed Workflow may continue long-running persistent waits."
     },
     {
       "id": 32,
@@ -216,7 +216,7 @@
       "id": 36,
       "name": "complex-work-does-not-auto-create-grok-thread",
       "prompt": "任务需要复杂跨模块实现，但用户没有要求创建新的 Grok 对话任务。判断自动路由。",
-      "expected_output": "Route the complex branch to Sol through the v2 native path and do not create or suggest that a Grok conversation task was automatically started. Complexity, latency, or native failure never implies permission to create a visible Grok task."
+      "expected_output": "Keep the single implicit complex branch at root and do not create a Grok task. If the user explicitly invokes Dynamic Workflow, route the branch to Sol without turning complexity alone into Managed Workflow."
     },
     {
       "id": 37,
@@ -247,6 +247,36 @@
       "name": "native-route-ladder-remains-visible",
       "prompt": "Dynamic Workflow 已由另一条实质支线触发。分别路由：一个窄而明确的只读代码问题、一个短小机械低风险但需要核对若干已知输出的只读验证支线、一个普通实现、一个复杂高影响跨模块实现。",
       "expected_output": "Use Explorer for the bounded codebase question when its pre-route applies, Spark for the short mechanical read, Luna for ordinary implementation, and Sol for the complex high-impact branch. Keep Grok outside native routing."
+    },
+    {
+      "id": 42,
+      "name": "broad-audit-splits-into-narrow-simple-swarm",
+      "prompt": "深度审核一个项目的 CLI 路由、runtime 恢复、Writer 权限边界和测试布局，要求尽快给出综合结论。",
+      "expected_output": "Select Simple Swarm and create separate narrow branches for CLI routing, runtime recovery, Writer authority, and test layout. Do not assign all dimensions to one child and do not start Workflow IR, Human Gate, or Writer."
+    },
+    {
+      "id": 43,
+      "name": "root-does-not-duplicate-active-child",
+      "prompt": "Luna 正在检查 runtime 恢复路径，主线程还有文档入口和最终验收要做。判断主线程是否也应重新检查 runtime。",
+      "expected_output": "Do not duplicate the active runtime investigation. Root handles documentation, uncovered scope, conflict resolution, and acceptance, and only takes over runtime if the child fails or is closed."
+    },
+    {
+      "id": 44,
+      "name": "managed-workflow-is-explicit",
+      "prompt": "比较普通多角度项目审核与一个必须暂停、人工决定、恢复后不重跑并保留事件证据的长任务。",
+      "expected_output": "Use Simple Swarm for the ordinary audit. Select Managed Workflow only for the task that explicitly requires pause/resume, Human Gate, no-replay, and formal run evidence."
+    },
+    {
+      "id": 45,
+      "name": "writer-workflow-is-explicit",
+      "prompt": "比较“修复一个小 bug”和“请在隔离 worktree 生成不可变 candidate，再由 fresh reviewer 审核”。",
+      "expected_output": "The small bug may use one scoped native writer because implementation was requested. Only the explicit isolated-candidate request selects Writer Workflow / Worktree Writer v1."
+    },
+    {
+      "id": 46,
+      "name": "wide-child-package-is-resplit",
+      "prompt": "计划把 CLI、runtime、Writer 安全、测试和覆盖率全部交给一个 Luna，主线程也会同步检查其中两项。",
+      "expected_output": "Reject the package as too broad. Re-split it into narrow, non-overlapping branches and remove root duplication before dispatch."
     }
   ]
 }

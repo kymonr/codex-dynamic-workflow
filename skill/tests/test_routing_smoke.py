@@ -97,6 +97,23 @@ class RoutingSmokeTests(unittest.TestCase):
                     sorted(case.routes),
                 )
 
+    def test_implicit_single_branch_stays_root(self) -> None:
+        case = smoke.CASES["implicit-single-negative"]
+        result = smoke.evaluate_transcript(
+            case, smoke._synthetic_transcript(case)
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["observed"]["routes"], [])
+        self.assertEqual(result["observed"]["selection_count"], 0)
+
+    def test_broad_simple_swarm_uses_three_luna_branches(self) -> None:
+        case = smoke.CASES["broad-simple-swarm"]
+        result = smoke.evaluate_transcript(
+            case, smoke._synthetic_transcript(case)
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["observed"]["routes"], ["Luna", "Luna", "Luna"])
+
     def test_ordinary_agent_message_does_not_change_structured_pass(
         self,
     ) -> None:

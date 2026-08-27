@@ -105,9 +105,8 @@ CASES: dict[str, SmokeCase] = {
     "root-plus-luna": SmokeCase(
         name="root-plus-luna",
         prompt=(
-            "只读检查 AGENTS.md 中的工作线规则和当前可用配置，判断普通、"
-            "低风险、可独立验证的检查任务应如何执行以及哪些情况属于例外，"
-            "最后给出统一结论；不要修改。"
+            "使用 $dynamic-workflow，把 AGENTS.md 的工作线规则交给一个 "
+            "Luna 只读检查，主线程只负责整合和最终判断；不要修改。"
         ),
         workflow=True,
         routes=("Luna",),
@@ -121,6 +120,26 @@ CASES: dict[str, SmokeCase] = {
         ),
         workflow=True,
         routes=("Luna", "Luna"),
+        mode="execute",
+    ),
+    "implicit-single-negative": SmokeCase(
+        name="implicit-single-negative",
+        prompt=(
+            "只读分析 payment.log 的支付超时调用链，给出证据和修复建议；"
+            "没有其他独立分支。"
+        ),
+        workflow=False,
+        routes=(),
+        mode=None,
+    ),
+    "broad-simple-swarm": SmokeCase(
+        name="broad-simple-swarm",
+        prompt=(
+            "分别只读检查 CLI 路由、runtime 恢复和测试布局，"
+            "每个分支独立给出证据，主线程只做整合。"
+        ),
+        workflow=True,
+        routes=("Luna", "Luna", "Luna"),
         mode="execute",
     ),
     "simple-negative": SmokeCase(
