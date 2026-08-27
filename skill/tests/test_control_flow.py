@@ -173,6 +173,33 @@ class TrustedControlFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.temp.cleanup()
 
+    async def _interrupt_after_child_aggregation(
+        self,
+        raw: dict[str, Any],
+        run_dir: Path,
+        *,
+        node_id: str,
+    ) -> None:
+        scheduler = TrustedControlFlowScheduler(
+            raw,
+            run_dir,
+            execute_agent=FakeExecutor(discover_count=2),
+            limits=self.limits,
+        )
+        original_set_node_output = scheduler._set_node_output
+        interrupted = False
+
+        def interrupt_aggregation(entry: dict[str, Any], value: Any) -> None:
+            nonlocal interrupted
+            if entry["id"] == node_id and not interrupted:
+                interrupted = True
+                raise asyncio.CancelledError()
+            original_set_node_output(entry, value)
+
+        scheduler._set_node_output = interrupt_aggregation
+        with self.assertRaises(asyncio.CancelledError):
+            await scheduler.run()
+
     async def test_map_verify_reduce_pipeline_is_artifact_backed(self) -> None:
         executor = FakeExecutor()
         run_dir = self.base / "run"
@@ -384,6 +411,165 @@ class TrustedControlFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(mapped_summary["output_artifact"])
 
+    async def test_resume_revalidates_recovered_map_child_schema_before_dispatch(
+        self,
+    ) -> None:
+        raw = workflow_ir(max_agents=4, include_reduce=False)
+        raw["nodes"] = raw["nodes"][:2]
+        raw["nodes"][1]["config"]["template"]["output_schema"] = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"finding": {"type": "string"}},
+            "required": ["finding"],
+        }
+        run_dir = self.base / "resume-map-schema"
+        await self._interrupt_after_child_aggregation(
+            raw, run_dir, node_id="mapped"
+        )
+
+        class TamperedRecoveredMapScheduler(TrustedControlFlowScheduler):
+            def _restore(inner_self) -> None:
+                super()._restore()
+                child = next(
+                    iter(inner_self.entries["mapped"]["children"].values())
+                )
+                invalid = {"unexpected": "schema"}
+                reference = inner_self.store.put_json(child["id"], invalid)
+                child["output"] = invalid
+                child["output_artifact"] = reference
+                child["agent_entry"]["output"] = invalid
+                child["agent_entry"]["output_artifact"] = reference
+
+        executor = FakeExecutor(discover_count=2)
+        resumed = TamperedRecoveredMapScheduler(
+            raw,
+            run_dir,
+            execute_agent=executor,
+            limits=self.limits,
+        )
+
+        summary = await resumed.run(resume=True)
+
+        mapped = next(node for node in summary["nodes"] if node["id"] == "mapped")
+        self.assertEqual(mapped["status"], "failed")
+        self.assertIn("output schema mismatch", mapped["error"])
+        self.assertEqual(executor.calls, [])
+
+    async def test_resume_revalidates_recovered_verify_child_schema_before_dispatch(
+        self,
+    ) -> None:
+        raw = workflow_ir(max_agents=8, include_reduce=False)
+        run_dir = self.base / "resume-verify-schema"
+        await self._interrupt_after_child_aggregation(
+            raw, run_dir, node_id="checked"
+        )
+
+        class TamperedRecoveredVerifyScheduler(TrustedControlFlowScheduler):
+            def _restore(inner_self) -> None:
+                super()._restore()
+                child = next(
+                    iter(inner_self.entries["checked"]["children"].values())
+                )
+                invalid = {"verdict": "accept", "summary": "missing evidence"}
+                reference = inner_self.store.put_json(child["id"], invalid)
+                child["output"] = invalid
+                child["output_artifact"] = reference
+                child["agent_entry"]["output"] = invalid
+                child["agent_entry"]["output_artifact"] = reference
+
+        executor = FakeExecutor(discover_count=2)
+        resumed = TamperedRecoveredVerifyScheduler(
+            raw,
+            run_dir,
+            execute_agent=executor,
+            limits=self.limits,
+        )
+
+        summary = await resumed.run(resume=True)
+
+        checked = next(node for node in summary["nodes"] if node["id"] == "checked")
+        self.assertEqual(checked["status"], "failed")
+        self.assertIn("output schema mismatch", checked["error"])
+        self.assertEqual(executor.calls, [])
+
+    async def test_resume_revalidates_recovered_child_input_before_dispatch(
+        self,
+    ) -> None:
+        cases = {
+            "map": ("mapped", workflow_ir(max_agents=4, include_reduce=False)),
+            "verify": ("checked", workflow_ir(max_agents=8, include_reduce=False)),
+        }
+        cases["map"][1]["nodes"] = cases["map"][1]["nodes"][:2]
+
+        for phase, (node_id, raw) in cases.items():
+            with self.subTest(phase=phase):
+                run_dir = self.base / f"resume-{phase}-input"
+                await self._interrupt_after_child_aggregation(
+                    raw, run_dir, node_id=node_id
+                )
+
+                class TamperedRecoveredInputScheduler(TrustedControlFlowScheduler):
+                    def _restore(inner_self) -> None:
+                        super()._restore()
+                        child = next(
+                            iter(inner_self.entries[node_id]["children"].values())
+                        )
+                        input_id = child["input_artifact"]["$artifact"]["task_id"]
+                        replacement: Any
+                        if phase == "map":
+                            replacement = {"name": "different-source-item"}
+                        else:
+                            replacement = {
+                                "index": child["index"],
+                                "source_child_id": child["source_child_id"],
+                                "candidate_output": {"forged": True},
+                                "candidate_artifact": None,
+                            }
+                        child["input_artifact"] = inner_self.store.put_json(
+                            input_id, replacement
+                        )
+
+                executor = FakeExecutor(discover_count=2)
+                resumed = TamperedRecoveredInputScheduler(
+                    raw,
+                    run_dir,
+                    execute_agent=executor,
+                    limits=self.limits,
+                )
+
+                summary = await resumed.run(resume=True)
+
+                recovered = next(
+                    node for node in summary["nodes"] if node["id"] == node_id
+                )
+                self.assertEqual(recovered["status"], "failed")
+                self.assertIn("input artifact", recovered["error"])
+                self.assertEqual(executor.calls, [])
+
+    async def test_resume_reuses_completed_verify_children_after_aggregation_interrupt(
+        self,
+    ) -> None:
+        raw = workflow_ir(max_agents=8, include_reduce=False)
+        run_dir = self.base / "resume-after-verify-aggregation"
+        await self._interrupt_after_child_aggregation(
+            raw, run_dir, node_id="checked"
+        )
+
+        executor = FakeExecutor(discover_count=2)
+        resumed = TrustedControlFlowScheduler(
+            raw,
+            run_dir,
+            execute_agent=executor,
+            limits=self.limits,
+        )
+
+        summary = await resumed.run(resume=True)
+
+        self.assertTrue(summary["all_succeeded"])
+        self.assertEqual(executor.calls, [])
+        checked = next(node for node in summary["nodes"] if node["id"] == "checked")
+        self.assertEqual(checked["status"], "succeeded")
+
     async def test_verify_rejects_noncanonical_map_manifest_before_dispatch(
         self,
     ) -> None:
@@ -396,6 +582,9 @@ class TrustedControlFlowTests(unittest.IsolatedAsyncioTestCase):
             "child identity": lambda manifest: manifest["items"][1].__setitem__(
                 "child_id", "forged-map-child"
             ),
+            "persisted map child evidence": lambda manifest: manifest[
+                "items"
+            ][0].__setitem__("input_artifact", None),
         }
 
         for expected_error, mutate in cases.items():
@@ -425,6 +614,84 @@ class TrustedControlFlowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(checked["status"], "failed")
                 self.assertIn(expected_error, checked["error"])
                 self.assertEqual(checked["children"], {})
+                self.assertFalse(
+                    any("_verify_" in task_id for task_id in executor.calls)
+                )
+
+    async def test_verify_rejects_truncated_manifest_against_source_before_dispatch(
+        self,
+    ) -> None:
+        class TruncatedManifestScheduler(TrustedControlFlowScheduler):
+            def _load_result_value(inner_self, node_id: str) -> Any:
+                value = super()._load_result_value(node_id)
+                if node_id == "mapped":
+                    value = json.loads(json.dumps(value))
+                    value["items"].pop()
+                    value["item_count"] = len(value["items"])
+                return value
+
+        executor = FakeExecutor(discover_count=2)
+        scheduler = TruncatedManifestScheduler(
+            workflow_ir(include_reduce=False),
+            self.base / "truncated-manifest",
+            execute_agent=executor,
+            limits=self.limits,
+        )
+
+        summary = await scheduler.run()
+
+        checked = next(node for node in summary["nodes"] if node["id"] == "checked")
+        self.assertEqual(checked["status"], "failed")
+        self.assertIn("source", checked["error"])
+        self.assertFalse(any("_verify_" in task_id for task_id in executor.calls))
+
+    async def test_verify_rejects_persisted_map_child_set_mismatch_before_dispatch(
+        self,
+    ) -> None:
+        def add_child(children: dict[str, Any]) -> None:
+            children["unexpected-map-child"] = {
+                "id": "unexpected-map-child",
+                "index": 2,
+                "status": "succeeded",
+            }
+
+        def remove_child(children: dict[str, Any]) -> None:
+            children.pop(next(reversed(children)))
+
+        def forge_identity(children: dict[str, Any]) -> None:
+            next(iter(children.values()))["id"] = "forged-map-child"
+
+        for label, mutate in {
+            "extra": add_child,
+            "missing": remove_child,
+            "identity": forge_identity,
+        }.items():
+            with self.subTest(label=label):
+                class TamperedMapChildrenScheduler(TrustedControlFlowScheduler):
+                    def _load_result_value(inner_self, node_id: str) -> Any:
+                        value = super()._load_result_value(node_id)
+                        if node_id == "mapped" and not hasattr(
+                            inner_self, "_map_children_tampered"
+                        ):
+                            inner_self._map_children_tampered = True
+                            mutate(inner_self.entries["mapped"]["children"])
+                        return value
+
+                executor = FakeExecutor(discover_count=2)
+                scheduler = TamperedMapChildrenScheduler(
+                    workflow_ir(include_reduce=False),
+                    self.base / f"map-child-set-{label}",
+                    execute_agent=executor,
+                    limits=self.limits,
+                )
+
+                summary = await scheduler.run()
+
+                checked = next(
+                    node for node in summary["nodes"] if node["id"] == "checked"
+                )
+                self.assertEqual(checked["status"], "failed")
+                self.assertIn("map child", checked["error"])
                 self.assertFalse(
                     any("_verify_" in task_id for task_id in executor.calls)
                 )

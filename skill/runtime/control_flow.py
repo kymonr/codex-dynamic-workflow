@@ -849,6 +849,92 @@ class TrustedControlFlowScheduler:
                     )
             raise
 
+    def _validate_recovered_child(
+        self,
+        child: Any,
+        *,
+        phase: str,
+        agent_id: str,
+        index: int,
+        input_id: str,
+        expected_input: Any,
+        output_schema: dict[str, Any] | None,
+        source_child_id: str | None = None,
+    ) -> None:
+        if (
+            not isinstance(child, dict)
+            or child.get("id") != agent_id
+            or child.get("index") != index
+            or child.get("status") != SUCCESS
+        ):
+            raise ControlFlowError(
+                f"recovered {phase} child identity is invalid: {agent_id}"
+            )
+        if phase == "verify" and child.get("source_child_id") != source_child_id:
+            raise ControlFlowError(
+                f"recovered verify child source identity is invalid: {agent_id}"
+            )
+
+        input_reference = child.get("input_artifact")
+        if not is_artifact_reference(input_reference):
+            raise ControlFlowError(
+                f"recovered {phase} child input artifact is invalid: {agent_id}"
+            )
+        try:
+            recovered_input = self.store.load_json(
+                input_reference, expected_task_id=input_id
+            )
+        except ArtifactLimitError as exc:
+            raise ControlFlowError(
+                f"recovered {phase} child input artifact is invalid: "
+                f"{agent_id}: {exc}"
+            ) from exc
+        if canonical_json_bytes(recovered_input) != canonical_json_bytes(
+            expected_input
+        ):
+            raise ControlFlowError(
+                f"recovered {phase} child input artifact disagrees with current "
+                f"input: {agent_id}"
+            )
+
+        agent_entry = child.get("agent_entry")
+        if not isinstance(agent_entry, dict) or not is_artifact_reference(
+            agent_entry.get("output_artifact")
+        ):
+            raise ControlFlowError(
+                f"recovered {phase} child agent entry is invalid: {agent_id}"
+            )
+        try:
+            normalized = _normalize_agent_entry(
+                agent_id,
+                agent_entry,
+                store=self.store,
+                limits=self.limits,
+                output_schema=output_schema,
+            )
+        except ArtifactLimitError as exc:
+            raise ControlFlowError(
+                f"recovered {phase} child output artifact is invalid: "
+                f"{agent_id}: {exc}"
+            ) from exc
+        if normalized.get("status") != SUCCESS:
+            raise ControlFlowError(
+                f"recovered {phase} child agent entry is not successful: {agent_id}"
+            )
+        if (
+            agent_entry.get("output_artifact")
+            != normalized.get("output_artifact")
+            or canonical_json_bytes(agent_entry.get("output"))
+            != canonical_json_bytes(normalized.get("output"))
+            or child.get("output_artifact") != normalized.get("output_artifact")
+            or canonical_json_bytes(child.get("output"))
+            != canonical_json_bytes(normalized.get("output"))
+            or child.get("error") != normalized.get("error")
+        ):
+            raise ControlFlowError(
+                f"recovered {phase} child output identity is invalid: {agent_id}"
+            )
+
     async def _run_map_child(
         self,
         node: dict[str, Any],
@@ -944,24 +1030,44 @@ class TrustedControlFlowScheduler:
                 f"map node {node['id']} has {len(source)} items; item_limit={item_limit}"
             )
         entry.setdefault("children", {})
+        if not isinstance(entry["children"], dict):
+            raise ControlFlowError("map child collection is malformed")
+        for index, item in enumerate(source):
+            agent_id = _child_agent_id(node["id"], "map", index)
+            prior = entry["children"].get(agent_id)
+            if prior is None:
+                continue
+            if not isinstance(prior, dict) or (
+                prior.get("id") != agent_id or prior.get("index") != index
+            ):
+                raise ControlFlowError(
+                    f"map child identity is invalid: {agent_id}"
+                )
+            status = prior.get("status")
+            if status == SUCCESS:
+                self._validate_recovered_child(
+                    prior,
+                    phase="map",
+                    agent_id=agent_id,
+                    index=index,
+                    input_id=_input_id(node["id"], "map", index),
+                    expected_input=item,
+                    output_schema=config["template"].get("output_schema"),
+                )
+            elif status not in TERMINAL_STATES | {"pending"}:
+                raise ControlFlowError(
+                    f"map child lifecycle is invalid: {agent_id}"
+                )
         work: list[tuple[str, Awaitable[dict[str, Any]]]] = []
         for index, item in enumerate(source):
             agent_id = _child_agent_id(node["id"], "map", index)
             prior = entry["children"].get(agent_id)
-            if prior:
-                if prior.get("id") != agent_id or prior.get("index") != index:
-                    raise ControlFlowError(
-                        f"map child identity is invalid: {agent_id}"
-                    )
+            if prior is not None:
                 if prior.get("status") == SUCCESS:
                     self._claim_agent(agent_id)
                     continue
                 if prior.get("status") in TERMINAL_STATES:
                     continue
-                if prior.get("status") != "pending":
-                    raise ControlFlowError(
-                        f"map child lifecycle is invalid: {agent_id}"
-                    )
             else:
                 entry["children"][agent_id] = {
                     "id": agent_id,
@@ -1035,6 +1141,12 @@ class TrustedControlFlowScheduler:
             raise ControlFlowError("map manifest node identity is invalid")
         if target.get("source_node") != target_node["config"]["over"]:
             raise ControlFlowError("map manifest source identity is invalid")
+        source_node = target_node["config"]["over"]
+        source = self._load_result_value(source_node)
+        if not isinstance(source, list):
+            raise ControlFlowError(
+                f"map manifest source {source_node} must be a JSON array"
+            )
         items = target.get("items")
         if not isinstance(items, list):
             raise ControlFlowError("map manifest items are malformed")
@@ -1046,9 +1158,31 @@ class TrustedControlFlowScheduler:
             or item_count != len(items)
         ):
             raise ControlFlowError("map manifest item_count is invalid")
+        if item_count != len(source):
+            raise ControlFlowError(
+                "map manifest item_count does not match the complete source"
+            )
         item_limit = min(target_node["config"]["item_limit"], self.max_agents)
         if item_count > item_limit:
             raise ControlFlowError("map manifest item_count exceeds item_limit")
+
+        target_entry = self.entries.get(target_id)
+        if (
+            not isinstance(target_entry, dict)
+            or target_entry.get("status") != SUCCESS
+        ):
+            raise ControlFlowError("persisted map entry is not successful")
+        map_children = target_entry.get("children")
+        if not isinstance(map_children, dict):
+            raise ControlFlowError("persisted map child collection is malformed")
+        expected_map_children = {
+            _child_agent_id(target_id, "map", index)
+            for index in range(len(source))
+        }
+        if set(map_children) != expected_map_children:
+            raise ControlFlowError(
+                "persisted map child set does not match the complete source"
+            )
 
         indices: list[int] = []
         for item in items:
@@ -1076,6 +1210,38 @@ class TrustedControlFlowScheduler:
             expected_map_child = _child_agent_id(target_id, "map", index)
             if item.get("child_id") != expected_map_child:
                 raise ControlFlowError("map manifest child identity is invalid")
+            persisted_child = map_children.get(expected_map_child)
+            if not isinstance(persisted_child, dict):
+                raise ControlFlowError("persisted map child is malformed")
+            evidence_fields = (
+                "status",
+                "input_artifact",
+                "output",
+                "output_artifact",
+                "error",
+            )
+            if any(
+                field not in item or field not in persisted_child
+                for field in evidence_fields
+            ) or canonical_json_bytes(
+                {field: item[field] for field in evidence_fields}
+            ) != canonical_json_bytes(
+                {field: persisted_child[field] for field in evidence_fields}
+            ):
+                raise ControlFlowError(
+                    "map manifest item disagrees with persisted map child evidence"
+                )
+            self._validate_recovered_child(
+                persisted_child,
+                phase="map",
+                agent_id=expected_map_child,
+                index=index,
+                input_id=_input_id(target_id, "map", index),
+                expected_input=source[index],
+                output_schema=target_node["config"]["template"].get(
+                    "output_schema"
+                ),
+            )
             reference = item.get("output_artifact")
             if not is_artifact_reference(reference):
                 raise ControlFlowError("map manifest child artifact is invalid")
@@ -1104,12 +1270,13 @@ class TrustedControlFlowScheduler:
                 node["id"], "verify", item["index"]
             )
             prior = children.get(verify_child_id)
-            if prior and (
-                prior.get("id") != verify_child_id
-                or prior.get("index") != item["index"]
-                or prior.get("source_child_id") != item["child_id"]
-            ):
-                raise ControlFlowError("verifier child identity is invalid")
+            if prior is not None:
+                if not isinstance(prior, dict) or (
+                    prior.get("id") != verify_child_id
+                    or prior.get("index") != item["index"]
+                    or prior.get("source_child_id") != item["child_id"]
+                ):
+                    raise ControlFlowError("verifier child identity is invalid")
         return ordered
 
     async def _run_verify_child(
@@ -1210,21 +1377,45 @@ class TrustedControlFlowScheduler:
         target = self._load_result_value(config["target"])
         entry.setdefault("children", {})
         items = self._validate_map_manifest_for_verify(node, entry, target)
+        for item in items:
+            index = item["index"]
+            agent_id = _child_agent_id(node["id"], "verify", index)
+            prior = entry["children"].get(agent_id)
+            if prior is None:
+                continue
+            status = prior.get("status")
+            if status == SUCCESS:
+                candidate = {
+                    "index": index,
+                    "source_child_id": item["child_id"],
+                    "candidate_output": item.get("output"),
+                    "candidate_artifact": item.get("output_artifact"),
+                }
+                self._validate_recovered_child(
+                    prior,
+                    phase="verify",
+                    agent_id=agent_id,
+                    index=index,
+                    input_id=_input_id(node["id"], "verify", index),
+                    expected_input=candidate,
+                    output_schema=VERIFICATION_RESULT_SCHEMA,
+                    source_child_id=item["child_id"],
+                )
+            elif status not in TERMINAL_STATES | {"pending"}:
+                raise ControlFlowError(
+                    f"verifier child lifecycle is invalid: {agent_id}"
+                )
         work: list[tuple[str, Awaitable[dict[str, Any]]]] = []
         for item in items:
             index = item["index"]
             agent_id = _child_agent_id(node["id"], "verify", index)
             prior = entry["children"].get(agent_id)
-            if prior:
+            if prior is not None:
                 if prior.get("status") == SUCCESS:
                     self._claim_agent(agent_id)
                     continue
                 if prior.get("status") in TERMINAL_STATES:
                     continue
-                if prior.get("status") != "pending":
-                    raise ControlFlowError(
-                        f"verifier child lifecycle is invalid: {agent_id}"
-                    )
             else:
                 entry["children"][agent_id] = {
                     "id": agent_id,
