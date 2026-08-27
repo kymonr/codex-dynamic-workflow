@@ -100,7 +100,7 @@ class RoutingSmokeTests(unittest.TestCase):
     def test_ordinary_agent_message_does_not_change_structured_pass(
         self,
     ) -> None:
-        case = smoke.CASES["root-plus-luna"]
+        case = smoke.CASES["implicit-luna"]
         events = _events(case)
         events.insert(
             -1,
@@ -116,9 +116,20 @@ class RoutingSmokeTests(unittest.TestCase):
         result = smoke.evaluate_transcript(case, _transcript(events))
         self.assertEqual(result["status"], "pass")
         self.assertTrue(result["passed"])
-        self.assertEqual(result["observed"]["routes"], ["Luna"])
+        self.assertEqual(result["observed"]["routes"], ["Luna", "Luna"])
         self.assertEqual(result["observed"]["visible_marker_count"], 1)
         self.assertEqual(result["observed"]["untrusted_marker_count"], 0)
+
+    def test_single_implicit_branch_stays_root_only(self) -> None:
+        case = smoke.CASES["root-plus-luna"]
+        result = smoke.evaluate_transcript(
+            case,
+            smoke._synthetic_transcript(case),
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertFalse(result["expected"]["workflow"])
+        self.assertEqual(result["observed"]["selection_count"], 0)
+        self.assertEqual(result["observed"]["routes"], [])
 
     def test_prompt_or_answer_echo_without_dispatch_cannot_pass(self) -> None:
         transcript = "\n".join(
@@ -127,7 +138,7 @@ class RoutingSmokeTests(unittest.TestCase):
                 {
                     "type": "turn.started",
                     "prompt": (
-                        "Workflow: dynamic-workflow "
+                        "Workflow: simple-swarm "
                         "Luna Sol Explorer"
                     ),
                 },
@@ -135,7 +146,7 @@ class RoutingSmokeTests(unittest.TestCase):
                     "type": "item.completed",
                     "item": {
                         "type": "agent_message",
-                        "text": "Workflow: dynamic-workflow",
+                        "text": "Workflow: simple-swarm",
                     },
                 },
                 {"type": "turn.completed"},
@@ -201,7 +212,7 @@ class RoutingSmokeTests(unittest.TestCase):
                     "item": {
                         "type": "agent_message",
                         "channel": "final",
-                        "text": "Workflow: dynamic-workflow",
+                        "text": "Workflow: simple-swarm",
                     },
                 }
             ),
@@ -550,7 +561,7 @@ class RoutingSmokeTests(unittest.TestCase):
             {
                 "type": "workflow.selected",
                 "skill": "dynamic-workflow",
-                "mode": "execute",
+                "mode": "simple-swarm",
             }
         )
         self.assertEqual(
@@ -661,7 +672,7 @@ class RoutingSmokeTests(unittest.TestCase):
             for event in mismatch
             if event.get("type") == "workflow.selected"
         )
-        selection["mode"] = "audit"
+        selection["mode"] = "managed-workflow"
         self.assertEqual(
             smoke.evaluate_transcript(
                 case, _transcript(mismatch)
@@ -681,8 +692,8 @@ class RoutingSmokeTests(unittest.TestCase):
             if event.get("type") == "item.completed"
             and event.get("item", {}).get("type") == "agent_message"
         )
-        selection["mode"] = "audit"
-        marker["item"]["text"] = "Workflow: dynamic-workflow (audit)"
+        selection["mode"] = "managed-workflow"
+        marker["item"]["text"] = "Workflow: managed-workflow"
         self.assertEqual(
             smoke.evaluate_transcript(
                 smoke.CASES["implicit-luna"],

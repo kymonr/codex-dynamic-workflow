@@ -1,5 +1,10 @@
 # Native routing contract
 
+## Mode boundary
+
+Workflow mode and model route are separate decisions. The default multi-agent mode is Simple Swarm: a few narrow native branches with no Workflow IR, checkpoint, gate, or Writer machinery. Managed Workflow and Worktree Writer require their own explicit triggers. Model selection never upgrades a Simple Swarm task into an advanced mode.
+
+Read [simple-swarm.md](simple-swarm.md) for split quality, overlap, wait, takeover, and adoption rules. This file only selects the effective native route for each already-approved branch.
 ## Precedence
 
 Apply routing rules in this order:
@@ -19,7 +24,7 @@ A named Dynamic Workflow route is a complete preset, not a set of independently 
 
 Never label a Custom dispatch as Luna, Spark, or Sol merely because its model resembles that preset.
 
-There is no outer-mode overlay. Luna handles ordinary delegated work and scoped writing; Sol handles complex or high-impact execution and judgment. Grok is outside native routing and never appears as an automatic route or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
+Mode does not alter route identity. Luna handles ordinary delegated work and scoped writing; Sol handles complex or high-impact execution and judgment. Grok is outside native routing and never appears as an automatic route or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
 
 ## Narrow Explorer pre-route
 
@@ -80,6 +85,16 @@ Include:
 - whether nested delegation is allowed.
 
 For ordinary Luna and every Spark child, state that nested delegation is forbidden. For Sol, allow at most one Luna-only nested layer when decomposition would materially help. The Sol prompt must require those grandchildren to avoid further spawning.
+
+## Simple Swarm split and wait rules
+
+Before route selection, the root must already have a valid Simple Swarm ownership table. Each branch owns one primary question, one module or responsibility, and usually no more than three primary files. Branches with the same central question or material file overlap must be merged or re-split before dispatch.
+
+The root may inspect shared entry points and perform final verification, but it must not duplicate a live child's full investigation. Use one normal wait. If the child remains active, request one concise progress or partial result when supported. A second non-delivery ends the branch: shut it down, re-split it, or return the remaining work to root.
+
+Route selection cannot rescue a badly scoped branch. A wide Luna task that serially scans CLI, runtime, Writer authority, tests, and coverage is still invalid even if Luna is the correct model. Sol is not a substitute for decomposition.
+
+Adopted output is the success metric. Record whether each child result was used, partially used, rejected, or replaced by root takeover. Formatting defects alone do not invalidate useful content.
 
 ## Recovery and route advances
 

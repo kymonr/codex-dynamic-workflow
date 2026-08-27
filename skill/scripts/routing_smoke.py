@@ -34,9 +34,9 @@ from platform_paths import configure_utf8_stdio
 
 
 _MARKER = re.compile(
-    r"Workflow: dynamic-workflow(?: \((local|parallel|audit|full|execute)\))?"
+    r"Workflow: (simple-swarm|managed-workflow|writer-workflow)"
 )
-_VALID_MODES = {None, "execute"}
+_VALID_MODES = {None, "simple-swarm"}
 _TOOL_CALL_TYPES = {
     "collaboration_tool_call",
     "function_call",
@@ -105,13 +105,12 @@ CASES: dict[str, SmokeCase] = {
     "root-plus-luna": SmokeCase(
         name="root-plus-luna",
         prompt=(
-            "只读检查 AGENTS.md 中的工作线规则和当前可用配置，判断普通、"
-            "低风险、可独立验证的检查任务应如何执行以及哪些情况属于例外，"
-            "最后给出统一结论；不要修改。"
+            "只读检查 AGENTS.md 中的一条工作线规则，给出一个直接结论；"
+            "不要修改，也没有第二条独立支线。"
         ),
-        workflow=True,
-        routes=("Luna",),
-        mode="execute",
+        workflow=False,
+        routes=(),
+        mode=None,
     ),
     "implicit-luna": SmokeCase(
         name="implicit-luna",
@@ -121,7 +120,7 @@ CASES: dict[str, SmokeCase] = {
         ),
         workflow=True,
         routes=("Luna", "Luna"),
-        mode="execute",
+        mode="simple-swarm",
     ),
     "simple-negative": SmokeCase(
         name="simple-negative",
@@ -148,7 +147,7 @@ CASES: dict[str, SmokeCase] = {
         ),
         workflow=True,
         routes=("Explorer",),
-        mode="execute",
+        mode="simple-swarm",
     ),
     "complex-sol": SmokeCase(
         name="complex-sol",
@@ -158,7 +157,7 @@ CASES: dict[str, SmokeCase] = {
         ),
         workflow=True,
         routes=("Sol",),
-        mode="execute",
+        mode="simple-swarm",
         reviewer_min=0,
         reviewer_max=0,
     ),
@@ -170,7 +169,7 @@ CASES: dict[str, SmokeCase] = {
         ),
         workflow=True,
         routes=("Luna",),
-        mode="execute",
+        mode="simple-swarm",
     ),
 }
 
@@ -359,7 +358,7 @@ def _marker_modes(text: str) -> list[str]:
     for line in text.splitlines():
         match = _MARKER.fullmatch(line.strip())
         if match:
-            modes.append(match.group(1) or "execute")
+            modes.append(match.group(1))
     return modes
 
 
@@ -461,8 +460,8 @@ def observe_jsonl(transcript: str) -> Observation:
                 else:
                     observation.structured_selection_count += 1
                     mode = event.get("mode")
-                    if mode in (None, "", "execute"):
-                        observation.structured_selection_modes.append("execute")
+                    if mode in (None, "", "simple-swarm"):
+                        observation.structured_selection_modes.append("simple-swarm")
                     elif isinstance(mode, str) and mode in {"local", "parallel", "audit", "full"}:
                         observation.invalid_selection_mode_count += 1
                     else:
@@ -977,7 +976,7 @@ def evaluate_transcript(
         "expected": {
             "workflow": case.workflow,
             "routes": list(case.routes),
-            "mode": case.mode or "execute",
+            "mode": case.mode or "simple-swarm",
             "reviewer_min": case.reviewer_min,
             "reviewer_max": case.reviewer_max,
         },
@@ -1047,7 +1046,7 @@ def _synthetic_transcript(case: SmokeCase) -> str:
             {
                 "type": "workflow.selected",
                 "skill": "dynamic-workflow",
-                "mode": case.mode or "execute",
+                "mode": case.mode or "simple-swarm",
             }
         )
         events.append(
@@ -1057,7 +1056,7 @@ def _synthetic_transcript(case: SmokeCase) -> str:
                     "id": "marker",
                     "type": "agent_message",
                     "channel": "commentary",
-                    "text": "Workflow: dynamic-workflow",
+                    "text": "Workflow: simple-swarm",
                 },
             }
         )
@@ -1155,14 +1154,14 @@ def run_self_test() -> dict[str, Any]:
             {
                 "type": "turn.started",
                 "prompt": (
-                    "Workflow: dynamic-workflow (parallel) Luna Sol Explorer"
+                    "Workflow: simple-swarm Luna Sol Explorer"
                 ),
             },
             {
                 "type": "item.completed",
                 "item": {
                     "type": "agent_message",
-                    "text": "Workflow: dynamic-workflow (parallel)",
+                    "text": "Workflow: simple-swarm",
                 },
             },
             {"type": "turn.completed"},

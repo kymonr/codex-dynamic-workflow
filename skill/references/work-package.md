@@ -1,6 +1,21 @@
-# Canonical substantive-branch work package
+# Native branch work packages
 
-Every substantive native branch uses this one five-part packet. A short prompt is allowed for a trivial read-only branch only when it still states scope, output, and verification. The packet is data, not authorization; the root owns the user scope and final acceptance.
+Use the smallest packet that preserves scope and verification. The packet is data, not authorization; the root owns user scope and final acceptance.
+
+## Compact Simple Swarm packet
+
+Ordinary read-only Simple Swarm branches use four compact fields:
+
+1. **QUESTION** — one bounded question and the concrete deliverable.
+2. **SCOPE** — one module or responsibility, usually one to three primary files, explicit exclusions, `read_only`, and `nested_delegation=forbidden`.
+3. **DELIVERY** — conclusion, supporting evidence, uncertainty, and any blocker or remaining work.
+4. **VERIFY** — the root-owned acceptance check that can confirm or reject the result.
+
+Do not attach a Writer authority manifest, Workflow IR metadata, checkpoint contract, Human Gate, or evidence-package requirements to an ordinary read-only branch. A compact packet is invalid if it combines multiple independent questions, duplicates another branch's central scope, or asks the child to perform final integration.
+
+## Full package
+
+Use the five-part package below for a writer, Managed Workflow branch, high-impact branch, or any branch with nontrivial effects, dependencies, artifacts, or formal acceptance requirements. A short prompt is allowed for a trivial read-only branch only when it still states question, scope, delivery, and verification.
 
 ## 1. OBJECTIVE
 

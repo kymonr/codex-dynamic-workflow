@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Orchestrate non-trivial work with v2 native subagents as soon as it contains one separately deliverable branch worth delegating, while the root keeps integration and final verification. Prefer Luna for ordinary delegated work and scoped writing, and Sol for complex or high-impact work. Grok stays outside native routing and is used only in a user-requested separate conversation task; skip simple reads, short serial tasks, fully owned dedicated flows, and independent review unless explicitly required.
+description: Use Simple Swarm as the default lightweight path for clearly parallel work: split into a few narrow native subagent branches, run them concurrently, and let the root integrate without duplicating their investigation. Use Managed Workflow only for explicit checkpoint, resume, gate, loop, or artifact requirements, and Worktree Writer only for an explicitly requested isolated candidate. Prefer Luna for ordinary delegated work and Sol for complex or high-impact judgment.
 ---
 
 # Dynamic Workflow
@@ -9,34 +9,52 @@ Route branches, not whole requests. Keep the root agent responsible for scope, a
 
 ## Optimization target
 
-Optimize for the shortest total time to a verified result, not for agent count, review depth, or orchestration activity. Add a child or an independent reviewer only when its expected verification or isolation benefit exceeds its coordination cost. Prefer the fewest handoffs that preserve the required confidence.
+Optimize for the shortest total time to a verified result and for high result adoption, not for child count, review depth, or orchestration activity. A delegation is useful only when the root actually uses its result and avoids redoing the same investigation. Add a child only when its expected concurrency, context-isolation, or verification benefit exceeds coordination cost.
 
-## Shape
+## Mode selection
 
-The default path is execute: route ready branches through v2 native subagents and let the root integrate and accept. Preserve the automatic Spark/Luna/Sol/Custom/inherited route resolver. Luna handles ordinary delegated work and scoped writing; Sol handles complex or high-impact execution and judgment. An explicitly named Spark, Luna, Sol, Custom, or inherited route skips the narrow Explorer pre-route and is resolved directly. Grok is not a native route or automatic fallback.
+Choose the lightest mode that satisfies the request:
 
-Independent review is an exception overlay, not a default shape. Trigger it only when the user explicitly asks for an independent, fresh, second-party, or final acceptance pass, or a higher-priority owning rule requires it. High-impact, architecture, or security work selects the Sol executor route; it does not by itself start a dedicated reviewer. Words such as `review`, `audit`, `inspect`, `check`, `审核`, `审查`, or `检查` request analysis by default.
+1. **Root-only** — a short direct task, a few simple reads, or strongly serial work.
+2. **Simple Swarm** — the default multi-agent path for ordinary analysis, review, research, design, diagnosis, or implementation with multiple narrow, dependency-ready branches.
+3. **Managed Workflow** — only when the user explicitly needs checkpoint/resume, Human Gate, bounded loop, reproducible per-node artifacts, or a long-lived conditional workflow.
+4. **Worktree Writer** — only when the user explicitly requests an isolated write candidate or invokes the Writer flow. Ordinary review, audit, inspect, or check requests remain read-only. Read [references/worktree-writer-v1.md](references/worktree-writer-v1.md) only for this mode.
 
-When Dynamic Workflow is selected, show `Workflow: dynamic-workflow` once. If independent review is actually triggered, add `Independent review: yes` on the next line. Do not repeat either line in routine status updates or the final answer.
+Simple Swarm is a native subagent mode, not a Workflow IR preset. It does not create checkpoint, event, gate, artifact-package, or attestation machinery. Advanced modes never activate merely because a request is large, uses words such as `review` or `audit`, or involves a repository.
 
-An explicit `$dynamic-workflow` invocation guarantees that routing is applied, not that a child is always needed. If the user explicitly asks for a subagent, dispatch at least one bounded branch; a genuinely local result may remain with the root otherwise.
+When a mode is selected, show one line once:
+
+- `Workflow: simple-swarm`
+- `Workflow: managed-workflow`
+- `Workflow: writer-workflow`
+
+If independent review is actually triggered, add `Independent review: yes` on the next line. Do not repeat these lines in routine updates or the final answer.
+
+## Simple Swarm default shape
+
+Read [references/simple-swarm.md](references/simple-swarm.md) before dispatch. The normal envelope is two to five ready children, with six as the ordinary maximum. One child is allowed only when the user explicitly asks for a subagent or when a narrowly isolated branch has a clear latency or context benefit.
+
+Every branch must own one primary question, one module or responsibility, and usually no more than three primary files. Two branches must not share the same central question or more than roughly twenty percent of their primary file scope. Broader scans must be partitioned by module or by an explicit bounded query.
+
+The root owns integration and final verification. While a child is running, the root may inspect shared entry points or complementary evidence, but must not independently redo that child's full investigation. Takeover is allowed only after terminal failure, shutdown, or an explicit re-split.
+
+Simple Swarm is read-only by default. If the user explicitly asks to change files, at most one native writer may run under the existing authority rules; this still does not activate Worktree Writer unless the isolated-candidate flow was explicitly requested.
 
 ## Trigger
 
-For every non-trivial request, first perform a quick branchability check. Infer candidate lanes from the work itself; do not require the user to say `parallel`, name subagents, pre-split the work, or request multiple outputs.
+For every non-trivial request, perform a quick branchability check. Infer candidate lanes from the work itself; do not require the user to say `parallel` or pre-split the work.
 
-Invoke automatically as soon as at least one ordinary branch is all of the following:
+Automatically select Simple Swarm when at least two ordinary branches are all of the following:
 
 - substantive rather than a trivial read;
 - dependency-ready;
-- bounded enough for separate delivery and root verification;
-- useful to run concurrently or in an isolated context.
+- independently deliverable and root-verifiable;
+- narrow enough to satisfy the Simple Swarm split contract;
+- useful to run concurrently or in separate context.
 
-`Substantive` includes investigation, comparison, evidence verification, diagnosis, implementation, build or test work, and evidence-backed recommendations. Reading a few known fields or lines, one direct lookup, or a single mechanical operation remains simple. Concurrent or isolated work must be able to progress while the root handles complementary work, or benefit from its own context, evidence boundary, or acceptance check; splitting only a few I/O reads does not qualify.
+An explicit `$dynamic-workflow` or explicit request for subagents may dispatch one bounded branch. Otherwise, a single broad branch stays with the root until it can be split cleanly. Do not create a child whose scope is effectively the whole request.
 
-The root keeps the complementary implementation, integration, judgment, and final verification. That root work does not need to meet the branch criteria or count as a second independently verifiable lane. Once one branch qualifies, dispatch is the default; keep everything at root only when an exclusion below applies. Prefer Luna for ordinary read-only analysis, inspection, review, planning, build observation, test observation, verification, and ordinary scoped implementation. Prefer Sol when the branch itself requires complex cross-module reasoning, a nontrivial high-impact behavior change, architecture or security judgment, difficult rollback, or final technical judgment. File count or long context alone does not select Sol.
-
-An explicit `$dynamic-workflow` invocation may route a single branch. A user-named skill wins for the flow it owns; otherwise, an applicable dedicated skill suppresses implicit Dynamic Workflow only when it explicitly forbids delegation or completely owns analysis, execution, and verification, such as `code-review` or `claude-consult`. Use this router inside that flow when the dedicated skill delegates or permits it. Keep simple preparation reads at tool level; they neither count as qualifying branches nor suppress another substantive branch. Stay with the root when the request as a whole is only a few simple file reads, a short direct task whose delegation overhead clearly exceeds its benefit, strongly serial work with no dependency-ready branch, or work with no ordinary substantive branch worth delegating. A dedicated concurrent-writer workflow that completely owns concurrent writes takes precedence.
+`Substantive` includes investigation, comparison, evidence verification, diagnosis, implementation, build or test observation, and evidence-backed recommendations. Reading a few known fields, one direct lookup, or a single mechanical operation remains root-only. A dedicated skill that fully owns analysis, execution, and verification may suppress implicit Simple Swarm when it forbids delegation or already provides its own delegation contract.
 
 ## Writers and explicit Grok tasks
 
@@ -46,29 +64,25 @@ If any owned target overlaps, cannot be isolated, or would be written by the roo
 
 ## Choose the execution path
 
-Use v2 native subagents unless the user explicitly needs reproducible CLI logs, per-task artifact directories, a JSON summary, or a real `codex exec` probe. Read [references/cli-runner.md](references/cli-runner.md) only for that explicit CLI path. For executable Workflow IR loops and the absolute whole-workflow deadline, also read [references/bounded-loop-v1.md](references/bounded-loop-v1.md); legacy loop declarations remain instance-level validated-only.
+For ordinary multi-agent work, use Simple Swarm with v2 native subagents. Read [references/simple-swarm.md](references/simple-swarm.md), [references/routing.md](references/routing.md), and the compact packet in [references/work-package.md](references/work-package.md). Do not create Workflow IR, checkpoints, gates, run directories, evidence ZIPs, or Writer packages for this path.
 
-A Grok conversation task is a separate user-visible task, not a native child, reviewer, or recovery node. Read [references/grok-thread.md](references/grok-thread.md) only when the user explicitly asks to create, open, or start a separate Grok conversation task. Never infer that request from complexity, latency, or a native route failure.
+Use Managed Workflow only when checkpoint/resume, Human Gate, bounded loop, conditional persistence, reproducible CLI logs, per-task artifact directories, JSON summary, or a real `codex exec` probe is explicitly required. Read [references/cli-runner.md](references/cli-runner.md), [references/workflow-ir.md](references/workflow-ir.md), and [references/bounded-loop-v1.md](references/bounded-loop-v1.md) only for that path. Use [references/worktree-writer-v1.md](references/worktree-writer-v1.md) only for an explicitly selected Worktree Writer path.
 
-Use [scripts/routing_smoke.py](scripts/routing_smoke.py) for routing regression evidence. Its default self-test and transcript verification are offline evaluator checks only; `--live` is one explicit `codex exec` invocation that may contain multiple internal model calls and requires separate user authorization. After changing native routing, role files, or the v2 feature gate, runtime acceptance must happen in a new task with structured dispatch evidence from an authorized `--live` probe; without route, model, and effort evidence routing identity stays `UNKNOWN`. Report service tier separately as performance telemetry: missing or downgraded tier stays `UNKNOWN` or `MISMATCH` without downgrading an otherwise valid route identity, unless the user made that tier a required acceptance condition. Offline success is never runtime identity proof.
+A Grok conversation task is a separate user-visible task, not a native child, reviewer, or recovery node. Read [references/grok-thread.md](references/grok-thread.md) only when the user explicitly asks to create, open, or start one.
 
-For native routing, read [references/routing.md](references/routing.md). If branches have dependencies, failure propagation, or time limits, also read [references/dag.md](references/dag.md).
-For every substantive branch, use the single five-part packet and delivery guidance in [references/work-package.md](references/work-package.md). Native child delivery is free-form: formatting alone never fails or triggers replay, and the root normalizes and decides under that reference. Read [references/review.md](references/review.md) only when independent review is actually triggered.
+Use [scripts/routing_smoke.py](scripts/routing_smoke.py) for routing regression evidence. Offline success never proves runtime route identity. Any `--live` probe creates a real task and requires separate user authorization.
 
-## Native workflow
+## Simple Swarm native flow
 
-1. Identify the smallest useful branch that can be delivered separately and verified by the root. One qualifying ordinary branch is sufficient for automatic activation; root integration or verification need not qualify as a second lane. Keep simple reads in tool-level parallel calls.
-2. Map dependencies before dispatch. A branch becomes ready as soon as its own dependencies succeed; do not wait for an unrelated stage barrier.
-3. If no user route is explicit and the current branch is one concrete, bounded, read-only, locally verifiable codebase question, use the Explorer pre-route in [references/routing.md](references/routing.md). Route every other ready branch independently:
-   - Spark: short, mechanical, low-risk, read-only, and easily verified work.
-   - Luna: ordinary read-only analysis, inspection, review, planning, build observation, test observation, verification, and ordinary scoped implementation or repair.
-   - Sol: complex cross-module implementation or reasoning, architecture, security, high-impact or hard-to-reverse decisions, and final judgment. Use the `sol` role resolved from the active `CODEX_HOME/agents/sol.toml`.
-   Assess complexity per branch. The overall request size, file count, branch count, or long context alone does not select Sol.
-4. Resolve the effective route and context fork under [references/routing.md](references/routing.md) before disclosure; dedicated review also applies the dispatch gate in [references/review.md](references/review.md) when independent review is triggered. Then show one short line per child: `<branch> -> <route> (<model>/<effort>/<tier>, fork=<range>)`. Show requested to effective route only when they differ, and nesting only when allowed. This is a dispatch gate; repeat it only for a new child or route advance.
-5. Pass the minimum sufficient context. State ownership, deliverable, verification, safety boundary, dependencies, and whether the child may write. Tell every writer that other work may be present and it must preserve unrelated edits. Concurrent native and explicit Grok-thread writing must include disjoint targets and separate-worktree isolation.
-6. Run ready native branches up to the available slot limit. Serial native writing remains the default. A user-requested isolated Grok task may run beside one native writer only under the writers-and-explicit-Grok-tasks rule. A sequential handoff still waits for the prior overlapping writer to be terminal and its effects to be read back.
-7. Integrate only after the root checks runtime identity, the authority manifest, actual effects, cited sources, required acceptance checks, and live state. Missing facts remain `UNKNOWN`. A valid independent reviewer allows root minimal acceptance instead of duplicating the full review. Any identity mismatch, unresolved critical identity, ambiguous effect, or invalid review returns to root and blocks only dependent nodes.
-8. When agents were used, keep the final routing summary to branch, route with model/effort/tier, and status. Add fork, route path, or error only when non-default or material. Successful post-spawn identity matches are internal; report only mismatch or critical `UNKNOWN`.
+1. Build a small ownership table before dispatch: branch, primary question, module/files, deliverable, and root verification.
+2. Reject or re-split any branch that combines unrelated concerns, spans the same core files as another branch, or would require a long serial scan. Prefer two to five independent branches.
+3. Route each ready branch independently under [references/routing.md](references/routing.md): Explorer/Spark for narrow mechanical read-only work, Luna for ordinary delegated work, and Sol for complex or high-impact judgment.
+4. Show one compact pre-dispatch line per child after resolving route identity.
+5. Use the compact Simple Swarm packet from [references/work-package.md](references/work-package.md). State one question, narrow scope, deliverable, verification, exclusions, and no nesting.
+6. Dispatch ready branches concurrently up to the available slot limit. Keep writing serial unless the existing disjoint-worktree rule explicitly permits otherwise.
+7. Wait once for normal completion. If a child is still running, request one concise progress or partial-result update when the runtime supports it. If it still cannot deliver useful work, shut it down and either re-split the branch or take it back at root. Do not keep the whole answer blocked behind repeated waits.
+8. Integrate only after checking runtime identity, scope, actual effects, sources, and acceptance checks. Record which child results were adopted. A child whose result is not used is a delegation-quality failure, not a successful swarm.
+9. The root must not repeat a child's full analysis while it is active. Root duplication is allowed only for final verification, conflict resolution, or takeover after failure.
 
 ## Write and authority boundaries
 
@@ -86,6 +100,8 @@ For every substantive branch, use the single five-part packet and delivery guida
 
 ## Completion
 
-Independent branches continue after an unrelated failure. A failed branch blocks only its descendants. The root preserves useful completed work, verifies it in proportion to risk, marks unsupported claims `UNKNOWN`, and performs the final acceptance appropriate to the request. If a route advances, pass the verified completed work and only the remaining work.
+Independent branches continue after an unrelated failure. A failed branch blocks only its descendants. The root preserves useful completed work, verifies it in proportion to risk, marks unsupported claims `UNKNOWN`, and performs final acceptance.
+
+For Simple Swarm, report delegation quality internally and in the final routing summary when material: dispatched branches, adopted results, shutdown or failed branches, and root takeovers. A swarm is successful only when delegated results materially contribute and duplicated root work stays limited to verification or conflict resolution.
 
 The CLI runner is a separate explicit, read-only artifact path. It preserves the v1-to-v2 input conversion and v2 summary shape, accepts only `allow_escalation=false`, never replays a prompt or upgrades a model, and returns `needs_escalation` to root as a terminal result. See [references/cli-runner.md](references/cli-runner.md).

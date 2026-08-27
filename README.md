@@ -1,6 +1,14 @@
 # Codex Dynamic Workflow
 
-面向 Codex v2 native subagent 的轻量编排 Skill。它把真正可独立交付的支线交给合适的子代理，同时由主线程保留范围控制、授权、结果整合和最终验收。
+面向 Codex v2 native subagent 的轻量编排 Skill。默认路径是 **Simple Swarm**：把任务拆成少量、窄而独立的支线并行交给子代理，主线程只做范围控制、结果整合和最终验收，不重复完成同一调查。
+
+## 三种使用模式
+
+- **Root-only**：短任务、少量读取或强串行工作。
+- **Simple Swarm（默认）**：通常 2–5 个只读 native subagent；无 Workflow IR、checkpoint、Human Gate、artifact package 或 Writer。
+- **Managed Workflow / Worktree Writer（显式高级模式）**：只在明确需要恢复、Gate、Loop、正式 artifacts 或隔离写入候选时启用。
+
+Simple Swarm 不是 Workflow IR preset。每个支线只负责一个问题、一个模块或责任范围，通常不超过三个主要文件；root 在 child 运行期间不重复其完整调查。完整合同见 `skill/references/simple-swarm.md`。
 
 ## 当前路由
 
@@ -15,7 +23,7 @@
 
 ## 执行路径
 
-Native subagent 是默认路径。只有用户明确需要可复现的 CLI 日志、逐任务产物目录、JSON summary 或真实 `codex exec` 探针时，才使用显式 CLI runner。
+Simple Swarm 的 native subagent 是默认路径。普通分析、审核、研究、设计和诊断只执行“拆分 → 并行 → 汇总”。只有用户明确需要可复现 CLI 日志、checkpoint/resume、Human Gate、bounded loop、逐任务产物目录或 JSON summary 时，才进入 Managed Workflow。Worktree Writer 只在明确要求隔离候选时启用。
 
 CLI runner 是有界只读路径，不提供 workspace write、Git 写入、任意命令或自动模型升级。使用跨平台入口：
 
@@ -75,6 +83,7 @@ config/workflow-policy.toml      机器可读路由、限制与路径合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
+skill/references/simple-swarm.md  默认轻量多代理合同
 skill/cli.py                     跨平台 CLI 入口
 skill/platform_paths.py          本地状态、产物与 worktree 路径解析
 skill/runner.py                  有界、可恢复的只读 DAG runner
