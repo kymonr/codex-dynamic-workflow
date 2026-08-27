@@ -134,6 +134,12 @@ class SwarmPresetCompilerTests(unittest.TestCase):
 
     def test_ultra_review_topology_and_selected_report_join(self) -> None:
         raw = self.render("ultra-review")
+        scope_schema = _node(raw, "scope-discovery")["config"]["output_schema"]
+        self.assertEqual(scope_schema["type"], "array")
+        self.assertEqual(scope_schema["minItems"], 7)
+        self.assertEqual(scope_schema["maxItems"], 7)
+        scope_prompt = _prompt(_node(raw, "scope-discovery"))
+        self.assertIn("performance and test/CI evidence", scope_prompt)
         self.assertEqual(_node(raw, "review-findings")["config"]["item_limit"], 7)
         self.assertEqual(
             _node(raw, "verify-findings")["config"]["target"],
