@@ -2,7 +2,15 @@
 
 本项目采用 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格记录面向使用者和维护者的重要变化。
 
-## [1.0.0-rc.1] - Unreleased
+## [Unreleased]
+
+### Changed
+
+- 将 Dynamic Workflow 默认入口改为轻量 `Simple Swarm`：隐式触发至少需要两个窄而不重叠的分支，默认 2–6 个 child，root 不重复活跃分支。
+- 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；将 Worktree Writer v1 保持为显式授权模式。
+- 简化 read-only child packet、等待策略和结果采用规则，避免宽工作包、无限 wait 和为编排而编排。
+
+## [1.0.0-rc.1] - 2026-08-28
 
 这是首个发布候选。它冻结当前 `master` 的 Dynamic Workflow v1 功能面，用于隔离安装、对 Dynamic Workflow 自身精确 RC Head 的只读自审，以及在确有 verifier 支持的小范围问题时生成受限 Writer 候选；在这些发布门完成前，不创建稳定版 `v1.0.0`。外部业务仓库的 dogfooding 属于可选验证，不是本版本的发布依赖、合并门或 tag 门。
 

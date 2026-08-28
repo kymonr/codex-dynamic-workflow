@@ -1,21 +1,50 @@
 # Codex Dynamic Workflow
 
-面向 Codex v2 native subagent 的轻量编排 Skill。它把真正可独立交付的支线交给合适的子代理，同时由主线程保留范围控制、授权、结果整合和最终验收。
+面向 Codex v2 native subagent 的轻量编排 Skill。默认目标不是搭建复杂工作流，而是把普通任务拆成少量、窄而不重叠的子代理分支，由主线程统一整合。
+
+```text
+Multi-agent first
+Workflow only when needed
+Writer only when explicitly authorized
+```
+
+## 默认模式：Simple Swarm
+
+普通分析、审核、研究、设计、诊断和规划，默认使用轻量 Simple Swarm：
+
+```text
+拆成 2–6 个窄分支
+→ 并行派给 native subagent
+→ 收集结果
+→ 主线程去重、解决冲突、验收并回答
+```
+
+隐式触发至少需要两个依赖已就绪、可独立交付且不大面积重叠的分支。只有一个隐式分支时留在主线程；用户显式调用 `$dynamic-workflow` 或明确要求 subagent 时，可以派一个有界分支。
+
+每个分支通常只负责一个问题、一个模块或 1–3 个主要文件。主线程不重复调查仍在运行的子代理范围。普通 Simple Swarm 不创建 Workflow IR、checkpoint、Human Gate、bounded loop、正式 evidence package 或 Worktree Writer run。
+
+详细规则见 `skill/references/simple-swarm.md`。
+
+## 高级模式按需开启
+
+- **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、长时间恢复或可复现运行产物时才启用。
+- **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。普通“实现/修复”请求最多授权一个 scoped native writer。
+- **Independent Review**：只有用户明确要求独立、全新、第二方或最终验收时才创建 dedicated reviewer。
 
 ## 当前路由
 
 - Spark / Explorer：窄而明确、低风险、可本地核对的只读调查。
-- Luna：普通委派任务，以及边界清晰、低风险的 scoped writing。
+- Luna：普通委派任务，以及用户已明确授权的边界清晰 scoped writing。
 - Sol：复杂、跨模块、高影响、架构/安全判断或最终技术判断。
 - Grok：不属于 native subagent 路由，也不是自动 fallback；只有用户明确要求时才创建独立可见的 Grok 对话任务。
 
-默认只允许一个 native writer。Grok 与 native writer 并发写入时，必须使用独立 worktree，并给双方互斥、封闭的 `owned_targets`。
+Simple Swarm 禁止嵌套委派，默认只允许一个 native writer。Grok 与 native writer 并发写入时，必须使用独立 worktree，并给双方互斥、封闭的 `owned_targets`。
 
-机器可读的角色、资源限制与路径合同位于 `config/workflow-policy.toml`。角色 TOML、公开文档和接入片段必须通过一致性检查，避免规则在多个文件之间悄悄漂移。
+机器可读的角色、Simple Swarm 限制、资源限制与路径合同位于 `config/workflow-policy.toml`。角色 TOML、公开文档和接入片段必须通过一致性检查。
 
 ## 执行路径
 
-Native subagent 是默认路径。只有用户明确需要可复现的 CLI 日志、逐任务产物目录、JSON summary 或真实 `codex exec` 探针时，才使用显式 CLI runner。
+Simple Swarm 的 native subagent 是默认路径。只有明确需要 checkpoint/resume、Human Gate、bounded loop、可复现 CLI 日志、逐任务产物目录、JSON summary 或真实 `codex exec` 探针时，才进入 Managed Workflow 或显式 CLI runner。
 
 CLI runner 是有界只读路径，不提供 workspace write、Git 写入、任意命令或自动模型升级。使用跨平台入口：
 
@@ -75,6 +104,7 @@ config/workflow-policy.toml      机器可读路由、限制与路径合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
+skill/references/simple-swarm.md 默认轻量多代理合同
 skill/cli.py                     跨平台 CLI 入口
 skill/platform_paths.py          本地状态、产物与 worktree 路径解析
 skill/runner.py                  有界、可恢复的只读 DAG runner

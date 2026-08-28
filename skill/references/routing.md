@@ -1,5 +1,30 @@
 # Native routing contract
 
+## Mode selection before route selection
+
+Choose execution mode before model route:
+
+1. **Root only** for trivial reads, short serial work, one implicit branch, or delegation whose coordination cost exceeds its value.
+2. **Simple Swarm** for ordinary work with at least two dependency-ready, non-overlapping branches. This is the default.
+3. **Managed Workflow** only when checkpoint/resume, Human Gate, bounded loop, conditional flow, long-running recovery, or formal run artifacts are explicitly needed.
+4. **Writer Workflow** only when the user explicitly authorizes an isolated Worktree Writer candidate.
+
+An explicit `$dynamic-workflow` or explicit subagent request may route one bounded branch. Implicit activation requires at least two useful child branches.
+
+Complexity, repository size, file count, security wording, or the word `audit` does not by itself select Managed Workflow or Writer Workflow.
+
+## Simple Swarm branch width
+
+Simple Swarm routes 2–6 branches by default, with a hard ceiling of 8.
+
+Each branch should normally have one objective, one primary responsibility, one module or 1–3 primary files, one independently useful deliverable, and one root-verifiable acceptance check.
+
+Do not dispatch a combined package such as “CLI + runtime + Writer authority + tests + coverage”. Split it into orthogonal branches first.
+
+Active branches should not substantially duplicate files or responsibility. Root must not repeat an active child’s investigation. Simple Swarm forbids nested delegation.
+
+Use one bounded wait, one progress request after the first timeout, and one final bounded wait. If the second wait still produces no useful delivery and the branch blocks completion, close and re-split it or return the scope to root.
+
 ## Precedence
 
 Apply routing rules in this order:
@@ -19,7 +44,7 @@ A named Dynamic Workflow route is a complete preset, not a set of independently 
 
 Never label a Custom dispatch as Luna, Spark, or Sol merely because its model resembles that preset.
 
-There is no outer-mode overlay. Luna handles ordinary delegated work and scoped writing; Sol handles complex or high-impact execution and judgment. Grok is outside native routing and never appears as an automatic route or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
+Execution mode and model route are separate. Simple Swarm, Managed Workflow, and Writer Workflow choose orchestration shape; Luna and Sol choose the executor for one branch. Grok is outside native routing and never appears as an automatic route or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
 
 ## Narrow Explorer pre-route
 
@@ -58,7 +83,7 @@ Use `fork_turns=all` only when full conversation history is more important than 
 
 An explicit model or effort override takes precedence over `all`: use `none` or a finite positive fork and restate the required context. If the user explicitly makes both full-history inheritance and a different model/effort non-negotiable, stop and ask which constraint to retain; never silently discard either one.
 
-Sol-to-Luna nested work never uses `all`.
+Sol-to-Luna nested work never uses `all` and is unavailable in Simple Swarm.
 
 ## Pre-dispatch disclosure
 
@@ -79,7 +104,7 @@ Include:
 - the instruction to preserve unrelated changes;
 - whether nested delegation is allowed.
 
-For ordinary Luna and every Spark child, state that nested delegation is forbidden. For Sol, allow at most one Luna-only nested layer when decomposition would materially help. The Sol prompt must require those grandchildren to avoid further spawning.
+Simple Swarm forbids nested delegation for every route. Outside Simple Swarm, ordinary Luna and every Spark child still forbid nesting; a Sol branch may use at most one Luna-only nested layer when its selected advanced flow explicitly allows it. Those grandchildren must avoid further spawning.
 
 ## Recovery and route advances
 
@@ -117,7 +142,7 @@ Before the next route starts, the root reads back and reconciles completed local
 
 The handoff contains the branch goal and acceptance check, authority and exclusions, requested and effective route/model/effort/tier/fork, the traversed route path, root-owned failure evidence, completed effects with readback, useful verified results, remaining work, and explicit `UNKNOWN`. Do not replay or follow up with the same route solely to obtain different formatting.
 
-Nested Luna helpers are part of their Sol branch, not independent recovery routes. A terminal nested failure returns its structured error and effects through Sol to the top-level root. Neither Sol nor the nested Luna automatically follows up, respawns, replaces, or reroutes that nested branch.
+Outside Simple Swarm, nested Luna helpers are part of their Sol branch, not independent recovery routes. A terminal nested failure returns its structured error and effects through Sol to the top-level root. Neither Sol nor the nested Luna automatically follows up, respawns, replaces, or reroutes that nested branch.
 
 A root handoff is a stop condition, not permission to execute the branch again automatically.
 

@@ -97,6 +97,131 @@ class RoutingSmokeTests(unittest.TestCase):
                     sorted(case.routes),
                 )
 
+    def test_implicit_single_branch_stays_root(self) -> None:
+        case = smoke.CASES["implicit-single-negative"]
+        result = smoke.evaluate_transcript(
+            case, smoke._synthetic_transcript(case)
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["observed"]["routes"], [])
+        self.assertEqual(result["observed"]["selection_count"], 0)
+
+    def test_broad_simple_swarm_uses_three_luna_branches(self) -> None:
+        case = smoke.CASES["broad-simple-swarm"]
+        result = smoke.evaluate_transcript(
+            case, smoke._synthetic_transcript(case)
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["observed"]["routes"], ["Luna", "Luna", "Luna"])
+
+    def test_orchestration_mode_is_required_and_bound(self) -> None:
+        case = smoke.CASES["broad-simple-swarm"]
+        baseline = _events(case)
+        result = smoke.evaluate_transcript(case, _transcript(baseline))
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(
+            result["observed"]["orchestration_mode"], "simple-swarm"
+        )
+        self.assertEqual(
+            result["observed"]["visible_orchestration_mode_count"], 1
+        )
+
+        missing = _events(case)
+        marker = next(
+            event
+            for event in missing
+            if event.get("type") == "item.completed"
+            and event.get("item", {}).get("id") == "marker"
+        )
+        marker["item"]["text"] = "Workflow: dynamic-workflow"
+        self.assertEqual(
+            smoke.evaluate_transcript(case, _transcript(missing))["status"],
+            "fail",
+        )
+
+        wrong = _events(case)
+        marker = next(
+            event
+            for event in wrong
+            if event.get("type") == "item.completed"
+            and event.get("item", {}).get("id") == "marker"
+        )
+        marker["item"]["text"] = (
+            "Workflow: dynamic-workflow\nMode: managed-workflow"
+        )
+        self.assertEqual(
+            smoke.evaluate_transcript(case, _transcript(wrong))["status"],
+            "fail",
+        )
+
+        duplicate = _events(case)
+        marker = next(
+            event
+            for event in duplicate
+            if event.get("type") == "item.completed"
+            and event.get("item", {}).get("id") == "marker"
+        )
+        marker["item"]["text"] += "\nMode: simple-swarm"
+        self.assertEqual(
+            smoke.evaluate_transcript(case, _transcript(duplicate))["status"],
+            "fail",
+        )
+
+        structured_wrong = _events(case)
+        selection = next(
+            event
+            for event in structured_wrong
+            if event.get("type") == "workflow.selected"
+        )
+        selection["orchestration_mode"] = "managed-workflow"
+        self.assertEqual(
+            smoke.evaluate_transcript(
+                case, _transcript(structured_wrong)
+            )["status"],
+            "fail",
+        )
+
+        malformed_structured = _events(case)
+        selection = next(
+            event
+            for event in malformed_structured
+            if event.get("type") == "workflow.selected"
+        )
+        selection["orchestration_mode"] = {"unexpected": "object"}
+        self.assertEqual(
+            smoke.evaluate_transcript(
+                case, _transcript(malformed_structured)
+            )["status"],
+            "fail",
+        )
+
+        invalid = _events(case)
+        marker = next(
+            event
+            for event in invalid
+            if event.get("type") == "item.completed"
+            and event.get("item", {}).get("id") == "marker"
+        )
+        marker["item"]["text"] = "Workflow: dynamic-workflow\nMode: execute"
+        self.assertEqual(
+            smoke.evaluate_transcript(case, _transcript(invalid))["status"],
+            "fail",
+        )
+
+        visible_only = _events(case)
+        selection = next(
+            event
+            for event in visible_only
+            if event.get("type") == "workflow.selected"
+        )
+        selection.pop("orchestration_mode")
+        self.assertEqual(
+            smoke.evaluate_transcript(
+                case, _transcript(visible_only)
+            )["status"],
+            "pass",
+        )
+
     def test_ordinary_agent_message_does_not_change_structured_pass(
         self,
     ) -> None:
@@ -127,15 +252,15 @@ class RoutingSmokeTests(unittest.TestCase):
                 {
                     "type": "turn.started",
                     "prompt": (
-                        "Workflow: dynamic-workflow "
-                        "Luna Sol Explorer"
+                        "Workflow: dynamic-workflow\n"
+                        "Mode: simple-swarm\nLuna Sol Explorer"
                     ),
                 },
                 {
                     "type": "item.completed",
                     "item": {
                         "type": "agent_message",
-                        "text": "Workflow: dynamic-workflow",
+                        "text": "Workflow: dynamic-workflow\nMode: simple-swarm",
                     },
                 },
                 {"type": "turn.completed"},
