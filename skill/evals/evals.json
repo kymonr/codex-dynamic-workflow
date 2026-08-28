@@ -270,7 +270,7 @@
       "id": 45,
       "name": "writer-workflow-is-explicit",
       "prompt": "比较“修复一个小 bug”和“请在隔离 worktree 生成不可变 candidate，再由 fresh reviewer 审核”。",
-      "expected_output": "The small bug may use one scoped native writer because implementation was requested. Only the explicit isolated-candidate request selects Writer Workflow / Worktree Writer v1."
+      "expected_output": "The small bug may use one scoped native writer because implementation was requested. Only the explicit isolated-candidate request selects Writer Workflow / Worktree Writer v2."
     },
     {
       "id": 46,

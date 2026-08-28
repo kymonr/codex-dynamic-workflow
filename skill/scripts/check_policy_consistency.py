@@ -337,6 +337,140 @@ def _validate_capability_surfaces(
                 errors.append(f"{relative} contains stale capability text")
 
 
+
+def _validate_worktree_writer_policy(root: Path, errors: list[str]) -> None:
+    path = root / "config" / "worktree-writer-policy.toml"
+    if not path.is_file():
+        errors.append("config/worktree-writer-policy.toml is missing")
+        return
+    try:
+        policy = _load_toml(path)["worktree_writer"]
+        import writer_contract
+        import writer_process
+        import writer_review
+        import writer_runtime_base
+    except Exception as exc:
+        errors.append(f"cannot load Worktree Writer policy/runtime: {exc}")
+        return
+
+    if policy.get("runtime_version") != writer_runtime_base.WRITER_RUNTIME_VERSION:
+        errors.append("Worktree Writer runtime_version disagrees with runtime")
+    if policy.get("default_writer_profile") != writer_process.DEFAULT_WRITER_PROFILE:
+        errors.append("Worktree Writer default profile disagrees with runtime")
+    for key in ("explicit_cli_only", "single_active_writer_per_repository"):
+        if policy.get(key) is not True:
+            errors.append(f"Worktree Writer {key} must be true")
+    for key in (
+        "auto_planner_activation",
+        "workflow_ir_activation",
+        "automatic_resume",
+        "automatic_retry",
+        "automatic_apply",
+        "automatic_commit",
+        "automatic_push",
+        "automatic_merge",
+        "automatic_release",
+        "automatic_deploy",
+    ):
+        if policy.get(key) is not False:
+            errors.append(f"Worktree Writer {key} must be false")
+
+    package = policy.get("package")
+    if not isinstance(package, dict):
+        errors.append("Worktree Writer package policy is missing")
+    else:
+        if set(package.get("allowed_actions", [])) != set(
+            writer_contract.GRANTABLE_ACTIONS
+        ):
+            errors.append("Worktree Writer allowed actions disagree with runtime")
+        if set(package.get("supported_versions", [])) != set(
+            writer_contract.SUPPORTED_PACKAGE_VERSIONS
+        ):
+            errors.append("Worktree Writer package versions disagree with runtime")
+        if package.get("max_v2_quality_context_bytes") != (
+            writer_contract.MAX_QUALITY_CONTEXT_BYTES
+        ):
+            errors.append("Worktree Writer quality-context budget disagrees with runtime")
+
+    common = policy.get("writer")
+    if not isinstance(common, dict):
+        errors.append("Worktree Writer common writer policy is missing")
+    else:
+        expected_common = {
+            "attempts": 1,
+            "retry": 0,
+            "upgrade": "none",
+            "sandbox": "workspace-write",
+            "network": False,
+            "shell_tool": False,
+            "code_mode": False,
+            "multi_agent": False,
+            "edit_tool": "apply_patch-only",
+        }
+        for key, expected in expected_common.items():
+            if common.get(key) != expected:
+                errors.append(
+                    f"Worktree Writer common policy {key} disagrees with runtime"
+                )
+
+    profiles = policy.get("writer_profiles")
+    if not isinstance(profiles, dict):
+        errors.append("Worktree Writer writer_profiles policy is missing")
+    elif set(profiles) != set(writer_process.WRITER_PROFILES):
+        errors.append("Worktree Writer profile ids disagree with runtime")
+    else:
+        for profile_id, runtime_profile in writer_process.WRITER_PROFILES.items():
+            configured = profiles[profile_id]
+            expected = {
+                "role": runtime_profile.route.role,
+                "model": runtime_profile.route.model,
+                "effort": runtime_profile.route.effort,
+                "tier": runtime_profile.route.tier,
+                "accepted_package_versions": sorted(
+                    runtime_profile.package_versions
+                ),
+                "max_owned_targets": runtime_profile.max_owned_targets,
+                "max_changed_files": runtime_profile.max_changed_files,
+                "max_patch_bytes": runtime_profile.max_patch_bytes,
+                "max_created_file_bytes": (
+                    runtime_profile.max_created_file_bytes
+                ),
+                "max_total_candidate_bytes": (
+                    runtime_profile.max_total_candidate_bytes
+                ),
+                "requires_quality_context": (
+                    runtime_profile.requires_quality_context
+                ),
+            }
+            for key, expected_value in expected.items():
+                actual = configured.get(key)
+                if actual != expected_value:
+                    errors.append(
+                        f"Worktree Writer profile {profile_id} {key} "
+                        f"disagrees with runtime: {actual!r} != {expected_value!r}"
+                    )
+
+    reviewer = policy.get("reviewer")
+    if not isinstance(reviewer, dict):
+        errors.append("Worktree Writer reviewer policy is missing")
+    else:
+        expected_reviewer = {
+            "agent_type": writer_review.REVIEWER_AGENT_TYPE,
+            "model": writer_process.REVIEWER_ROUTE.model,
+            "effort": writer_process.REVIEWER_ROUTE.effort,
+            "sandbox": writer_process.REVIEWER_ROUTE.sandbox,
+            "attempts": 1,
+            "retry": 0,
+            "upgrade": "none",
+            "fresh_process": True,
+            "write_authority": False,
+        }
+        for key, expected in expected_reviewer.items():
+            if reviewer.get(key) != expected:
+                errors.append(
+                    f"Worktree Writer reviewer {key} disagrees with runtime"
+                )
+
 def _validate_repository_paths(root: Path, errors: list[str]) -> None:
     for path in root.rglob("*"):
         if not path.is_file() or ".git" in path.parts:
@@ -381,6 +515,7 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
         errors.append("grok_writer.toml.disabled rollback reference is missing")
 
     _validate_runtime_contract(root, policy, errors)
+    _validate_worktree_writer_policy(root, errors)
     _validate_public_surfaces(root, policy, errors)
     _validate_repository_paths(root, errors)
     return errors, warnings

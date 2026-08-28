@@ -122,7 +122,7 @@ class FakeProcessAdapter:
         attempt_dir = kwargs["attempt_dir"]
         attempt_dir.mkdir(parents=True, exist_ok=False)
         (attempt_dir / "cmd.json").write_text("[]", encoding="utf-8")
-        if route.role == "luna":
+        if route.role in {"luna", "sol"}:
             if self.writer_error:
                 raise writer_process.WriterProcessError("fixture interruption")
             cwd = kwargs["cwd"]
@@ -137,10 +137,10 @@ class FakeProcessAdapter:
                 effects = []
             return {
                 "status": "succeeded",
-                "role": "luna",
-                "model": "gpt-5.6-luna",
-                "effort": "max",
-                "tier": "fast",
+                "role": route.role,
+                "model": route.model,
+                "effort": route.effort,
+                "tier": route.tier,
                 "requested_sandbox": "workspace-write",
                 "observed_sandbox": "fixture",
                 "attempt_count": 1,

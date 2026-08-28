@@ -1,5 +1,7 @@
 # Worktree Writer v1 安全合同
 
+> **历史合同。** 当前实现与操作入口为 [Worktree Writer v2](worktree-writer-v2.md)。v1 文档保留用于解释 Luna-only 设计和历史运行证据；不得把本页当作 v2 profile、package 或 artifact 格式说明。
+
 本文件定义 Dynamic Workflow 的第一版隔离写入能力。Worktree Writer v1 允许一个明确授权的 Luna writer 在**仓库外、由宿主创建的独立 Git worktree** 中修改有限的 UTF-8 文本文件，再由宿主读取真实效果、执行固定验证、捕获不可变候选包，并交给一个全新的只读 Sol reviewer。它不把模型输出当作授权，不自动修改 canonical checkout，不 commit、push、merge、release 或 deploy。
 
 在 runtime、完整测试、Windows/Ubuntu CI 和一次真实 Windows RC 全部通过前，本合同只是一份设计约束；仓库不得声称 Worktree Writer 已经可执行。

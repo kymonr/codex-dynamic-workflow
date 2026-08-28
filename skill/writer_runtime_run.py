@@ -1,4 +1,4 @@
-"""Worktree Writer v1 execution lifecycle."""
+"""Worktree Writer v2 execution lifecycle."""
 
 try:
     from skill.writer_runtime_base import *
@@ -15,6 +15,7 @@ def run_writer(
     expected_package_digest: str,
     expected_head_sha: str,
     ack_isolated_worktree_write: bool,
+    writer_profile: str = DEFAULT_WRITER_PROFILE,
     requested_run_dir: str | None = None,
     process_adapter: ProcessAdapter = run_codex_attempt,
 ) -> dict[str, Any]:
@@ -26,8 +27,14 @@ def run_writer(
         package_path=package_path,
         repository=repository,
         expected_package_digest=expected_package_digest,
+        writer_profile=writer_profile,
     )
     package = WriterPackage(plan["package"], plan["package_digest"])
+    profile_record = dict(plan["writer_profile"])
+    profile = resolve_writer_profile(profile_record["profile_id"])
+    if writer_profile_record(profile) != profile_record:
+        raise WriterRuntimeError("resolved writer profile record is inconsistent")
+    writer_route = profile.route
     if expected_head_sha != package.expected_head_sha:
         raise WriterRuntimeError("expected-head-sha does not match the package")
     canonical = Path(plan["canonical_repository"])
@@ -50,12 +57,13 @@ def run_writer(
         lock_path,
         run_id=run_id,
         package=package,
+        writer_profile=profile_record,
         repository=canonical,
         worktree_path=worktree_path,
     )
     run_dir.mkdir(parents=True, exist_ok=False)
     state: dict[str, Any] = {
-        "runtime": "worktree-writer-v1",
+        "runtime": WRITER_RUNTIME_NAME,
         "runtime_version": WRITER_RUNTIME_VERSION,
         "run_id": run_id,
         "state": "running",
@@ -64,6 +72,7 @@ def run_writer(
         "created_at": now_iso(),
         "finished_at": None,
         "package_digest": package.digest,
+        "writer_profile": profile_record,
         "canonical_repository": str(canonical),
         "worktree_path": str(worktree_path),
         "lock_path": str(lock_path),
@@ -85,8 +94,10 @@ def run_writer(
         _atomic_json(
             run_dir / "writer-authorization.json",
             {
-                "authorization_version": 1,
+                "authorization_version": 2,
+                "package_version": package.version,
                 "package_digest": package.digest,
+                "writer_profile": profile_record,
                 "expected_head_sha": expected_head_sha,
                 "ack_isolated_worktree_write": True,
                 "owned_targets": list(package.owned_targets),
@@ -100,7 +111,11 @@ def run_writer(
         journal.event("writer.run.created", {"run_id": run_id, "package_digest": package.digest})
         journal.event(
             "writer.authorization.recorded",
-            {"package_digest": package.digest, "owned_targets": list(package.owned_targets)},
+            {
+                "package_digest": package.digest,
+                "writer_profile": profile.profile_id,
+                "owned_targets": list(package.owned_targets),
+            },
         )
 
         run_git(canonical, ["worktree", "add", "--detach", str(worktree_path), package.expected_head_sha])
@@ -127,13 +142,23 @@ def run_writer(
         )
 
         state["phase"] = "writer"
-        journal.event("writer.agent.started", {"role": "luna", "attempt": 1})
+        journal.event(
+            "writer.agent.started",
+            {
+                "writer_profile": profile.profile_id,
+                "role": writer_route.role,
+                "model": writer_route.model,
+                "attempt": 1,
+            },
+        )
         writer_entry = process_adapter(
-            attempt_dir=run_dir / "tasks" / "writer" / "attempt-01-luna",
+            attempt_dir=(
+                run_dir / "tasks" / "writer" / f"attempt-01-{writer_route.role}"
+            ),
             cwd=worktree_path,
-            prompt=_writer_prompt(package),
+            prompt=_writer_prompt(package, profile_record),
             schema=writer_output_schema(),
-            route=WRITER_ROUTE,
+            route=writer_route,
             timeout_seconds=MAX_WRITER_TIMEOUT_SECONDS,
             codex_prefix=plan["codex_prefix"],
             codex_identity=plan["codex_identity"],
@@ -250,6 +275,7 @@ def run_writer(
             stored_files=stored_files,
             verification_results=results,
             writer_entry=writer_entry,
+            writer_profile=profile_record,
         )
         material_digest = canonical_digest(material)
         candidate_package = {

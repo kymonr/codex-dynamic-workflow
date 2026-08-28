@@ -1,8 +1,9 @@
-# Worktree Writer v1 is an explicit, isolated candidate producer. It is not a
+# Worktree Writer v2 is an explicit, isolated candidate producer. It is not a
 # Workflow IR node kind and cannot be activated by Auto Planner or Bounded Loop.
 
 [worktree_writer]
-runtime_version = 1
+runtime_version = 2
+default_writer_profile = "bounded-luna"
 explicit_cli_only = true
 single_active_writer_per_repository = true
 auto_planner_activation = false
@@ -19,15 +20,21 @@ automatic_deploy = false
 [worktree_writer.package]
 closed_schema = true
 canonical_digest = "sha256-canonical-json"
+supported_versions = [1, 2]
+max_v2_quality_context_bytes = 131072
+v1_profile_compatibility = ["bounded-luna"]
+v2_quality_fields = [
+  "acceptance_criteria",
+  "constraints",
+  "non_goals",
+  "behavior",
+  "implementation_context",
+]
 allowed_actions = ["create", "modify"]
 repo_relative_posix_paths = true
 case_insensitive_uniqueness = true
 
 [worktree_writer.writer]
-role = "luna"
-model = "gpt-5.6-luna"
-effort = "max"
-tier = "fast"
 attempts = 1
 retry = 0
 upgrade = "none"
@@ -37,6 +44,31 @@ shell_tool = false
 code_mode = false
 multi_agent = false
 edit_tool = "apply_patch-only"
+
+[worktree_writer.writer_profiles.bounded-luna]
+role = "luna"
+model = "gpt-5.6-luna"
+effort = "max"
+tier = "fast"
+accepted_package_versions = [1, 2]
+max_owned_targets = 2
+max_changed_files = 2
+max_patch_bytes = 262144
+max_created_file_bytes = 131072
+max_total_candidate_bytes = 524288
+requires_quality_context = false
+
+[worktree_writer.writer_profiles.complex-sol]
+role = "sol"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+accepted_package_versions = [2]
+max_owned_targets = 8
+max_changed_files = 8
+max_patch_bytes = 524288
+max_created_file_bytes = 262144
+max_total_candidate_bytes = 2097152
+requires_quality_context = true
 
 [worktree_writer.reviewer]
 agent_type = "dynamic_workflow_sol_reviewer"
@@ -64,4 +96,5 @@ forbid_external_write = true
 text_only_patch = true
 capture_untracked_content = true
 freeze_before_review = true
+bind_writer_profile = true
 terminal_verdicts = ["ship_candidate", "fix_first", "rethink"]

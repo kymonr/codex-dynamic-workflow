@@ -1,4 +1,4 @@
-"""Public Worktree Writer v1 runtime surface."""
+"""Public Worktree Writer v2 runtime surface."""
 
 try:
     from skill.writer_runtime_base import (

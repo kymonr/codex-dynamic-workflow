@@ -1,10 +1,10 @@
-"""Isolated Worktree Writer v1 host runtime.
+"""Isolated Worktree Writer v2 host runtime.
 
 The runtime is deliberately separate from Workflow IR: neither Auto Planner nor
-Bounded Loop can activate it.  One explicit package creates one detached
-worktree, one Luna writer attempt, host reconciliation and validation, and one
-fresh read-only Sol review.  It never applies the candidate to the canonical
-checkout and never commits, pushes, merges, releases, or deploys.
+Bounded Loop can activate it. One explicit package and one trusted writer profile
+create one detached worktree, one writer attempt, host reconciliation and
+validation, and one fresh read-only Sol review. It never applies the candidate to
+the canonical checkout and never commits, pushes, merges, releases, or deploys.
 """
 
 from __future__ import annotations
@@ -52,12 +52,15 @@ try:
         validate_base,
     )
     from skill.writer_process import (
+        DEFAULT_WRITER_PROFILE,
         REVIEWER_ROUTE,
-        WRITER_ROUTE,
         WriterProcessError,
         probe_codex_capabilities,
+        resolve_writer_profile,
         run_codex_attempt,
+        validate_writer_profile_package,
         writer_output_schema,
+        writer_profile_record,
     )
     from skill.writer_review import (
         REVIEWER_AGENT_TYPE,
@@ -95,12 +98,15 @@ except ModuleNotFoundError:
         validate_base,
     )
     from writer_process import (
+        DEFAULT_WRITER_PROFILE,
         REVIEWER_ROUTE,
-        WRITER_ROUTE,
         WriterProcessError,
         probe_codex_capabilities,
+        resolve_writer_profile,
         run_codex_attempt,
+        validate_writer_profile_package,
         writer_output_schema,
+        writer_profile_record,
     )
     from writer_review import (
         REVIEWER_AGENT_TYPE,
@@ -111,7 +117,8 @@ except ModuleNotFoundError:
         validate_review_record,
     )
 
-WRITER_RUNTIME_VERSION = 1
+WRITER_RUNTIME_VERSION = 2
+WRITER_RUNTIME_NAME = "worktree-writer-v2"
 WRITER_ACK = "--ack-isolated-worktree-write"
 WRITER_RUNS_SUBDIR = "writers"
 LOCKS_SUBDIR = ".locks"
@@ -227,6 +234,7 @@ def plan_writer(
     package_path: str | Path,
     repository: str | Path,
     expected_package_digest: str,
+    writer_profile: str = DEFAULT_WRITER_PROFILE,
 ) -> dict[str, Any]:
     """Zero-model, zero-write package/repository/capability preview."""
 
@@ -235,6 +243,12 @@ def plan_writer(
         raise WriterRuntimeError(
             f"package digest mismatch: expected={expected_package_digest} actual={package.digest}"
         )
+    try:
+        profile = resolve_writer_profile(writer_profile)
+        validate_writer_profile_package(profile, package)
+    except WriterProcessError as exc:
+        raise WriterRuntimeError(str(exc)) from exc
+    profile_record = writer_profile_record(profile)
     canonical = repository_root(repository)
     codex_home = legacy.resolve_codex_home().resolve()
     runs_root = _runs_root().expanduser().resolve(strict=False)
@@ -263,6 +277,7 @@ def plan_writer(
         "package": package.value,
         "package_digest": package.digest,
         "package_contract": package_contract(),
+        "writer_profile": profile_record,
         "base_identity": base_snapshot,
         "canonical_repository": str(canonical),
         "runs_root": str(runs_root),
@@ -273,11 +288,12 @@ def plan_writer(
         "codex_identity": codex_identity,
         "codex_capabilities": capabilities,
         "writer_route": {
-            "role": WRITER_ROUTE.role,
-            "model": WRITER_ROUTE.model,
-            "effort": WRITER_ROUTE.effort,
-            "tier": WRITER_ROUTE.tier,
-            "sandbox": WRITER_ROUTE.sandbox,
+            "profile_id": profile.profile_id,
+            "role": profile.route.role,
+            "model": profile.route.model,
+            "effort": profile.route.effort,
+            "tier": profile.route.tier,
+            "sandbox": profile.route.sandbox,
             "attempts": 1,
             "retry": 0,
             "upgrade": None,
@@ -312,16 +328,19 @@ def _create_lock(
     *,
     run_id: str,
     package: WriterPackage,
+    writer_profile: Mapping[str, Any],
     repository: Path,
     worktree_path: Path,
 ) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
-        "lock_version": 1,
+        "lock_version": 2,
         "status": "active",
         "run_id": run_id,
         "pid": os.getpid(),
+        "package_version": package.version,
         "package_digest": package.digest,
+        "writer_profile": dict(writer_profile),
         "repository": str(repository),
         "repository_full_name": package.repository_full_name,
         "created_at": now_iso(),
@@ -359,10 +378,11 @@ def _load_json_file(path: Path, *, label: str) -> Any:
 def _lock_record(path: Path) -> dict[str, Any]:
     value = _load_json_file(path, label="writer lock")
     required = {
-        "lock_version", "status", "run_id", "pid", "package_digest",
-        "repository", "repository_full_name", "created_at", "worktree_path",
+        "lock_version", "status", "run_id", "pid", "package_version",
+        "package_digest", "writer_profile", "repository",
+        "repository_full_name", "created_at", "worktree_path",
     }
-    if not isinstance(value, dict) or set(value) != required or value.get("lock_version") != 1:
+    if not isinstance(value, dict) or set(value) != required or value.get("lock_version") != 2:
         raise WriterRuntimeError("writer lock has an invalid shape")
     return value
 

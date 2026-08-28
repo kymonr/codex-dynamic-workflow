@@ -61,6 +61,7 @@ class WriterReviewTests(unittest.TestCase):
             candidate_package={"candidate_revision": revision, "value": "untrusted"},
             patch_text="diff --git a/a b/a\n",
         )
+        self.assertIn("WORKTREE_WRITER_V2_FRESH_SOL_REVIEW", prompt)
         self.assertIn("untrusted evidence", prompt)
         self.assertIn(revision, prompt)
         self.assertIn("EFFECTS must be []", prompt)

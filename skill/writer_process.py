@@ -18,12 +18,18 @@ try:
 except ModuleNotFoundError:
     import runner as legacy
 
-WRITER_MODEL = "gpt-5.6-luna"
-WRITER_EFFORT = "max"
-WRITER_TIER = "fast"
+LUNA_WRITER_MODEL = "gpt-5.6-luna"
+LUNA_WRITER_EFFORT = "max"
+LUNA_WRITER_TIER = "fast"
+SOL_WRITER_MODEL = "gpt-5.6-sol"
+SOL_WRITER_EFFORT = "xhigh"
+SOL_WRITER_TIER = None
+WRITER_MODEL = LUNA_WRITER_MODEL
+WRITER_EFFORT = LUNA_WRITER_EFFORT
+WRITER_TIER = LUNA_WRITER_TIER
 REVIEWER_MODEL = "gpt-5.6-sol"
 REVIEWER_EFFORT = "xhigh"
-MAX_PROMPT_BYTES = 512 * 1024
+MAX_PROMPT_BYTES = 1024 * 1024
 MAX_SCHEMA_BYTES = 256 * 1024
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -42,10 +48,129 @@ class ProcessRoute:
     sandbox: str
 
 
-WRITER_ROUTE = ProcessRoute("luna", WRITER_MODEL, WRITER_EFFORT, WRITER_TIER, "workspace-write")
+@dataclass(frozen=True)
+class WriterProfile:
+    profile_id: str
+    route: ProcessRoute
+    package_versions: frozenset[int]
+    max_owned_targets: int
+    max_changed_files: int
+    max_patch_bytes: int
+    max_created_file_bytes: int
+    max_total_candidate_bytes: int
+    requires_quality_context: bool
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "writer_profile_version": 1,
+            "profile_id": self.profile_id,
+            "route": {
+                "role": self.route.role,
+                "model": self.route.model,
+                "effort": self.route.effort,
+                "tier": self.route.tier,
+                "sandbox": self.route.sandbox,
+            },
+            "package_versions": sorted(self.package_versions),
+            "limits": {
+                "max_owned_targets": self.max_owned_targets,
+                "max_changed_files": self.max_changed_files,
+                "max_patch_bytes": self.max_patch_bytes,
+                "max_created_file_bytes": self.max_created_file_bytes,
+                "max_total_candidate_bytes": self.max_total_candidate_bytes,
+            },
+            "requires_quality_context": self.requires_quality_context,
+        }
+
+
+DEFAULT_WRITER_PROFILE = "bounded-luna"
+LUNA_WRITER_ROUTE = ProcessRoute(
+    "luna",
+    LUNA_WRITER_MODEL,
+    LUNA_WRITER_EFFORT,
+    LUNA_WRITER_TIER,
+    "workspace-write",
+)
+SOL_WRITER_ROUTE = ProcessRoute(
+    "sol",
+    SOL_WRITER_MODEL,
+    SOL_WRITER_EFFORT,
+    SOL_WRITER_TIER,
+    "workspace-write",
+)
+WRITER_ROUTE = LUNA_WRITER_ROUTE
 REVIEWER_ROUTE = ProcessRoute(
     "dynamic_workflow_sol_reviewer", REVIEWER_MODEL, REVIEWER_EFFORT, None, "read-only"
 )
+
+WRITER_PROFILES: dict[str, WriterProfile] = {
+    "bounded-luna": WriterProfile(
+        profile_id="bounded-luna",
+        route=LUNA_WRITER_ROUTE,
+        package_versions=frozenset({1, 2}),
+        max_owned_targets=2,
+        max_changed_files=2,
+        max_patch_bytes=256 * 1024,
+        max_created_file_bytes=128 * 1024,
+        max_total_candidate_bytes=512 * 1024,
+        requires_quality_context=False,
+    ),
+    "complex-sol": WriterProfile(
+        profile_id="complex-sol",
+        route=SOL_WRITER_ROUTE,
+        package_versions=frozenset({2}),
+        max_owned_targets=8,
+        max_changed_files=8,
+        max_patch_bytes=512 * 1024,
+        max_created_file_bytes=256 * 1024,
+        max_total_candidate_bytes=2 * 1024 * 1024,
+        requires_quality_context=True,
+    ),
+}
+
+
+def resolve_writer_profile(profile_id: str | None) -> WriterProfile:
+    selected = DEFAULT_WRITER_PROFILE if profile_id is None else profile_id
+    if not isinstance(selected, str) or not selected:
+        raise WriterProcessError("writer profile must be a non-empty string")
+    profile = WRITER_PROFILES.get(selected)
+    if profile is None:
+        raise WriterProcessError(
+            f"unknown writer profile {selected!r}; expected one of {sorted(WRITER_PROFILES)}"
+        )
+    return profile
+
+
+def writer_profile_record(profile: WriterProfile) -> dict[str, Any]:
+    return profile.record()
+
+
+def validate_writer_profile_package(profile: WriterProfile, package: Any) -> None:
+    if package.version not in profile.package_versions:
+        raise WriterProcessError(
+            f"writer profile {profile.profile_id} does not accept package v{package.version}"
+        )
+    if profile.requires_quality_context and package.quality_context is None:
+        raise WriterProcessError(
+            f"writer profile {profile.profile_id} requires package v2 quality context"
+        )
+    if len(package.owned_targets) > profile.max_owned_targets:
+        raise WriterProcessError(
+            f"writer profile {profile.profile_id} allows at most "
+            f"{profile.max_owned_targets} owned targets"
+        )
+    profile_limits = {
+        "max_changed_files": profile.max_changed_files,
+        "max_patch_bytes": profile.max_patch_bytes,
+        "max_created_file_bytes": profile.max_created_file_bytes,
+        "max_total_candidate_bytes": profile.max_total_candidate_bytes,
+    }
+    for key, maximum in profile_limits.items():
+        if package.limits[key] > maximum:
+            raise WriterProcessError(
+                f"writer profile {profile.profile_id} requires "
+                f"package.limits.{key} <= {maximum}"
+            )
 
 
 def writer_output_schema() -> dict[str, Any]:

@@ -18,7 +18,7 @@ The root owns scope, authorization, decomposition, integration, acceptance, and 
 1. **Root only** — trivial reads, short serial work, one implicit branch, or work whose delegation cost exceeds its benefit.
 2. **Simple Swarm** — the default for ordinary analysis, review, research, design, diagnosis, planning, and implementation with at least two ready, non-overlapping branches.
 3. **Managed Workflow** — only when the user explicitly asks for, or the requested result inherently requires, checkpoint/resume, Human Gate, bounded loop, conditional flow, long-running recovery, or reproducible run artifacts.
-4. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v1.
+4. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v2.
 
 An explicit `$dynamic-workflow` request guarantees routing is considered and may use one bounded child. Implicit activation requires at least two useful child branches.
 
@@ -69,9 +69,11 @@ When selected, read [references/cli-runner.md](references/cli-runner.md), [refer
 
 ## Writer Workflow — explicit isolated candidate
 
-Worktree Writer v1 is not a default consequence of “fix”, “implement”, “change”, or “write”. Use it only when the user explicitly requests an isolated candidate or a higher-priority owning rule requires it.
+Worktree Writer v2 is not a default consequence of “fix”, “implement”, “change”, or “write”. Use it only when the user explicitly requests an isolated candidate or a higher-priority owning rule requires it.
 
-Read [references/worktree-writer-usage.md](references/worktree-writer-usage.md) and [references/worktree-writer-v1.md](references/worktree-writer-v1.md) only when Writer Workflow is selected.
+Read [references/worktree-writer-usage.md](references/worktree-writer-usage.md) and [references/worktree-writer-v2.md](references/worktree-writer-v2.md) only when Writer Workflow is selected. The v1 contract is historical.
+
+Use the default `bounded-luna` profile only for short, well-specified, low-risk edits with at most two owned targets. Use explicit `complex-sol` only with a package-v2 quality context for nontrivial cross-module behavior changes. Profile selection changes writer identity and hard budgets, never effect authority.
 
 Writer Workflow never implies commit, push, merge, release, deploy, cleanup, or canonical apply. Those remain separate root approvals.
 

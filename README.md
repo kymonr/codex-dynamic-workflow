@@ -28,7 +28,7 @@ Writer only when explicitly authorized
 ## 高级模式按需开启
 
 - **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、长时间恢复或可复现运行产物时才启用。
-- **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。普通“实现/修复”请求最多授权一个 scoped native writer。
+- **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。普通“实现/修复”请求最多授权一个 scoped native writer。默认 `bounded-luna` 只处理最多两个 owned targets 的短小低风险候选；非平凡跨模块行为修改使用显式 `complex-sol`，并要求 package v2 的验收、约束、非目标、行为和实现上下文。
 - **Independent Review**：只有用户明确要求独立、全新、第二方或最终验收时才创建 dedicated reviewer。
 
 ## 当前路由
@@ -40,7 +40,7 @@ Writer only when explicitly authorized
 
 Simple Swarm 禁止嵌套委派，默认只允许一个 native writer。Grok 与 native writer 并发写入时，必须使用独立 worktree，并给双方互斥、封闭的 `owned_targets`。
 
-机器可读的角色、Simple Swarm 限制、资源限制与路径合同位于 `config/workflow-policy.toml`。角色 TOML、公开文档和接入片段必须通过一致性检查。
+机器可读的角色、Simple Swarm 限制、资源限制与路径合同位于 `config/workflow-policy.toml`；Worktree Writer profile、package version、预算与 reviewer 合同位于 `config/worktree-writer-policy.toml`。两者都由一致性检查核对运行时代码。
 
 ## 执行路径
 
@@ -101,6 +101,7 @@ py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
 
 ```text
 config/workflow-policy.toml      机器可读路由、限制与路径合同
+config/worktree-writer-policy.toml Worktree Writer v2 profile 与安全合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
 skill/SKILL.md                   Dynamic Workflow Skill 主规则

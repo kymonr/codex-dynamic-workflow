@@ -1,4 +1,4 @@
-"""Public Git/effect reconciliation surface for Worktree Writer v1."""
+"""Public Git/effect reconciliation surface for Worktree Writer v2."""
 
 try:
     from skill.writer_git_state import *

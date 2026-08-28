@@ -1,4 +1,4 @@
-"""Git identity, containment and metadata snapshots for Worktree Writer v1."""
+"""Git identity, containment and metadata snapshots for Worktree Writer v2."""
 
 from __future__ import annotations
 

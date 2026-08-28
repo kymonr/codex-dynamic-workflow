@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "name": "complex-sol-example",
+  "objective": "在隔离 worktree 中实现一个需要跨两个相关文件的有界行为修改，并用固定测试验证。",
+  "acceptance_criteria": [
+    "声明的行为变化在两个 owned targets 中完整实现。",
+    "固定验证命令通过。",
+    "除 owned targets 外没有文件或 Git 元数据变化。"
+  ],
+  "constraints": [
+    "保持现有公共接口兼容。",
+    "不扩大写入路径或动作。"
+  ],
+  "non_goals": [
+    "不重构相邻模块。",
+    "不自动 apply、commit、push 或 merge。"
+  ],
+  "behavior": {
+    "before": "复杂写入任务缺少结构化验收上下文和显式强写手路由。",
+    "after": "任务由 host-selected complex-sol profile 执行，并把质量上下文绑定到候选修订。"
+  },
+  "implementation_context": {
+    "relevant_symbols": [
+      "skill/writer_process.py::WRITER_PROFILES",
+      "skill/tests/test_worktree_writer_profiles.py::WriterProfileTests"
+    ],
+    "analysis_summary": "实现应保持单 writer、单 attempt、无 retry，并继续使用宿主 effect reconciliation、固定验证和 fresh read-only reviewer。"
+  },
+  "base": {
+    "repository_full_name": "kymonr/codex-dynamic-workflow",
+    "expected_head_sha": "REPLACE_WITH_40_LOWERCASE_HEX",
+    "expected_tree_sha": "REPLACE_WITH_40_LOWERCASE_HEX"
+  },
+  "authority": {
+    "owned_targets": [
+      "skill/writer_process.py",
+      "skill/tests/test_worktree_writer_profiles.py"
+    ],
+    "allowed_actions": [
+      "modify"
+    ]
+  },
+  "limits": {
+    "max_changed_files": 2,
+    "max_patch_bytes": 524288,
+    "max_created_file_bytes": 262144,
+    "max_total_candidate_bytes": 2097152
+  },
+  "verification": {
+    "required_verification_ids": [
+      "writer-profile-tests"
+    ],
+    "commands": [
+      {
+        "id": "writer-profile-tests",
+        "argv": [
+          "python",
+          "-m",
+          "unittest",
+          "skill.tests.test_worktree_writer_profiles",
+          "-v"
+        ],
+        "timeout_seconds": 300
+      }
+    ]
+  }
+}
