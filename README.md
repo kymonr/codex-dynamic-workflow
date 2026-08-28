@@ -106,23 +106,68 @@ integration/                     工作区 AGENTS.md 接入片段
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
 skill/references/simple-swarm.md 默认轻量多代理合同
 skill/cli.py                     跨平台 CLI 入口
+skill/install_cli.py             个人安装管理 CLI
+skill/installation/              安装合同、安全文件操作、计划、状态与回滚
 skill/platform_paths.py          本地状态、产物与 worktree 路径解析
 skill/runner.py                  有界、可恢复的只读 DAG runner
 skill/runtime/                   schema、artifact、limits、state、Workflow IR 模块
 skill/scripts/                   路由 smoke 与合同检查
 skill/tests/                     离线回归测试
+docs/personal-operations.md      个人安装、状态检查与回滚操作
+docs/module-map.md               功能模块地图与后续个人模块顺序
 ```
+
+完整职责边界见 `docs/module-map.md`。
 
 `config/agents/grok_writer.toml.disabled` 仅作为停用状态的历史参考，不应复制或重命名为启用的 `.toml`。
 
 ## 安装
 
-先从当前进程解析 `CODEX_HOME`；未设置时再使用平台默认目录。然后：
+推荐从仓库根目录先生成零写入计划：
 
-1. 将 `skill/` 的内容复制到 `$CODEX_HOME/skills/dynamic-workflow/`。
-2. 将 `config/agents/` 中启用的 `.toml` 复制到 `$CODEX_HOME/agents/`。
-3. 按工作区实际需要，将 `integration/AGENTS.dynamic-workflow.md` 的规则合并进对应 `AGENTS.md`，不要覆盖已有项目规则。
-4. 重新开始一个 Codex 任务，让 Skill 与 agent 配置从新任务加载。
+```powershell
+py -3.12 skill\cli.py install-plan --source-root .
+```
+
+```bash
+python3.12 skill/cli.py install-plan --source-root .
+```
+
+检查输出中的 `source_commit`、`source_dirty`、文件动作、`blocked` 和 `plan_digest`。然后只应用该精确摘要：
+
+```powershell
+py -3.12 skill\cli.py install-apply `
+  --source-root . `
+  --expected-plan-digest <SHA256> `
+  --ack-install
+```
+
+```bash
+python3.12 skill/cli.py install-apply \
+  --source-root . \
+  --expected-plan-digest <SHA256> \
+  --ack-install
+```
+
+安装器会复制完整 `skill/` 载荷和 `config/agents/` 根目录下启用的 `.toml`，记录 Git identity 与逐文件 SHA-256，先备份被替换或删除的目标，最后发布 active manifest。它不会复制 `.disabled` agent，不会删除未管理文件，也不会修改任何工作区 `AGENTS.md`。
+
+安装后检查实际身份：
+
+```powershell
+py -3.12 skill\cli.py install-status
+```
+
+需要退回安装前状态时，使用 status 返回的当前 `install_id`：
+
+```powershell
+py -3.12 skill\cli.py install-rollback `
+  --expected-install-id <INSTALL_ID> `
+  --ack-rollback
+```
+
+工作区接入仍需人工把 `integration/AGENTS.dynamic-workflow.md` 合并进对应 `AGENTS.md`，不要覆盖已有项目规则。完整操作与状态含义见 `docs/personal-operations.md`。
+
+仍可手工复制 `skill/` 和启用的 agent TOML，但手工路径不会生成安装 manifest、逐文件身份、before backup 或一步 rollback。
 
 ## 本地路径
 
@@ -130,7 +175,8 @@ skill/tests/                     离线回归测试
 
 | 变量 | 用途 |
 |---|---|
-| `DYNWF_HOME` | Dynamic Workflow 本地状态根目录 |
+| `CODEX_HOME` | Codex 配置、Skill 与 agent 根目录；未设置时使用 `~/.codex` |
+| `DYNWF_HOME` | Dynamic Workflow 本地状态和安装 history 根目录 |
 | `DYNWF_RUNS_ROOT` | CLI run artifacts 根目录 |
 | `DYNWF_WORKTREE_ROOT` | 隔离 worktree 根目录 |
 | `DYNWF_MAX_RESULT_BYTES` | 单节点输出上限，不能超过硬上限 |

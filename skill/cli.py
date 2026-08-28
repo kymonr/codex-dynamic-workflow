@@ -51,6 +51,15 @@ def main(argv: list[str] | None = None) -> int:
         from writer_cli import main as writer_main
 
         return writer_main(arguments)
+    if arguments and arguments[0] in {
+        "install-plan",
+        "install-apply",
+        "install-status",
+        "install-rollback",
+    }:
+        from install_cli import main as install_main
+
+        return install_main(arguments)
 
     from runner import main as legacy_main
 

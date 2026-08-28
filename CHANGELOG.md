@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增个人安装管理模块与 `install-plan`、`install-apply`、`install-status`、`install-rollback`：记录 source commit/dirty state、逐文件 SHA-256、active manifest、before backup，并对 managed drift 与路径 reparse fail closed。
+- 新增个人运维说明和功能模块地图，明确下一顺序为 Candidate/Known-Good、显式 live routing evidence 与 Personal Doctor。
+
 ### Changed
 
 - 将 Dynamic Workflow 默认入口改为轻量 `Simple Swarm`：隐式触发至少需要两个窄而不重叠的分支，默认 2–6 个 child，root 不重复活跃分支。
