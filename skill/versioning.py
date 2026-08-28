@@ -73,10 +73,16 @@ def read_skill_version(source_root: Path | str) -> str:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
         raise VersionError("version file must be strict UTF-8") from exc
-    lines = text.splitlines()
-    if len(lines) != 1 or text not in {lines[0], lines[0] + "\n"}:
+
+    if text.endswith("\r\n"):
+        value = text[:-2]
+    elif text.endswith("\n"):
+        value = text[:-1]
+    else:
+        value = text
+    if not value or "\r" in value or "\n" in value:
         raise VersionError("version file must contain exactly one version line")
-    value = lines[0]
+
     parse_version(value, label="skill version")
     return value
 
