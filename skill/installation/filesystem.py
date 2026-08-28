@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import stat
 import subprocess
 from pathlib import Path, PurePosixPath
@@ -16,6 +17,7 @@ try:
     from skill.runtime.path_safety import (
         UnsafeRunPathError,
         assert_safe_descendant,
+        assert_safe_run_tree,
         canonical_runtime_path,
         is_reparse,
         lexists,
@@ -25,6 +27,7 @@ except ModuleNotFoundError:
     from runtime.path_safety import (
         UnsafeRunPathError,
         assert_safe_descendant,
+        assert_safe_run_tree,
         canonical_runtime_path,
         is_reparse,
         lexists,
@@ -144,14 +147,17 @@ def source_root(path: Path | str) -> Path:
     root = safe_root(Path(path), label="installation source root", must_exist=True)
     required = (
         root / "skill" / "SKILL.md",
+        root / "skill" / "VERSION",
         root / "config" / "agents",
         root / "integration" / "AGENTS.dynamic-workflow.md",
     )
     if not required[0].is_file():
         raise InstallManagerError(f"source root is missing skill/SKILL.md: {root}")
-    if not required[1].is_dir():
+    if not required[1].is_file():
+        raise InstallManagerError(f"source root is missing skill/VERSION: {root}")
+    if not required[2].is_dir():
         raise InstallManagerError(f"source root is missing config/agents: {root}")
-    if not required[2].is_file():
+    if not required[3].is_file():
         raise InstallManagerError(
             f"source root is missing integration/AGENTS.dynamic-workflow.md: {root}"
         )
@@ -384,6 +390,32 @@ def copy_backup(
     backup = safe_target(history, relative, label="installation backup file")
     atomic_write_bytes(backup, payload, root=state_root, label="installation backup file")
     return relative
+
+
+def remove_history_record_tree(state_root: Path, relative: str | None) -> str | None:
+    """Remove one no-longer-addressable rollback snapshot after state publication."""
+
+    if relative is None:
+        return None
+    record = safe_target(state_root, relative, label="obsolete installation history record")
+    history = record.parent
+    installations = safe_target(
+        state_root,
+        INSTALL_HISTORY_DIRNAME,
+        label="installation history root",
+    )
+    if history.parent != installations:
+        raise InstallManagerError("obsolete installation history path has invalid shape")
+    if not lexists(history):
+        return None
+    try:
+        assert_safe_run_tree(history)
+        shutil.rmtree(history)
+    except (UnsafeRunPathError, OSError) as exc:
+        raise InstallManagerError(
+            f"cannot remove obsolete installation history {history}: {exc}"
+        ) from exc
+    return str(history)
 
 
 def scan_unmanaged_skill_files(

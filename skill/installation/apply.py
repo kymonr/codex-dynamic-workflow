@@ -1,4 +1,4 @@
-"""Apply one exact personal installation plan."""
+"""Apply one exact personal installation plan with one rollback snapshot."""
 
 from __future__ import annotations
 
@@ -30,12 +30,24 @@ from .filesystem import (
     history_dir,
     manifest_path,
     read_manifest,
+    remove_history_record_tree,
     resolve_codex_home,
     resolve_state_root,
     safe_target,
     sha256_file,
 )
 from .planner import plan_install
+
+
+def _previous_for_one_step_rollback(
+    previous: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if previous is None:
+        return None
+    snapshot = dict(previous)
+    snapshot["managed_files"] = [dict(entry) for entry in previous["managed_files"]]
+    snapshot["history_record"] = None
+    return snapshot
 
 
 def apply_install(
@@ -72,6 +84,7 @@ def apply_install(
             previous = read_manifest(codex)
             same_identity = bool(
                 previous
+                and previous["skill_version"] == plan["skill_version"]
                 and previous["payload_digest"] == plan["payload_digest"]
                 and previous["source_commit"] == plan["source_commit"]
                 and previous["source_dirty"] == plan["source_dirty"]
@@ -82,8 +95,10 @@ def apply_install(
                     "operation": "install-apply",
                     "state": "already_current",
                     "install_id": previous["install_id"],
+                    "skill_version": previous["skill_version"],
                     "plan_digest": plan["plan_digest"],
                     "payload_digest": plan["payload_digest"],
+                    "rollback_available": previous["history_record"] is not None,
                     "model_calls": 0,
                     "writes": [],
                 }
@@ -175,6 +190,7 @@ def apply_install(
             record = {
                 "version": INSTALL_CONTRACT_VERSION,
                 "install_id": install_id,
+                "skill_version": plan["skill_version"],
                 "state": "prepared",
                 "prepared_at": now_iso(),
                 "applied_at": None,
@@ -182,7 +198,7 @@ def apply_install(
                 "plan_digest": plan["plan_digest"],
                 "payload_digest": plan["payload_digest"],
                 "codex_home": str(codex),
-                "previous_manifest": previous,
+                "previous_manifest": _previous_for_one_step_rollback(previous),
                 "changes": changes,
             }
             atomic_write_json(
@@ -285,6 +301,7 @@ def apply_install(
                 "version": INSTALL_CONTRACT_VERSION,
                 "install_id": install_id,
                 "installed_at": now_iso(),
+                "skill_version": plan["skill_version"],
                 "source_root": plan["source_root"],
                 "source_commit": plan["source_commit"],
                 "source_dirty": plan["source_dirty"],
@@ -308,19 +325,37 @@ def apply_install(
                 root=state,
                 label="installation history record",
             )
+
+            cleanup_warnings: list[str] = []
+            removed_history: str | None = None
+            if previous is not None and previous["history_record"] is not None:
+                try:
+                    removed_history = remove_history_record_tree(
+                        state, previous["history_record"]
+                    )
+                except InstallManagerError as exc:
+                    cleanup_warnings.append(str(exc))
+
             writes = [change["target"] for change in changes]
             writes.extend([str(active_manifest_path), str(record_path)])
             return {
                 "operation": "install-apply",
                 "state": "applied",
                 "install_id": install_id,
+                "skill_version": plan["skill_version"],
                 "previous_install_id": previous["install_id"] if previous else None,
+                "previous_skill_version": (
+                    previous["skill_version"] if previous else None
+                ),
                 "plan_digest": plan["plan_digest"],
                 "payload_digest": plan["payload_digest"],
                 "source_commit": plan["source_commit"],
                 "source_dirty": plan["source_dirty"],
                 "manifest_path": str(active_manifest_path),
                 "history_record": str(record_path),
+                "rollback_available": True,
+                "removed_obsolete_history": removed_history,
+                "cleanup_warnings": cleanup_warnings,
                 "change_count": len(changes),
                 "manual_integration": plan["manual_integration"],
                 "model_calls": 0,

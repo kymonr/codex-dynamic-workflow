@@ -1,4 +1,4 @@
-"""Versioned metadata contracts for personal installation management."""
+"""Versioned metadata contracts for one-step personal installation rollback."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ import re
 import secrets
 from pathlib import PurePosixPath
 from typing import Any, Iterable, Mapping
+
+try:
+    from skill.versioning import VersionError, parse_version
+except ModuleNotFoundError:
+    from versioning import VersionError, parse_version
 
 INSTALL_CONTRACT_VERSION = 1
 MANIFEST_FILENAME = ".dynamic-workflow-install.json"
@@ -25,6 +30,16 @@ EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
 class InstallManagerError(RuntimeError):
     """The requested installation operation cannot continue safely."""
+
+
+def validate_skill_version(value: Any, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise InstallManagerError(f"{label} must be a string")
+    try:
+        parse_version(value, label=label)
+    except VersionError as exc:
+        raise InstallManagerError(str(exc)) from exc
+    return value
 
 
 def now_iso() -> str:
@@ -125,6 +140,23 @@ def validate_managed_files(value: Any, *, label: str) -> list[dict[str, Any]]:
     return result
 
 
+def _validate_history_reference(value: Any, *, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise InstallManagerError(f"{label}.history_record is invalid")
+    history_path = PurePosixPath(value)
+    if history_path.is_absolute() or ".." in history_path.parts:
+        raise InstallManagerError(f"{label}.history_record is unsafe")
+    if not history_path.parts or history_path.parts[0] != INSTALL_HISTORY_DIRNAME:
+        raise InstallManagerError(
+            f"{label}.history_record is outside installation history"
+        )
+    if len(history_path.parts) != 3 or history_path.name != "record.json":
+        raise InstallManagerError(f"{label}.history_record shape is invalid")
+    return value
+
+
 def validate_manifest(value: Any, *, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InstallManagerError(f"{label} must be an object")
@@ -132,6 +164,7 @@ def validate_manifest(value: Any, *, label: str) -> dict[str, Any]:
         "version",
         "install_id",
         "installed_at",
+        "skill_version",
         "source_root",
         "source_commit",
         "source_dirty",
@@ -147,9 +180,11 @@ def validate_manifest(value: Any, *, label: str) -> dict[str, Any]:
     install_id = value.get("install_id")
     if not isinstance(install_id, str) or not INSTALL_ID_RE.fullmatch(install_id):
         raise InstallManagerError(f"{label}.install_id is invalid")
-    for key in ("installed_at", "source_root"):
-        if not isinstance(value.get(key), str) or not value[key]:
-            raise InstallManagerError(f"{label}.{key} is invalid")
+    if not isinstance(value.get("installed_at"), str) or not value["installed_at"]:
+        raise InstallManagerError(f"{label}.installed_at is invalid")
+    validate_skill_version(value.get("skill_version"), label=f"{label}.skill_version")
+    if not isinstance(value.get("source_root"), str) or not value["source_root"]:
+        raise InstallManagerError(f"{label}.source_root is invalid")
     commit = value.get("source_commit")
     if commit is not None and (
         not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit)
@@ -162,16 +197,7 @@ def validate_manifest(value: Any, *, label: str) -> dict[str, Any]:
         digest = value.get(key)
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
             raise InstallManagerError(f"{label}.{key} is invalid")
-    history_record = value.get("history_record")
-    if not isinstance(history_record, str) or not history_record:
-        raise InstallManagerError(f"{label}.history_record is invalid")
-    history_path = PurePosixPath(history_record)
-    if history_path.is_absolute() or ".." in history_path.parts:
-        raise InstallManagerError(f"{label}.history_record is unsafe")
-    if not history_path.parts or history_path.parts[0] != INSTALL_HISTORY_DIRNAME:
-        raise InstallManagerError(
-            f"{label}.history_record is outside installation history"
-        )
+    _validate_history_reference(value.get("history_record"), label=label)
     normalized = dict(value)
     normalized["managed_files"] = validate_managed_files(
         value.get("managed_files"), label=label
@@ -185,10 +211,14 @@ def validate_history_record(
     manifest: dict[str, Any],
     codex_home: str,
 ) -> None:
+    if not isinstance(record, dict):
+        raise InstallManagerError("installation history record must be an object")
     if record.get("version") != INSTALL_CONTRACT_VERSION:
         raise InstallManagerError("installation history record version is unsupported")
     if record.get("install_id") != manifest["install_id"]:
         raise InstallManagerError("installation history record identity mismatch")
+    if record.get("skill_version") != manifest["skill_version"]:
+        raise InstallManagerError("installation history record skill version mismatch")
     if record.get("plan_digest") != manifest["applied_plan_digest"]:
         raise InstallManagerError("installation history record plan digest mismatch")
     if record.get("payload_digest") != manifest["payload_digest"]:
@@ -204,6 +234,13 @@ def validate_history_record(
         raise InstallManagerError("installation history record state is invalid")
     if not isinstance(record.get("changes"), list):
         raise InstallManagerError("installation history record changes must be a list")
+    previous = record.get("previous_manifest")
+    if previous is not None:
+        normalized = validate_manifest(previous, label="previous installation manifest")
+        if normalized["history_record"] is not None:
+            raise InstallManagerError(
+                "previous installation manifest must not retain a rollback chain"
+            )
 
 
 def change_contract(change: Any, *, index: int) -> dict[str, Any]:
@@ -257,7 +294,7 @@ def change_contract(change: Any, *, index: int) -> dict[str, Any]:
 
 
 def validate_expected_digest(value: str, *, label: str) -> None:
-    if not SHA256_RE.fullmatch(value):
+    if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
         raise InstallManagerError(f"{label} must be a lowercase SHA-256 digest")
 
 

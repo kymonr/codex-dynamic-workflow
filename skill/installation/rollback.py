@@ -1,4 +1,4 @@
-"""Rollback the active personal installation by one exact history record."""
+"""Rollback the active personal installation to its single previous snapshot."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from .filesystem import (
     manifest_path,
     read_manifest,
     read_record,
+    remove_history_record_tree,
     resolve_codex_home,
     resolve_state_root,
     safe_target,
@@ -43,7 +44,7 @@ def rollback_install(
     codex_home: Path | str | None = None,
     state_root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Restore the exact pre-install target state for the active installation."""
+    """Restore the exact target state immediately preceding the active install."""
 
     if not ack_rollback:
         raise InstallManagerError("install-rollback requires --ack-rollback")
@@ -60,6 +61,10 @@ def rollback_install(
             if manifest["install_id"] != expected_install_id:
                 raise InstallManagerError(
                     "active install id changed; rerun install-status before rollback"
+                )
+            if manifest["history_record"] is None:
+                raise InstallManagerError(
+                    "the active installation has no previous rollback snapshot"
                 )
             status = install_status(codex_home=codex, state_root=state)
             record_path, record = read_record(state, manifest["history_record"])
@@ -79,10 +84,9 @@ def rollback_install(
                     f"active installation is not clean: {status['state']}"
                 )
 
-            raw_changes = record["changes"]
             changes = [
                 change_contract(change, index=index)
-                for index, change in enumerate(raw_changes)
+                for index, change in enumerate(record["changes"])
             ]
             history = record_path.parent
             current_sides: dict[str, str] = {}
@@ -195,10 +199,15 @@ def rollback_install(
                     )
                     active_manifest_path.unlink()
                 active_install_id = None
+                active_skill_version = None
             else:
                 previous_manifest = validate_manifest(
                     previous, label="previous installation manifest"
                 )
+                if previous_manifest["history_record"] is not None:
+                    raise InstallManagerError(
+                        "previous manifest unexpectedly retains a rollback chain"
+                    )
                 atomic_write_json(
                     active_manifest_path,
                     previous_manifest,
@@ -206,6 +215,7 @@ def rollback_install(
                     label="active installation manifest",
                 )
                 active_install_id = previous_manifest["install_id"]
+                active_skill_version = previous_manifest["skill_version"]
 
             record["state"] = "rolled_back"
             record["rolled_back_at"] = now_iso()
@@ -215,14 +225,28 @@ def rollback_install(
                 root=state,
                 label="installation history record",
             )
+
+            cleanup_warnings: list[str] = []
+            removed_history: str | None = None
+            try:
+                removed_history = remove_history_record_tree(
+                    state, manifest["history_record"]
+                )
+            except InstallManagerError as exc:
+                cleanup_warnings.append(str(exc))
+
             return {
                 "operation": "install-rollback",
                 "state": "rolled_back",
                 "rolled_back_install_id": expected_install_id,
+                "rolled_back_skill_version": manifest["skill_version"],
                 "active_install_id": active_install_id,
+                "active_skill_version": active_skill_version,
+                "rollback_available": False,
                 "restored": sorted(restored, key=str.casefold),
                 "removed": sorted(removed, key=str.casefold),
-                "history_record": str(record_path),
+                "removed_history": removed_history,
+                "cleanup_warnings": cleanup_warnings,
                 "model_calls": 0,
                 "writes": [
                     *restored,

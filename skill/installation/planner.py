@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+try:
+    from skill.versioning import VersionError, read_skill_version
+except ModuleNotFoundError:
+    from versioning import VersionError, read_skill_version
+
 from .contract import (
     INSTALL_CONTRACT_VERSION,
     InstallManagerError,
@@ -41,6 +46,10 @@ def plan_install(
     source = resolve_source_root(source_root)
     codex = resolve_codex_home(codex_home)
     state = resolve_state_root(state_root)
+    try:
+        skill_version = read_skill_version(source)
+    except VersionError as exc:
+        raise InstallManagerError(str(exc)) from exc
     payload = payload_entries(source)
     identity = git_identity(source)
     previous = read_manifest(codex)
@@ -133,6 +142,7 @@ def plan_install(
     content_digest = payload_digest(payload)
     plan_contract = {
         "version": INSTALL_CONTRACT_VERSION,
+        "skill_version": skill_version,
         "source_root": str(source),
         "codex_home": str(codex),
         "state_root": str(state),
@@ -140,6 +150,7 @@ def plan_install(
         "source_dirty": identity["dirty"],
         "payload_digest": content_digest,
         "previous_install_id": previous["install_id"] if previous else None,
+        "previous_skill_version": previous["skill_version"] if previous else None,
         "managed_files": planned_files,
         "stale_files": stale_files,
         "blocked": blocked,

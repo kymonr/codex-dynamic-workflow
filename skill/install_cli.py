@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit CLI for personal Dynamic Workflow installation management."""
+"""Explicit CLI for personal Dynamic Workflow version and installation management."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ try:
         rollback_install,
     )
     from platform_paths import configure_utf8_stdio
+    from versioning import VersionError, bump_skill_version
 except ModuleNotFoundError:
     from skill.installation import (
         InstallManagerError,
@@ -26,6 +27,7 @@ except ModuleNotFoundError:
         rollback_install,
     )
     from skill.platform_paths import configure_utf8_stdio
+    from skill.versioning import VersionError, bump_skill_version
 
 
 def _default_source_root() -> Path:
@@ -48,9 +50,31 @@ def _add_common_paths(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="plan, apply, inspect, and roll back one personal installation"
+        description="bump, plan, apply, inspect, and roll back one personal installation"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    version = subparsers.add_parser(
+        "version-bump",
+        help="atomically calculate and write the next skill semantic version",
+    )
+    version.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    bump = version.add_mutually_exclusive_group()
+    bump.add_argument(
+        "--prerelease", action="store_const", dest="bump_type", const="prerelease"
+    )
+    bump.add_argument(
+        "--release", action="store_const", dest="bump_type", const="release"
+    )
+    bump.add_argument(
+        "--patch", action="store_const", dest="bump_type", const="patch"
+    )
+    bump.add_argument(
+        "--minor", action="store_const", dest="bump_type", const="minor"
+    )
+    bump.add_argument(
+        "--major", action="store_const", dest="bump_type", const="major"
+    )
 
     plan = subparsers.add_parser(
         "install-plan",
@@ -76,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rollback = subparsers.add_parser(
         "install-rollback",
-        help="restore the exact target state from before the active installation",
+        help="restore only the exact state immediately before the active installation",
     )
     rollback.add_argument("--expected-install-id", required=True)
     rollback.add_argument("--ack-rollback", action="store_true")
@@ -88,7 +112,12 @@ def main(argv: list[str] | None = None) -> int:
     configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
-        if args.command == "install-plan":
+        if args.command == "version-bump":
+            result = bump_skill_version(
+                args.source_root,
+                bump_type=args.bump_type,
+            )
+        elif args.command == "install-plan":
             result = plan_install(
                 args.source_root,
                 codex_home=args.codex_home,
@@ -114,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
                 codex_home=args.codex_home,
                 state_root=args.state_root,
             )
-    except (InstallManagerError, OSError, ValueError) as exc:
+    except (InstallManagerError, VersionError, OSError, ValueError) as exc:
         print(f"Install manager failed: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))

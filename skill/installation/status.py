@@ -33,6 +33,8 @@ def install_status(
             "codex_home": str(codex),
             "state_root": str(state),
             "install_id": None,
+            "skill_version": None,
+            "rollback_available": False,
             "managed_files": [],
             "drift": [],
             "unmanaged_skill_files": [],
@@ -71,16 +73,25 @@ def install_status(
 
     record_error: str | None = None
     record_state: str | None = None
-    try:
-        _, record = read_record(state, manifest["history_record"])
-        validate_history_record(
-            record, manifest=manifest, codex_home=str(codex)
-        )
-        record_state = record["state"]
-        if record_state not in {"applied", "prepared"}:
-            record_error = f"active installation history state is {record_state!r}"
-    except InstallManagerError as exc:
-        record_error = str(exc)
+    previous_install_id: str | None = None
+    previous_skill_version: str | None = None
+    rollback_available = manifest["history_record"] is not None
+    if manifest["history_record"] is not None:
+        try:
+            _, record = read_record(state, manifest["history_record"])
+            validate_history_record(
+                record, manifest=manifest, codex_home=str(codex)
+            )
+            record_state = record["state"]
+            previous = record.get("previous_manifest")
+            if previous is not None:
+                previous_install_id = previous["install_id"]
+                previous_skill_version = previous["skill_version"]
+            if record_state not in {"applied", "prepared", "rolling_back"}:
+                record_error = f"active installation history state is {record_state!r}"
+        except InstallManagerError as exc:
+            record_error = str(exc)
+            rollback_available = False
 
     unmanaged = scan_unmanaged_skill_files(codex, managed_targets)
     if drift:
@@ -99,6 +110,7 @@ def install_status(
         "codex_home": str(codex),
         "state_root": str(state),
         "install_id": manifest["install_id"],
+        "skill_version": manifest["skill_version"],
         "installed_at": manifest["installed_at"],
         "source_root": manifest["source_root"],
         "source_commit": manifest["source_commit"],
@@ -107,6 +119,9 @@ def install_status(
         "history_record": manifest["history_record"],
         "history_state": record_state,
         "history_error": record_error,
+        "rollback_available": rollback_available,
+        "previous_install_id": previous_install_id,
+        "previous_skill_version": previous_skill_version,
         "managed_files": file_status,
         "drift": drift,
         "unmanaged_skill_files": unmanaged,

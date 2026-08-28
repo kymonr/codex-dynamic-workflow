@@ -1,6 +1,6 @@
 # Functional Module Map
 
-本项目同时包含轻量 Skill 合同、可恢复只读运行时和显式隔离写入运行时。下面按职责列出当前功能模块，避免把所有能力都归为一个“workflow”。
+本项目同时包含轻量 Skill 合同、可恢复只读运行时、显式隔离写入运行时和个人安装维护工具。下面按职责列出当前功能模块，避免把所有能力都归为一个“workflow”。
 
 ## 入口与模式选择
 
@@ -51,51 +51,39 @@
 
 | 模块 | 主要文件 | 职责 |
 |---|---|---|
-| Installation contract | `skill/installation/contract.py` | active manifest、history record、digest 和 rollback change Schema |
-| Installation filesystem | `skill/installation/filesystem.py` | source discovery、安全目标解析、原子写入、backup 与 Git identity |
-| Installation planner | `skill/installation/planner.py` | 零写入 diff、managed drift 阻断和 exact `plan_digest` |
-| Installation apply | `skill/installation/apply.py` | 精确计划重验、before backup、原子写入与 manifest-last 发布 |
-| Installation status | `skill/installation/status.py` | active identity、managed drift、history 一致性与 unmanaged file 报告 |
-| Installation rollback | `skill/installation/rollback.py` | 一步 rollback、backup 校验与中断续跑 |
+| Semantic version | `skill/VERSION`, `skill/versioning.py` | 严格 SemVer、显式 bump 类型和原子版本文件更新 |
+| Installation contract | `skill/installation/contract.py` | active manifest、单步 rollback record、digest 和 change Schema |
+| Installation filesystem | `skill/installation/filesystem.py` | source discovery、安全目标解析、原子写入、backup、Git identity 与旧 snapshot 清理 |
+| Installation planner | `skill/installation/planner.py` | 零写入 diff、版本身份、managed drift 阻断和 exact `plan_digest` |
+| Installation apply | `skill/installation/apply.py` | 精确计划重验、before backup、原子写入、manifest-last 发布与单步历史截断 |
+| Installation status | `skill/installation/status.py` | `skill_version`、源码身份、payload、managed drift 和 rollback 可用性 |
+| Installation rollback | `skill/installation/rollback.py` | 只回退一步、backup 校验、中断续跑和 snapshot 清理 |
 | Installation facade | `skill/installation/manager.py` | 保持稳定的 public import surface |
-| Installation CLI | `skill/install_cli.py` | `install-plan/apply/status/rollback` 显式命令面 |
+| Personal CLI | `skill/install_cli.py` | `version-bump` 与 `install-plan/apply/status/rollback` 显式命令面 |
 
-## 后续个人模块顺序
+## 当前明确不包含
 
-### P1：Candidate / Known-Good
+本轮个人维护功能刻意不建立完整发布系统：
 
-目标不是增加新的 workflow 节点，而是把日常使用版本与实验版本分开：
+- 没有 candidate / known-good 状态机；
+- 没有可选择的长期安装历史；
+- 没有自动 Git commit、tag 或 release；
+- 没有自动修改工作区 `AGENTS.md`；
+- 没有把 live routing probe 放进普通 CI；
+- 没有因为文件较大而进行一次性运行时重构。
 
-```text
-candidate install
-→ real routing smoke / normal task observation
-→ explicit promote-known-good
-→ later candidate can reactivate the frozen known-good payload
-```
+只有单步 rollback 在实际使用中不足时，才重新讨论长期版本保留或 known-good 激活。
 
-需要在 installation history 中保存可重新激活的完整 payload，而不只保存被覆盖文件的 before backup。
+## 后续仍可单独讨论的模块
 
-### P1：Live Routing Evidence
+### Live Routing Evidence
 
-增加手工、显式、低成本的真实探针记录：
+可增加手工、显式、低成本的真实探针记录：固定 case allowlist、最大调用数与绝对超时，并绑定 Skill 版本、安装 payload、Codex 版本和结构化 route metadata。该能力不进入普通 push/PR CI，也不调用 Writer。
 
-- 固定 case allowlist；
-- 最大调用数与绝对超时；
-- 记录 Skill commit、安装 manifest digest、Codex 版本和结构化 route metadata；
-- 永不进入普通 push/PR CI；
-- 不调用 Writer，不修改目标仓库。
+### Personal Doctor
 
-### P2：Personal Doctor
+可把 active install identity、managed drift、policy consistency、最近 routing smoke、paused Human Gate、incomplete run 和 orphan Writer worktree 汇总为一个只读诊断入口。
 
-把当前分散的只读状态检查组合成一个个人诊断入口：
-
-- active install identity 与 drift；
-- policy consistency；
-- 最近一次 routing smoke 身份；
-- paused Human Gate；
-- terminal/incomplete run；
-- orphan Writer worktree 与明确 cleanup 命令。
-
-### P2：按触碰范围拆分大型模块
+### 按触碰范围拆分大型模块
 
 不做一次性重写。只有修改某一复杂职责时，才把对应 invariant 连同测试一起抽离，例如 bounded loop executor、resume validation 或 completion reconciliation。功能正确性与回滚能力优先于文件行数。

@@ -52,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return writer_main(arguments)
     if arguments and arguments[0] in {
+        "version-bump",
         "install-plan",
         "install-apply",
         "install-status",
