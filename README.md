@@ -103,26 +103,89 @@ py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
 config/workflow-policy.toml      机器可读路由、限制与路径合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
+skill/VERSION                    人工可读的严格语义版本
+skill/versioning.py              显式版本递增与原子 VERSION 更新
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
 skill/references/simple-swarm.md 默认轻量多代理合同
 skill/cli.py                     跨平台 CLI 入口
+skill/install_cli.py             个人版本与安装管理 CLI
+skill/installation/              安装合同、安全文件操作、计划、状态与单步回滚
 skill/platform_paths.py          本地状态、产物与 worktree 路径解析
 skill/runner.py                  有界、可恢复的只读 DAG runner
 skill/runtime/                   schema、artifact、limits、state、Workflow IR 模块
 skill/scripts/                   路由 smoke 与合同检查
 skill/tests/                     离线回归测试
+docs/personal-operations.md      个人版本、安装、状态检查与回滚操作
+docs/module-map.md               功能模块地图与明确排除项
 ```
+
+完整职责边界见 `docs/module-map.md`。
 
 `config/agents/grok_writer.toml.disabled` 仅作为停用状态的历史参考，不应复制或重命名为启用的 `.toml`。
 
-## 安装
+## 版本与安装
 
-先从当前进程解析 `CODEX_HOME`；未设置时再使用平台默认目录。然后：
+当前人工可读版本只来自 `skill/VERSION`。文件接受 `MAJOR.MINOR.PATCH` 或 `MAJOR.MINOR.PATCH-rc.N`。需要下一个版本时单独执行：
 
-1. 将 `skill/` 的内容复制到 `$CODEX_HOME/skills/dynamic-workflow/`。
-2. 将 `config/agents/` 中启用的 `.toml` 复制到 `$CODEX_HOME/agents/`。
-3. 按工作区实际需要，将 `integration/AGENTS.dynamic-workflow.md` 的规则合并进对应 `AGENTS.md`，不要覆盖已有项目规则。
-4. 重新开始一个 Codex 任务，让 Skill 与 agent 配置从新任务加载。
+```powershell
+py -3.12 skill\cli.py version-bump --source-root .
+```
+
+```bash
+python3.12 skill/cli.py version-bump --source-root .
+```
+
+当前为 RC 时默认递增 RC；当前为正式版时默认递增 patch。也可显式使用 `--prerelease`、`--release`、`--patch`、`--minor` 或 `--major`。该命令只修改 `skill/VERSION`，不会安装、提交 Git、创建 tag 或发布 release。
+
+确定版本并审阅源码后，生成零写入安装计划：
+
+```powershell
+py -3.12 skill\cli.py install-plan --source-root .
+```
+
+```bash
+python3.12 skill/cli.py install-plan --source-root .
+```
+
+检查输出中的 `skill_version`、`source_commit`、`source_dirty`、文件动作、`blocked` 和 `plan_digest`。然后只应用该精确摘要：
+
+```powershell
+py -3.12 skill\cli.py install-apply `
+  --source-root . `
+  --expected-plan-digest <SHA256> `
+  --ack-install
+```
+
+```bash
+python3.12 skill/cli.py install-apply \
+  --source-root . \
+  --expected-plan-digest <SHA256> \
+  --ack-install
+```
+
+安装器会复制完整 `skill/` 载荷和 `config/agents/` 根目录下启用的 `.toml`，记录版本、Git identity 与逐文件 SHA-256，先备份被替换或删除的目标，并在任何目标写入前发布 active transaction pointer，最后发布 active manifest。它不会复制 `.disabled` agent，不会删除未管理文件，也不会修改任何工作区 `AGENTS.md`。
+
+安装后检查实际身份：
+
+```powershell
+py -3.12 skill\cli.py install-status
+```
+
+重点字段为 `skill_version`、`source_commit`、`payload_digest`、`install_id` 和 `rollback_available`。版本号便于人工查看，commit 与 payload digest 用于精确确认实际内容。若返回 `apply_incomplete` 或 `rollback_incomplete`，按输出中的 pending/current install ID 执行同一个 `install-rollback`；中断 apply 会恢复到 apply 前状态，不自动继续原计划。
+
+需要退回紧邻的上一状态时，使用 status 返回的当前 `install_id`：
+
+```powershell
+py -3.12 skill\cli.py install-rollback `
+  --expected-install-id <INSTALL_ID> `
+  --ack-rollback
+```
+
+只保留当前安装对应的一份 rollback snapshot。成功回退后恢复出的版本会显示 `rollback_available: false`，不能继续链式回退；下一次成功安装会重新建立一份单步 snapshot。
+
+工作区接入仍需人工把 `integration/AGENTS.dynamic-workflow.md` 合并进对应 `AGENTS.md`，不要覆盖已有项目规则。完整操作与状态含义见 `docs/personal-operations.md`。
+
+仍可手工复制 `skill/` 和启用的 agent TOML，但手工路径不会生成安装 manifest、逐文件身份、before backup 或一步 rollback。
 
 ## 本地路径
 
@@ -130,7 +193,8 @@ skill/tests/                     离线回归测试
 
 | 变量 | 用途 |
 |---|---|
-| `DYNWF_HOME` | Dynamic Workflow 本地状态根目录 |
+| `CODEX_HOME` | Codex 配置、Skill 与 agent 根目录；未设置时使用 `~/.codex` |
+| `DYNWF_HOME` | Dynamic Workflow 本地状态和当前 rollback snapshot 根目录 |
 | `DYNWF_RUNS_ROOT` | CLI run artifacts 根目录 |
 | `DYNWF_WORKTREE_ROOT` | 隔离 worktree 根目录 |
 | `DYNWF_MAX_RESULT_BYTES` | 单节点输出上限，不能超过硬上限 |
