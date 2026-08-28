@@ -26,6 +26,10 @@ INSTALL_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}-[0-9a-f]{8}$")
 EXCLUDED_DIR_NAMES = {"__pycache__"}
 EXCLUDED_FILE_NAMES = {MANIFEST_FILENAME, ".DS_Store"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+ACTIVE_TRANSACTION_RELATIVE = PurePosixPath(
+    "install-manager", "active-transaction.json"
+)
+TRANSACTION_OPERATIONS = {"apply", "rollback"}
 
 
 class InstallManagerError(RuntimeError):
@@ -87,19 +91,40 @@ def strict_json_loads(payload: str, *, label: str) -> Any:
         raise InstallManagerError(f"{label} is not valid JSON: {exc}") from exc
 
 
-def safe_relative_target_contract(target: str, label: str) -> None:
-    relative = PurePosixPath(target)
-    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
-        raise InstallManagerError(f"{label}.target is unsafe: {target!r}")
-    allowed = (
-        tuple(SKILL_TARGET.parts) == tuple(relative.parts[: len(SKILL_TARGET.parts)])
-        or tuple(AGENTS_TARGET.parts)
-        == tuple(relative.parts[: len(AGENTS_TARGET.parts)])
+def canonical_posix_relative(value: Any, *, label: str) -> PurePosixPath:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise InstallManagerError(f"{label} is not a canonical POSIX relative path")
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or relative.as_posix() != value
+    ):
+        raise InstallManagerError(f"{label} is not a canonical POSIX relative path")
+    return relative
+
+
+def safe_relative_target_contract(
+    target: str,
+    label: str,
+) -> PurePosixPath:
+    relative = canonical_posix_relative(target, label=f"{label}.target")
+    is_skill = (
+        tuple(SKILL_TARGET.parts)
+        == tuple(relative.parts[: len(SKILL_TARGET.parts)])
+        and len(relative.parts) > len(SKILL_TARGET.parts)
     )
-    if not allowed:
+    is_agent = (
+        relative.parts[:1] == tuple(AGENTS_TARGET.parts)
+        and len(relative.parts) == 2
+        and relative.suffix == ".toml"
+    )
+    if not (is_skill or is_agent):
         raise InstallManagerError(
             f"{label}.target is outside managed roots: {target!r}"
         )
+    return relative
 
 
 def validate_managed_files(value: Any, *, label: str) -> list[dict[str, Any]]:
@@ -123,11 +148,24 @@ def validate_managed_files(value: Any, *, label: str) -> list[dict[str, Any]]:
         size = item.get("bytes")
         if kind not in {"skill", "agent"}:
             raise InstallManagerError(f"{where}.kind is invalid")
-        if not isinstance(source, str) or not source:
-            raise InstallManagerError(f"{where}.source is invalid")
-        if not isinstance(target, str) or not target:
-            raise InstallManagerError(f"{where}.target is invalid")
-        safe_relative_target_contract(target, where)
+        source_path = canonical_posix_relative(source, label=f"{where}.source")
+        target_path = safe_relative_target_contract(target, where)
+        if kind == "skill":
+            if source_path.parts[:1] != ("skill",) or len(source_path.parts) < 2:
+                raise InstallManagerError(f"{where}.source is not a Skill path")
+            if tuple(target_path.parts[: len(SKILL_TARGET.parts)]) != tuple(
+                SKILL_TARGET.parts
+            ):
+                raise InstallManagerError(f"{where}.target/kind mismatch")
+        else:
+            if (
+                source_path.parts[:2] != ("config", "agents")
+                or len(source_path.parts) != 3
+                or source_path.suffix != ".toml"
+            ):
+                raise InstallManagerError(f"{where}.source is not an agent path")
+            if target_path.parts[:1] != tuple(AGENTS_TARGET.parts):
+                raise InstallManagerError(f"{where}.target/kind mismatch")
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
             raise InstallManagerError(f"{where}.sha256 is invalid")
         if isinstance(size, bool) or not isinstance(size, int) or size < 0:
@@ -143,16 +181,15 @@ def validate_managed_files(value: Any, *, label: str) -> list[dict[str, Any]]:
 def _validate_history_reference(value: Any, *, label: str) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not value:
-        raise InstallManagerError(f"{label}.history_record is invalid")
-    history_path = PurePosixPath(value)
-    if history_path.is_absolute() or ".." in history_path.parts:
-        raise InstallManagerError(f"{label}.history_record is unsafe")
-    if not history_path.parts or history_path.parts[0] != INSTALL_HISTORY_DIRNAME:
-        raise InstallManagerError(
-            f"{label}.history_record is outside installation history"
-        )
-    if len(history_path.parts) != 3 or history_path.name != "record.json":
+    history_path = canonical_posix_relative(
+        value, label=f"{label}.history_record"
+    )
+    if (
+        len(history_path.parts) != 3
+        or history_path.parts[0] != INSTALL_HISTORY_DIRNAME
+        or not INSTALL_ID_RE.fullmatch(history_path.parts[1])
+        or history_path.name != "record.json"
+    ):
         raise InstallManagerError(f"{label}.history_record shape is invalid")
     return value
 
@@ -205,43 +242,100 @@ def validate_manifest(value: Any, *, label: str) -> dict[str, Any]:
     return normalized
 
 
+def validate_install_record(
+    record: Any,
+    *,
+    codex_home: str,
+    label: str = "installation history record",
+) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        raise InstallManagerError(f"{label} must be an object")
+    required = {
+        "version", "install_id", "skill_version", "state",
+        "prepared_at", "applied_at", "rolled_back_at",
+        "plan_digest", "payload_digest", "codex_home",
+        "previous_manifest", "changes",
+    }
+    if set(record) != required:
+        raise InstallManagerError(
+            f"{label} keys must be exactly {sorted(required)!r}"
+        )
+    if record.get("version") != INSTALL_CONTRACT_VERSION:
+        raise InstallManagerError(f"{label} version is unsupported")
+    install_id = record.get("install_id")
+    if not isinstance(install_id, str) or not INSTALL_ID_RE.fullmatch(install_id):
+        raise InstallManagerError(f"{label} install id is invalid")
+    validate_skill_version(
+        record.get("skill_version"), label=f"{label}.skill_version"
+    )
+    if record.get("state") not in {
+        "prepared", "applied", "rolling_back", "rolled_back"
+    }:
+        raise InstallManagerError(f"{label} state is invalid")
+    if not isinstance(record.get("prepared_at"), str) or not record["prepared_at"]:
+        raise InstallManagerError(f"{label}.prepared_at is invalid")
+    for key in ("applied_at", "rolled_back_at"):
+        value = record.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise InstallManagerError(f"{label}.{key} is invalid")
+    for key in ("plan_digest", "payload_digest"):
+        value = record.get(key)
+        if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
+            raise InstallManagerError(f"{label}.{key} is invalid")
+    if record.get("codex_home") != codex_home:
+        raise InstallManagerError(f"{label} Codex home mismatch")
+    previous = record.get("previous_manifest")
+    normalized_previous = None
+    if previous is not None:
+        normalized_previous = validate_manifest(
+            previous, label="previous installation manifest"
+        )
+    changes_value = record.get("changes")
+    if not isinstance(changes_value, list):
+        raise InstallManagerError(f"{label}.changes must be a list")
+    changes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, value in enumerate(changes_value):
+        change = change_contract(value, index=index)
+        key = change["target"].casefold()
+        if key in seen:
+            raise InstallManagerError(
+                f"{label} contains duplicate target {change['target']!r}"
+            )
+        seen.add(key)
+        changes.append(change)
+    normalized = dict(record)
+    normalized["previous_manifest"] = normalized_previous
+    normalized["changes"] = changes
+    return normalized
+
+
 def validate_history_record(
     record: dict[str, Any],
     *,
     manifest: dict[str, Any],
     codex_home: str,
-) -> None:
-    if not isinstance(record, dict):
-        raise InstallManagerError("installation history record must be an object")
-    if record.get("version") != INSTALL_CONTRACT_VERSION:
-        raise InstallManagerError("installation history record version is unsupported")
-    if record.get("install_id") != manifest["install_id"]:
+) -> dict[str, Any]:
+    normalized = validate_install_record(
+        record,
+        codex_home=codex_home,
+        label="installation history record",
+    )
+    if normalized["install_id"] != manifest["install_id"]:
         raise InstallManagerError("installation history record identity mismatch")
-    if record.get("skill_version") != manifest["skill_version"]:
-        raise InstallManagerError("installation history record skill version mismatch")
-    if record.get("plan_digest") != manifest["applied_plan_digest"]:
-        raise InstallManagerError("installation history record plan digest mismatch")
-    if record.get("payload_digest") != manifest["payload_digest"]:
-        raise InstallManagerError("installation history record payload digest mismatch")
-    if record.get("codex_home") != codex_home:
-        raise InstallManagerError("installation history record Codex home mismatch")
-    if record.get("state") not in {
-        "prepared",
-        "applied",
-        "rolling_back",
-        "rolled_back",
-    }:
-        raise InstallManagerError("installation history record state is invalid")
-    if not isinstance(record.get("changes"), list):
-        raise InstallManagerError("installation history record changes must be a list")
-    previous = record.get("previous_manifest")
-    if previous is not None:
-        normalized = validate_manifest(previous, label="previous installation manifest")
-        if normalized["history_record"] is not None:
-            raise InstallManagerError(
-                "previous installation manifest must not retain a rollback chain"
-            )
-
+    if normalized["skill_version"] != manifest["skill_version"]:
+        raise InstallManagerError(
+            "installation history record skill version mismatch"
+        )
+    if normalized["plan_digest"] != manifest["applied_plan_digest"]:
+        raise InstallManagerError(
+            "installation history record plan digest mismatch"
+        )
+    if normalized["payload_digest"] != manifest["payload_digest"]:
+        raise InstallManagerError(
+            "installation history record payload digest mismatch"
+        )
+    return normalized
 
 def change_contract(change: Any, *, index: int) -> dict[str, Any]:
     where = f"installation history record changes[{index}]"
@@ -279,8 +373,12 @@ def change_contract(change: Any, *, index: int) -> dict[str, Any]:
             before["sha256"]
         ):
             raise InstallManagerError(f"{where}.before.sha256 is invalid")
-        if not isinstance(before["backup"], str) or not before["backup"]:
+        expected_backup = backup_relative(target)
+        if before["backup"] != expected_backup:
             raise InstallManagerError(f"{where}.before.backup is invalid")
+        canonical_posix_relative(
+            before["backup"], label=f"{where}.before.backup"
+        )
     elif before["sha256"] is not None or before["backup"] is not None:
         raise InstallManagerError(f"{where}.before absent contract is invalid")
     if after["exists"]:
@@ -290,7 +388,17 @@ def change_contract(change: Any, *, index: int) -> dict[str, Any]:
             raise InstallManagerError(f"{where}.after.sha256 is invalid")
     elif after["sha256"] is not None:
         raise InstallManagerError(f"{where}.after absent contract is invalid")
-    return change
+    if action == "create" and (before["exists"] or not after["exists"]):
+        raise InstallManagerError(f"{where} create sides are invalid")
+    if action == "delete_stale_managed" and (
+        not before["exists"] or after["exists"]
+    ):
+        raise InstallManagerError(f"{where} delete sides are invalid")
+    if action in {"replace_managed", "replace_unmanaged"} and (
+        not before["exists"] or not after["exists"]
+    ):
+        raise InstallManagerError(f"{where} replace sides are invalid")
+    return dict(change)
 
 
 def validate_expected_digest(value: str, *, label: str) -> None:
@@ -305,6 +413,40 @@ def new_install_id(plan_digest: str) -> str:
 
 def record_relative(install_id: str) -> str:
     return PurePosixPath(INSTALL_HISTORY_DIRNAME, install_id, "record.json").as_posix()
+
+
+def validate_active_transaction(
+    value: Any,
+    *,
+    label: str = "active installation transaction",
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise InstallManagerError(f"{label} must be an object")
+    required = {"version", "operation", "install_id", "record"}
+    if set(value) != required:
+        raise InstallManagerError(f"{label} keys must be exactly {sorted(required)!r}")
+    if value.get("version") != INSTALL_CONTRACT_VERSION:
+        raise InstallManagerError(f"{label}.version is unsupported")
+    operation = value.get("operation")
+    if operation not in TRANSACTION_OPERATIONS:
+        raise InstallManagerError(f"{label}.operation is invalid")
+    install_id = value.get("install_id")
+    if not isinstance(install_id, str) or not INSTALL_ID_RE.fullmatch(install_id):
+        raise InstallManagerError(f"{label}.install_id is invalid")
+    if value.get("record") != record_relative(install_id):
+        raise InstallManagerError(f"{label}.record is invalid")
+    return dict(value)
+
+
+def new_active_transaction(*, operation: str, install_id: str) -> dict[str, Any]:
+    return validate_active_transaction(
+        {
+            "version": INSTALL_CONTRACT_VERSION,
+            "operation": operation,
+            "install_id": install_id,
+            "record": record_relative(install_id),
+        }
+    )
 
 
 def backup_relative(target: str) -> str:

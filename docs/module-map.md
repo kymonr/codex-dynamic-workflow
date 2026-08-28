@@ -52,12 +52,13 @@
 | 模块 | 主要文件 | 职责 |
 |---|---|---|
 | Semantic version | `skill/VERSION`, `skill/versioning.py` | 严格 SemVer、显式 bump 类型和原子版本文件更新 |
-| Installation contract | `skill/installation/contract.py` | active manifest、单步 rollback record、digest 和 change Schema |
-| Installation filesystem | `skill/installation/filesystem.py` | source discovery、安全目标解析、原子写入、backup、Git identity 与旧 snapshot 清理 |
+| Installation contract | `skill/installation/contract.py` | active manifest、单步 rollback record、active transaction pointer 和 change Schema |
+| Installation filesystem | `skill/installation/filesystem.py` | source discovery、规范 POSIX 路径、Windows target identity、原子写入、backup 与 pointer I/O |
 | Installation planner | `skill/installation/planner.py` | 零写入 diff、版本身份、managed drift 阻断和 exact `plan_digest` |
 | Installation apply | `skill/installation/apply.py` | 精确计划重验、before backup、原子写入、manifest-last 发布与单步历史截断 |
 | Installation status | `skill/installation/status.py` | `skill_version`、源码身份、payload、managed drift 和 rollback 可用性 |
-| Installation rollback | `skill/installation/rollback.py` | 只回退一步、backup 校验、中断续跑和 snapshot 清理 |
+| Installation transaction | `skill/installation/transaction.py` | before/after 状态识别、未完成 apply 恢复和 manifest 幂等切换 |
+| Installation rollback | `skill/installation/rollback.py` | 只回退一步、未完成 apply 回收、rollback 续跑和 snapshot 清理 |
 | Installation facade | `skill/installation/manager.py` | 保持稳定的 public import surface |
 | Personal CLI | `skill/install_cli.py` | `version-bump` 与 `install-plan/apply/status/rollback` 显式命令面 |
 

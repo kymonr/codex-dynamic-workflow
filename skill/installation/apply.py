@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -15,6 +16,7 @@ except ModuleNotFoundError:
 from .contract import (
     INSTALL_CONTRACT_VERSION,
     InstallManagerError,
+    new_active_transaction,
     new_install_id,
     now_iso,
     record_relative,
@@ -30,24 +32,21 @@ from .filesystem import (
     history_dir,
     manifest_path,
     read_manifest,
+    remove_active_transaction,
     remove_history_record_tree,
     resolve_codex_home,
     resolve_state_root,
     safe_target,
     sha256_file,
+    write_active_transaction,
 )
 from .planner import plan_install
 
 
-def _previous_for_one_step_rollback(
+def _previous_for_recovery(
     previous: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    if previous is None:
-        return None
-    snapshot = dict(previous)
-    snapshot["managed_files"] = [dict(entry) for entry in previous["managed_files"]]
-    snapshot["history_record"] = None
-    return snapshot
+    return None if previous is None else copy.deepcopy(previous)
 
 
 def apply_install(
@@ -198,7 +197,7 @@ def apply_install(
                 "plan_digest": plan["plan_digest"],
                 "payload_digest": plan["payload_digest"],
                 "codex_home": str(codex),
-                "previous_manifest": _previous_for_one_step_rollback(previous),
+                "previous_manifest": _previous_for_recovery(previous),
                 "changes": changes,
             }
             atomic_write_json(
@@ -207,6 +206,11 @@ def apply_install(
                 root=state,
                 label="installation history record",
             )
+            pointer = new_active_transaction(
+                operation="apply",
+                install_id=install_id,
+            )
+            write_active_transaction(state, pointer)
 
             for entry in plan["managed_files"]:
                 if entry["action"] not in {
@@ -326,6 +330,7 @@ def apply_install(
                 label="installation history record",
             )
 
+            remove_active_transaction(state, expected=pointer)
             cleanup_warnings: list[str] = []
             removed_history: str | None = None
             if previous is not None and previous["history_record"] is not None:

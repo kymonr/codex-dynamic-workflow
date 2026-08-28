@@ -71,7 +71,7 @@ python3.12 skill/cli.py install-plan --source-root .
 - `source_commit` 与 `source_dirty` 是否符合预期；
 - `managed_files[].action` 是 `create`、`replace_managed`、`replace_unmanaged`、`adopt_existing` 或 `unchanged`；
 - `stale_files` 是否只包含上一 manifest 拥有、且仍与记录一致的旧文件；
-- `blocked` 是否为空；
+- `blocked` 是否为空；若存在未完成事务，会显示 `active_install_transaction` 并拒绝新计划；
 - `plan_digest` 是否是准备应用的精确计划摘要。
 
 启用的 agent 只包括 `config/agents/` 根目录下扩展名恰好为 `.toml` 的文件。`grok_writer.toml.disabled`、Python cache、`.pyc`、`.pyo` 和本地安装 manifest 不会进入安装载荷。`skill/VERSION` 会作为 managed file 安装到 `$CODEX_HOME/skills/dynamic-workflow/VERSION`。
@@ -98,11 +98,11 @@ python3.12 skill/cli.py install-apply \
 
 1. 获取安装级 OS-backed lease；
 2. 备份所有将被替换或删除的目标；
-3. 写入 `prepared` rollback record；
+3. 写入 `prepared` rollback record，并发布固定的 active transaction pointer；
 4. 原子写入新文件并删除已确认未漂移的 stale managed file；
 5. 逐文件重新验证 SHA-256；
 6. 最后发布 active manifest；
-7. 将 rollback record 标记为 `applied`；
+7. 将 rollback record 标记为 `applied`，删除 active transaction pointer；
 8. 清理上一份已不可寻址的 rollback snapshot。
 
 安装器不会删除未被上一 manifest 管理的额外文件，也不会覆盖已经发生漂移的 managed file。第一次接管一个同名未管理文件时，计划会显示 `replace_unmanaged`，应用前会先保存其原始内容。
@@ -140,7 +140,8 @@ previous_skill_version
 | `clean_with_unmanaged_files` | 安装一致，但 Skill 目录中还有未管理的本地文件 |
 | `drifted` | managed file 缺失或内容改变 |
 | `metadata_error` | manifest 与当前 rollback record 身份或状态不一致 |
-| `rollback_incomplete` | rollback 已开始，目标处于可续跑的 before/after 混合状态 |
+| `apply_incomplete` | apply 已中断；使用 pending install ID 执行 `install-rollback` 恢复到 apply 前状态 |
+| `rollback_incomplete` | rollback 已开始或终态尚未发布；使用同一 install ID 续跑 |
 
 修改 agent TOML、Skill 规则或路由配置后，应先检查此输出，再开始新的 Codex 任务。
 
@@ -169,7 +170,7 @@ rollback 只恢复这次安装实际改变的目标：
 
 只保留当前安装对应的一份 rollback snapshot。成功回退后，恢复出来的版本会显示 `rollback_available: false`，不能继续链式回退。下一次 `install-apply` 会重新建立一份新的单步 snapshot。
 
-正常 rollback 要求当前 managed files 无漂移。若进程在 rollback 中断，record 会保留 `rolling_back`；再次使用同一 `install_id` 执行命令可从已恢复和未恢复的混合状态继续。
+正常 rollback 要求当前 managed files 无漂移。若 apply 中断，`install-status` 会返回 `apply_incomplete` 和 `pending_install_id`；使用该 ID 执行同一 `install-rollback` 命令会恢复 apply 前状态，不会继续原计划。若 rollback 中断，则返回 `rollback_incomplete`，再次使用同一 ID 可续跑。
 
 ## 本地状态布局
 
@@ -185,6 +186,8 @@ $CODEX_HOME/
     ...enabled managed agent TOML...
 
 $DYNWF_HOME/
+  install-manager/
+    active-transaction.json  # 仅事务未完成时存在
   installations/<active-install-id>/
     record.json
     before/

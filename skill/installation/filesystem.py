@@ -34,6 +34,7 @@ except ModuleNotFoundError:
     )
 
 from .contract import (
+    ACTIVE_TRANSACTION_RELATIVE,
     AGENTS_TARGET,
     COMMIT_RE,
     EXCLUDED_DIR_NAMES,
@@ -46,6 +47,7 @@ from .contract import (
     backup_relative,
     sha256_bytes,
     strict_json_loads,
+    validate_active_transaction,
     validate_manifest,
 )
 
@@ -81,7 +83,15 @@ def resolve_state_root(value: Path | str | None) -> Path:
 
 def safe_target(root: Path, target: str, *, label: str) -> Path:
     relative = PurePosixPath(target)
-    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+    if (
+        not isinstance(target, str)
+        or not target
+        or "\\" in target
+        or relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or relative.as_posix() != target
+    ):
         raise InstallManagerError(f"{label} is not a safe relative path: {target!r}")
     candidate = root.joinpath(*relative.parts)
     try:
@@ -89,6 +99,11 @@ def safe_target(root: Path, target: str, *, label: str) -> Path:
         return canonical_runtime_path(candidate, label=label)
     except UnsafeRunPathError as exc:
         raise InstallManagerError(str(exc)) from exc
+
+
+def target_identity(root: Path, target: str) -> str:
+    path = safe_target(root, target, label="managed installation target")
+    return os.path.normcase(os.path.normpath(str(path)))
 
 
 def assert_safe_regular_file(path: Path, *, root: Path, label: str) -> None:
@@ -348,6 +363,66 @@ def atomic_write_json(path: Path, value: Any, *, root: Path, label: str) -> None
         allow_nan=False,
     ).encode("utf-8") + b"\n"
     atomic_write_bytes(path, payload, root=root, label=label)
+
+
+def active_transaction_path(state_root: Path) -> Path:
+    return safe_target(
+        state_root,
+        ACTIVE_TRANSACTION_RELATIVE.as_posix(),
+        label="active installation transaction",
+    )
+
+
+def read_active_transaction(state_root: Path) -> dict[str, Any] | None:
+    path = active_transaction_path(state_root)
+    if not lexists(path):
+        return None
+    assert_safe_regular_file(
+        path, root=state_root, label="active installation transaction"
+    )
+    try:
+        payload = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise InstallManagerError(
+            f"cannot read active installation transaction {path}: {exc}"
+        ) from exc
+    return validate_active_transaction(
+        strict_json_loads(payload, label="active installation transaction")
+    )
+
+
+def write_active_transaction(
+    state_root: Path,
+    value: dict[str, Any],
+) -> Path:
+    normalized = validate_active_transaction(value)
+    path = active_transaction_path(state_root)
+    atomic_write_json(
+        path,
+        normalized,
+        root=state_root,
+        label="active installation transaction",
+    )
+    return path
+
+
+def remove_active_transaction(
+    state_root: Path,
+    *,
+    expected: dict[str, Any],
+) -> None:
+    current = read_active_transaction(state_root)
+    if current is None:
+        raise InstallManagerError("active installation transaction is missing")
+    if current != validate_active_transaction(expected):
+        raise InstallManagerError("active installation transaction changed")
+    path = active_transaction_path(state_root)
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise InstallManagerError(
+            f"cannot remove active installation transaction {path}: {exc}"
+        ) from exc
 
 
 def current_regular_digest(codex_home: Path, target: str) -> tuple[str, int] | None:

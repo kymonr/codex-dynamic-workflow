@@ -163,7 +163,7 @@ python3.12 skill/cli.py install-apply \
   --ack-install
 ```
 
-安装器会复制完整 `skill/` 载荷和 `config/agents/` 根目录下启用的 `.toml`，记录版本、Git identity 与逐文件 SHA-256，先备份被替换或删除的目标，最后发布 active manifest。它不会复制 `.disabled` agent，不会删除未管理文件，也不会修改任何工作区 `AGENTS.md`。
+安装器会复制完整 `skill/` 载荷和 `config/agents/` 根目录下启用的 `.toml`，记录版本、Git identity 与逐文件 SHA-256，先备份被替换或删除的目标，并在任何目标写入前发布 active transaction pointer，最后发布 active manifest。它不会复制 `.disabled` agent，不会删除未管理文件，也不会修改任何工作区 `AGENTS.md`。
 
 安装后检查实际身份：
 
@@ -171,7 +171,7 @@ python3.12 skill/cli.py install-apply \
 py -3.12 skill\cli.py install-status
 ```
 
-重点字段为 `skill_version`、`source_commit`、`payload_digest`、`install_id` 和 `rollback_available`。版本号便于人工查看，commit 与 payload digest 用于精确确认实际内容。
+重点字段为 `skill_version`、`source_commit`、`payload_digest`、`install_id` 和 `rollback_available`。版本号便于人工查看，commit 与 payload digest 用于精确确认实际内容。若返回 `apply_incomplete` 或 `rollback_incomplete`，按输出中的 pending/current install ID 执行同一个 `install-rollback`；中断 apply 会恢复到 apply 前状态，不自动继续原计划。
 
 需要退回紧邻的上一状态时，使用 status 返回的当前 `install_id`：
 

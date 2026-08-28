@@ -457,6 +457,7 @@ class RepositoryInstallContractTests(unittest.TestCase):
         self.assertIn("skills/dynamic-workflow/installation/planner.py", targets)
         self.assertIn("skills/dynamic-workflow/installation/rollback.py", targets)
         self.assertIn("skills/dynamic-workflow/installation/status.py", targets)
+        self.assertIn("skills/dynamic-workflow/installation/transaction.py", targets)
         self.assertNotIn("agents/grok_writer.toml.disabled", targets)
 
 
