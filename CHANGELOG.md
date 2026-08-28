@@ -6,11 +6,13 @@
 
 ### Added
 
-- 新增个人安装管理模块与 `install-plan`、`install-apply`、`install-status`、`install-rollback`：记录 source commit/dirty state、逐文件 SHA-256、active manifest、before backup，并对 managed drift 与路径 reparse fail closed。
-- 新增个人运维说明和功能模块地图，明确下一顺序为 Candidate/Known-Good、显式 live routing evidence 与 Personal Doctor。
+- 新增唯一人工可读版本源 `skill/VERSION`，以及独立的 `version-bump` 命令；支持默认升级与显式 `--prerelease`、`--release`、`--patch`、`--minor`、`--major`，但不自动 commit、tag 或 release。
+- 新增个人安装管理模块与 `install-plan`、`install-apply`、`install-status`、`install-rollback`：记录 `skill_version`、source commit/dirty state、逐文件 SHA-256、active manifest 和 before backup，并对 managed drift 与路径 reparse fail closed。
+- 新增个人运维说明和功能模块地图，记录当前功能边界与明确排除项。
 
 ### Changed
 
+- 个人安装历史精简为只保留紧邻上一状态的一份 rollback snapshot；成功回退后不允许继续链式回退，后续安装再建立新的单步 snapshot。
 - 将 Dynamic Workflow 默认入口改为轻量 `Simple Swarm`：隐式触发至少需要两个窄而不重叠的分支，默认 2–6 个 child，root 不重复活跃分支。
 - 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；将 Worktree Writer v1 保持为显式授权模式。
 - 简化 read-only child packet、等待策略和结果采用规则，避免宽工作包、无限 wait 和为编排而编排。
