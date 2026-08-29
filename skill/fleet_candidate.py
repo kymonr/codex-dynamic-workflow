@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
 try:
     from skill.fleet_contract import FleetPackage, canonical_digest
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     from fleet_contract import FleetPackage, canonical_digest
 
 MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -23,6 +26,45 @@ class FleetCandidateError(RuntimeError):
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _is_reparse(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    marker = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attributes & marker)
+
+
+def _assert_no_link_components(
+    path: Path, *, stop: Path | None = None, label: str = "path"
+) -> None:
+    lexical = path.expanduser().absolute()
+    boundary = stop.expanduser().absolute() if stop is not None else None
+    components: list[Path] = []
+    current = lexical
+    while True:
+        components.append(current)
+        if boundary is not None and current == boundary:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    for component in reversed(components):
+        if component.exists() or component.is_symlink():
+            if component.is_symlink() or _is_reparse(component):
+                raise FleetCandidateError(
+                    f"{label} contains symlink/reparse component: {component}"
+                )
+
+
+def _revision_basis(value: Mapping[str, Any]) -> dict[str, Any]:
+    basis = dict(value)
+    basis.pop("repository_root", None)
+    return basis
 
 
 def _git(
@@ -52,12 +94,21 @@ def _git(
 
 
 def repository_root(value: str | Path) -> Path:
-    path = Path(value).expanduser().resolve(strict=True)
+    lexical = Path(value).expanduser().absolute()
+    _assert_no_link_components(lexical, label="repository path")
+    try:
+        path = lexical.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise FleetCandidateError(f"cannot resolve repository path: {exc}") from exc
+    _assert_no_link_components(path, label="repository path")
     raw = _git(path, ["rev-parse", "--show-toplevel"], maximum=16 * 1024)
     try:
-        root = Path(raw.decode("utf-8", errors="strict").strip()).resolve(strict=True)
-    except (UnicodeDecodeError, OSError) as exc:
+        root_lexical = Path(raw.decode("utf-8", errors="strict").strip())
+        _assert_no_link_components(root_lexical, label="Git repository root")
+        root = root_lexical.resolve(strict=True)
+    except (UnicodeDecodeError, OSError, RuntimeError) as exc:
         raise FleetCandidateError(f"cannot resolve repository root: {exc}") from exc
+    _assert_no_link_components(root, label="Git repository root")
     if root != path:
         raise FleetCandidateError(f"repository path must be the Git root: {root}")
     return root
@@ -145,6 +196,12 @@ def capture_candidate(repository: str | Path, package: FleetPackage) -> dict[str
         {path for entry in entries for path in entry["paths"]},
         key=str.casefold,
     )
+    for relative in observed_paths:
+        _assert_no_link_components(
+            root / Path(*relative.split("/")),
+            stop=root,
+            label=f"candidate path {relative}",
+        )
     expected_paths = list(package.candidate["changed_files"])
     if {item.casefold() for item in observed_paths} != {
         item.casefold() for item in expected_paths
@@ -168,9 +225,23 @@ def capture_candidate(repository: str | Path, package: FleetPackage) -> dict[str
     untracked: list[dict[str, Any]] = []
     total_untracked = 0
     for relative in _untracked_paths(entries):
-        path = (root / Path(*relative.split("/"))).resolve(strict=True)
-        if not path.is_relative_to(root) or path.is_symlink() or not path.is_file():
-            raise FleetCandidateError(f"untracked candidate is not a regular contained file: {relative}")
+        lexical = root / Path(*relative.split("/"))
+        _assert_no_link_components(
+            lexical, stop=root, label=f"untracked candidate {relative}"
+        )
+        try:
+            path = lexical.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise FleetCandidateError(
+                f"cannot resolve untracked candidate {relative}: {exc}"
+            ) from exc
+        _assert_no_link_components(
+            path, stop=root, label=f"untracked candidate {relative}"
+        )
+        if not path.is_relative_to(root) or not path.is_file():
+            raise FleetCandidateError(
+                f"untracked candidate is not a regular contained file: {relative}"
+            )
         payload = path.read_bytes()
         if len(payload) > package.limits["max_untracked_file_bytes"]:
             raise FleetCandidateError(
@@ -220,7 +291,7 @@ def capture_candidate(repository: str | Path, package: FleetPackage) -> dict[str
         "untracked_files": untracked,
         "total_candidate_bytes": total_candidate,
     }
-    basis_digest = canonical_digest(material)
+    basis_digest = canonical_digest(_revision_basis(material))
     return {
         **material,
         "candidate_revision": f"sha256:{basis_digest}",
@@ -234,7 +305,7 @@ def validate_candidate_package(value: Mapping[str, Any]) -> None:
     basis = dict(value)
     revision = basis.pop("candidate_revision", None)
     recorded = basis.pop("revision_basis_digest", None)
-    computed = canonical_digest(basis)
+    computed = canonical_digest(_revision_basis(basis))
     if recorded != computed or revision != f"sha256:{computed}":
         raise FleetCandidateError("candidate revision binding is invalid")
 

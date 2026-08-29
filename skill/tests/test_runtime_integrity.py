@@ -401,8 +401,10 @@ class Utf8EntrypointTests(unittest.TestCase):
     @staticmethod
     def _cp936_env(runs_root: Path) -> dict[str, str]:
         env = dict(os.environ)
+        env.pop("PYTHONPYCACHEPREFIX", None)
         env["PYTHONIOENCODING"] = "cp936"
         env["PYTHONUTF8"] = "0"
+        env["PYTHONNOUSERSITE"] = "1"
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["DYNWF_RUNS_ROOT"] = str(runs_root)
         return env
@@ -427,8 +429,10 @@ class Utf8EntrypointTests(unittest.TestCase):
                 ],
                 cwd=SKILL_DIR,
                 env=env,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                timeout=30,
                 check=False,
             )
             self.assertEqual(
@@ -512,8 +516,10 @@ class Utf8EntrypointTests(unittest.TestCase):
                         [sys.executable, "-B", *map(str, arguments)],
                         cwd=SKILL_DIR,
                         env=env,
+                        stdin=subprocess.DEVNULL,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
+                        timeout=30,
                         check=False,
                     )
                     output = completed.stdout.decode("utf-8")

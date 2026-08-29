@@ -202,22 +202,6 @@ def _node_preview(
                 **_prompt_metadata(config),
             }
         )
-    elif kind == "fleet_aggregate":
-        preview.update(
-            {
-                "mode": config["mode"],
-                "subject_id": config["subject_id"],
-                "risk_level": config["risk_level"],
-                "sol_policy": config["sol_policy"],
-                "fleet_members": len(config["members"]),
-                "discovery_members": sum(
-                    member["stage"] == "discovery" for member in config["members"]
-                ),
-                "challenge_members": sum(
-                    member["stage"] == "challenge" for member in config["members"]
-                ),
-            }
-        )
     elif kind == "conditional":
         preview.update(
             {

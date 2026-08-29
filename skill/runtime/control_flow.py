@@ -1,7 +1,7 @@
 """Trusted Workflow IR v3 control-flow scheduler.
 
 This module executes declarative, read-only ``agent``, ``map``, ``verify``,
-``reduce``, ``fleet_aggregate``, ``conditional`` and ``human_gate`` nodes. It never evaluates
+``reduce``, ``conditional`` and ``human_gate`` nodes. It never evaluates
 model-authored Python, JavaScript, shell, path expressions, or arbitrary
 selectors. Dynamic expansion and decisions are finite, deterministic,
 budgeted, artifact-backed, and checkpointed.
@@ -46,11 +46,6 @@ from .path_safety import (
 from .run_lease import RunLease, RunLeaseError
 from .schema_contract import validate_instance
 from .state_store import RunStateStore, now_iso
-try:
-    from ..fleet_contract import FleetContractError, aggregate_fleet_records
-except ImportError:  # Imported as top-level runtime package.
-    from fleet_contract import FleetContractError, aggregate_fleet_records
-
 from .workflow_ir import (
     DEFAULT_DEPENDENCY_POLICY,
     EXECUTABLE_NODE_KINDS,
@@ -2173,23 +2168,6 @@ class TrustedControlFlowScheduler:
             )
         return payload
 
-    async def _run_fleet_aggregate_node(
-        self, node: dict[str, Any], entry: dict[str, Any]
-    ) -> dict[str, Any]:
-        config = node["config"]
-        outputs = {
-            member["node_id"]: self._load_result_value(member["node_id"])
-            for member in config["members"]
-        }
-        try:
-            aggregate = aggregate_fleet_records(config, outputs)
-        except FleetContractError as exc:
-            raise ControlFlowError(f"fleet aggregate rejected: {exc}") from exc
-        self._set_node_output(entry, aggregate)
-        entry["status"] = SUCCESS
-        entry["error"] = None
-        return entry
-
     async def _run_conditional_node(
         self, node: dict[str, Any], entry: dict[str, Any]
     ) -> dict[str, Any]:
@@ -2319,8 +2297,6 @@ class TrustedControlFlowScheduler:
                 entry = await self._run_loop_node(node, entry)
             elif node["kind"] == "reduce":
                 entry = await self._run_reduce_node(node, entry)
-            elif node["kind"] == "fleet_aggregate":
-                entry = await self._run_fleet_aggregate_node(node, entry)
             elif node["kind"] == "conditional":
                 entry = await self._run_conditional_node(node, entry)
             elif node["kind"] == "human_gate":
@@ -2370,41 +2346,6 @@ class TrustedControlFlowScheduler:
             raise ControlFlowError(
                 f"successful node {node_id} public output disagrees with artifact"
             )
-        if self.node_by_id[node_id]["kind"] == "fleet_aggregate":
-            node = self.node_by_id[node_id]
-            outputs: dict[str, Any] = {}
-            for member in node["config"]["members"]:
-                member_id = member["node_id"]
-                member_entry = self.entries.get(member_id)
-                if (
-                    not isinstance(member_entry, dict)
-                    or self.states.get(member_id) != SUCCESS
-                ):
-                    raise ControlFlowError(
-                        f"successful fleet aggregate {node_id} has a non-success member: "
-                        f"{member_id}"
-                    )
-                member_reference = member_entry.get("output_artifact")
-                try:
-                    outputs[member_id] = self.store.load_json(
-                        member_reference, expected_task_id=member_id
-                    )
-                except ArtifactLimitError as exc:
-                    raise ControlFlowError(
-                        f"successful fleet aggregate {node_id} member evidence is invalid: "
-                        f"{member_id}: {exc}"
-                    ) from exc
-            try:
-                recomputed = aggregate_fleet_records(node["config"], outputs)
-            except FleetContractError as exc:
-                raise ControlFlowError(
-                    f"successful fleet aggregate {node_id} cannot be recomputed: {exc}"
-                ) from exc
-            if value != recomputed:
-                raise ControlFlowError(
-                    f"successful fleet aggregate {node_id} disagrees with member evidence"
-                )
-
         if self.node_by_id[node_id]["kind"] == "human_gate":
             try:
                 record = self.gate_store.load(node_id)

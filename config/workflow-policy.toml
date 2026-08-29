@@ -18,21 +18,6 @@ root_duplicates_active_scope = false
 managed_workflow_auto_trigger = false
 worktree_writer_auto_trigger = false
 
-[agent_fleet]
-contract_version = 1
-minimum_luna_agents = 4
-default_luna_agents = 6
-maximum_luna_agents = 12
-default_max_concurrency = 6
-maximum_max_concurrency = 12
-conditional_sol_presets = ["adversarial-review", "repository-audit", "test-matrix"]
-always_sol_presets = ["architecture-council", "competing-hypotheses"]
-direct_agent_communication = false
-nested_delegation = false
-host_aggregation = true
-majority_vote = false
-read_only = true
-
 [paths]
 state_home_env = "DYNWF_HOME"
 runs_root_env = "DYNWF_RUNS_ROOT"
@@ -57,8 +42,8 @@ max_event_bytes = 1048576
 current_version = 3
 static_execution_version = 2
 control_flow_runtime_version = 3
-validated_node_kinds = ["agent", "map", "verify", "loop", "reduce", "fleet_aggregate", "conditional", "human_gate"]
-executable_node_kinds = ["agent", "map", "verify", "loop", "reduce", "fleet_aggregate", "conditional", "human_gate"]
+validated_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
+executable_node_kinds = ["agent", "map", "verify", "loop", "reduce", "conditional", "human_gate"]
 
 [routes.spark]
 agent_type = "spark"

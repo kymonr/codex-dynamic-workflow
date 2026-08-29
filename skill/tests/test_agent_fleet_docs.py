@@ -16,15 +16,15 @@ import fleet_contract
 class FleetDocumentationTests(unittest.TestCase):
     def test_public_surfaces_define_agent_fleet_boundary(self) -> None:
         surfaces = {
-            "README.md": ["Agent Fleet", "4–12", "多数投票"],
-            "skill/SKILL.md": ["## Agent Fleet", "4–12", "fresh Sol/xhigh"],
+            "README.md": ["## Agent Fleet v1", "fleet-plan", "不采用多数投票"],
+            "skill/SKILL.md": ["## Agent Fleet", "fleet-run", "fresh Sol/xhigh"],
             "skill/references/routing.md": [
                 "## Agent Fleet boundary",
-                "A normal audit with 2–6 useful non-overlapping questions remains Simple Swarm",
-                "majority",
+                "ordinary audit with 2–6 useful non-overlapping questions remains Simple Swarm",
+                "cannot be outvoted",
             ],
             "skill/references/simple-swarm.md": ["Agent Fleet", "4–12"],
-            "skill/references/work-package.md": ["## Agent Fleet packet"],
+            "skill/references/work-package.md": ["## Agent Fleet packet", "closed JSON package"],
             "integration/AGENTS.dynamic-workflow.md": ["Agent Fleet v1", "finding graph"],
         }
         for relative, tokens in surfaces.items():
@@ -48,6 +48,7 @@ class FleetDocumentationTests(unittest.TestCase):
             "一个可复现的 P1",
             "fresh Sol/xhigh",
             "不按多数票",
+            "observed_sandbox=unknown",
         ):
             self.assertIn(token, contract)
         for token in (
@@ -85,6 +86,45 @@ class FleetDocumentationTests(unittest.TestCase):
             "clean-low-risk-fleet-skips-sol",
         ):
             self.assertIn(name, names)
+
+    def test_agent_fleet_has_one_package_runtime_surface(self) -> None:
+        self.assertFalse((ROOT / "skill" / "agent_fleet.py").exists())
+        cli = (ROOT / "skill" / "cli.py").read_text(encoding="utf-8")
+        for command in ("fleet-plan", "fleet-run", "fleet-status"):
+            self.assertIn(command, cli)
+        for command in ("fleet-list", "fleet-ir"):
+            self.assertNotIn(command, cli)
+
+        workflow_ir = (
+            ROOT / "skill" / "runtime" / "workflow_ir.py"
+        ).read_text(encoding="utf-8")
+        control_flow = (
+            ROOT / "skill" / "runtime" / "control_flow.py"
+        ).read_text(encoding="utf-8")
+        workflow_policy = (
+            ROOT / "config" / "workflow-policy.toml"
+        ).read_text(encoding="utf-8")
+        for surface in (workflow_ir, control_flow, workflow_policy):
+            self.assertNotIn("fleet_aggregate", surface)
+        self.assertTrue(
+            (ROOT / "config" / "agent-fleet-policy.toml").is_file()
+        )
+
+    def test_import_fallbacks_only_handle_a_missing_skill_package(self) -> None:
+        for relative in (
+            "fleet_candidate.py",
+            "fleet_cli.py",
+            "fleet_escalation.py",
+            "fleet_findings.py",
+            "fleet_integrity.py",
+            "fleet_presets.py",
+            "fleet_process.py",
+            "fleet_runtime.py",
+        ):
+            text = (SKILL / relative).read_text(encoding="utf-8")
+            self.assertNotIn("except ModuleNotFoundError:\n", text, relative)
+            self.assertIn("except ModuleNotFoundError as exc:", text, relative)
+            self.assertIn('if exc.name != "skill":', text, relative)
 
     def test_portable_cli_exposes_only_plan_run_and_status(self) -> None:
         text = (ROOT / "skill" / "cli.py").read_text(encoding="utf-8")

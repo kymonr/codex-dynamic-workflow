@@ -25,6 +25,7 @@ FINDING_CATEGORIES = frozenset(
 SEVERITIES = frozenset({"P1", "P2", "P3"})
 CONFIDENCE = frozenset({"high", "medium", "low"})
 MAX_ITEMS = 128
+MAX_FINDINGS_PER_RECORD = 16
 MAX_TEXT = 8_000
 
 
@@ -122,7 +123,11 @@ def discovery_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
             "role_id": {"type": "string", "enum": [agent["role_id"]]},
             "phase": {"type": "string", "enum": ["discovery"]},
             "verdict": {"type": "string", "enum": ["accept", "findings", "unknown"]},
-            "findings": {"type": "array", "items": finding_schema()},
+            "findings": {
+                "type": "array",
+                "maxItems": MAX_FINDINGS_PER_RECORD,
+                "items": finding_schema(),
+            },
             "unknown": {"type": "array", "items": {"type": "string"}},
             "effects": {"type": "array", "maxItems": 0},
         },
@@ -164,7 +169,11 @@ def challenge_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
                     "required": ["finding_id", "outcome", "evidence"],
                 },
             },
-            "new_findings": {"type": "array", "items": finding_schema()},
+            "new_findings": {
+                "type": "array",
+                "maxItems": MAX_FINDINGS_PER_RECORD,
+                "items": finding_schema(),
+            },
             "unknown": {"type": "array", "items": {"type": "string"}},
             "effects": {"type": "array", "maxItems": 0},
         },
@@ -207,7 +216,11 @@ def reproduction_schema(*, candidate_revision: str, agent: Mapping[str, Any]) ->
                     "required": ["finding_id", "status", "steps", "evidence"],
                 },
             },
-            "new_findings": {"type": "array", "items": finding_schema()},
+            "new_findings": {
+                "type": "array",
+                "maxItems": MAX_FINDINGS_PER_RECORD,
+                "items": finding_schema(),
+            },
             "unknown": {"type": "array", "items": {"type": "string"}},
             "effects": {"type": "array", "maxItems": 0},
         },
@@ -297,7 +310,10 @@ def validate_discovery_record(
     if verdict not in {"accept", "findings", "unknown"}:
         raise FleetRecordError("discovery verdict is invalid")
     findings_raw = record["findings"]
-    if not isinstance(findings_raw, list) or len(findings_raw) > MAX_ITEMS:
+    if (
+        not isinstance(findings_raw, list)
+        or len(findings_raw) > MAX_FINDINGS_PER_RECORD
+    ):
         raise FleetRecordError("discovery findings must be a bounded array")
     findings = [
         _finding(item, where=f"discovery findings[{index}]")
@@ -377,8 +393,16 @@ def validate_challenge_record(
                 ),
             }
         )
+    missing = sorted(allowed - seen)
+    if missing:
+        raise FleetRecordError(
+            f"challenge must assess every assigned finding exactly once: {missing}"
+        )
     raw_new = record["new_findings"]
-    if not isinstance(raw_new, list) or len(raw_new) > MAX_ITEMS:
+    if (
+        not isinstance(raw_new, list)
+        or len(raw_new) > MAX_FINDINGS_PER_RECORD
+    ):
         raise FleetRecordError("challenge new_findings must be a bounded array")
     return {
         "candidate_revision": candidate_revision,
@@ -455,8 +479,16 @@ def validate_reproduction_record(
                 "evidence": evidence,
             }
         )
+    missing = sorted(allowed - seen)
+    if missing:
+        raise FleetRecordError(
+            f"reproduction must assess every assigned finding exactly once: {missing}"
+        )
     raw_new = record["new_findings"]
-    if not isinstance(raw_new, list) or len(raw_new) > MAX_ITEMS:
+    if (
+        not isinstance(raw_new, list)
+        or len(raw_new) > MAX_FINDINGS_PER_RECORD
+    ):
         raise FleetRecordError("reproduction new_findings must be a bounded array")
     return {
         "candidate_revision": candidate_revision,
@@ -516,8 +548,6 @@ def validate_arbiter_record(
         raise FleetRecordError("ship cannot accept a P1/P2 finding")
     if verdict == "fix-first" and not blocking:
         raise FleetRecordError("fix-first requires an accepted P1/P2 finding")
-    if verdict == "rethink" and not accepted:
-        raise FleetRecordError("rethink requires at least one accepted finding")
     return {
         "candidate_revision": candidate_revision,
         "verdict": verdict,

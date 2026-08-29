@@ -15,7 +15,9 @@ from typing import Any, Mapping, Sequence
 try:
     from skill import runner as legacy
     from skill.fleet_contract import FleetPackage, canonical_json_bytes
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     import runner as legacy
     from fleet_contract import FleetPackage, canonical_json_bytes
 
@@ -501,6 +503,7 @@ def process_contract() -> dict[str, Any]:
         "retry": 0,
         "upgrade": None,
         "nested_agents": 0,
+        "observed_sandbox": "unknown",
         "direct_agent_messages": False,
         "write_authority": False,
     }

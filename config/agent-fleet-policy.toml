@@ -70,12 +70,18 @@ write_authority = false
 
 [agent_fleet.phases]
 order = ["discovery", "challenge", "reproduction", "host-aggregation", "conditional-sol"]
-minimum_discovery_agents = 4
+minimum_discovery_agents = 2
 maximum_discovery_agents = 8
+minimum_challenge_agents = 1
 maximum_challenge_agents = 2
+minimum_reproduction_agents = 1
 maximum_reproduction_agents = 2
 proposer_may_self_challenge = false
 proposer_may_self_reproduce = false
+
+[agent_fleet.findings]
+max_findings_per_record = 16
+max_graph_findings = 128
 
 [agent_fleet.presets]
 values = [
@@ -120,3 +126,4 @@ bind_process_output_digest = true
 rebuild_findings_on_status = true
 recompute_escalation_on_status = true
 require_live_candidate_match = true
+observed_sandbox = "unknown"

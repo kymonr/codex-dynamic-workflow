@@ -179,9 +179,108 @@ class FleetProcessTests(unittest.TestCase):
                 schema["properties"]["candidate_revision"]["enum"], [revision]
             )
             self.assertEqual(schema["properties"]["effects"]["maxItems"], 0)
+            bounded_key = "findings" if phase == "discovery" else "new_findings"
+            self.assertEqual(
+                schema["properties"][bounded_key]["maxItems"],
+                fleet_records.MAX_FINDINGS_PER_RECORD,
+            )
         arbiter = fleet_records.arbiter_schema(candidate_revision=revision)
         self.assertFalse(arbiter["additionalProperties"])
         self.assertEqual(arbiter["properties"]["effects"]["maxItems"], 0)
+
+    def test_challenge_and_reproduction_cover_every_assignment(self) -> None:
+        pkg = package()
+        schedule = fleet_presets.build_schedule(pkg)
+        revision = candidate()["candidate_revision"]
+        challenge = next(
+            item for item in schedule["agents"] if item["phase"] == "challenge"
+        )
+        raw_challenge = {
+            "candidate_revision": revision,
+            "agent_id": challenge["agent_id"],
+            "role_id": challenge["role_id"],
+            "phase": "challenge",
+            "assessments": [
+                {
+                    "finding_id": "F-one",
+                    "outcome": "support",
+                    "evidence": ["one finding checked"],
+                }
+            ],
+            "new_findings": [],
+            "unknown": [],
+            "effects": [],
+        }
+        with self.assertRaisesRegex(
+            fleet_records.FleetRecordError, "every assigned finding"
+        ):
+            fleet_records.validate_challenge_record(
+                raw_challenge,
+                candidate_revision=revision,
+                agent=challenge,
+                finding_ids=["F-one", "F-two"],
+            )
+
+        reproduction = next(
+            item for item in schedule["agents"] if item["phase"] == "reproduction"
+        )
+        raw_reproduction = {
+            "candidate_revision": revision,
+            "agent_id": reproduction["agent_id"],
+            "role_id": reproduction["role_id"],
+            "phase": "reproduction",
+            "reproductions": [
+                {
+                    "finding_id": "F-one",
+                    "status": "refuted",
+                    "steps": [],
+                    "evidence": ["one finding checked"],
+                }
+            ],
+            "new_findings": [],
+            "unknown": [],
+            "effects": [],
+        }
+        with self.assertRaisesRegex(
+            fleet_records.FleetRecordError, "every assigned finding"
+        ):
+            fleet_records.validate_reproduction_record(
+                raw_reproduction,
+                candidate_revision=revision,
+                agent=reproduction,
+                finding_ids=["F-one", "F-two"],
+            )
+
+    def test_discovery_finding_capacity_is_enforced_by_schema_and_host(self) -> None:
+        pkg = package()
+        agent = next(
+            item
+            for item in fleet_presets.build_schedule(pkg)["agents"]
+            if item["phase"] == "discovery"
+        )
+        revision = candidate()["candidate_revision"]
+        one = {
+            "category": "correctness",
+            "severity": "P3",
+            "summary": "bounded fixture",
+            "evidence": ["module.py:1"],
+            "locations": ["module.py:1"],
+            "confidence": "medium",
+        }
+        raw = {
+            "candidate_revision": revision,
+            "agent_id": agent["agent_id"],
+            "role_id": agent["role_id"],
+            "phase": "discovery",
+            "verdict": "findings",
+            "findings": [dict(one, summary=f"fixture-{index}") for index in range(17)],
+            "unknown": [],
+            "effects": [],
+        }
+        with self.assertRaisesRegex(fleet_records.FleetRecordError, "bounded array"):
+            fleet_records.validate_discovery_record(
+                raw, candidate_revision=revision, agent=agent
+            )
 
     def test_process_contract_has_no_retry_write_or_direct_messages(self) -> None:
         contract = fleet_process.process_contract()
@@ -189,6 +288,7 @@ class FleetProcessTests(unittest.TestCase):
         self.assertEqual(contract["retry"], 0)
         self.assertIsNone(contract["upgrade"])
         self.assertEqual(contract["nested_agents"], 0)
+        self.assertEqual(contract["observed_sandbox"], "unknown")
         self.assertFalse(contract["direct_agent_messages"])
         self.assertFalse(contract["write_authority"])
 

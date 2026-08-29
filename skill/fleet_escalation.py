@@ -6,7 +6,9 @@ from typing import Any, Mapping, Sequence
 
 try:
     from skill.fleet_contract import FleetPackage
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     from fleet_contract import FleetPackage
 
 MANDATORY_SOL_RISK_TAGS = frozenset(

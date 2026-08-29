@@ -21,7 +21,9 @@ try:
         run_fleet,
         status_fleet,
     )
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     from fleet_candidate import FleetCandidateError
     from fleet_contract import FleetContractError
     from fleet_findings import FleetFindingError

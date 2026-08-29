@@ -2,7 +2,7 @@
 
 The IR is data, never authorization or executable source code. The trusted
 runtime supports read-only ``agent``, ``map``, ``verify``, ``reduce``,
-``fleet_aggregate``, ``conditional`` and ``human_gate`` nodes, plus loop declarations that satisfy
+``conditional`` and ``human_gate`` nodes, plus loop declarations that satisfy
 the complete Bounded Loop v1 contract. Legacy loop declarations remain
 validated-only and are never silently migrated.
 """
@@ -19,23 +19,6 @@ try:
 except ImportError:  # Standalone policy-contract import.
     from condition import ConditionValidationError, validate_condition
 
-try:
-    from ..fleet_contract import (
-        FleetContractError,
-        challenge_record_schema,
-        discovery_record_schema,
-        sol_arbitration_schema,
-        validate_aggregate_config,
-    )
-except ImportError:  # Standalone policy-contract import.
-    from fleet_contract import (
-        FleetContractError,
-        challenge_record_schema,
-        discovery_record_schema,
-        sol_arbitration_schema,
-        validate_aggregate_config,
-    )
-
 IR_VERSION = 3
 IR_MODES = {"direct", "delegate", "workflow"}
 NODE_KIND_ORDER = (
@@ -44,7 +27,6 @@ NODE_KIND_ORDER = (
     "verify",
     "loop",
     "reduce",
-    "fleet_aggregate",
     "conditional",
     "human_gate",
 )
@@ -356,15 +338,6 @@ def _validate_reduce_config(config: dict[str, Any], where: str) -> dict[str, Any
     return {"over": over, **agent}
 
 
-def _validate_fleet_aggregate_config(
-    config: dict[str, Any], where: str
-) -> dict[str, Any]:
-    try:
-        return validate_aggregate_config(config, where=where)
-    except FleetContractError as exc:
-        raise WorkflowIRValidationError(str(exc)) from exc
-
-
 def _validate_reserved_config(
     kind: str, config: dict[str, Any], where: str
 ) -> dict[str, Any]:
@@ -525,111 +498,6 @@ def _validate_control_flow_references(nodes: list[dict[str, Any]]) -> None:
             source = node["config"]["over"]
             field = "over"
             allowed_source_kinds = {"map", "verify"}
-        elif kind == "fleet_aggregate":
-            config = node["config"]
-            members = config["members"]
-            member_ids = [member["node_id"] for member in members]
-            discovery_ids = [
-                member["node_id"]
-                for member in members
-                if member["stage"] == "discovery"
-            ]
-            if node["depends_on"] != member_ids:
-                raise WorkflowIRValidationError(
-                    f"node {node['id']} dependencies must exactly match fleet members"
-                )
-            for member in members:
-                member_id = member["node_id"]
-                source_node = by_id.get(member_id)
-                if source_node is None:
-                    raise WorkflowIRValidationError(
-                        f"node {node['id']} fleet member is unknown: {member_id}"
-                    )
-                if source_node["kind"] != "agent":
-                    raise WorkflowIRValidationError(
-                        f"node {node['id']} fleet member must be agent: {member_id}"
-                    )
-                source_config = source_node["config"]
-                if source_config["profile"] != "luna":
-                    raise WorkflowIRValidationError(
-                        f"node {node['id']} fleet member must use Luna: {member_id}"
-                    )
-                expected_dependencies = (
-                    [] if member["stage"] == "discovery" else discovery_ids
-                )
-                if source_node["depends_on"] != expected_dependencies:
-                    raise WorkflowIRValidationError(
-                        f"node {node['id']} fleet member dependencies are invalid: "
-                        f"{member_id}"
-                    )
-                expected_schema = (
-                    discovery_record_schema(
-                        config["subject_id"], member["role_id"]
-                    )
-                    if member["stage"] == "discovery"
-                    else challenge_record_schema(
-                        config["subject_id"],
-                        member["role_id"],
-                        discovery_ids,
-                    )
-                )
-                if source_config.get("output_schema") != expected_schema:
-                    raise WorkflowIRValidationError(
-                        f"node {node['id']} fleet member output schema is invalid: "
-                        f"{member_id}"
-                    )
-            arbiter_id = config["arbiter_node"]
-            arbiter = by_id.get(arbiter_id)
-            if arbiter is None or arbiter["kind"] != "agent":
-                raise WorkflowIRValidationError(
-                    f"node {node['id']} arbiter must be an agent: {arbiter_id}"
-                )
-            arbiter_config = arbiter["config"]
-            if arbiter_config["profile"] != "sol":
-                raise WorkflowIRValidationError(
-                    f"node {node['id']} arbiter must use Sol: {arbiter_id}"
-                )
-            if arbiter_config.get("output_schema") != sol_arbitration_schema(
-                config["subject_id"]
-            ):
-                raise WorkflowIRValidationError(
-                    f"node {node['id']} arbiter output schema is invalid: {arbiter_id}"
-                )
-            if "{{result:" + node["id"] + "}}" not in arbiter_config["prompt"]:
-                raise WorkflowIRValidationError(
-                    f"node {node['id']} arbiter prompt must consume the Fleet aggregate"
-                )
-            if config["sol_policy"] == "conditional":
-                selector_id = config["selector_node"]
-                selector = by_id.get(selector_id)
-                expected_selector_config = {
-                    "condition": {
-                        "source": node["id"],
-                        "pointer": "/requires_sol",
-                        "operator": "eq",
-                        "value": True,
-                    },
-                    "then": [arbiter_id],
-                    "else": [],
-                }
-                if (
-                    selector is None
-                    or selector["kind"] != "conditional"
-                    or selector["depends_on"] != [node["id"]]
-                    or selector["config"] != expected_selector_config
-                ):
-                    raise WorkflowIRValidationError(
-                        f"node {node['id']} conditional Sol selector is invalid: "
-                        f"{selector_id}"
-                    )
-                expected_arbiter_dependencies = [selector_id, node["id"]]
-            else:
-                expected_arbiter_dependencies = [node["id"]]
-            if arbiter["depends_on"] != expected_arbiter_dependencies:
-                raise WorkflowIRValidationError(
-                    f"node {node['id']} arbiter dependencies are invalid: {arbiter_id}"
-                )
-            continue
         else:
             continue
         if source not in by_id:
@@ -1028,10 +896,6 @@ def validate_workflow_ir(raw: Any) -> dict[str, Any]:
             )
         elif kind == "reduce":
             normalized_config = _validate_reduce_config(
-                config, f"{where}.config"
-            )
-        elif kind == "fleet_aggregate":
-            normalized_config = _validate_fleet_aggregate_config(
                 config, f"{where}.config"
             )
         else:

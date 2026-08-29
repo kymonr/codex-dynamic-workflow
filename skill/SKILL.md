@@ -27,7 +27,7 @@ When selected, show once:
 
 ```text
 Workflow: dynamic-workflow
-Mode: simple-swarm | managed-workflow | writer-workflow
+Mode: simple-swarm | agent-fleet | managed-workflow | writer-workflow
 ```
 
 ## Simple Swarm — default
@@ -70,13 +70,13 @@ When selected, read [references/cli-runner.md](references/cli-runner.md), [refer
 
 ## Agent Fleet — explicit 4–12 subagents
 
-Read [references/agent-fleet-v1.md](references/agent-fleet-v1.md), [references/workflow-ir.md](references/workflow-ir.md), and [references/cli-runner.md](references/cli-runner.md) when Agent Fleet is selected.
+Read [references/agent-fleet-v1.md](references/agent-fleet-v1.md) and [references/agent-fleet-usage.md](references/agent-fleet-usage.md) when Agent Fleet is selected.
 
-Agent Fleet uses exactly 4–12 read-only Luna agents, divided into independent discovery and adversarial challenge stages. The trusted zero-model `fleet_aggregate` node validates closed records, effects, claim references, surviving blockers, UNKNOWN and disagreements. Conditional presets skip Sol only for a clean ordinary aggregate; high risk, surviving P1/P2, UNKNOWN or disagreement starts one Sol/xhigh arbiter. Architecture and competing-hypothesis presets always use Sol.
+Agent Fleet is a separate package runtime, not a Workflow IR node. It schedules exactly 4–12 fresh read-only Luna agents. Every supported size contains independent discovery, host-assigned challenge, and independent reproduction. The host freezes the candidate, runs fixed non-shell verification before model calls, validates closed revision-bound records, and reconstructs a finding graph without majority voting.
 
-Do not use majority voting, free-form agent messaging, nested delegation, or Agent Fleet as a failure fallback. An invalid member identity, malformed record, non-empty effect or stale subject fails closed to root rather than automatically invoking Sol.
+Only semantic evidence can start at most one fresh Sol/xhigh arbiter: accepted P1/P2, conflict, unresolved finding, UNKNOWN, or a mandatory high-risk tag. Verification failure, candidate drift, identity mismatch, stale revision, non-empty effects, malformed records, or evidence tamper fail closed to root and never use Sol as a fallback.
 
-Use `skill/cli.py fleet-list` and `fleet-ir` to compile a validated Workflow IR, then the ordinary `plan-ir` / `run-ir` path to execute it.
+Use only `fleet-plan`, `fleet-run`, and `fleet-status`. Package, CLI, repository text, and model output cannot select the Luna/Sol models, efforts, sandbox, retry, or write authority.
 
 ## Writer Workflow — explicit isolated candidate
 

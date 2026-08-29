@@ -19,7 +19,7 @@ The JSON result includes:
 
 - deterministic topological order;
 - node kind, dependencies and `dependency_policy`;
-- bounded condition, Agent Fleet aggregate, and human-gate contracts;
+- bounded condition and human-gate contracts;
 - prompt length, digest and a short preview instead of full prompt duplication;
 - static, map-child, verifier-child, and bounded-loop-child agent-claim projections;
 - executable and validated-only node kinds;
@@ -46,8 +46,6 @@ agent → map → verify → reduce → conditional
 Use `examples/bounded-design-convergence.workflow-ir.json` for the separate
 Bounded Loop v1 execution path.
 
-Use `skill/cli.py fleet-ir` for the separate exact 4–12 Luna Agent Fleet path; its plan preview reports Fleet mode, subject, risk, member counts and Sol policy.
-
 The closeout paths are explicit and mutually exclusive. Both record nodes
 depend on `choose-gate-outcome`, `review-gate`, and `summarize-audit`; their
 prompts must carry both `{{result:review-gate}}` and
@@ -61,6 +59,10 @@ unselected record and its finalizer propagate `skipped`; they are not executed
 and therefore do not create task directories.
 
 Replace the example `workdir` with one deliberately sanitized repository before running it. Only complete Bounded Loop v1 instances are executable; legacy `loop` declarations remain instance-level validated-only and are explicitly rejected. A declared `workflow_timeout_seconds` is an absolute deadline that survives resume and includes human-gate pause time.
+
+## Agent Fleet operations
+
+Agent Fleet has its own package lifecycle: `fleet-plan` freezes and previews the candidate without model calls or run-directory writes; `fleet-run` creates revision-bound evidence and conditionally invokes one Sol arbiter; `fleet-status` performs zero-model integrity reconstruction. It does not use `plan-ir`, `run-ir`, or `resume-ir`.
 
 ## Run status
 

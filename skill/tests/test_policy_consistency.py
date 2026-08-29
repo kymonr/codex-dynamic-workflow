@@ -38,7 +38,7 @@ class PolicyConsistencyTests(unittest.TestCase):
         self.assertEqual(
             checker._expected_capability_matrix(policy),
             "Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, "
-            "`fleet_aggregate`, `conditional`, `human_gate`.\n"
+            "`conditional`, `human_gate`.\n"
             "Validated-only node kinds: none.",
         )
 
@@ -60,13 +60,17 @@ class PolicyConsistencyTests(unittest.TestCase):
         )
 
     def test_agent_fleet_policy_drift_fails_machine_contract_check(self) -> None:
-        policy = checker._load_toml(ROOT / "config" / "workflow-policy.toml")
+        policy = checker._load_toml(
+            ROOT / "config" / "agent-fleet-policy.toml"
+        )["agent_fleet"]
         drifted = copy.deepcopy(policy)
-        drifted["agent_fleet"]["maximum_luna_agents"] = 11
+        drifted["maximum_agents"] = 11
         errors: list[str] = []
-        checker._validate_agent_fleet_policy(ROOT, drifted, errors)
-        self.assertTrue(
-            any("maximum_luna_agents disagrees" in item for item in errors),
+        checker._validate_agent_fleet_policy(
+            ROOT, errors, policy_override=drifted
+        )
+        self.assertIn(
+            "Agent Fleet maximum_agents disagrees with runtime",
             errors,
         )
 

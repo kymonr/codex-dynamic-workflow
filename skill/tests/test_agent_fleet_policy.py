@@ -12,8 +12,10 @@ if str(SKILL) not in sys.path:
 
 import fleet_contract
 import fleet_escalation
+import fleet_findings
 import fleet_presets
 import fleet_process
+import fleet_records
 import fleet_runtime
 
 
@@ -102,10 +104,25 @@ class FleetPolicyTests(unittest.TestCase):
         for count in range(fleet_contract.MIN_AGENTS, fleet_contract.MAX_AGENTS + 1):
             allocation = fleet_presets.phase_counts(count)
             self.assertEqual(sum(allocation.values()), count)
-            self.assertGreaterEqual(allocation["discovery"], 4)
+            self.assertGreaterEqual(allocation["discovery"], 2)
             self.assertLessEqual(allocation["discovery"], 8)
+            self.assertGreaterEqual(allocation["challenge"], 1)
             self.assertLessEqual(allocation["challenge"], 2)
+            self.assertGreaterEqual(allocation["reproduction"], 1)
             self.assertLessEqual(allocation["reproduction"], 2)
+
+
+    def test_finding_and_sandbox_evidence_bounds_match_runtime(self) -> None:
+        findings = self.policy["findings"]
+        self.assertEqual(
+            findings["max_findings_per_record"],
+            fleet_records.MAX_FINDINGS_PER_RECORD,
+        )
+        self.assertEqual(
+            findings["max_graph_findings"], fleet_findings.MAX_GRAPH_FINDINGS
+        )
+        self.assertEqual(self.policy["evidence"]["observed_sandbox"], "unknown")
+        self.assertEqual(fleet_process.process_contract()["observed_sandbox"], "unknown")
 
 
 if __name__ == "__main__":

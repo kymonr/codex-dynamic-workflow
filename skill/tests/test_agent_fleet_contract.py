@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -153,7 +154,7 @@ class FleetCandidateTests(unittest.TestCase):
         fleet_candidate.validate_candidate_package(first)
 
     def test_untracked_text_is_captured_and_changed_set_is_exact(self) -> None:
-        (self.repo / "new.txt").write_text("candidate\n", encoding="utf-8")
+        (self.repo / "new.txt").write_bytes(b"candidate\n")
         package = self.package(["new.txt"])
         candidate = fleet_candidate.capture_candidate(self.repo, package)
         self.assertEqual(candidate["changed_files"], ["new.txt"])
@@ -162,6 +163,56 @@ class FleetCandidateTests(unittest.TestCase):
         wrong = self.package([])
         with self.assertRaisesRegex(fleet_candidate.FleetCandidateError, "changed-file set"):
             fleet_candidate.capture_candidate(self.repo, wrong)
+
+    def test_candidate_revision_is_checkout_path_independent(self) -> None:
+        (self.repo / "new.txt").write_bytes(b"candidate\n")
+        first = fleet_candidate.capture_candidate(
+            self.repo, self.package(["new.txt"])
+        )
+        second_repo = Path(self.temp.name) / "second-repo"
+        subprocess.run(
+            ["git", "clone", "--no-hardlinks", str(self.repo), str(second_repo)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        git(second_repo, "config", "core.autocrlf", "false")
+        git(
+            second_repo,
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/owner/repo.git",
+        )
+        (second_repo / "new.txt").write_bytes(b"candidate\n")
+        raw = valid_raw(head=git(second_repo, "rev-parse", "HEAD"))
+        raw["candidate"]["changed_files"] = ["new.txt"]
+        second = fleet_candidate.capture_candidate(
+            second_repo, fleet_contract.validate_package(raw)
+        )
+        self.assertNotEqual(first["repository_root"], second["repository_root"])
+        self.assertEqual(first["candidate_revision"], second["candidate_revision"])
+        self.assertEqual(
+            first["revision_basis_digest"], second["revision_basis_digest"]
+        )
+
+    def test_repository_root_rejects_link_or_reparse_alias(self) -> None:
+        alias = Path(self.temp.name) / "repo-alias"
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias), str(self.repo)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if completed.returncode != 0:
+                self.skipTest(f"cannot create Windows junction: {completed.stderr}")
+        else:
+            alias.symlink_to(self.repo, target_is_directory=True)
+        with self.assertRaisesRegex(
+            fleet_candidate.FleetCandidateError, "symlink/reparse"
+        ):
+            fleet_candidate.repository_root(alias)
 
     def test_binary_candidate_is_rejected(self) -> None:
         (self.repo / "binary.bin").write_bytes(b"bad\x00data")

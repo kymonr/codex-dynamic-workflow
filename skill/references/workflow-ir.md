@@ -6,10 +6,10 @@ Workflow IR v3 是面向后续 Claude 风格 Dynamic Workflow Runtime 的声明�
 
 - IR 版本固定为整数 `3`。
 - 静态 `agent` 节点仍可编译为现有只读 v2 DAG。
-- Workflow IR v3 可信 runtime 可执行 `agent`、`map`、`verify`、`reduce`、`fleet_aggregate`、`conditional`、`human_gate`，以及满足 Bounded Loop v1 完整合同的 `loop` 实例。
+- Workflow IR v3 可信 runtime 可执行 `agent`、`map`、`verify`、`reduce`、`conditional`、`human_gate`，以及满足 Bounded Loop v1 完整合同的 `loop` 实例。
 - `max_tokens` 是 advisory 字段；soft/hard timeout 仍是 per-agent 进程边界。可选的 `workflow_timeout_seconds` 是额外的 whole-workflow 绝对上界。
 
-Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `fleet_aggregate`, `conditional`, `human_gate`.
+Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `conditional`, `human_gate`.
 Validated-only node kinds: none.
 
 Only `loop` instances that fully satisfy the Bounded Loop v1 contract are executable. Legacy `loop` declarations remain instance-level validated-only and are explicitly rejected at execution.
@@ -93,12 +93,6 @@ v3 runner 只解释声明式数据，不执行工作流提供的 Python、JavaSc
 - `verify` 只能消费 map manifest，每个 verifier 固定返回 `accept | reject | unknown`、summary 和 evidence。语义 reject 是数据，不伪装成进程失败。
 - `reduce` 只能消费声明依赖中的 map/verify manifest；大型输入通过内容寻址 artifact reference 传递。
 - `checkpoint.json` 保存动态 child、claimed agents 与 artifact identity；`resume-ir` 复用已成功 child，只重排确认中断的 running 工作。
-
-## Trusted Agent Fleet aggregate
-
-`fleet_aggregate` 是零模型节点，只消费 config 中按顺序声明且同时列入 `depends_on` 的 Luna `agent` 成员。Config 绑定 4–12 个成员的 node/role/stage identity、subject、risk 和 Sol policy；成员依赖或 profile 不一致时 IR 在执行前拒绝。
-
-运行时从内容寻址 artifact 加载成员输出，验证封闭 discovery/challenge 记录、`effects=[]`、claim 引用和 assessment，再确定性计算 surviving/refuted claims、UNKNOWN、分歧、`clean` 与 `requires_sol`。它不执行多数票，也不调用模型。完整合同见 [Agent Fleet v1](agent-fleet-v1.md)。
 
 ## Trusted conditional and human gate
 

@@ -6,6 +6,7 @@ Agent Fleet 是显式或高级只读模式。普通审核不因为出现 `review
 
 复制 `examples/agent-fleet-package.json`，替换：
 
+- `repository_full_name`（必须匹配当前 `origin` URL 中的 owner/repository；仓库迁移或别名需显式更新）；
 - `expected_head_sha`；
 - `changed_files`；
 - objective、acceptance、scope、exclusions；
@@ -107,7 +108,7 @@ research-synthesis      多证据研究与反证综合
 12  最大 adversarial / council 模式
 ```
 
-4 个代理只有 discovery。需要完整的发现—质疑—复现链时使用 6 或以上。
+4 个代理也包含 2 个 discovery、1 个 challenge 和 1 个 reproduction；更大规模增加独立 discovery 维度，并在 7/10 个代理起扩展 challenge/reproduction。
 
 ## 7. Fail-closed 行为
 

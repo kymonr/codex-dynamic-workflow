@@ -7,7 +7,9 @@ from typing import Any
 
 try:
     from skill.fleet_contract import FleetPackage, canonical_digest
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     from fleet_contract import FleetPackage, canonical_digest
 
 SCHEDULE_VERSION = 1
@@ -135,17 +137,21 @@ DISCOVERY_POOLS: dict[str, tuple[RoleSpec, ...]] = {
 
 
 def phase_counts(agent_count: int) -> dict[str, int]:
-    if not 4 <= agent_count <= 12:
-        raise ValueError("agent_count must be 4..12")
-    if agent_count == 4:
-        return {"discovery": 4, "challenge": 0, "reproduction": 0}
-    if agent_count == 5:
-        return {"discovery": 4, "challenge": 1, "reproduction": 0}
-    reproduction = 2 if agent_count == 12 else 1
-    challenge = 2 if agent_count >= 9 else 1
-    discovery = agent_count - challenge - reproduction
-    if discovery < 4 or discovery > 8:
-        raise AssertionError("invalid deterministic phase allocation")
+    allocations = {
+        4: (2, 1, 1),
+        5: (3, 1, 1),
+        6: (4, 1, 1),
+        7: (4, 2, 1),
+        8: (5, 2, 1),
+        9: (6, 2, 1),
+        10: (6, 2, 2),
+        11: (7, 2, 2),
+        12: (8, 2, 2),
+    }
+    try:
+        discovery, challenge, reproduction = allocations[agent_count]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("agent_count must be 4..12") from exc
     return {
         "discovery": discovery,
         "challenge": challenge,

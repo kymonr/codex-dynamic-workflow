@@ -246,5 +246,16 @@ class FleetFindingTests(unittest.TestCase):
         self.assertIn("high-risk-scope", {item["code"] for item in high_risk["triggers"]})
 
 
+    def test_host_graph_rejects_more_than_128_unique_findings(self) -> None:
+        findings = [
+            finding(summary=f"unique finding {index}")
+            for index in range(fleet_findings.MAX_GRAPH_FINDINGS + 1)
+        ]
+        with self.assertRaisesRegex(
+            fleet_findings.FleetFindingError, "exceeds 128 unique findings"
+        ):
+            fleet_findings.build_finding_graph([discovery("a", findings)])
+
+
 if __name__ == "__main__":
     unittest.main()

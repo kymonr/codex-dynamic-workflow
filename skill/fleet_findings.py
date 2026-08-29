@@ -12,10 +12,13 @@ from typing import Any, Iterable, Mapping, Sequence
 
 try:
     from skill.fleet_contract import canonical_digest
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     from fleet_contract import canonical_digest
 
 SEVERITY_ORDER = {"P1": 0, "P2": 1, "P3": 2}
+MAX_GRAPH_FINDINGS = 128
 
 
 class FleetFindingError(RuntimeError):
@@ -48,6 +51,10 @@ def _merge_finding(
     finding_id = _finding_id(finding)
     existing = graph.get(finding_id)
     if existing is None:
+        if len(graph) >= MAX_GRAPH_FINDINGS:
+            raise FleetFindingError(
+                f"finding graph exceeds {MAX_GRAPH_FINDINGS} unique findings"
+            )
         graph[finding_id] = {
             "finding_id": finding_id,
             "category": finding["category"],

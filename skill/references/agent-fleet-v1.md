@@ -5,11 +5,11 @@ Agent Fleet v1 是 Dynamic Workflow 的高级只读多代理模式。它为一�
 ```text
 固定验证与候选冻结
   ↓
-4–8 Luna discovery
+2–8 Luna discovery
   ↓
-0–2 Luna challenge
+1–2 Luna challenge
   ↓
-0–2 Luna reproduction
+1–2 Luna reproduction
   ↓
 宿主去重、冲突识别与升级判断
   ├─ clean low-risk → accept
@@ -36,17 +36,17 @@ Fleet 大小只能是 4–12，默认 6。宿主按大小确定阶段配额：
 
 | 总数 | Discovery | Challenge | Reproduction |
 |---:|---:|---:|---:|
-| 4 | 4 | 0 | 0 |
-| 5 | 4 | 1 | 0 |
+| 4 | 2 | 1 | 1 |
+| 5 | 3 | 1 | 1 |
 | 6 | 4 | 1 | 1 |
-| 7 | 5 | 1 | 1 |
-| 8 | 6 | 1 | 1 |
+| 7 | 4 | 2 | 1 |
+| 8 | 5 | 2 | 1 |
 | 9 | 6 | 2 | 1 |
-| 10 | 7 | 2 | 1 |
-| 11 | 8 | 2 | 1 |
+| 10 | 6 | 2 | 2 |
+| 11 | 7 | 2 | 2 |
 | 12 | 8 | 2 | 2 |
 
-所有角色必须不同。第一轮不是把同一 prompt 复制 12 次；每个角色拥有独立 focus。Finding 提出者不能挑战或复现自己的 finding。
+所有角色必须不同。第一轮不是把同一 prompt 复制 12 次；每个 discovery 角色拥有独立 focus。每个支持规模都包含 challenge 与 reproduction。Finding 提出者不能挑战或复现自己的 finding，且每份 challenge/reproduction 记录必须恰好覆盖宿主分配的全部 finding ID。
 
 ## 3. 固定路由
 
@@ -77,7 +77,7 @@ retry=0
 nested_agents=0
 ```
 
-Package、仓库内容、其他代理记录和模型输出都不能选择模型、修改 effort、扩大 sandbox 或授权写入。CLI 不提供 `--model`、`--effort` 或代理间消息参数。
+Package、仓库内容、其他代理记录和模型输出都不能选择模型、修改 effort、扩大 sandbox 或授权写入。CLI 不提供 `--model`、`--effort` 或代理间消息参数。`requested_sandbox=read-only` 来自宿主构造的命令；当前 backend 不提供独立的 per-process sandbox attestation，因此 `observed_sandbox=unknown` 必须如实保留，不能把请求值冒充观察值。
 
 ## 4. Presets
 
@@ -91,7 +91,7 @@ v1 支持七个只读 preset：
 - `repository-audit`：CLI、runtime、安全、持久化、测试、文档、打包和平台；
 - `research-synthesis`：一手证据、反证、方法、统计、时间线、假设、复现与综合质疑。
 
-这些 preset 共享相同的可信运行边界和 finding lifecycle，但使用不同的 discovery 角色池。
+这些 preset 共享相同的可信运行边界、条件 Sol 规则和 finding lifecycle，但使用不同的 discovery 角色池。没有 preset 能绕过证据聚合或把 Luna 多数当作最终决定。
 
 ## 5. Finding lifecycle
 
@@ -113,20 +113,20 @@ Finding ID 由类别、规范化摘要和位置生成。完全相同的问题会
 
 ## 6. 条件 Sol
 
-以下任一条件触发 fresh Sol/xhigh：
+以下任一**语义证据**触发 fresh Sol/xhigh：
 
-- 固定验证失败；
-- 候选在 Fleet 期间变化；
 - 任一代理存在 `UNKNOWN`；
-- surviving P1/P2；
+- accepted P1/P2；
 - finding 出现事实冲突；
 - finding 无法确认也无法推翻；
 - risk tag 涉及 public API、schema、migration、安全、凭据、权限、并发、状态机、恢复、持久化、发布、sandbox 或完整性。
 
+固定验证失败、候选变化、identity mismatch、stale revision、非空 effects、格式错误、进程失败或证据损坏属于执行证据无效，直接 fail closed 返回 root，不能触发 Sol。
+
 只有同时满足以下条件才能跳过 Sol：
 
 - 固定验证全部通过；
-- candidate revision 稳定；
+- candidate revision 稳定且所有进程/记录证据有效；
 - 无 `UNKNOWN`；
 - 无强制高风险标签；
 - 无 accepted P1/P2；
@@ -147,11 +147,13 @@ Package 精确绑定：
 - 固定非 shell 验证命令；
 - candidate、patch、untracked file、agent output 和 log 上限。
 
-宿主从 live Git 捕获 tracked patch 与 UTF-8 untracked content，拒绝 binary/NUL、路径逃逸、symlink 和 changed-file 漂移，并计算：
+宿主从 live Git 捕获 tracked patch 与 UTF-8 untracked content，拒绝 binary/NUL、路径逃逸、symlink、Windows reparse/junction 和 changed-file 漂移，并计算：
 
 ```text
 candidate_revision=sha256:<canonical candidate material digest>
 ```
+
+绝对 `repository_root` 仅用于本机读回，不进入 revision basis；相同 Git identity、patch、status 与 untracked bytes 在不同 checkout 路径下得到相同 revision。
 
 固定验证在任何模型调用之前执行。每轮结束后重新捕获候选；任何变化进入 `attention_required`。
 

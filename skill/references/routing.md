@@ -28,11 +28,11 @@ Use one bounded wait, one progress request after the first timeout, and one fina
 
 ## Agent Fleet boundary
 
-Agent Fleet is an explicit Managed Workflow shape for exact 4–12 Luna agents. Use it when the user asks for many agents, adversarial challenge, independent reproduction, a test matrix, repository-wide evidence lanes, architecture competition, or competing root-cause hypotheses.
+Agent Fleet is an explicit package runtime for exactly 4–12 fresh read-only Luna agents. Use it when the user requests a fleet/team/council, adversarial challenge, independent reproduction, a broad test matrix, repository-wide evidence lanes, architecture competition, or competing hypotheses. An ordinary audit with 2–6 useful non-overlapping questions remains Simple Swarm.
 
-Fleet discovery agents inspect independent dimensions. Challenge agents consume all discovery artifacts and attempt to confirm, refute, or leave each claim unresolved. A trusted `fleet_aggregate` node validates identities, effects and references; it never uses majority voting. Conditional presets start one Sol only for surviving P1/P2, UNKNOWN, disagreement, or high risk. Architecture and competing-hypothesis presets always use Sol.
+Every supported Fleet size contains discovery, challenge, and reproduction. The host assigns findings, requires each challenge/reproduction record to cover every assigned finding exactly once, and reconstructs a finding graph. A reproduced P1/P2 cannot be outvoted by clean agents; proposer count is evidence metadata, not a vote.
 
-Agent Fleet is read-only, forbids nested delegation and direct agent messaging, and is not a recovery route for failed Simple Swarm children. Invalid Fleet evidence returns root rather than silently switching models. See [agent-fleet-v1.md](agent-fleet-v1.md).
+At most one fresh Sol/xhigh arbiter is conditionally invoked for accepted P1/P2, conflict, unresolved findings, UNKNOWN, or mandatory high-risk tags. Invalid identity, candidate drift, non-empty effects, malformed evidence, or process failure returns root without Sol fallback. Agent Fleet forbids nested delegation, direct agent messaging, and repository writes. See [agent-fleet-v1.md](agent-fleet-v1.md).
 
 ## Precedence
 
@@ -96,7 +96,7 @@ Use `fork_turns=all` only when full conversation history is more important than 
 
 An explicit model or effort override takes precedence over `all`: use `none` or a finite positive fork and restate the required context. If the user explicitly makes both full-history inheritance and a different model/effort non-negotiable, stop and ask which constraint to retain; never silently discard either one.
 
-Sol-to-Luna nested work never uses `all` and is unavailable in Simple Swarm. Agent Fleet also forbids nested delegation; its Luna members are top-level Workflow IR agents with host-mediated artifacts.
+Sol-to-Luna nested work never uses `all` and is unavailable in Simple Swarm. Agent Fleet also forbids nested delegation; its Luna members are fresh top-level package-runtime processes with host-mediated artifacts.
 
 ## Pre-dispatch disclosure
 

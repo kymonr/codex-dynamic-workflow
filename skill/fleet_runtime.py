@@ -7,6 +7,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -66,7 +67,9 @@ try:
         validate_discovery_record,
         validate_reproduction_record,
     )
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     import platform_paths
     import runner as legacy
     from fleet_candidate import (
@@ -409,6 +412,7 @@ def _validate_process_entry(
         "effort": route.effort,
         "tier": route.tier,
         "requested_sandbox": route.sandbox,
+        "observed_sandbox": "unknown",
         "attempt_count": 1,
         "retry": 0,
         "upgrade": None,
@@ -443,7 +447,7 @@ def _persisted_process_record(
         "effort": entry.get("effort"),
         "tier": entry.get("tier"),
         "requested_sandbox": entry.get("requested_sandbox"),
-        "observed_sandbox": entry.get("observed_sandbox", "unknown"),
+        "observed_sandbox": entry.get("observed_sandbox"),
         "attempt_count": entry.get("attempt_count"),
         "retry": entry.get("retry"),
         "upgrade": entry.get("upgrade"),
@@ -467,7 +471,7 @@ def _run_parallel(
             agent = futures[future]
             try:
                 results[agent["agent_id"]] = future.result()
-            except BaseException as exc:
+            except Exception as exc:
                 for other in futures:
                     other.cancel()
                 raise FleetRuntimeError(
@@ -476,23 +480,55 @@ def _run_parallel(
     return [results[agent["agent_id"]] for agent in agents]
 
 
+def _is_reparse(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    marker = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attributes & marker)
+
+
 def _manifest_files(root: Path) -> list[dict[str, Any]]:
+    if root.is_symlink() or _is_reparse(root):
+        raise FleetRuntimeError("fleet run directory cannot be a link/reparse point")
     files: list[dict[str, Any]] = []
-    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().casefold()):
-        relative = path.relative_to(root).as_posix()
-        if relative == "evidence-manifest.json":
-            continue
-        if path.is_symlink():
-            raise FleetRuntimeError(f"run evidence contains a symlink: {relative}")
-        if path.is_file():
-            payload = path.read_bytes()
-            files.append(
-                {
-                    "path": relative,
-                    "bytes": len(payload),
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                }
-            )
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            children = sorted(current.iterdir(), key=lambda item: item.name.casefold())
+        except OSError as exc:
+            raise FleetRuntimeError(f"cannot enumerate fleet evidence: {exc}") from exc
+        for path in children:
+            relative = path.relative_to(root).as_posix()
+            if relative == "evidence-manifest.json":
+                continue
+            if path.is_symlink() or _is_reparse(path):
+                raise FleetRuntimeError(
+                    f"run evidence contains a link/reparse point: {relative}"
+                )
+            try:
+                metadata = path.lstat()
+            except OSError as exc:
+                raise FleetRuntimeError(f"cannot inspect run evidence {relative}: {exc}") from exc
+            if path.is_dir():
+                stack.append(path)
+            elif path.is_file():
+                payload = path.read_bytes()
+                files.append(
+                    {
+                        "path": relative,
+                        "bytes": metadata.st_size,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    }
+                )
+            else:
+                raise FleetRuntimeError(
+                    f"run evidence contains unsupported file type: {relative}"
+                )
+    files.sort(key=lambda item: item["path"].casefold())
     return files
 
 
@@ -920,7 +956,15 @@ def run_fleet(
             terminal="attention_required",
             error=str(exc),
         )
-    except BaseException as exc:
+    except KeyboardInterrupt:
+        _terminal_state(
+            state=state,
+            run_dir=run_dir,
+            terminal="attention_required",
+            error="KeyboardInterrupt",
+        )
+        raise
+    except Exception as exc:
         return _terminal_state(
             state=state,
             run_dir=run_dir,
@@ -944,7 +988,9 @@ def _load_json(path: Path) -> Any:
 def status_fleet(run_dir: str | Path) -> dict[str, Any]:
     try:
         from skill.fleet_integrity import FleetIntegrityError, validate_run_integrity
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        if exc.name != "skill":
+            raise
         from fleet_integrity import FleetIntegrityError, validate_run_integrity
 
     try:

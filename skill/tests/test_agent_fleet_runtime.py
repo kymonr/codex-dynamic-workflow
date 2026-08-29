@@ -151,7 +151,7 @@ class FakeFleetAdapter:
             "effort": route.effort,
             "tier": route.tier,
             "requested_sandbox": route.sandbox,
-            "observed_sandbox": "fixture-read-only",
+            "observed_sandbox": "unknown",
             "attempt_count": 1,
             "retry": 0,
             "upgrade": None,
@@ -175,7 +175,13 @@ class FakeFleetAdapter:
                 if item["severity"] in {"P1", "P2"}
                 and item["disposition"] in {"accepted", "conflict", "unresolved"}
             ]
-            verdict = "fix-first" if blockers else "ship"
+            verdict = (
+                "fix-first"
+                if blockers
+                else "rethink"
+                if self.scenario == "unknown-rethink"
+                else "ship"
+            )
             return self._entry(
                 route,
                 {
@@ -220,7 +226,7 @@ class FakeFleetAdapter:
                     }
                 ]
                 verdict = "findings"
-            elif self.scenario == "unknown" and role_id == "correctness-hunter":
+            elif self.scenario in {"unknown", "unknown-rethink"} and role_id == "correctness-hunter":
                 unknown = ["caller behavior cannot be established"]
                 verdict = "unknown"
             output = {
@@ -287,6 +293,8 @@ class FakeFleetAdapter:
             entry["model"] = "gpt-5.6-sol"
         if self.scenario == "effect-record" and phase == "discovery" and role_id == "correctness-hunter":
             entry["output"]["effects"] = ["unexpected-write"]
+        if self.scenario == "sandbox-mismatch" and phase == "discovery" and role_id == "correctness-hunter":
+            entry["observed_sandbox"] = "workspace-write"
         return entry
 
 
@@ -320,6 +328,28 @@ class FleetRuntimeTests(unittest.TestCase):
                 process_adapter=adapter,
             )
 
+    def test_exact_four_and_twelve_agent_runs_complete_full_lifecycle(self) -> None:
+        for count in (4, 12):
+            fixture = Fixture(agent_count=count)
+            try:
+                adapter = FakeFleetAdapter("clean")
+                result = self.run_fixture(fixture, adapter)
+                with self.subTest(count=count):
+                    self.assertEqual(result["state"], "accepted")
+                    self.assertEqual(result["model_calls"], count)
+                    self.assertEqual(len(adapter.calls), count)
+                    phases = [phase for _, phase in adapter.calls]
+                    self.assertIn("discovery", phases)
+                    self.assertIn("challenge", phases)
+                    self.assertIn("reproduction", phases)
+                    self.assertFalse(result["aggregation"]["requires_sol"])
+                    self.assertEqual(
+                        fleet_runtime.status_fleet(result["run_dir"])["integrity"],
+                        "match",
+                    )
+            finally:
+                fixture.close()
+
     def test_clean_fleet_skips_sol_and_status_matches(self) -> None:
         fixture = Fixture()
         try:
@@ -329,6 +359,12 @@ class FleetRuntimeTests(unittest.TestCase):
             self.assertEqual(result["model_calls"], 6)
             self.assertEqual([role for role, _ in adapter.calls], ["luna"] * 6)
             self.assertFalse(result["aggregation"]["requires_sol"])
+            self.assertTrue(
+                all(
+                    record["observed_sandbox"] == "unknown"
+                    for record in result["process_records"]
+                )
+            )
             status = fleet_runtime.status_fleet(result["run_dir"])
             self.assertEqual(status["integrity"], "match")
         finally:
@@ -357,6 +393,24 @@ class FleetRuntimeTests(unittest.TestCase):
             self.assertEqual(result["model_calls"], 6)
             self.assertFalse(result["aggregation"]["requires_sol"])
             self.assertEqual(result["findings"][0]["disposition"], "accepted")
+        finally:
+            fixture.close()
+
+    def test_unknown_can_rethink_without_an_existing_finding(self) -> None:
+        fixture = Fixture()
+        try:
+            adapter = FakeFleetAdapter("unknown-rethink")
+            result = self.run_fixture(fixture, adapter)
+            self.assertEqual(result["state"], "rethink")
+            self.assertEqual(result["model_calls"], fixture.package.agent_count + 1)
+            self.assertTrue(result["aggregation"]["requires_sol"])
+            self.assertEqual(result["findings"], [])
+            self.assertEqual(result["sol_arbitration"]["verdict"], "rethink")
+            self.assertEqual(result["sol_arbitration"]["accepted_findings"], [])
+            self.assertEqual(
+                fleet_runtime.status_fleet(result["run_dir"])["integrity"],
+                "match",
+            )
         finally:
             fixture.close()
 
@@ -417,6 +471,32 @@ class FleetRuntimeTests(unittest.TestCase):
             )
         finally:
             fixture.close()
+
+    def test_manifest_rejects_link_or_reparse_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "run"
+            root.mkdir()
+            target = root / "target"
+            target.mkdir()
+            (target / "evidence.json").write_text("{}", encoding="utf-8")
+            alias = root / "alias"
+            if os.name == "nt":
+                completed = subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if completed.returncode != 0:
+                    self.skipTest(
+                        f"cannot create Windows junction: {completed.stderr}"
+                    )
+            else:
+                alias.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(
+                fleet_runtime.FleetRuntimeError, "link/reparse"
+            ):
+                fleet_runtime._manifest_files(root)
 
     def test_evidence_tamper_breaks_status(self) -> None:
         fixture = Fixture()
@@ -502,8 +582,35 @@ class FleetRuntimeTests(unittest.TestCase):
             fixture.close()
 
 
+    def test_keyboard_interrupt_is_recorded_and_re_raised(self) -> None:
+        fixture = Fixture()
+        try:
+            def interrupting_adapter(**kwargs):
+                raise KeyboardInterrupt
+
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_fixture(fixture, interrupting_adapter)
+            fleet_root = fixture.runs / fleet_runtime.FLEET_RUNS_SUBDIR
+            run_dirs = [item for item in fleet_root.iterdir() if item.is_dir()]
+            self.assertEqual(len(run_dirs), 1)
+            summary = json.loads(
+                (run_dirs[0] / "summary.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(summary["state"], "attention_required")
+            self.assertEqual(summary["error"], "KeyboardInterrupt")
+            self.assertEqual(
+                fleet_runtime.status_fleet(run_dirs[0])["integrity"], "match"
+            )
+        finally:
+            fixture.close()
+
     def test_process_identity_effect_and_interruption_return_root_without_sol(self) -> None:
-        for scenario in ("process-error", "identity-mismatch", "effect-record"):
+        for scenario in (
+            "process-error",
+            "identity-mismatch",
+            "sandbox-mismatch",
+            "effect-record",
+        ):
             fixture = Fixture()
             try:
                 adapter = FakeFleetAdapter(scenario)

@@ -43,14 +43,14 @@ def package(*, preset: str = "adversarial-review", count: int = 6):
 class FleetPresetTests(unittest.TestCase):
     def test_phase_allocation_is_deterministic_for_every_size(self) -> None:
         expected = {
-            4: (4, 0, 0),
-            5: (4, 1, 0),
+            4: (2, 1, 1),
+            5: (3, 1, 1),
             6: (4, 1, 1),
-            7: (5, 1, 1),
-            8: (6, 1, 1),
+            7: (4, 2, 1),
+            8: (5, 2, 1),
             9: (6, 2, 1),
-            10: (7, 2, 1),
-            11: (8, 2, 1),
+            10: (6, 2, 2),
+            11: (7, 2, 2),
             12: (8, 2, 2),
         }
         for count, values in expected.items():
@@ -91,18 +91,21 @@ class FleetPresetTests(unittest.TestCase):
         self.assertNotEqual(first["schedule_digest"], other_size["schedule_digest"])
         self.assertNotEqual(first["schedule_digest"], other_preset["schedule_digest"])
 
-    def test_four_agents_are_diverse_discovery_not_duplicate_prompts(self) -> None:
+    def test_four_agents_cover_discovery_challenge_and_reproduction(self) -> None:
         schedule = fleet_presets.build_schedule(package(count=4))
         agents = schedule["agents"]
-        self.assertEqual({item["phase"] for item in agents}, {"discovery"})
+        self.assertEqual(
+            [item["phase"] for item in agents],
+            ["discovery", "discovery", "challenge", "reproduction"],
+        )
         self.assertEqual(len({item["focus"] for item in agents}), 4)
         self.assertEqual(
             [item["role_id"] for item in agents],
             [
                 "correctness-hunter",
                 "regression-hunter",
-                "test-evidence-auditor",
-                "devils-advocate",
+                "finding-challenger-a",
+                "reproduction-verifier-a",
             ],
         )
 

@@ -39,7 +39,9 @@ try:
         validate_discovery_record,
         validate_reproduction_record,
     )
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
     from fleet_candidate import (
         FleetCandidateError,
         assert_candidate_stable,
@@ -468,6 +470,7 @@ def _validate_process_record(
         "effort": route.effort,
         "tier": route.tier,
         "requested_sandbox": route.sandbox,
+        "observed_sandbox": "unknown",
         "attempt_count": 1,
         "retry": 0,
         "upgrade": None,
@@ -480,8 +483,6 @@ def _validate_process_record(
                 f"process record {agent_id} {key} mismatch: "
                 f"{record[key]!r} != {expected_value!r}"
             )
-    if not isinstance(record["observed_sandbox"], str) or not record["observed_sandbox"]:
-        raise FleetIntegrityError(f"process record {agent_id} observed_sandbox is invalid")
     if not isinstance(record["codex_identity"], dict):
         raise FleetIntegrityError(f"process record {agent_id} codex_identity is invalid")
     return record

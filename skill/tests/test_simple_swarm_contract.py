@@ -114,8 +114,10 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "worktree-writer-route-is-fixed-sol-high",
             "explicit-eight-agent-adversarial-review-uses-fleet",
             "ordinary-broad-audit-does-not-imply-agent-fleet",
-            "architecture-council-always-uses-sol-synthesis",
+            "fleet-roles-are-distinct",
             "twelve-agent-test-matrix-is-flat-and-host-mediated",
+            "minority-reproduced-blocker-defeats-majority",
+            "clean-low-risk-fleet-skips-sol",
         ):
             self.assertIn(name, names)
 

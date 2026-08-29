@@ -287,26 +287,50 @@
     {
       "id": 48,
       "name": "explicit-eight-agent-adversarial-review-uses-fleet",
-      "prompt": "请用 8 个 fresh 子代理对这个候选做对抗性审核：先独立发现，再互相反驳和复现；只有存在 blocker、分歧或未知时才让 Sol 裁决。",
-      "expected_output": "Select Agent Fleet adversarial-review with exactly 8 read-only Luna members split into discovery and challenge stages. Use deterministic host aggregation with no majority vote, and dispatch at most one Sol only when surviving P1/P2, UNKNOWN, disagreement, or high risk requires arbitration."
+      "prompt": "请用 8 个 fresh 子代理对这个候选做对抗性审核：先独立发现，再逐项反驳和独立复现；只有语义证据需要时才让 Sol 裁决。",
+      "expected_output": "Select Agent Fleet adversarial-review with exactly 8 fresh read-only Luna members, including discovery, challenge, and reproduction. Use host finding aggregation with no majority vote; invoke at most one fresh Sol/xhigh only for accepted P1/P2, conflict, unresolved evidence, UNKNOWN, or mandatory high risk. Invalid execution evidence returns root without Sol fallback."
     },
     {
       "id": 49,
       "name": "ordinary-broad-audit-does-not-imply-agent-fleet",
-      "prompt": "深度审核 CLI、runtime、权限和测试，尽快综合结果；没有指定子代理数量或对抗轮次。",
+      "prompt": "深度审核 CLI、runtime、权限和测试，尽快综合结果；没有指定子代理数量、fleet、相互质疑或复现。",
       "expected_output": "Keep the ordinary multi-angle audit in Simple Swarm with a few narrow non-overlapping branches. Do not infer Agent Fleet merely from audit depth, repository breadth, or the desire for speed."
     },
     {
       "id": 50,
-      "name": "architecture-council-always-uses-sol-synthesis",
-      "prompt": "组织 10 个子代理做架构委员会：提出明显不同的方案、互相挑战，最后给一个综合架构决定。",
-      "expected_output": "Select Agent Fleet architecture-council with exactly 10 read-only Luna members for competing proposals and challenges, followed by one mandatory Sol/xhigh synthesis. Do not let a Luna majority decide the architecture."
+      "name": "fleet-roles-are-distinct",
+      "prompt": "用 6 个 Agent Fleet 子代理审核同一候选，但不要把同一个 prompt 复制六次。",
+      "expected_output": "Select exactly 6 fresh read-only Luna members with distinct role IDs and focuses. The deterministic schedule includes discovery, challenge, and reproduction; agents cannot message or spawn one another."
     },
     {
       "id": 51,
       "name": "twelve-agent-test-matrix-is-flat-and-host-mediated",
       "prompt": "用 12 个子代理做跨平台、错误路径、恢复、并发和性能测试矩阵；代理不要自行再开子代理。",
-      "expected_output": "Select Agent Fleet test-matrix with exactly 12 top-level read-only Luna members, no nesting and no direct agent messaging. Discovery records and adversarial challenge records flow through host artifacts; conditional Sol arbitration is zero-or-one, never majority voting."
+      "expected_output": "Select Agent Fleet test-matrix with exactly 12 top-level fresh read-only Luna members, no nesting and no direct messages. Discovery, challenge, and reproduction records flow through host artifacts; Sol arbitration is conditional zero-or-one, never majority voting."
+    },
+    {
+      "id": 52,
+      "name": "explicit-twelve-agent-adversarial-review",
+      "prompt": "请精确使用 12 个 fresh 子代理进行对抗审核，并让 finding 经历发现、质疑和独立复现。",
+      "expected_output": "Select Agent Fleet adversarial-review with exactly 12 fresh read-only Luna members allocated as 8 discovery, 2 challenge, and 2 reproduction. Host aggregation is evidence-based and uses no majority vote."
+    },
+    {
+      "id": 53,
+      "name": "ordinary-four-branch-audit-stays-simple-swarm",
+      "prompt": "把普通代码审核拆成四个互不重叠的模块问题；不需要相互质疑、复现或 fleet 证据。",
+      "expected_output": "Use a four-branch Simple Swarm. Exact branch count alone does not select Agent Fleet without an explicit fleet/adversarial/challenge-reproduction requirement."
+    },
+    {
+      "id": 54,
+      "name": "minority-reproduced-blocker-defeats-majority",
+      "prompt": "12 个审核代理中 11 个没有发现问题，但 1 个 finding 被独立复现为 P1。是否可以按多数通过？",
+      "expected_output": "Do not vote. Preserve the independently reproduced P1, mark it accepted, and conditionally invoke one fresh Sol/xhigh arbiter. Eleven clean records cannot outvote evidence."
+    },
+    {
+      "id": 55,
+      "name": "clean-low-risk-fleet-skips-sol",
+      "prompt": "6 个 Fleet 代理完成 discovery、challenge、reproduction；所有 finding 被反驳，无 UNKNOWN、冲突或高风险标签。",
+      "expected_output": "Host aggregation accepts the clean low-risk candidate and skips Sol. Sol is not mandatory by preset name and is never called merely because a fleet ran."
     }
   ]
 }

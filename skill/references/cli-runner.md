@@ -108,6 +108,18 @@ python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" resume `
 
 The runner refuses a checkpoint whose plan digest differs from the current resolved spec. Previously successful nodes are reused through their artifact references. A node recorded as `running` at interruption is requeued only by the explicit `resume` command, receives a new attempt directory, and preserves the earlier artifacts and event history.
 
+## Agent Fleet package commands
+
+Agent Fleet is not compiled into Workflow IR. Its separate read-only package runtime exposes only:
+
+```powershell
+python skill\cli.py fleet-plan --package fleet.json --repository D:\repo --expected-package-digest <digest>
+python skill\cli.py fleet-run --package fleet.json --repository D:\repo --expected-package-digest <digest> --ack-read-only-agent-fleet
+python skill\cli.py fleet-status --run-dir <run-directory>
+```
+
+`fleet-plan` is zero-model and zero-write. `fleet-run` performs fixed verification before dispatching 4–12 fresh Luna processes, then host-mediated challenge/reproduction and conditional one-shot Sol arbitration. `fleet-status` reconstructs evidence without calling a model.
+
 ## Workflow IR v3 preparation
 
 `validate-ir` validates the declaration format without starting a model call:
@@ -119,24 +131,10 @@ python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" validate-ir `
 
 Static `agent`-only IR can be shown as compiled v2 with `--emit-v2`. The trusted v3 scheduler capability is policy-derived:
 
-Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `fleet_aggregate`, `conditional`, `human_gate`.
+Executable node kinds: `agent`, `map`, `verify`, `loop`, `reduce`, `conditional`, `human_gate`.
 Validated-only node kinds: none.
 
 Only `loop` instances that fully satisfy the Bounded Loop v1 contract are executable. Legacy `loop` declarations remain instance-level validated-only and are explicitly rejected at execution.
-
-Agent Fleet plans can be compiled without a model call or run-directory write:
-
-```powershell
-python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" fleet-list
-python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" fleet-ir `
-  --preset adversarial-review `
-  --objective "Review the bounded candidate" `
-  --workdir D:\path\bounded-repository `
-  --subject-id sha256:stable-revision `
-  --fleet-size 8 > fleet.json
-```
-
-The generated declaration is passed to `plan-ir` and `run-ir`. See `agent-fleet-v1.md` for the 4–12 Luna, host-aggregate, and conditional-Sol contract.
 
 `max_tokens` remains advisory because usage may be unavailable from CLI logs. Soft and hard timeout fields continue to apply per agent process. Optional `workflow_timeout_seconds` adds an absolute whole-workflow deadline that survives resume and includes human-gate pause time. See `workflow-ir.md` and `bounded-loop-v1.md`.
 
@@ -146,7 +144,7 @@ There is no transient same-route retry, prompt replay, regex retry classificatio
 
 ## Workflow IR control-flow commands
 
-使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent`、`map`、`verify`、Bounded Loop v1、`reduce`、`fleet_aggregate`、`conditional` 与 `human_gate` 控制流。未选分支默认向后传播 `skipped`；只有显式 `dependency_policy: "join"` 且至少一个依赖成功时才允许汇合。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。
+使用 `skill/cli.py run-ir` 和 `resume-ir` 执行可信的只读 `agent`、`map`、`verify`、Bounded Loop v1、`reduce`、`conditional` 与 `human_gate` 控制流。未选分支默认向后传播 `skipped`；只有显式 `dependency_policy: "join"` 且至少一个依赖成功时才允许汇合。命令沿用 v2 runner 的路径预检、Codex 身份核验、artifact 限制和显式外部模型导出确认；不开放任意代码、workspace write、Git 写入、自动升级或隐藏重试。
 
 ## Condition and human-gate commands
 

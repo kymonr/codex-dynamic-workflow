@@ -27,6 +27,13 @@ WorkflowIRValidationError = ir_runner.WorkflowIRValidationError
 FAKE_IR_CODEX = Path(__file__).with_name("fake_ir_codex.py")
 
 
+def isolated_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPYCACHEPREFIX", None)
+    env.update({"PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1"})
+    return env
+
+
 def gate_cli_ir(workdir: Path) -> dict:
     return {
         "version": 3,
@@ -844,9 +851,11 @@ class WorkflowIRRunnerIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "--",
                 slow_prompt,
             ],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
-            timeout=5,
+            env=isolated_subprocess_env(),
+            timeout=30,
             check=False,
         )
         elapsed = time.monotonic() - started
@@ -869,9 +878,11 @@ class WorkflowIRRunnerIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     "<BOUNDED_LOOP_HOST_RESULTS_V1>"
                 ),
             ],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
-            timeout=5,
+            env=isolated_subprocess_env(),
+            timeout=30,
             check=False,
         )
         self.assertEqual(unknown.returncode, 2)
