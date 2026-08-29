@@ -148,6 +148,10 @@ docs/module-map.md               功能模块地图与明确排除项
 
 `config/agents/grok_writer.toml.disabled` 仅作为停用状态的历史参考，不应复制或重命名为启用的 `.toml`。
 
+`config/agents/ox.toml.disabled` 仅作为停用状态的参考，不会被 Codex 自动加载。
+
+如需重新创建 Ox 角色，先确认 `opencode-zen/x-preview-f-free` 当前可用，并确认父任务与第三方子任务的传输兼容性。然后将 `config/agents/ox.toml.disabled` 复制为 `$CODEX_HOME/agents/ox.toml`。该操作只注册角色；除非另行修改路由策略，否则 Dynamic Workflow 仍默认使用 Luna。
+
 ## 版本与安装
 
 当前人工可读版本只来自 `skill/VERSION`。文件接受 `MAJOR.MINOR.PATCH` 或 `MAJOR.MINOR.PATCH-rc.N`。需要下一个版本时单独执行：
