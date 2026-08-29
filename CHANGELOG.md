@@ -8,12 +8,18 @@
 
 - Agent Fleet v1：独立 `fleet-plan` / `fleet-run` / `fleet-status` package runtime，exact 4–12 个 fresh read-only Luna；每个规模均含 discovery、challenge 与 reproduction，宿主构建 finding graph，不采用多数投票，并按语义证据 zero-or-one 调用 fresh Sol/xhigh。
 - 七个只读 preset：`adversarial-review`、`competing-hypotheses`、`architecture-council`、`security-red-blue`、`test-matrix`、`repository-audit` 与 `research-synthesis`。
+- 新增唯一人工可读版本源 `skill/VERSION`，以及独立的 `version-bump` 命令；支持默认升级与显式 `--prerelease`、`--release`、`--patch`、`--minor`、`--major`，但不自动 commit、tag 或 release。
+- 新增个人安装管理模块与 `install-plan`、`install-apply`、`install-status`、`install-rollback`：记录 `skill_version`、source commit/dirty state、逐文件 SHA-256、active manifest 和 before backup，并对 managed drift 与路径 reparse fail closed。
+- 新增个人运维说明和功能模块地图，记录当前功能边界与明确排除项。
+- 新增固定 active transaction pointer：中断的 apply 由现有 `install-rollback` 恢复到 before 状态，中断的 rollback 可用同一 install ID 续跑。
 - Worktree Writer v2：固定 `Sol / gpt-5.6-sol / high` Writer，并把精确 route、package version 与硬预算绑定到 plan、authorization、lock、checkpoint、candidate package 和 candidate revision。
 - Package v2：强制 digest-bound `acceptance_criteria`、`constraints`、`non_goals`、`behavior` 与 `implementation_context`；v2 runtime 不再接受 package v1。
 - 固定 Writer route 与机器策略的一致性检查，以及 route-binding、quality-context 和 revision 篡改回归测试。
 
 ### Changed
 
+- 持久化安装路径只接受规范 POSIX 相对路径；Windows 上 case-only target collision 在写入前 fail closed。
+- 个人安装历史精简为只保留紧邻上一状态的一份 rollback snapshot；成功回退后不允许继续链式回退，后续安装再建立新的单步 snapshot。
 - 将 Dynamic Workflow 默认入口改为轻量 `Simple Swarm`：隐式触发至少需要两个窄而不重叠的分支，默认 2–6 个 child，root 不重复活跃分支。
 - 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；Worktree Writer v2 保持为显式授权模式，只接受 package v2。
 - 简化 read-only child packet、等待策略和结果采用规则，避免宽工作包、无限 wait 和为编排而编排。

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Mapping, MutableMapping
 
 APP_DIR_NAME = "codex-dynamic-workflow"
+CODEX_HOME_ENV = "CODEX_HOME"
 STATE_HOME_ENV = "DYNWF_HOME"
 RUNS_ROOT_ENV = "DYNWF_RUNS_ROOT"
 WORKTREE_ROOT_ENV = "DYNWF_WORKTREE_ROOT"
@@ -21,6 +22,20 @@ WORKTREE_ROOT_ENV = "DYNWF_WORKTREE_ROOT"
 
 def _expanded(value: str | os.PathLike[str]) -> Path:
     return Path(value).expanduser()
+
+
+def default_codex_home(
+    env: Mapping[str, str] | None = None,
+    *,
+    home: Path | None = None,
+) -> Path:
+    """Return the effective Codex home without creating it."""
+
+    env = os.environ if env is None else env
+    home = Path.home() if home is None else home
+    if configured := env.get(CODEX_HOME_ENV):
+        return _expanded(configured)
+    return home / ".codex"
 
 
 def default_state_root(

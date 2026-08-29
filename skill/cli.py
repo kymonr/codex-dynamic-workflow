@@ -18,12 +18,17 @@ apply_runtime_defaults()
 
 
 def _main(package_module: str, direct_module: str) -> Callable[[list[str]], int]:
+    primary, fallback = (
+        (package_module, direct_module)
+        if __package__
+        else (direct_module, package_module)
+    )
     try:
-        module = importlib.import_module(package_module)
+        module = importlib.import_module(primary)
     except ModuleNotFoundError as exc:
-        if exc.name not in {"skill", package_module}:
+        if exc.name not in {"skill", primary}:
             raise
-        module = importlib.import_module(direct_module)
+        module = importlib.import_module(fallback)
     return module.main
 
 
@@ -59,6 +64,15 @@ def main(argv: list[str] | None = None) -> int:
         "writer-cleanup",
     }:
         return _main("skill.writer_cli", "writer_cli")(arguments)
+
+    if arguments and arguments[0] in {
+        "version-bump",
+        "install-plan",
+        "install-apply",
+        "install-status",
+        "install-rollback",
+    }:
+        return _main("skill.install_cli", "install_cli")(arguments)
 
     return _main("skill.runner", "runner")(arguments)
 
