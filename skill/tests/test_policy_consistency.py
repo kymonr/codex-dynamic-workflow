@@ -59,6 +59,27 @@ class PolicyConsistencyTests(unittest.TestCase):
             errors,
         )
 
+    def test_writer_route_drift_fails_machine_contract_check(self) -> None:
+        policy = checker._load_toml(ROOT / "config" / "workflow-policy.toml")
+        mutations = (
+            ("default_native_writer_route", None, "luna"),
+            ("explicit_native_model_precedence", None, False),
+            ("routes", "luna", "read_only"),
+            ("explicit_grok_task", "writer", True),
+        )
+        for section, key, value in mutations:
+            with self.subTest(section=section, key=key):
+                drifted = copy.deepcopy(policy)
+                if key is None:
+                    drifted[section] = value
+                elif section == "routes":
+                    drifted[section][key]["access"] = value
+                else:
+                    drifted[section][key] = value
+                errors: list[str] = []
+                checker._validate_writer_routing(drifted, errors)
+                self.assertTrue(errors)
+
     def test_agent_fleet_policy_drift_fails_machine_contract_check(self) -> None:
         policy = checker._load_toml(
             ROOT / "config" / "agent-fleet-policy.toml"

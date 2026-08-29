@@ -35,11 +35,11 @@ Writer only when explicitly authorized
 ## 当前路由
 
 - Spark / Explorer：窄而明确、低风险、可本地核对的只读调查。
-- Luna：普通委派任务，以及用户已明确授权的边界清晰 scoped writing。
-- Sol：复杂、跨模块、高影响、架构/安全判断或最终技术判断。
-- Grok：不属于 native subagent 路由，也不是自动 fallback；只有用户明确要求时才创建独立可见的 Grok 对话任务。
+- Luna：默认处理普通只读委派任务；用户显式指定 Luna 写入时，可作为唯一 scoped writer。
+- Sol：默认处理 native / delegated 写入，以及复杂、跨模块、高影响、架构/安全判断或最终技术判断。
+- Grok：不属于 native subagent 路由，也不是 writer、native reviewer 或自动 fallback；只有用户明确要求时，才在 candidate 冻结后创建独立可见的只读二审对话任务。
 
-Simple Swarm 禁止嵌套委派，默认只允许一个 native writer。Grok 与 native writer 并发写入时，必须使用独立 worktree，并给双方互斥、封闭的 `owned_targets`。
+Simple Swarm 禁止嵌套委派，最多只允许一个 native writer。默认 writer 是 Sol；用户显式指定受支持的 native 模型时优先，显式 Luna 可承担 scoped writing。Grok 始终没有写入权限。
 
 机器可读的角色、Simple Swarm、资源限制与路径合同位于 `config/workflow-policy.toml`；Agent Fleet 的 package、4–12 阶段、固定 Luna/Sol 路由与完整性边界位于 `config/agent-fleet-policy.toml`；Worktree Writer 合同位于 `config/worktree-writer-policy.toml`。三者都由一致性检查核对运行时代码。
 
@@ -146,11 +146,11 @@ docs/module-map.md               功能模块地图与明确排除项
 
 完整职责边界见 `docs/module-map.md`。
 
-`config/agents/grok_writer.toml.disabled` 仅作为停用状态的历史参考，不应复制或重命名为启用的 `.toml`。
+`config/agents/grok_writer.toml.disabled` 仅作为停用状态的历史参考，不应复制、重命名或启用。显式 Grok 二审通过独立可见的只读对话任务完成，不使用该角色文件。
 
 `config/agents/ox.toml.disabled` 仅作为停用状态的参考，不会被 Codex 自动加载。
 
-如需重新创建 Ox 角色，先确认 `opencode-zen/x-preview-f-free` 当前可用，并确认父任务与第三方子任务的传输兼容性。然后将 `config/agents/ox.toml.disabled` 复制为 `$CODEX_HOME/agents/ox.toml`。该操作只注册角色；除非另行修改路由策略，否则 Dynamic Workflow 仍默认使用 Luna。
+如需重新创建 Ox 角色，先确认 `opencode-zen/x-preview-f-free` 当前可用，并确认父任务与第三方子任务的传输兼容性。然后将 `config/agents/ox.toml.disabled` 复制为 `$CODEX_HOME/agents/ox.toml`。该操作只注册角色；除非另行修改路由策略，否则 Dynamic Workflow 的普通只读委派仍使用 Luna，未显式指定 native 模型的 delegated 写入仍使用 Sol。
 
 ## 版本与安装
 

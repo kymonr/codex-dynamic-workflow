@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the explicit 4–12 Luna Agent Fleet for adversarial review, test matrices, repository audits, architecture councils, or competing hypotheses. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Prefer Luna for ordinary delegated work and Sol for complex or high-impact branches. Grok remains outside native routing unless the user explicitly requests a separate visible task.
+description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the explicit 4–12 Luna Agent Fleet for adversarial review, test matrices, repository audits, architecture councils, or competing hypotheses. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Use Luna for ordinary read-only work and explicitly user-selected scoped writing; use Sol as the default writer and for complex or high-impact branches. Grok is only an explicitly requested separate visible read-only second review after candidate freeze.
 ---
 
 # Dynamic Workflow
@@ -47,7 +47,7 @@ Rules:
 - Avoid substantial file or responsibility overlap.
 - The root must not duplicate an active child’s investigation. It may handle integration, uncovered scope, conflict resolution, and independent acceptance checks.
 - Simple Swarm forbids nested delegation. Re-split at the root if a child needs internal orchestration.
-- Read-only is the default. If the user explicitly asks for implementation, allow at most one active native writer.
+- Read-only is the default. If the user explicitly asks for implementation, allow at most one active native writer. Use Sol by default; an explicit supported native model selection takes precedence, so the user may select Luna as the scoped writer.
 - Do not create Workflow IR, checkpoints, Human Gates, bounded loops, formal evidence packages, or Worktree Writer runs for ordinary Simple Swarm work.
 - Use one bounded wait. After one timeout, request one partial result or progress signal. After a second bounded wait without useful delivery, close and re-split or return the scope to root if the branch blocks completion.
 - Every child result must be adopted, partially adopted, not adopted, failed, or cancelled. Agent count alone is not success.
@@ -92,9 +92,9 @@ Writer Workflow never implies commit, push, merge, release, deploy, cleanup, or 
 
 - **Explorer** — one concrete, bounded, read-only codebase question with local verification.
 - **Spark** — short, mechanical, low-risk, read-only work.
-- **Luna** — ordinary read-only analysis and ordinary scoped implementation.
-- **Sol** — complex cross-module reasoning, architecture, security, high-impact changes, difficult rollback, or final technical judgment.
-- **Grok** — never a native route or automatic fallback. Only a user-requested separate visible task follows [references/grok-thread.md](references/grok-thread.md).
+- **Luna** — ordinary read-only analysis, inspection, review, planning, and verification; scoped writing only when the user explicitly selects Luna.
+- **Sol** — the default native/delegated writer, plus complex cross-module reasoning, architecture, security, high-impact changes, difficult rollback, or final technical judgment.
+- **Grok** — never a native route, writer, native reviewer, fallback, or recovery node. Only a user-requested separate visible read-only second review after candidate freeze follows [references/grok-thread.md](references/grok-thread.md).
 
 Assess complexity per branch, not by repository size, file count, or total number of lanes.
 

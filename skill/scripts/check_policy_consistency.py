@@ -125,6 +125,51 @@ def _validate_roles(root: Path, policy: dict[str, Any], errors: list[str]) -> No
                 )
 
 
+def _validate_writer_routing(policy: dict[str, Any], errors: list[str]) -> None:
+    if policy.get("single_native_writer") is not True:
+        errors.append("Dynamic Workflow must keep one native writer")
+    if policy.get("default_native_writer_route") != "sol":
+        errors.append("Dynamic Workflow default native writer route must be sol")
+    if policy.get("explicit_native_model_precedence") is not True:
+        errors.append("explicit supported native model selection must take precedence")
+    if policy.get("native_grok_route") is not False:
+        errors.append("Grok must remain outside native routing")
+
+    routes = policy.get("routes")
+    if not isinstance(routes, dict):
+        return
+    luna = routes.get("luna")
+    sol = routes.get("sol")
+    if (
+        not isinstance(luna, dict)
+        or luna.get("access") != "read_or_explicit_scoped_writer"
+    ):
+        errors.append("Luna route must allow only explicit scoped writing")
+    if not isinstance(sol, dict) or sol.get("access") != "read_or_scoped_writer":
+        errors.append("Sol route must own native delegated writes")
+
+    grok = policy.get("explicit_grok_task")
+    expected_grok = {
+        "enabled": True,
+        "native": False,
+        "purpose": "second_review",
+        "access": "read_only",
+        "writer": False,
+        "native_reviewer": False,
+        "fallback": False,
+        "recovery": False,
+        "requires_explicit_user_request": True,
+        "requires_separate_visible_task": True,
+        "requires_frozen_candidate": True,
+    }
+    if not isinstance(grok, dict):
+        errors.append("explicit Grok second-review policy is missing")
+    else:
+        for key, expected in expected_grok.items():
+            if grok.get(key) != expected:
+                errors.append(f"explicit Grok task {key} must be {expected!r}")
+
+
 def _validate_runtime_contract(root: Path, policy: dict[str, Any], errors: list[str]) -> None:
     for relative in REQUIRED_RUNTIME_FILES:
         if not (root / relative).is_file():
@@ -675,6 +720,7 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
     if policy.get("workflow_name") != "dynamic-workflow":
         errors.append("workflow_name must be dynamic-workflow")
 
+    _validate_writer_routing(policy, errors)
     _validate_roles(root, policy, errors)
 
     enabled_grok = root / "config" / "agents" / "grok_writer.toml"

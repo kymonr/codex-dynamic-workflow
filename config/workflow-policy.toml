@@ -3,6 +3,8 @@ workflow_name = "dynamic-workflow"
 default_shape = "simple_swarm"
 allow_implicit_invocation = true
 single_native_writer = true
+default_native_writer_route = "sol"
+explicit_native_model_precedence = true
 native_grok_route = false
 
 [simple_swarm]
@@ -58,7 +60,7 @@ agent_type = "luna"
 model = "gpt-5.6-luna"
 effort = "max"
 tier = "fast"
-access = "read_or_scoped_writer"
+access = "read_or_explicit_scoped_writer"
 max_nested_depth = 0
 
 [routes.sol]
@@ -82,8 +84,15 @@ max_nested_depth = 0
 enabled = true
 native = false
 model = "xai/grok-4.6"
+purpose = "second_review"
+access = "read_only"
+writer = false
+native_reviewer = false
+fallback = false
+recovery = false
 requires_explicit_user_request = true
 requires_separate_visible_task = true
+requires_frozen_candidate = true
 
 [workflow_ir.control_flow]
 trusted_runtime = true
