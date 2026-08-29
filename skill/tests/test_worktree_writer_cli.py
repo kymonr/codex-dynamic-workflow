@@ -13,7 +13,7 @@ if str(SKILL) not in sys.path:
     sys.path.insert(0, str(SKILL))
 
 import writer_cli
-import cli
+import skill.cli as portable_cli
 
 
 class WriterCliTests(unittest.TestCase):
@@ -67,8 +67,12 @@ class WriterCliTests(unittest.TestCase):
         self.assertEqual(code, 2)
 
     def test_portable_cli_routes_writer_commands(self) -> None:
-        with mock.patch.object(writer_cli, "main", return_value=17) as routed:
-            self.assertEqual(cli.main(["writer-status", "--run-dir", "x"]), 17)
+        routed = mock.Mock(return_value=17)
+        with mock.patch.object(portable_cli, "_main", return_value=routed) as loader:
+            self.assertEqual(
+                portable_cli.main(["writer-status", "--run-dir", "x"]), 17
+            )
+        loader.assert_called_once_with("skill.writer_cli", "writer_cli")
         routed.assert_called_once_with(["writer-status", "--run-dir", "x"])
 
     def test_unknown_arguments_fail_in_argparse(self) -> None:

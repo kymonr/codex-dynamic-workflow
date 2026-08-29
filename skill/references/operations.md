@@ -60,6 +60,10 @@ and therefore do not create task directories.
 
 Replace the example `workdir` with one deliberately sanitized repository before running it. Only complete Bounded Loop v1 instances are executable; legacy `loop` declarations remain instance-level validated-only and are explicitly rejected. A declared `workflow_timeout_seconds` is an absolute deadline that survives resume and includes human-gate pause time.
 
+## Agent Fleet operations
+
+Agent Fleet has its own package lifecycle: `fleet-plan` freezes and previews the candidate without model calls or run-directory writes; `fleet-run` creates revision-bound evidence and conditionally invokes one Sol arbiter; `fleet-status` performs zero-model integrity reconstruction. It does not use `plan-ir`, `run-ir`, or `resume-ir`.
+
 ## Run status
 
 Inspect a Workflow IR v3 run without advancing it:

@@ -69,6 +69,10 @@ directories, attempts, or artifacts. Branch finalizers only consume their own
 selected record. `repo-sweep` omits a separate finalizer so its worst-case
 static + map + verify projection remains exactly 24 claims.
 
+## Agent Fleet relation
+
+Static Workflow IR presets keep fixed graphs and budgets. Exact 4–12 fresh-Luna adversarial panels use the separate `fleet-plan` / `fleet-run` / `fleet-status` package runtime. Agent Fleet does not replace existing preset names or silently reinterpret `ultra-review`.
+
 ## Current scope
 
 These presets use only the currently executable read-only node kinds:

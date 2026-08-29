@@ -59,6 +59,21 @@ class PolicyConsistencyTests(unittest.TestCase):
             errors,
         )
 
+    def test_agent_fleet_policy_drift_fails_machine_contract_check(self) -> None:
+        policy = checker._load_toml(
+            ROOT / "config" / "agent-fleet-policy.toml"
+        )["agent_fleet"]
+        drifted = copy.deepcopy(policy)
+        drifted["maximum_agents"] = 11
+        errors: list[str] = []
+        checker._validate_agent_fleet_policy(
+            ROOT, errors, policy_override=drifted
+        )
+        self.assertIn(
+            "Agent Fleet maximum_agents disagrees with runtime",
+            errors,
+        )
+
     def test_capability_surfaces_require_instance_level_loop_qualifier(self) -> None:
         policy = checker._load_toml(ROOT / "config" / "workflow-policy.toml")
         matrix = checker._expected_capability_matrix(policy)

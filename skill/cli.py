@@ -3,44 +3,59 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
+from collections.abc import Callable
 
-from platform_paths import apply_runtime_defaults, configure_utf8_stdio
+try:
+    from skill.platform_paths import apply_runtime_defaults, configure_utf8_stdio
+except ModuleNotFoundError as exc:
+    if exc.name != "skill":
+        raise
+    from platform_paths import apply_runtime_defaults, configure_utf8_stdio
 
 apply_runtime_defaults()
+
+
+def _main(package_module: str, direct_module: str) -> Callable[[list[str]], int]:
+    primary, fallback = (
+        (package_module, direct_module)
+        if __package__
+        else (direct_module, package_module)
+    )
+    try:
+        module = importlib.import_module(primary)
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"skill", primary}:
+            raise
+        module = importlib.import_module(fallback)
+    return module.main
 
 
 def main(argv: list[str] | None = None) -> int:
     configure_utf8_stdio()
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments and arguments[0] in {"run-ir", "resume-ir"}:
-        from ir_runner import main as ir_main
 
-        return ir_main(arguments)
+    if arguments and arguments[0] in {"fleet-plan", "fleet-run", "fleet-status"}:
+        return _main("skill.fleet_cli", "fleet_cli")(arguments)
+    if arguments and arguments[0] in {"run-ir", "resume-ir"}:
+        return _main("skill.ir_runner", "ir_runner")(arguments)
     if arguments and arguments[0] in {
         "condition-evaluate",
         "gate-status",
         "gate-decide",
     }:
-        from gate_cli import main as gate_main
-
-        return gate_main(arguments)
+        return _main("skill.gate_cli", "gate_cli")(arguments)
     if arguments and arguments[0] in {"plan-ir", "run-status"}:
-        from ops_cli import main as ops_main
-
-        return ops_main(arguments)
+        return _main("skill.ops_cli", "ops_cli")(arguments)
     if arguments and arguments[0] in {"preset-list", "preset-ir"}:
-        from swarm_presets import main as preset_main
-
-        return preset_main(arguments)
+        return _main("skill.swarm_presets", "swarm_presets")(arguments)
     if arguments and arguments[0] in {
         "auto-plan-contract",
         "auto-plan-apply",
         "auto-plan",
     }:
-        from auto_planner import main as auto_plan_main
-
-        return auto_plan_main(arguments)
+        return _main("skill.auto_planner", "auto_planner")(arguments)
     if arguments and arguments[0] in {
         "writer-plan",
         "writer-run",
@@ -48,9 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         "writer-export",
         "writer-cleanup",
     }:
-        from writer_cli import main as writer_main
+        return _main("skill.writer_cli", "writer_cli")(arguments)
 
-        return writer_main(arguments)
     if arguments and arguments[0] in {
         "version-bump",
         "install-plan",
@@ -58,13 +72,9 @@ def main(argv: list[str] | None = None) -> int:
         "install-status",
         "install-rollback",
     }:
-        from install_cli import main as install_main
+        return _main("skill.install_cli", "install_cli")(arguments)
 
-        return install_main(arguments)
-
-    from runner import main as legacy_main
-
-    return legacy_main(arguments)
+    return _main("skill.runner", "runner")(arguments)
 
 
 if __name__ == "__main__":

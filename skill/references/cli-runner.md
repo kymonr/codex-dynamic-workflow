@@ -108,6 +108,18 @@ python "$env:CODEX_HOME\skills\dynamic-workflow\cli.py" resume `
 
 The runner refuses a checkpoint whose plan digest differs from the current resolved spec. Previously successful nodes are reused through their artifact references. A node recorded as `running` at interruption is requeued only by the explicit `resume` command, receives a new attempt directory, and preserves the earlier artifacts and event history.
 
+## Agent Fleet package commands
+
+Agent Fleet is not compiled into Workflow IR. Its separate read-only package runtime exposes only:
+
+```powershell
+python skill\cli.py fleet-plan --package fleet.json --repository D:\repo --expected-package-digest <digest>
+python skill\cli.py fleet-run --package fleet.json --repository D:\repo --expected-package-digest <digest> --ack-read-only-agent-fleet
+python skill\cli.py fleet-status --run-dir <run-directory>
+```
+
+`fleet-plan` is zero-model and zero-write. `fleet-run` performs fixed verification before dispatching 4–12 fresh Luna processes, then host-mediated challenge/reproduction and conditional one-shot Sol arbitration. `fleet-status` reconstructs evidence without calling a model.
+
 ## Workflow IR v3 preparation
 
 `validate-ir` validates the declaration format without starting a model call:

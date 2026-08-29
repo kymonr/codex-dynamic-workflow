@@ -1,0 +1,129 @@
+# Agent Fleet v1 is a separate explicit/advanced read-only orchestration mode.
+# It is not Simple Swarm and does not grant repository write authority.
+
+[agent_fleet]
+runtime_version = 1
+explicit_or_advanced_only = true
+minimum_agents = 4
+default_agents = 6
+maximum_agents = 12
+direct_agent_messages = false
+majority_vote = false
+automatic_retry = false
+automatic_write = false
+automatic_commit = false
+automatic_push = false
+automatic_merge = false
+automatic_release = false
+automatic_deploy = false
+
+[agent_fleet.package]
+version = 1
+closed_schema = true
+canonical_digest = "sha256-canonical-json"
+model_selectable = false
+max_inline_context_bytes = 12582912
+risk_tags = [
+  "concurrency",
+  "credentials",
+  "integrity",
+  "migration",
+  "performance",
+  "permissions",
+  "persistence",
+  "platform",
+  "public-api",
+  "recovery",
+  "release",
+  "sandbox",
+  "schema",
+  "security",
+  "state-machine",
+]
+
+[agent_fleet.luna]
+role = "luna"
+model = "gpt-5.6-luna"
+effort = "max"
+tier = "fast"
+sandbox = "read-only"
+fresh = true
+attempts = 1
+retry = 0
+nested_agents = 0
+network = false
+shell_tool = false
+code_mode = false
+
+[agent_fleet.sol_arbiter]
+role = "fleet_sol_arbiter"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+tier = "inherit"
+sandbox = "read-only"
+fresh = true
+conditional = true
+attempts = 1
+retry = 0
+nested_agents = 0
+write_authority = false
+
+[agent_fleet.phases]
+order = ["discovery", "challenge", "reproduction", "host-aggregation", "conditional-sol"]
+minimum_discovery_agents = 2
+maximum_discovery_agents = 8
+minimum_challenge_agents = 1
+maximum_challenge_agents = 2
+minimum_reproduction_agents = 1
+maximum_reproduction_agents = 2
+proposer_may_self_challenge = false
+proposer_may_self_reproduce = false
+
+[agent_fleet.findings]
+max_findings_per_record = 16
+max_graph_findings = 128
+
+[agent_fleet.presets]
+values = [
+  "adversarial-review",
+  "architecture-council",
+  "competing-hypotheses",
+  "repository-audit",
+  "research-synthesis",
+  "security-red-blue",
+  "test-matrix",
+]
+
+[agent_fleet.escalation]
+mandatory_risk_tags = [
+  "concurrency",
+  "credentials",
+  "integrity",
+  "migration",
+  "permissions",
+  "persistence",
+  "public-api",
+  "recovery",
+  "release",
+  "sandbox",
+  "schema",
+  "security",
+  "state-machine",
+]
+triggers = [
+  "accepted-blocker",
+  "agent-unknown",
+  "finding-conflict",
+  "finding-unresolved",
+  "high-risk-scope",
+]
+
+[agent_fleet.evidence]
+candidate_revision = "sha256-canonical-json"
+manifest_sha256 = true
+bind_process_identity = true
+bind_process_output_digest = true
+rebuild_findings_on_status = true
+recompute_escalation_on_status = true
+require_live_candidate_match = true
+observed_sandbox = "unknown"

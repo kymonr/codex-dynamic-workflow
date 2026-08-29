@@ -52,6 +52,12 @@ Tell the writer unrelated edits may exist and must be preserved. Only one native
 
 Worktree Writer v2 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v2.md](worktree-writer-v2.md). It accepts package v2 only and uses one host-fixed Sol/high Writer; the v1 contract is historical.
 
+## Agent Fleet packet
+
+Agent Fleet uses a closed JSON package rather than a free-form Workflow IR declaration. Root supplies one preset, objective, acceptance criteria, scope, exclusions, exact 4–12 agent count, frozen repository identity/HEAD/changed-file set, risk tags, fixed verification commands, and resource limits.
+
+The package cannot select model, effort, tier, sandbox, retry, write authority, or direct messages. Every supported size includes discovery, challenge, and reproduction. Stage records bind the candidate revision and `effects=[]`; challenge/reproduction records must cover all assigned finding IDs exactly once. Invalid execution evidence returns root rather than invoking Sol.
+
 ## Managed Workflow packet
 
 When Managed Workflow is selected, use its Workflow IR, CLI runner, DAG, Human Gate, or bounded-loop contracts. Those advanced contracts do not add requirements to ordinary Simple Swarm branches.

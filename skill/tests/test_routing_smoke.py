@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,13 @@ from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "routing_smoke.py"
+
+
+def isolated_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPYCACHEPREFIX", None)
+    env.update({"PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1"})
+    return env
 
 
 def _load_smoke_module():
@@ -1150,8 +1158,11 @@ class RoutingSmokeTests(unittest.TestCase):
                     str(transcript),
                 ],
                 check=True,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                env=isolated_subprocess_env(),
+                timeout=30,
             )
         result = json.loads(completed.stdout)
         self.assertEqual(result["status"], "pass")
@@ -1163,8 +1174,11 @@ class RoutingSmokeTests(unittest.TestCase):
         completed = subprocess.run(
             [sys.executable, "-B", str(SCRIPT), "--json"],
             check=True,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            env=isolated_subprocess_env(),
+            timeout=30,
         )
         result = json.loads(completed.stdout)
         self.assertEqual(

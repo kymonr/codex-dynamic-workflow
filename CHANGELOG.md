@@ -6,6 +6,8 @@
 
 ### Added
 
+- Agent Fleet v1：独立 `fleet-plan` / `fleet-run` / `fleet-status` package runtime，exact 4–12 个 fresh read-only Luna；每个规模均含 discovery、challenge 与 reproduction，宿主构建 finding graph，不采用多数投票，并按语义证据 zero-or-one 调用 fresh Sol/xhigh。
+- 七个只读 preset：`adversarial-review`、`competing-hypotheses`、`architecture-council`、`security-red-blue`、`test-matrix`、`repository-audit` 与 `research-synthesis`。
 - 新增唯一人工可读版本源 `skill/VERSION`，以及独立的 `version-bump` 命令；支持默认升级与显式 `--prerelease`、`--release`、`--patch`、`--minor`、`--major`，但不自动 commit、tag 或 release。
 - 新增个人安装管理模块与 `install-plan`、`install-apply`、`install-status`、`install-rollback`：记录 `skill_version`、source commit/dirty state、逐文件 SHA-256、active manifest 和 before backup，并对 managed drift 与路径 reparse fail closed。
 - 新增个人运维说明和功能模块地图，记录当前功能边界与明确排除项。

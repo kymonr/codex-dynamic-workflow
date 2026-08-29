@@ -28,6 +28,7 @@ Writer only when explicitly authorized
 ## 高级模式按需开启
 
 - **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、长时间恢复或可复现运行产物时才启用。
+- **Agent Fleet**：用户明确要求 4–12 个相互质疑的只读子代理、对抗审核、测试矩阵、仓库深审、架构委员会或竞争假设时启用。每个规模都包含 discovery、challenge 与 reproduction；宿主按 finding graph 聚合，不采用多数投票，并仅在语义证据需要时调用一个 fresh Sol/xhigh。
 - **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。v2 只接受含验收、约束、非目标、行为和实现上下文的 package v2，并固定使用 Sol/high Writer；随后由 fresh read-only Sol/xhigh reviewer 审核。CLI 和 package 都不能选择或降级 Writer。
 - **Independent Review**：只有用户明确要求独立、全新、第二方或最终验收时才创建 dedicated reviewer。
 
@@ -40,7 +41,7 @@ Writer only when explicitly authorized
 
 Simple Swarm 禁止嵌套委派，默认只允许一个 native writer。Grok 与 native writer 并发写入时，必须使用独立 worktree，并给双方互斥、封闭的 `owned_targets`。
 
-机器可读的角色、Simple Swarm 限制、资源限制与路径合同位于 `config/workflow-policy.toml`；Worktree Writer profile、package version、预算与 reviewer 合同位于 `config/worktree-writer-policy.toml`。两者都由一致性检查核对运行时代码。
+机器可读的角色、Simple Swarm、资源限制与路径合同位于 `config/workflow-policy.toml`；Agent Fleet 的 package、4–12 阶段、固定 Luna/Sol 路由与完整性边界位于 `config/agent-fleet-policy.toml`；Worktree Writer 合同位于 `config/worktree-writer-policy.toml`。三者都由一致性检查核对运行时代码。
 
 ## 执行路径
 
@@ -87,6 +88,26 @@ py -3.12 skill\cli.py resume `
 
 所有成功结果都会生成 SHA-256 内容寻址 artifact。小结果仍可内联；超过累计 inline budget 时，下游只收到带摘要、哈希和精确只读路径的 `UPSTREAM_ARTIFACT_REFERENCE`，避免重复复制大对象。
 
+## Agent Fleet v1
+
+Agent Fleet 是独立于 Workflow IR 的显式只读 package runtime。先冻结 live Git candidate 并运行固定验证，再调度 4–12 个 fresh Luna：
+
+```text
+discovery → challenge → reproduction → host finding graph
+                                  ├─ clean / only P3 → accept
+                                  └─ blocker / conflict / UNKNOWN / high risk → one fresh Sol/xhigh
+```
+
+每个 challenge 与 reproduction 记录必须恰好覆盖宿主分配的全部 finding。代理 identity、candidate revision、effects、schema 或证据完整性无效时直接 fail closed 返回 root；Sol 不作为执行失败兜底。
+
+```powershell
+python skill\cli.py fleet-plan --package fleet.json --repository D:\repo --expected-package-digest <digest>
+python skill\cli.py fleet-run --package fleet.json --repository D:\repo --expected-package-digest <digest> --ack-read-only-agent-fleet
+python skill\cli.py fleet-status --run-dir <run-directory>
+```
+
+完整合同与用法见 `skill/references/agent-fleet-v1.md` 和 `skill/references/agent-fleet-usage.md`.
+
 ## Workflow IR v3
 
 仓库已加入声明式 Workflow IR v3 基础：
@@ -101,6 +122,7 @@ py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
 
 ```text
 config/workflow-policy.toml      机器可读路由、限制与路径合同
+config/agent-fleet-policy.toml   Agent Fleet package、路由与完整性合同
 config/worktree-writer-policy.toml Worktree Writer v2 profile 与安全合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
@@ -108,6 +130,8 @@ skill/VERSION                    人工可读的严格语义版本
 skill/versioning.py              显式版本递增与原子 VERSION 更新
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
 skill/references/simple-swarm.md 默认轻量多代理合同
+skill/references/agent-fleet-v1.md 4–12 Agent Fleet 可信合同
+skill/fleet_runtime.py           Agent Fleet package runtime
 skill/cli.py                     跨平台 CLI 入口
 skill/install_cli.py             个人版本与安装管理 CLI
 skill/installation/              安装合同、安全文件操作、计划、状态与单步回滚
