@@ -6,16 +6,16 @@
 
 ### Added
 
-- Worktree Writer v2：可信 `bounded-luna` 与 `complex-sol` profile 注册表；profile 由宿主显式选择并绑定到 plan、authorization、lock、checkpoint、candidate package 和 candidate revision。
-- Package v2：增加 digest-bound `acceptance_criteria`、`constraints`、`non_goals`、`behavior` 与 `implementation_context`；`complex-sol` 只接受 v2。
-- Writer profile 与机器策略的一致性检查，以及 profile/quality-context/revision 篡改回归测试。
+- Worktree Writer v2：固定 `Sol / gpt-5.6-sol / high` Writer，并把精确 route、package version 与硬预算绑定到 plan、authorization、lock、checkpoint、candidate package 和 candidate revision。
+- Package v2：强制 digest-bound `acceptance_criteria`、`constraints`、`non_goals`、`behavior` 与 `implementation_context`；v2 runtime 不再接受 package v1。
+- 固定 Writer route 与机器策略的一致性检查，以及 route-binding、quality-context 和 revision 篡改回归测试。
 
 ### Changed
 
 - 将 Dynamic Workflow 默认入口改为轻量 `Simple Swarm`：隐式触发至少需要两个窄而不重叠的分支，默认 2–6 个 child，root 不重复活跃分支。
-- 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；将 Worktree Writer v2 保持为显式授权模式，并把 package v1 限制为默认 `bounded-luna` 输入兼容。
+- 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；Worktree Writer v2 保持为显式授权模式，只接受 package v2。
 - 简化 read-only child packet、等待策略和结果采用规则，避免宽工作包、无限 wait 和为编排而编排。
-- 将 Luna Writer 收紧为最多两个 owned targets 的低风险 bounded profile；复杂但仍可隔离的跨模块行为修改改用显式 Sol Writer，仍保持单 attempt、无 retry、无自动 apply。
+- 取消 Writer profile 选择，统一使用 Sol/high Writer；仍保持单 attempt、无 retry、无自动 apply，并以 8 个 owned targets / changed files 为硬上限。
 
 ## [1.0.0-rc.1] - 2026-08-28
 

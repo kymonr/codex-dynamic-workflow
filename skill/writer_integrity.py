@@ -32,9 +32,9 @@ try:
     from skill.writer_process import (
         REVIEWER_ROUTE,
         WriterProcessError,
-        resolve_writer_profile,
-        validate_writer_profile_package,
-        writer_profile_record,
+        WRITER_ROUTE,
+        validate_writer_package,
+        writer_binding_record,
     )
     from skill.writer_review import (
         REVIEWER_AGENT_TYPE,
@@ -64,9 +64,9 @@ except ModuleNotFoundError:
     from writer_process import (
         REVIEWER_ROUTE,
         WriterProcessError,
-        resolve_writer_profile,
-        validate_writer_profile_package,
-        writer_profile_record,
+        WRITER_ROUTE,
+        validate_writer_package,
+        writer_binding_record,
     )
     from writer_review import (
         REVIEWER_AGENT_TYPE,
@@ -99,7 +99,7 @@ CHECKPOINT_KEYS = frozenset(
         "created_at",
         "finished_at",
         "package_digest",
-        "writer_profile",
+        "writer_binding",
         "canonical_repository",
         "worktree_path",
         "lock_path",
@@ -137,7 +137,7 @@ CANDIDATE_PACKAGE_KEYS = frozenset(
         "package_name",
         "objective",
         "quality_context",
-        "writer_profile",
+        "writer_binding",
         "repository_full_name",
         "base",
         "worktree",
@@ -234,7 +234,7 @@ LOCK_KEYS = frozenset(
         "pid",
         "package_version",
         "package_digest",
-        "writer_profile",
+        "writer_binding",
         "repository",
         "repository_full_name",
         "created_at",
@@ -282,19 +282,21 @@ def _hex64(value: Any, *, where: str) -> str:
     return value
 
 
-def _validated_writer_profile(value: Any, package: WriterPackage) -> Any:
+def _validated_writer_binding(
+    value: Any, package: WriterPackage
+) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise WriterIntegrityError("writer profile record must be an object")
-    profile_id = value.get("profile_id")
+        raise WriterIntegrityError("writer binding record must be an object")
     try:
-        profile = resolve_writer_profile(profile_id)
-        validate_writer_profile_package(profile, package)
+        validate_writer_package(package)
     except WriterProcessError as exc:
         raise WriterIntegrityError(str(exc)) from exc
-    expected = writer_profile_record(profile)
+    expected = writer_binding_record()
     if value != expected:
-        raise WriterIntegrityError("writer profile record does not match trusted registry")
-    return profile
+        raise WriterIntegrityError(
+            "writer binding record does not match the trusted fixed route"
+        )
+    return expected
 
 
 def _strict_regular_file(path: Path, *, label: str, maximum: int | None = None) -> Path:
@@ -587,7 +589,7 @@ def _validate_candidate(
     effect_manifest: Mapping[str, Any],
     writer: Mapping[str, Any],
     verification_results: Sequence[Mapping[str, Any]],
-    writer_profile: Mapping[str, Any],
+    writer_binding: Mapping[str, Any],
 ) -> tuple[dict[str, Any], Path, Path]:
     candidate = _closed(
         checkpoint_candidate,
@@ -645,8 +647,8 @@ def _validate_candidate(
         raise WriterIntegrityError("candidate package source version mismatch")
     if value["quality_context"] != package.quality_context:
         raise WriterIntegrityError("candidate package quality context mismatch")
-    if value["writer_profile"] != writer_profile:
-        raise WriterIntegrityError("candidate package writer profile mismatch")
+    if value["writer_binding"] != writer_binding:
+        raise WriterIntegrityError("candidate package writer binding mismatch")
     for key, expected in (
         ("package_digest", package.digest),
         ("package_name", package.name),
@@ -736,7 +738,7 @@ def _validate_lock(
     checkpoint: Mapping[str, Any],
     *,
     package: WriterPackage,
-    writer_profile: Mapping[str, Any],
+    writer_binding: Mapping[str, Any],
     cleaned: bool,
 ) -> None:
     run_copy = _strict_regular_file(root / "writer-lock.json", label="writer lock copy", maximum=64 * 1024)
@@ -751,7 +753,7 @@ def _validate_lock(
         "run_id": checkpoint["run_id"],
         "package_version": package.version,
         "package_digest": package.digest,
-        "writer_profile": writer_profile,
+        "writer_binding": writer_binding,
         "repository": checkpoint["canonical_repository"],
         "repository_full_name": package.repository_full_name,
         "worktree_path": checkpoint["worktree_path"],
@@ -852,7 +854,7 @@ def validate_run_integrity(
         key: checkpoint.get(key)
         for key in (
             "runtime", "runtime_version", "run_id", "state", "terminal", "phase",
-            "created_at", "finished_at", "package_digest", "writer_profile",
+            "created_at", "finished_at", "package_digest", "writer_binding",
             "canonical_repository",
             "worktree_path", "lock_path", "writer", "effect_manifest",
             "verification_results", "candidate", "reviewer", "error", "cleanup",
@@ -868,8 +870,7 @@ def validate_run_integrity(
     package = validate_package(_strict_json(package_path, label="resolved writer package", maximum=1024 * 1024))
     if package.digest != package_digest:
         raise WriterIntegrityError("resolved writer package digest mismatch")
-    profile = _validated_writer_profile(checkpoint["writer_profile"], package)
-    profile_record = writer_profile_record(profile)
+    binding_record = _validated_writer_binding(checkpoint["writer_binding"], package)
     authorization = _strict_json(
         _strict_regular_file(root / "writer-authorization.json", label="writer authorization", maximum=1024 * 1024),
         label="writer authorization",
@@ -881,7 +882,7 @@ def validate_run_integrity(
         "authorization_version": 2,
         "package_version": package.version,
         "package_digest": package.digest,
-        "writer_profile": profile_record,
+        "writer_binding": binding_record,
         "expected_head_sha": package.expected_head_sha,
         "ack_isolated_worktree_write": True,
         "owned_targets": list(package.owned_targets),
@@ -917,11 +918,11 @@ def validate_run_integrity(
         writer = _validate_process(
             writer,
             where="writer process",
-            expected_role=profile.route.role,
-            expected_model=profile.route.model,
-            expected_effort=profile.route.effort,
-            expected_tier=profile.route.tier,
-            expected_sandbox=profile.route.sandbox,
+            expected_role=WRITER_ROUTE.role,
+            expected_model=WRITER_ROUTE.model,
+            expected_effort=WRITER_ROUTE.effort,
+            expected_tier=WRITER_ROUTE.tier,
+            expected_sandbox=WRITER_ROUTE.sandbox,
         )
     effect_manifest = checkpoint["effect_manifest"]
     if effect_manifest is not None:
@@ -957,7 +958,7 @@ def validate_run_integrity(
             effect_manifest=effect_manifest,
             writer=writer,
             verification_results=verification_results,
-            writer_profile=profile_record,
+            writer_binding=binding_record,
         )
     else:
         candidate_package = None
@@ -997,7 +998,7 @@ def validate_run_integrity(
         root,
         checkpoint,
         package=package,
-        writer_profile=profile_record,
+        writer_binding=binding_record,
         cleaned=cleanup["cleaned"],
     )
     canonical = repository_root(checkpoint["canonical_repository"])

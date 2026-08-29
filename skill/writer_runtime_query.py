@@ -135,7 +135,7 @@ def cleanup_writer(
     if (
         lock["run_id"] != expected_run_id
         or lock["package_digest"] != expected_package_digest
-        or lock["writer_profile"] != checkpoint["writer_profile"]
+        or lock["writer_binding"] != checkpoint["writer_binding"]
         or Path(lock["worktree_path"]).resolve(strict=True) != worktree
         or Path(lock["repository"]).resolve(strict=True) != canonical
     ):

@@ -11,11 +11,7 @@ import sys
 try:
     from skill.writer_contract import WriterContractError
     from skill.writer_effects import WriterEffectError
-    from skill.writer_process import (
-        DEFAULT_WRITER_PROFILE,
-        WRITER_PROFILES,
-        WriterProcessError,
-    )
+    from skill.writer_process import WriterProcessError
     from skill.writer_review import WriterReviewError
     from skill.writer_runtime import (
         WriterRuntimeError,
@@ -28,11 +24,7 @@ try:
 except ModuleNotFoundError:
     from writer_contract import WriterContractError
     from writer_effects import WriterEffectError
-    from writer_process import (
-        DEFAULT_WRITER_PROFILE,
-        WRITER_PROFILES,
-        WriterProcessError,
-    )
+    from writer_process import WriterProcessError
     from writer_review import WriterReviewError
     from writer_runtime import (
         WriterRuntimeError,
@@ -57,11 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--package", required=True)
     plan.add_argument("--repository", required=True)
     plan.add_argument("--expected-package-digest", required=True)
-    plan.add_argument(
-        "--writer-profile",
-        choices=sorted(WRITER_PROFILES),
-        default=DEFAULT_WRITER_PROFILE,
-    )
 
     run = subparsers.add_parser(
         "writer-run",
@@ -71,11 +58,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--repository", required=True)
     run.add_argument("--expected-package-digest", required=True)
     run.add_argument("--expected-head-sha", required=True)
-    run.add_argument(
-        "--writer-profile",
-        choices=sorted(WRITER_PROFILES),
-        default=DEFAULT_WRITER_PROFILE,
-    )
     run.add_argument("--run-dir", default=None)
     run.add_argument("--ack-isolated-worktree-write", action="store_true")
 
@@ -120,7 +102,6 @@ def main(argv: list[str] | None = None) -> int:
                 package_path=args.package,
                 repository=args.repository,
                 expected_package_digest=args.expected_package_digest,
-                writer_profile=args.writer_profile,
             )
         elif args.command == "writer-run":
             result = run_writer(
@@ -129,7 +110,6 @@ def main(argv: list[str] | None = None) -> int:
                 expected_package_digest=args.expected_package_digest,
                 expected_head_sha=args.expected_head_sha,
                 ack_isolated_worktree_write=args.ack_isolated_worktree_write,
-                writer_profile=args.writer_profile,
                 requested_run_dir=args.run_dir,
             )
         elif args.command == "writer-status":

@@ -31,13 +31,14 @@ class WriterPolicyConsistencyTests(unittest.TestCase):
             policy["runtime_version"], writer_runtime_base.WRITER_RUNTIME_VERSION
         )
         self.assertEqual(
-            policy["default_writer_profile"], writer_process.DEFAULT_WRITER_PROFILE
+            policy["writer_route_binding_version"],
+            writer_process.WRITER_BINDING_VERSION,
         )
         self.assertTrue(policy["explicit_cli_only"])
         self.assertTrue(policy["single_active_writer_per_repository"])
-        self.assertFalse(policy["auto_planner_activation"])
-        self.assertFalse(policy["workflow_ir_activation"])
         for key in (
+            "auto_planner_activation",
+            "workflow_ir_activation",
             "automatic_resume",
             "automatic_retry",
             "automatic_apply",
@@ -72,69 +73,45 @@ class WriterPolicyConsistencyTests(unittest.TestCase):
                 "implementation_context",
             },
         )
-        self.assertEqual(package["v1_profile_compatibility"], ["bounded-luna"])
         for key, value in self.policy["effects"].items():
             self.assertTrue(value, key)
-        self.assertTrue(self.policy["candidate"]["bind_writer_profile"])
+        self.assertTrue(self.policy["candidate"]["bind_writer_route"])
 
-    def test_writer_profiles_and_command_policy(self) -> None:
-        common = self.policy["writer"]
-        self.assertEqual(common["attempts"], 1)
-        self.assertEqual(common["retry"], 0)
-        self.assertEqual(common["upgrade"], "none")
-        self.assertEqual(common["sandbox"], "workspace-write")
-        self.assertFalse(common["network"])
-        self.assertFalse(common["shell_tool"])
-        self.assertFalse(common["code_mode"])
-        self.assertFalse(common["multi_agent"])
-
-        policy_profiles = self.policy["writer_profiles"]
-        self.assertEqual(set(policy_profiles), set(writer_process.WRITER_PROFILES))
-        for profile_id, runtime_profile in writer_process.WRITER_PROFILES.items():
-            policy = policy_profiles[profile_id]
-            self.assertEqual(policy["role"], runtime_profile.route.role)
-            self.assertEqual(policy["model"], runtime_profile.route.model)
-            self.assertEqual(policy["effort"], runtime_profile.route.effort)
-            self.assertEqual(policy.get("tier"), runtime_profile.route.tier)
-            self.assertEqual(
-                set(policy["accepted_package_versions"]),
-                set(runtime_profile.package_versions),
-            )
-            self.assertEqual(
-                policy["max_owned_targets"], runtime_profile.max_owned_targets
-            )
-            self.assertEqual(
-                policy["max_changed_files"], runtime_profile.max_changed_files
-            )
-            self.assertEqual(
-                policy["max_patch_bytes"], runtime_profile.max_patch_bytes
-            )
-            self.assertEqual(
-                policy["max_created_file_bytes"],
-                runtime_profile.max_created_file_bytes,
-            )
-            self.assertEqual(
-                policy["max_total_candidate_bytes"],
-                runtime_profile.max_total_candidate_bytes,
-            )
-            self.assertEqual(
-                policy["requires_quality_context"],
-                runtime_profile.requires_quality_context,
-            )
-            command = writer_process._build_command(
-                codex_prefix=["codex"],
-                cwd=Path("/isolated"),
-                route=runtime_profile.route,
-                schema_path=Path("/evidence/schema.json"),
-                output_path=Path("/evidence/out.json"),
-            )
-            self.assertIn("features.shell_tool=false", command)
-            self.assertIn("features.code_mode=false", command)
-            self.assertIn("features.multi_agent=false", command)
-            self.assertIn("web_search=disabled", command)
-            self.assertIn(
-                "sandbox_workspace_write.network_access=false", command
-            )
+    def test_fixed_sol_writer_and_command_policy(self) -> None:
+        writer = self.policy["writer"]
+        binding = writer_process.writer_binding_record()
+        route = binding["route"]
+        limits = binding["limits"]
+        self.assertEqual(writer["selection"], binding["selection"])
+        self.assertEqual(writer["role"], route["role"])
+        self.assertEqual(writer["model"], route["model"])
+        self.assertEqual(writer["effort"], route["effort"])
+        self.assertEqual(writer["tier"], "inherit")
+        self.assertIsNone(route["tier"])
+        self.assertEqual(writer["package_version"], binding["package_version"])
+        for key, value in limits.items():
+            self.assertEqual(writer[key], value)
+        self.assertTrue(writer["requires_quality_context"])
+        self.assertEqual(writer["attempts"], 1)
+        self.assertEqual(writer["retry"], 0)
+        self.assertEqual(writer["upgrade"], "none")
+        self.assertEqual(writer["sandbox"], "workspace-write")
+        self.assertFalse(writer["network"])
+        self.assertFalse(writer["shell_tool"])
+        self.assertFalse(writer["code_mode"])
+        self.assertFalse(writer["multi_agent"])
+        command = writer_process._build_command(
+            codex_prefix=["codex"],
+            cwd=Path("/isolated"),
+            route=writer_process.WRITER_ROUTE,
+            schema_path=Path("/evidence/schema.json"),
+            output_path=Path("/evidence/out.json"),
+        )
+        self.assertIn("features.shell_tool=false", command)
+        self.assertIn("features.code_mode=false", command)
+        self.assertIn("features.multi_agent=false", command)
+        self.assertIn("web_search=disabled", command)
+        self.assertIn("sandbox_workspace_write.network_access=false", command)
 
     def test_reviewer_identity_and_terminal_contract(self) -> None:
         policy = self.policy["reviewer"]

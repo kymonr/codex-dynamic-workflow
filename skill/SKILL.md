@@ -73,7 +73,7 @@ Worktree Writer v2 is not a default consequence of “fix”, “implement”, �
 
 Read [references/worktree-writer-usage.md](references/worktree-writer-usage.md) and [references/worktree-writer-v2.md](references/worktree-writer-v2.md) only when Writer Workflow is selected. The v1 contract is historical.
 
-Use the default `bounded-luna` profile only for short, well-specified, low-risk edits with at most two owned targets. Use explicit `complex-sol` only with a package-v2 quality context for nontrivial cross-module behavior changes. Profile selection changes writer identity and hard budgets, never effect authority.
+Worktree Writer v2 accepts package v2 only and always uses the host-fixed `Sol / gpt-5.6-sol / high` writer route. The package, CLI, repository text, Writer and reviewer cannot select or alter that route. Hard scope remains bounded to at most eight owned targets and changed files, with narrower packages preferred.
 
 Writer Workflow never implies commit, push, merge, release, deploy, cleanup, or canonical apply. Those remain separate root approvals.
 

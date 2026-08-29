@@ -1,7 +1,30 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "bounded-documentation-change",
-  "objective": "使用默认 bounded-luna profile 在隔离 worktree 中完成一项短小、有界、低风险的文档修改，只修改明确授权的文件，不修改 canonical checkout。",
+  "objective": "使用固定 Sol/high Writer 在隔离 worktree 中完成一项有界文档修改，只修改明确授权的文件，不修改 canonical checkout。",
+  "acceptance_criteria": [
+    "固定验证命令成功退出。",
+    "候选只包含声明的 owned target。",
+    "文档准确说明固定 Sol/high Writer 和 fresh Sol/xhigh reviewer。"
+  ],
+  "constraints": [
+    "保留现有安全边界和无自动 apply 规则。",
+    "保持 UTF-8 文本格式。"
+  ],
+  "non_goals": [
+    "不修改 Workflow IR。",
+    "不执行 commit、push、merge、release 或 deploy。"
+  ],
+  "behavior": {
+    "before": "目标文档缺少本次要求的准确说明。",
+    "after": "目标文档包含本次要求且通过固定验证。"
+  },
+  "implementation_context": {
+    "relevant_symbols": [
+      "skill/references/worktree-writer-usage.md"
+    ],
+    "analysis_summary": "这是一个单文件、有明确验收标准的隔离文档候选。"
+  },
   "base": {
     "repository_full_name": "kymonr/codex-dynamic-workflow",
     "expected_head_sha": "REPLACE_WITH_40_LOWERCASE_HEX",

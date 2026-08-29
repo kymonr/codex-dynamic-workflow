@@ -29,9 +29,20 @@ def git(root: Path, *args: str) -> str:
 def package(root: Path, targets: list[str], actions: list[str]) -> writer_contract.WriterPackage:
     return writer_contract.validate_package(
         {
-            "version": 1,
+            "version": 2,
             "name": "candidate",
             "objective": "Produce an exact bounded text candidate.",
+            "acceptance_criteria": ["The fixed verification command passes."],
+            "constraints": ["Preserve unrelated repository behavior."],
+            "non_goals": ["Do not expand authority."],
+            "behavior": {
+                "before": "The requested bounded change is absent.",
+                "after": "The requested bounded change is present.",
+            },
+            "implementation_context": {
+                "relevant_symbols": ["base.txt", "docs/new.md"],
+                "analysis_summary": "Only declared targets are relevant.",
+            },
             "base": {
                 "repository_full_name": "owner/repo",
                 "expected_head_sha": git(root, "rev-parse", "HEAD"),

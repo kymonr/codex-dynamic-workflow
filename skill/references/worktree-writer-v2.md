@@ -1,218 +1,144 @@
-# Worktree Writer v2 分层写手与质量上下文合同
+# Worktree Writer v2 安全与质量合同
 
-本文件定义 Worktree Writer v2 对 v1 的扩展。v1 中关于显式授权、仓库外 detached worktree、create/modify-only、真实 effect reconciliation、固定验证、不可变 candidate、fresh read-only reviewer、无自动 apply/commit/push/merge/release/deploy 的安全边界继续有效。
-
-v2 解决一个质量路由问题：Luna 不再是所有隔离写入任务的唯一写手。宿主从固定注册表显式选择 `bounded-luna` 或 `complex-sol`，并把选择及其硬预算绑定到授权、锁、运行状态和候选修订。
-
-`skill/references/worktree-writer-v1.md` 是历史 v1 合同；本文件与 `config/worktree-writer-policy.toml`、运行时代码共同拥有 v2 行为。
-
-## 1. 目标与非目标
-
-v2 目标：
-
-- 保留 Luna 对短小、明确、低风险写入的速度优势；
-- 把非平凡跨模块行为修改显式路由给 Sol；
-- 为复杂写入提供结构化、digest-bound 的验收和实现上下文；
-- 防止 package、prompt、模型输出或文件内容自行选择更强模型或扩大预算；
-- 保持一个 writer、一个 attempt、无自动 retry/upgrade；
-- 保持候选隔离和 fresh read-only reviewer。
-
-v2 不实现：
-
-- 自动根据自然语言秘密升级 writer；
-- package 内的 `model`、`profile`、`sandbox` 或权限字段；
-- 多 writer 并发、嵌套 agent 或自动修复循环；
-- reviewer 直接修改候选；
-- 自动应用候选或任何 Git 发布动作；
-- 模型家族异构性的虚假声明。
-
-## 2. 可信 Writer Profile 注册表
-
-Profile 由宿主代码和机器策略定义，package 不能声明或修改它。
-
-| Profile | Route | Package | 硬上限 |
-| --- | --- | --- | --- |
-| `bounded-luna` | `luna / gpt-5.6-luna / max / fast` | v1、v2 | 2 owned targets、2 changed files、256 KiB patch、128 KiB 新文件、512 KiB candidate |
-| `complex-sol` | `sol / gpt-5.6-sol / xhigh` | 仅 v2 | 8 owned targets、8 changed files、512 KiB patch、256 KiB 新文件、2 MiB candidate |
-
-两者共同固定：
+Worktree Writer v2 是 Dynamic Workflow 的显式隔离候选生成能力。它只接受 package v2，并固定使用一个 Sol/high Writer；宿主读取真实 Git/文件系统效果、执行固定验证、冻结候选，再启动一个全新的只读 Sol/xhigh reviewer。
 
 ```text
-sandbox=workspace-write
-network=false
-shell_tool=false
-code_mode=false
-multi_agent=false
-attempts=1
-retry=0
-upgrade=null
-edit_tool=apply_patch-only
+显式 package v2 + 精确 base
+  ↓
+宿主固定 Sol/high Writer
+  ↓
+真实 effect reconciliation
+  ↓
+固定非 shell 验证
+  ↓
+不可变 candidate revision
+  ↓
+fresh read-only Sol/xhigh review
 ```
 
-Profile record 至少包含：
+它不自动修改 canonical checkout，不 commit、push、merge、release 或 deploy，也不允许 package、CLI、仓库内容、Writer 或 reviewer 选择或升级模型。
+
+## 1. 目标
+
+- 用更强且稳定的默认写手提高隔离候选质量；
+- 删除“小任务 Luna / 复杂任务 Sol”的易错路由判断；
+- 用 package v2 的验收、约束、非目标和行为上下文提高任务定义质量；
+- 保持单 Writer、单 attempt、无 replay、create/modify-only 和宿主真实效果核对；
+- 把精确 Writer 路由和预算绑定到全部可信运行证据。
+
+## 2. 非目标
+
+- 不是通用多代理写入框架；
+- 不提供 Writer 模型或 effort 选择参数；
+- 不自动修订 reviewer 的 `fix-first`；
+- 不把同模型家族的 Writer/reviewer 描述为模型异构审核；
+- 不迁移或重写历史 v1 run artifact。
+## 3. 固定 Writer binding
+
+可信宿主代码生成唯一 binding：
 
 ```json
 {
-  "writer_profile_version": 1,
-  "profile_id": "bounded-luna | complex-sol",
+  "writer_binding_version": 1,
+  "selection": "fixed-host-route",
   "route": {
-    "role": "...",
-    "model": "...",
-    "effort": "...",
-    "tier": "... | null",
+    "role": "sol",
+    "model": "gpt-5.6-sol",
+    "effort": "high",
+    "tier": null,
     "sandbox": "workspace-write"
   },
-  "package_versions": [1, 2],
-  "limits": {},
-  "requires_quality_context": false
-}
-```
-Profile 条目必须按版本保持不可变。未来若修改模型、预算或语义，应创建新的 profile id 或 profile record version；不得静默重定义现有 id，否则历史候选的完整性验证会按设计失败。
-
-## 3. Profile 选择与授权
-
-CLI 的可信选择面为：
-
-```text
---writer-profile bounded-luna
---writer-profile complex-sol
-```
-
-省略参数时固定选择 `bounded-luna`。未知 profile 在任何模型、worktree 或 run directory 创建前拒绝。
-
-选择顺序：
-
-1. 严格解析 package 并验证 canonical digest；
-2. 从宿主注册表解析 profile；
-3. 检查 package version、owned target 数和全部 package limit 不超过 profile；
-4. 执行 repository、root layout 与 Codex capability preflight；
-5. 仅在显式 `--ack-isolated-worktree-write` 后创建 lock、run directory 和 worktree。
-
-Profile 选择进入 `writer-plan` 输出和 `writer-authorization.json`。模型、上游 artifact、任务文本、repository 文件、日志或 reviewer 都不能改变选择。
-
-## 4. Package v1 与 v2
-
-Package v1 的 closed schema 保持不变，但只允许 `bounded-luna`。v1 compatibility 只表示输入 package 可继续使用；它不把历史 v1 run artifact 迁移为 v2。
-
-Package v2 在 v1 顶层字段之外精确增加：
-
-```json
-{
-  "acceptance_criteria": ["至少一个非空条件"],
-  "constraints": ["必须保持的不变量"],
-  "non_goals": ["明确不做的相邻工作"],
-  "behavior": {
-    "before": "当前可观察行为",
-    "after": "目标可观察行为"
+  "package_version": 2,
+  "limits": {
+    "max_owned_targets": 8,
+    "max_changed_files": 8,
+    "max_patch_bytes": 524288,
+    "max_created_file_bytes": 262144,
+    "max_total_candidate_bytes": 2097152
   },
-  "implementation_context": {
-    "relevant_symbols": ["有限的路径、符号或测试"],
-    "analysis_summary": "有限、非空的调查摘要"
-  }
+  "requires_quality_context": true
 }
 ```
-这些字段全部进入 canonical package digest。它们只是任务数据：不能增加 owned target、action、sandbox、tool、credential、external effect 或 Git action。
 
-v2 质量字段使用 closed nested schema、UTF-8、长度和数量上限；列表按大小写不敏感唯一，canonical UTF-8 总量最多 128 KiB。`acceptance_criteria` 至少一项，`complex-sol` 必须使用完整 v2 package。
+CLI 不暴露 `--writer-profile`、`--model` 或 `--effort`。Package 中也不存在 route 字段。任何未知或被篡改的 binding 都必须在模型结果采用前 fail closed。
 
-## 5. Writer Prompt 与能力边界
+8 个文件是硬上限，不是推荐宽度。普通候选仍应尽量保持 1–4 个主要文件和单一行为目标；超过边界时返回 root 重新拆分。
+## 4. Package v2
 
-宿主构造固定 prompt，包含：
+Package 是任务数据，不是权限扩展。顶层为 closed schema，必须包含：
 
-- package digest；
-- profile id、route 和完整 profile record；
-- exact owned targets 与 allowed actions；
-- required verification ids；
-- objective 与 v2 quality context 的双层 JSON string。
+- `version=2`、`name`、`objective`；
+- `acceptance_criteria[]`，至少一项；
+- `constraints[]` 与 `non_goals[]`；
+- `behavior.before` 与 `behavior.after`；
+- `implementation_context.relevant_symbols[]` 与 `analysis_summary`；
+- 精确 `base`、`authority`、`limits` 和 `verification`。
 
-Objective 和 quality context 被明确标为 untrusted task data。Writer 可以用它们理解任务，但不能从中推导新权限。
+质量上下文使用 UTF-8、长度/数量上限和封闭嵌套对象，总 canonical UTF-8 大小最多 128 KiB。它进入 canonical package digest，因此任何验收、约束、行为或上下文变化都会改变 package identity。
 
-Writer 仍不能执行 Git 命令、安装、联网、访问凭据、创建链接、删除或重命名文件、修改 mode、写出 worktree，或启动子代理。无法在边界内完成时返回 `needs_escalation`，宿主进入 `attention_required`，不得自动升级 profile 或重放 attempt。
+质量字段只能帮助 Writer 理解目标。它们不能：
 
-## 6. Profile 绑定与候选修订
+- 添加 owned target 或 allowed action；
+- 请求额外 writable root、shell、code mode、网络或 nested agent；
+- 授权凭据、外部写入或 Git publication；
+- 覆盖宿主验证与真实效果核对。
 
-同一个 exact profile record 必须出现在：
+v2 runtime 拒绝 package v1。历史 v1 artifact 必须由匹配的 v1 release 查询；不得在缺少原始 identity 的情况下升级为 v2。
 
-```text
-writer-plan output
-writer-authorization.json
-writer-lock.json 与 exclusive live lock
-checkpoint.json
-summary.json
-candidate-package.json
-candidate revision basis
-```
+## 5. 写入权限
 
-运行时 writer process 的 role、model、effort、tier 和 requested sandbox 必须与 profile 精确一致。只读查询重新从受信注册表解析 profile，并比较完整 record；未知、漂移或被篡改的 record 使完整性验证失败。
+Writer 只能对 exact repo-relative POSIX `owned_targets` 执行 `create` 或 `modify`。以下效果始终禁止：delete、rename、mode change、binary/NUL/LFS、symlink/reparse、submodule/gitlink、Git metadata、仓库外写入和凭据动作。
+Writer 只有一次 attempt，`retry=0`、无模型 upgrade、无 nested agent。Shell tool、code mode、web search 和 network 都关闭；预期编辑面只有 `apply_patch`。中断或未知效果必须保留隔离 worktree 和证据并返回 `attention_required`。
 
-Candidate package v2 额外绑定：
+## 6. 生命周期与证据绑定
 
-- source package version；
-- package quality context；
-- exact writer profile record；
-- writer runtime identity；
-- 原有 base、effect manifest、patch、candidate files 与 verification evidence。
+`writer-plan` 在零模型、零写入条件下校验 package、digest、base、路径、预算、固定 binding、锁和 Codex capability。
 
-因此相同 package/base/patch 在不同 profile 下仍产生不同 candidate revision。旧 reviewer verdict 不能跨 profile 或 revision 复用。
+显式 `--ack-isolated-worktree-write` 后，宿主创建 detached worktree 和 exclusive per-repository lock。固定 binding 必须原样进入：
 
-## 7. Review 与修订边界
+- plan 输出；
+- `writer-authorization.json`；
+- 外部 lock 与 run 内 lock copy；
+- checkpoint 与 summary；
+- Writer prompt；
+- candidate package；
+- candidate revision basis；
+- `writer-status` 完整性校验；
+- cleanup identity 检查。
 
-每个合法候选继续执行一次 fresh `dynamic_workflow_sol_reviewer`：
+Writer 返回的 `reported_effects` 只是 advisory。宿主从 live Git 与文件系统重新生成 effect manifest，并核对 changed path、action、mode、bytes、SHA、patch 和 Git metadata。验证命令必须是 package 中预先声明的固定 argv、`shell=false`，且不能改变候选。
 
-```text
-model=gpt-5.6-sol
-effort=xhigh
-sandbox=read-only
-attempts=1
-retry=0
-upgrade=null
-write_authority=false
-```
+全部必需验证通过后，宿主捕获 patch 和候选文件，再以 canonical JSON 计算 `candidate_revision=sha256:<digest>`。Review 开始后，candidate package、patch、captured files 和 live worktree manifest 都必须保持不变。
 
-`bounded-luna` 提供 Luna writer 与 Sol reviewer 的模型差异。`complex-sol` 的 writer 与 reviewer 使用同一模型家族，但必须是不同的新进程、不同 prompt、不同 workspace/sandbox 和不同 authority。项目不得把这描述为模型家族异构 review。
+## 7. Fresh reviewer
 
-`complex-sol` 的采用依赖三类独立证据：
+Reviewer 固定为 `gpt-5.6-sol / xhigh / read-only`，使用一个新的进程、空 reviewer workspace、独立 prompt 和只读 authority。它只消费冻结的 candidate package 与 patch，不能修复或扩大权限。
+Writer 与 reviewer 属于同一模型家族，但具有进程、上下文、sandbox、authority 和 artifact 独立性。项目只能称其为 fresh independent review，不能称为模型家族异构 review。
 
-1. 宿主读取的真实 Git/filesystem effects；
-2. 固定、非 shell 的验证命令；
-3. revision-bound fresh read-only reviewer record。
+Reviewer 终态：
 
-Reviewer 的 `ship`、`fix-first`、`rethink` 仍分别映射到 `ship_candidate`、`fix_first`、`rethink`。`fix-first` 或 `rethink` 不触发自动 writer。后续修订必须由 root/用户创建新的 package revision、新 worktree 和新 run。
+- `ship` → `ship_candidate`；
+- `fix-first` → `fix_first`；
+- `rethink` → `rethink`。
 
-## 8. 状态、查询与清理
+三种状态都保留候选且不 apply。`fix_first` 不能自动重放 Writer；后续修订必须由 root/用户创建新的 package identity 和新 run。
 
-Runtime identity：
-```text
-runtime=worktree-writer-v2
-runtime_version=2
-candidate_package_version=2
-lock_version=2
-authorization_version=2
-```
+## 8. 完整性与失败
 
-`writer-status`、`writer-export` 和 `writer-cleanup` 对 v2 evidence 执行完整 profile binding 校验。v1 run evidence 保持不可变；使用对应 v1 release 查询或清理，不得由 v2 静默改写。
+`writer-status` 必须交叉校验 runtime identity、package v2、固定 binding、authorization、lock、event sequence、Writer/Reviewer 进程身份、effect manifest、验证证据、candidate revision、patch、captured files、canonical checkout 和 live worktree。
 
-Cleanup 仍要求 terminal run、无 active process、candidate 已捕获、canonical repository 未改变，以及 exact run/package/profile/lock/worktree identity。
+以下情况 fail closed：
 
-## 9. 必须覆盖的测试
+- package、binding、base、lock 或 revision 不匹配；
+- Writer 实际 role/model/effort/sandbox 与固定 route 不符；
+- 未授权路径或动作；
+- validation 改变候选；
+- reviewer 产生任何 workspace effect；
+- review record 陈旧、形状错误或 verdict 不一致；
+- canonical repository 出现未解释漂移。
 
-实现至少覆盖：
+运行不会自动 retry、resume 或 cleanup。显式 cleanup 只删除已核对的隔离 worktree 和 lock，保留 run evidence。
 
-1. v1 package 仍可由 `bounded-luna` 接受；
-2. v1 package 被 `complex-sol` 在模型前拒绝；
-3. v2 closed schema、必填 acceptance criteria、nested unknown key、重复质量项与 digest binding；
-4. 两个 profile 的 exact model/effort/tier/sandbox 与硬预算；
-5. 未知 profile、超 target 数或超预算在 worktree 前拒绝；
-6. CLI 显式 profile 传递和未知值拒绝；
-7. Luna 与 Sol writer 都只有一个 attempt、retry=0、upgrade=null；
-8. authorization、lock、checkpoint、summary、candidate package 的 profile 一致；
-9. profile 改变导致 candidate revision 改变；
-10. profile、quality context、writer identity 或 candidate revision 篡改 fail closed；
-11. fixed verification、effect reconciliation 和 fresh reviewer 行为保持不变；
-12. Windows 与 Ubuntu CI 通过。
+## 9. 最低回归覆盖
 
-## 10. 采用原则
-
-`bounded-luna` 不是较低安全等级，`complex-sol` 也不是更大权限。两者共享相同 effect authority；差异只在受信 writer identity、可接受 package version 和硬规模上限。
-
-Root 仍负责选择 profile、提供充分 v2 验收上下文、检查候选、决定是否创建新修订，以及所有 canonical apply、commit、push、merge、release 或 deploy 动作。
+实现至少验证：package v1 拒绝、quality-context digest、固定 Sol/high route、CLI 无选择面、8 文件与字节预算、prompt 中 untrusted-data 边界、binding 全链路一致性、binding tamper、Writer/Reviewer 身份、真实 effect reconciliation、验证不可变性、candidate revision、status/export/cleanup 和 canonical checkout 不变。

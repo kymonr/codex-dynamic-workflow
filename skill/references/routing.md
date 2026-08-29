@@ -58,9 +58,9 @@ Explorer uses `fork_turns=none` by default. It is not an automatic recovery node
 
 Route ordinary read-only work and ordinary scoped implementation, repair, refactor, or file editing to Luna. Route directly to Sol when the branch itself requires complex cross-module reasoning, a nontrivial high-impact behavior change, architecture or security judgment, difficult rollback, or final judgment. Assess complexity per branch: file count, branch count, or long context alone does not select Sol. Grok is not a native route; only a user-requested separate Grok conversation task follows `grok-thread.md`.
 
-## Writer Workflow profile boundary
+## Writer Workflow fixed route boundary
 
-Ordinary Luna/Sol branch routing and Worktree Writer profile selection are separate. Writer Workflow defaults to trusted `bounded-luna` for short, well-specified, low-risk edits with at most two owned targets. A nontrivial cross-module behavior change may use explicit `complex-sol` only with package v2 quality context. The package cannot select either profile, and `complex-sol` changes model identity and hard budgets—not create/modify-only authority. See [worktree-writer-v2.md](worktree-writer-v2.md).
+Ordinary Luna/Sol branch routing does not select the Worktree Writer. Writer Workflow accepts package v2 only and always uses the host-fixed `Sol / gpt-5.6-sol / high` writer route, followed by a fresh read-only Sol/xhigh reviewer. The CLI, package, repository text and model output cannot choose, downgrade or upgrade the Writer. This fixed identity does not expand create/modify-only authority. See [worktree-writer-v2.md](worktree-writer-v2.md).
 
 ## Routes
 

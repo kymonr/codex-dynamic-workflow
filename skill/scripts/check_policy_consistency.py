@@ -355,8 +355,10 @@ def _validate_worktree_writer_policy(root: Path, errors: list[str]) -> None:
 
     if policy.get("runtime_version") != writer_runtime_base.WRITER_RUNTIME_VERSION:
         errors.append("Worktree Writer runtime_version disagrees with runtime")
-    if policy.get("default_writer_profile") != writer_process.DEFAULT_WRITER_PROFILE:
-        errors.append("Worktree Writer default profile disagrees with runtime")
+    if policy.get("writer_route_binding_version") != (
+        writer_process.WRITER_BINDING_VERSION
+    ):
+        errors.append("Worktree Writer binding version disagrees with runtime")
     for key in ("explicit_cli_only", "single_active_writer_per_repository"):
         if policy.get(key) is not True:
             errors.append(f"Worktree Writer {key} must be true")
@@ -392,63 +394,37 @@ def _validate_worktree_writer_policy(root: Path, errors: list[str]) -> None:
         ):
             errors.append("Worktree Writer quality-context budget disagrees with runtime")
 
-    common = policy.get("writer")
-    if not isinstance(common, dict):
-        errors.append("Worktree Writer common writer policy is missing")
+    writer = policy.get("writer")
+    if not isinstance(writer, dict):
+        errors.append("Worktree Writer fixed writer policy is missing")
     else:
-        expected_common = {
+        binding = writer_process.writer_binding_record()
+        route = binding["route"]
+        limits = binding["limits"]
+        expected_writer = {
+            "selection": binding["selection"],
+            "role": route["role"],
+            "model": route["model"],
+            "effort": route["effort"],
+            "tier": "inherit" if route["tier"] is None else route["tier"],
+            "package_version": binding["package_version"],
+            **limits,
+            "requires_quality_context": binding["requires_quality_context"],
             "attempts": 1,
             "retry": 0,
             "upgrade": "none",
-            "sandbox": "workspace-write",
+            "sandbox": writer_process.WRITER_ROUTE.sandbox,
             "network": False,
             "shell_tool": False,
             "code_mode": False,
             "multi_agent": False,
             "edit_tool": "apply_patch-only",
         }
-        for key, expected in expected_common.items():
-            if common.get(key) != expected:
+        for key, expected in expected_writer.items():
+            if writer.get(key) != expected:
                 errors.append(
-                    f"Worktree Writer common policy {key} disagrees with runtime"
+                    f"Worktree Writer fixed writer {key} disagrees with runtime"
                 )
-
-    profiles = policy.get("writer_profiles")
-    if not isinstance(profiles, dict):
-        errors.append("Worktree Writer writer_profiles policy is missing")
-    elif set(profiles) != set(writer_process.WRITER_PROFILES):
-        errors.append("Worktree Writer profile ids disagree with runtime")
-    else:
-        for profile_id, runtime_profile in writer_process.WRITER_PROFILES.items():
-            configured = profiles[profile_id]
-            expected = {
-                "role": runtime_profile.route.role,
-                "model": runtime_profile.route.model,
-                "effort": runtime_profile.route.effort,
-                "tier": runtime_profile.route.tier,
-                "accepted_package_versions": sorted(
-                    runtime_profile.package_versions
-                ),
-                "max_owned_targets": runtime_profile.max_owned_targets,
-                "max_changed_files": runtime_profile.max_changed_files,
-                "max_patch_bytes": runtime_profile.max_patch_bytes,
-                "max_created_file_bytes": (
-                    runtime_profile.max_created_file_bytes
-                ),
-                "max_total_candidate_bytes": (
-                    runtime_profile.max_total_candidate_bytes
-                ),
-                "requires_quality_context": (
-                    runtime_profile.requires_quality_context
-                ),
-            }
-            for key, expected_value in expected.items():
-                actual = configured.get(key)
-                if actual != expected_value:
-                    errors.append(
-                        f"Worktree Writer profile {profile_id} {key} "
-                        f"disagrees with runtime: {actual!r} != {expected_value!r}"
-                    )
 
     reviewer = policy.get("reviewer")
     if not isinstance(reviewer, dict):
@@ -470,6 +446,10 @@ def _validate_worktree_writer_policy(root: Path, errors: list[str]) -> None:
                 errors.append(
                     f"Worktree Writer reviewer {key} disagrees with runtime"
                 )
+
+    candidate = policy.get("candidate")
+    if not isinstance(candidate, dict) or candidate.get("bind_writer_route") is not True:
+        errors.append("Worktree Writer candidate must bind the fixed writer route")
 
 def _validate_repository_paths(root: Path, errors: list[str]) -> None:
     for path in root.rglob("*"):

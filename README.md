@@ -28,7 +28,7 @@ Writer only when explicitly authorized
 ## 高级模式按需开启
 
 - **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、长时间恢复或可复现运行产物时才启用。
-- **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。普通“实现/修复”请求最多授权一个 scoped native writer。默认 `bounded-luna` 只处理最多两个 owned targets 的短小低风险候选；非平凡跨模块行为修改使用显式 `complex-sol`，并要求 package v2 的验收、约束、非目标、行为和实现上下文。
+- **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。v2 只接受含验收、约束、非目标、行为和实现上下文的 package v2，并固定使用 Sol/high Writer；随后由 fresh read-only Sol/xhigh reviewer 审核。CLI 和 package 都不能选择或降级 Writer。
 - **Independent Review**：只有用户明确要求独立、全新、第二方或最终验收时才创建 dedicated reviewer。
 
 ## 当前路由
