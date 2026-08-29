@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Default to a lightweight Simple Swarm for ordinary multi-branch work: split into a few narrow, non-overlapping native subagent branches, let the root integrate, and keep Managed Workflow and Worktree Writer explicit or requirement-driven. Prefer Luna for ordinary delegated work and Sol for complex or high-impact branches. Grok remains outside native routing unless the user explicitly requests a separate visible task.
+description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the explicit 4–12 Luna Agent Fleet for adversarial review, test matrices, repository audits, architecture councils, or competing hypotheses. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Prefer Luna for ordinary delegated work and Sol for complex or high-impact branches. Grok remains outside native routing unless the user explicitly requests a separate visible task.
 ---
 
 # Dynamic Workflow
@@ -18,7 +18,8 @@ The root owns scope, authorization, decomposition, integration, acceptance, and 
 1. **Root only** — trivial reads, short serial work, one implicit branch, or work whose delegation cost exceeds its benefit.
 2. **Simple Swarm** — the default for ordinary analysis, review, research, design, diagnosis, planning, and implementation with at least two ready, non-overlapping branches.
 3. **Managed Workflow** — only when the user explicitly asks for, or the requested result inherently requires, checkpoint/resume, Human Gate, bounded loop, conditional flow, long-running recovery, or reproducible run artifacts.
-4. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v2.
+4. **Agent Fleet** — only when the user explicitly requests 4–12 subagents, adversarial review, a broad test matrix, a deep repository audit, an architecture council, or competing hypotheses.
+5. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v2.
 
 An explicit `$dynamic-workflow` request guarantees routing is considered and may use one bounded child. Implicit activation requires at least two useful child branches.
 
@@ -67,6 +68,16 @@ Complexity alone does not justify Managed Workflow. A broad audit should normall
 
 When selected, read [references/cli-runner.md](references/cli-runner.md), [references/dag.md](references/dag.md), [references/workflow-ir.md](references/workflow-ir.md), and [references/bounded-loop-v1.md](references/bounded-loop-v1.md) as applicable.
 
+## Agent Fleet — explicit 4–12 subagents
+
+Read [references/agent-fleet-v1.md](references/agent-fleet-v1.md), [references/workflow-ir.md](references/workflow-ir.md), and [references/cli-runner.md](references/cli-runner.md) when Agent Fleet is selected.
+
+Agent Fleet uses exactly 4–12 read-only Luna agents, divided into independent discovery and adversarial challenge stages. The trusted zero-model `fleet_aggregate` node validates closed records, effects, claim references, surviving blockers, UNKNOWN and disagreements. Conditional presets skip Sol only for a clean ordinary aggregate; high risk, surviving P1/P2, UNKNOWN or disagreement starts one Sol/xhigh arbiter. Architecture and competing-hypothesis presets always use Sol.
+
+Do not use majority voting, free-form agent messaging, nested delegation, or Agent Fleet as a failure fallback. An invalid member identity, malformed record, non-empty effect or stale subject fails closed to root rather than automatically invoking Sol.
+
+Use `skill/cli.py fleet-list` and `fleet-ir` to compile a validated Workflow IR, then the ordinary `plan-ir` / `run-ir` path to execute it.
+
 ## Writer Workflow — explicit isolated candidate
 
 Worktree Writer v2 is not a default consequence of “fix”, “implement”, “change”, or “write”. Use it only when the user explicitly requests an isolated candidate or a higher-priority owning rule requires it.
@@ -97,7 +108,7 @@ Use `fork_turns=none` by default and pass only the minimum sufficient context.
 
 ## Independent review
 
-Independent review is an exception, not a synonym for ordinary review or audit. Trigger a fresh dedicated reviewer only when the user explicitly asks for an independent, fresh, second-party, or final acceptance pass, or a higher-priority rule requires it.
+Independent review is an exception, not a synonym for ordinary review, an Agent Fleet, or an audit. Trigger a fresh dedicated reviewer only when the user explicitly asks for an independent, fresh, second-party, or final acceptance pass, or a higher-priority rule requires it.
 
 Read [references/review.md](references/review.md) only then.
 

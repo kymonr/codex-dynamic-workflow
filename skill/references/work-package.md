@@ -52,9 +52,15 @@ Tell the writer unrelated edits may exist and must be preserved. Only one native
 
 Worktree Writer v2 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v2.md](worktree-writer-v2.md). It accepts package v2 only and uses one host-fixed Sol/high Writer; the v1 contract is historical.
 
+## Agent Fleet packet
+
+Agent Fleet is compiled, not written free-form. Root supplies preset, objective, bounded `workdir`, stable `subject_id`, exact Luna `fleet_size` (4–12), risk level, and optional concurrency. The compiler creates closed discovery/challenge schemas, explicit dependencies, a zero-model `fleet_aggregate`, and zero-or-one Sol arbitration path.
+
+Fleet members remain read-only, cannot nest, and may not authorize actions. Discovery and challenge records must use the exact subject/member identities and `effects=[]`; invalid records fail closed. See [agent-fleet-v1.md](agent-fleet-v1.md).
+
 ## Managed Workflow packet
 
-When Managed Workflow is selected, use its Workflow IR, CLI runner, DAG, Human Gate, or bounded-loop contracts. Those advanced contracts do not add requirements to ordinary Simple Swarm branches.
+When Managed Workflow is selected, use its Workflow IR, CLI runner, DAG, Human Gate, bounded-loop, or Agent Fleet contracts. Those advanced contracts do not add requirements to ordinary Simple Swarm branches.
 
 ## Child delivery
 

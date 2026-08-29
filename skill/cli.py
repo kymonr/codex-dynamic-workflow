@@ -11,6 +11,14 @@ apply_runtime_defaults()
 
 
 def main(argv: list[str] | None = None) -> int:
+    fleet_argv = list(sys.argv[1:] if argv is None else argv)
+    if fleet_argv and fleet_argv[0] in {"fleet-plan", "fleet-run", "fleet-status"}:
+        try:
+            from skill import fleet_cli
+        except ModuleNotFoundError:
+            import fleet_cli
+        return fleet_cli.main(fleet_argv)
+
     configure_utf8_stdio()
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] in {"run-ir", "resume-ir"}:
@@ -33,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         from swarm_presets import main as preset_main
 
         return preset_main(arguments)
+    if arguments and arguments[0] in {"fleet-list", "fleet-ir"}:
+        from agent_fleet import main as fleet_main
+
+        return fleet_main(arguments)
     if arguments and arguments[0] in {
         "auto-plan-contract",
         "auto-plan-apply",

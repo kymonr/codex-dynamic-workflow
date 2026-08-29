@@ -112,6 +112,10 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "writer-workflow-is-explicit",
             "wide-child-package-is-resplit",
             "worktree-writer-route-is-fixed-sol-high",
+            "explicit-eight-agent-adversarial-review-uses-fleet",
+            "ordinary-broad-audit-does-not-imply-agent-fleet",
+            "architecture-council-always-uses-sol-synthesis",
+            "twelve-agent-test-matrix-is-flat-and-host-mediated",
         ):
             self.assertIn(name, names)
 

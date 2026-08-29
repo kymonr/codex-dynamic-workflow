@@ -52,8 +52,11 @@ REQUIRED_RUNTIME_FILES = (
     "skill/runtime/condition.py",
     "skill/runtime/human_gate.py",
     "skill/runtime/deadline.py",
+    "skill/agent_fleet.py",
+    "skill/fleet_contract.py",
     "skill/references/workflow-ir.md",
     "skill/references/bounded-loop-v1.md",
+    "skill/references/agent-fleet-v1.md",
 )
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"[A-Za-z]:[/\\]Users[/\\][^/\\\s]+", re.IGNORECASE),
@@ -286,6 +289,8 @@ def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[s
                 errors.append(f"{relative} does not mention policy route {route}")
         if "Grok" not in text:
             errors.append(f"{relative} does not state the explicit Grok boundary")
+        if "Agent Fleet" not in text:
+            errors.append(f"{relative} does not document the Agent Fleet boundary")
 
     readme_path = root / "README.md"
     if readme_path.is_file():
@@ -305,6 +310,8 @@ def _validate_public_surfaces(root: Path, policy: dict[str, Any], errors: list[s
             "checkpoint.json",
             "events.jsonl",
             "validate-ir",
+            "fleet-list",
+            "fleet-ir",
         ):
             if token not in text:
                 errors.append(f"skill/references/cli-runner.md must document {token}")
@@ -336,6 +343,73 @@ def _validate_capability_surfaces(
             if stale in text:
                 errors.append(f"{relative} contains stale capability text")
 
+
+
+def _validate_agent_fleet_policy(
+    root: Path, policy: dict[str, Any], errors: list[str]
+) -> None:
+    configured = policy.get("agent_fleet")
+    if not isinstance(configured, dict):
+        errors.append("policy agent_fleet table is missing")
+        return
+    try:
+        import agent_fleet
+        import fleet_contract
+    except Exception as exc:
+        errors.append(f"cannot load Agent Fleet policy/runtime: {exc}")
+        return
+
+    expected_scalars = {
+        "contract_version": fleet_contract.FLEET_CONTRACT_VERSION,
+        "minimum_luna_agents": fleet_contract.MIN_FLEET_AGENTS,
+        "default_luna_agents": agent_fleet.DEFAULT_FLEET_SIZE,
+        "maximum_luna_agents": fleet_contract.MAX_FLEET_AGENTS,
+        "default_max_concurrency": agent_fleet.DEFAULT_MAX_CONCURRENCY,
+        "maximum_max_concurrency": agent_fleet.MAX_FLEET_CONCURRENCY,
+        "direct_agent_communication": False,
+        "nested_delegation": False,
+        "host_aggregation": True,
+        "majority_vote": False,
+        "read_only": True,
+    }
+    for key, expected in expected_scalars.items():
+        if configured.get(key) != expected:
+            errors.append(
+                f"Agent Fleet policy {key} disagrees with runtime: "
+                f"{configured.get(key)!r} != {expected!r}"
+            )
+
+    conditional = sorted(
+        name for name, preset in agent_fleet.PRESETS.items()
+        if preset.sol_policy == "conditional"
+    )
+    always = sorted(
+        name for name, preset in agent_fleet.PRESETS.items()
+        if preset.sol_policy == "always"
+    )
+    if sorted(configured.get("conditional_sol_presets", [])) != conditional:
+        errors.append("Agent Fleet conditional Sol presets disagree with runtime")
+    if sorted(configured.get("always_sol_presets", [])) != always:
+        errors.append("Agent Fleet always-Sol presets disagree with runtime")
+
+    expected_keys = set(expected_scalars) | {
+        "conditional_sol_presets",
+        "always_sol_presets",
+    }
+    if set(configured) != expected_keys:
+        errors.append(
+            "Agent Fleet policy keys mismatch: "
+            f"missing={sorted(expected_keys - set(configured))} "
+            f"unknown={sorted(set(configured) - expected_keys)}"
+        )
+    for name, preset in agent_fleet.PRESETS.items():
+        if len(preset.discovery_roles) < 8 or len(preset.challenge_roles) < 4:
+            errors.append(f"Agent Fleet preset lacks 12-agent role coverage: {name}")
+        if preset.mode not in fleet_contract.FLEET_MODES:
+            errors.append(f"Agent Fleet preset mode is not contracted: {name}")
+    preview = agent_fleet.list_fleets()
+    if preview.get("model_calls") != 0 or preview.get("writes") != []:
+        errors.append("Agent Fleet list operation must be zero-model and zero-write")
 
 
 def _validate_worktree_writer_policy(root: Path, errors: list[str]) -> None:
@@ -495,6 +569,7 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
         errors.append("grok_writer.toml.disabled rollback reference is missing")
 
     _validate_runtime_contract(root, policy, errors)
+    _validate_agent_fleet_policy(root, policy, errors)
     _validate_worktree_writer_policy(root, errors)
     _validate_public_surfaces(root, policy, errors)
     _validate_repository_paths(root, errors)

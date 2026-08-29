@@ -283,6 +283,30 @@
       "name": "worktree-writer-route-is-fixed-sol-high",
       "prompt": "显式请求 Worktree Writer v2 隔离 candidate，并询问 package 是否可以选择 Luna 或把 Sol effort 改成 xhigh。",
       "expected_output": "Use package v2 with the host-fixed Sol/high Writer and fresh read-only Sol/xhigh reviewer. The package and CLI cannot select, downgrade, or upgrade the Writer route."
+    },
+    {
+      "id": 48,
+      "name": "explicit-eight-agent-adversarial-review-uses-fleet",
+      "prompt": "请用 8 个 fresh 子代理对这个候选做对抗性审核：先独立发现，再互相反驳和复现；只有存在 blocker、分歧或未知时才让 Sol 裁决。",
+      "expected_output": "Select Agent Fleet adversarial-review with exactly 8 read-only Luna members split into discovery and challenge stages. Use deterministic host aggregation with no majority vote, and dispatch at most one Sol only when surviving P1/P2, UNKNOWN, disagreement, or high risk requires arbitration."
+    },
+    {
+      "id": 49,
+      "name": "ordinary-broad-audit-does-not-imply-agent-fleet",
+      "prompt": "深度审核 CLI、runtime、权限和测试，尽快综合结果；没有指定子代理数量或对抗轮次。",
+      "expected_output": "Keep the ordinary multi-angle audit in Simple Swarm with a few narrow non-overlapping branches. Do not infer Agent Fleet merely from audit depth, repository breadth, or the desire for speed."
+    },
+    {
+      "id": 50,
+      "name": "architecture-council-always-uses-sol-synthesis",
+      "prompt": "组织 10 个子代理做架构委员会：提出明显不同的方案、互相挑战，最后给一个综合架构决定。",
+      "expected_output": "Select Agent Fleet architecture-council with exactly 10 read-only Luna members for competing proposals and challenges, followed by one mandatory Sol/xhigh synthesis. Do not let a Luna majority decide the architecture."
+    },
+    {
+      "id": 51,
+      "name": "twelve-agent-test-matrix-is-flat-and-host-mediated",
+      "prompt": "用 12 个子代理做跨平台、错误路径、恢复、并发和性能测试矩阵；代理不要自行再开子代理。",
+      "expected_output": "Select Agent Fleet test-matrix with exactly 12 top-level read-only Luna members, no nesting and no direct agent messaging. Discovery records and adversarial challenge records flow through host artifacts; conditional Sol arbitration is zero-or-one, never majority voting."
     }
   ]
 }

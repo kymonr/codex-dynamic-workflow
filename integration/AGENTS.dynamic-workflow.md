@@ -9,6 +9,7 @@
 - Simple Swarm 禁止嵌套委派。一次 bounded wait 后只做一次进度检查；第二次仍无有效交付且阻塞完成时，关闭并重新拆小或由 root 接管。
 - Spark / Explorer 处理窄只读问题；Luna 处理普通任务和明确授权的 scoped writing；Sol 处理复杂或高影响任务。
 - 只有明确需要 checkpoint/resume、Human Gate、bounded loop、长时间恢复或正式运行产物时，才启用 Managed Workflow。
+- 用户明确要求 4–12 个子代理、对抗性审核、测试矩阵、仓库深审、架构委员会或竞争根因时，使用 Agent Fleet：exact 4–12 个 read-only Luna，宿主聚合后按规则跳过或调用一个 Sol；禁止多数票、嵌套和代理自由通信。
 - 只有用户明确授权隔离 candidate 时，才启用 Writer Workflow / Worktree Writer v2。该模式只接受 package v2，并固定使用 Sol/high Writer 与 fresh read-only Sol/xhigh reviewer；CLI、package 和模型输出都不能选择 Writer。
 - Grok 不作为 native subagent、reviewer 或自动 fallback。只有用户明确要求新建 Grok 对话任务时，才创建独立可见任务。
 - commit、push、PR、merge、release、deploy、cleanup、凭据和其他外部或高风险动作始终由 root 持有。

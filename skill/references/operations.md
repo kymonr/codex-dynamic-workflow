@@ -19,7 +19,7 @@ The JSON result includes:
 
 - deterministic topological order;
 - node kind, dependencies and `dependency_policy`;
-- bounded condition and human-gate contracts;
+- bounded condition, Agent Fleet aggregate, and human-gate contracts;
 - prompt length, digest and a short preview instead of full prompt duplication;
 - static, map-child, verifier-child, and bounded-loop-child agent-claim projections;
 - executable and validated-only node kinds;
@@ -45,6 +45,8 @@ agent → map → verify → reduce → conditional
 
 Use `examples/bounded-design-convergence.workflow-ir.json` for the separate
 Bounded Loop v1 execution path.
+
+Use `skill/cli.py fleet-ir` for the separate exact 4–12 Luna Agent Fleet path; its plan preview reports Fleet mode, subject, risk, member counts and Sol policy.
 
 The closeout paths are explicit and mutually exclusive. Both record nodes
 depend on `choose-gate-outcome`, `review-gate`, and `summarize-audit`; their

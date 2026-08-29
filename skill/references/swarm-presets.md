@@ -69,9 +69,13 @@ directories, attempts, or artifacts. Branch finalizers only consume their own
 selected record. `repo-sweep` omits a separate finalizer so its worst-case
 static + map + verify projection remains exactly 24 claims.
 
+## Agent Fleet relation
+
+Static presets retain fixed large graphs and fixed budgets. When the caller needs an exact 4–12 Luna count, discovery/challenge stages, deterministic claim aggregation, or conditional Sol arbitration, use `fleet-list` / `fleet-ir` and [Agent Fleet v1](agent-fleet-v1.md) instead. Agent Fleet does not replace existing preset names or silently reinterpret `ultra-review`.
+
 ## Current scope
 
-These presets use only the currently executable read-only node kinds:
+These fixed preset graphs use only these executable read-only node kinds:
 
 ```text
 agent, map, verify, reduce, conditional, human_gate

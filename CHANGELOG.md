@@ -6,12 +6,15 @@
 
 ### Added
 
+- Agent Fleet v1：exact 4–12 个 read-only Luna，discovery/challenge 两阶段、封闭 claim 记录、零模型 `fleet_aggregate`、对抗性 refute/reproduce 和 zero-or-one Sol 仲裁。
+- `fleet-list` / `fleet-ir` 编译器，以及 `adversarial-review`、`test-matrix`、`repository-audit`、`architecture-council`、`competing-hypotheses` 五个 preset。
 - Worktree Writer v2：固定 `Sol / gpt-5.6-sol / high` Writer，并把精确 route、package version 与硬预算绑定到 plan、authorization、lock、checkpoint、candidate package 和 candidate revision。
 - Package v2：强制 digest-bound `acceptance_criteria`、`constraints`、`non_goals`、`behavior` 与 `implementation_context`；v2 runtime 不再接受 package v1。
 - 固定 Writer route 与机器策略的一致性检查，以及 route-binding、quality-context 和 revision 篡改回归测试。
 
 ### Changed
 
+- Workflow IR v3 新增可信 `fleet_aggregate` 节点；策略、CLI 预览、checkpoint artifact 和 agent-budget 投影同步覆盖 Agent Fleet。
 - 将 Dynamic Workflow 默认入口改为轻量 `Simple Swarm`：隐式触发至少需要两个窄而不重叠的分支，默认 2–6 个 child，root 不重复活跃分支。
 - 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；Worktree Writer v2 保持为显式授权模式，只接受 package v2。
 - 简化 read-only child packet、等待策略和结果采用规则，避免宽工作包、无限 wait 和为编排而编排。
