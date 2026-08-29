@@ -27,11 +27,18 @@ class WriterPolicyConsistencyTests(unittest.TestCase):
 
     def test_runtime_and_activation_boundary(self) -> None:
         policy = self.policy
-        self.assertEqual(policy["runtime_version"], writer_runtime_base.WRITER_RUNTIME_VERSION)
+        self.assertEqual(
+            policy["runtime_version"], writer_runtime_base.WRITER_RUNTIME_VERSION
+        )
+        self.assertEqual(
+            policy["writer_route_binding_version"],
+            writer_process.WRITER_BINDING_VERSION,
+        )
         self.assertTrue(policy["explicit_cli_only"])
-        self.assertFalse(policy["auto_planner_activation"])
-        self.assertFalse(policy["workflow_ir_activation"])
+        self.assertTrue(policy["single_active_writer_per_repository"])
         for key in (
+            "auto_planner_activation",
+            "workflow_ir_activation",
             "automatic_resume",
             "automatic_retry",
             "automatic_apply",
@@ -44,28 +51,55 @@ class WriterPolicyConsistencyTests(unittest.TestCase):
             self.assertFalse(policy[key], key)
 
     def test_package_and_effect_policy(self) -> None:
+        package = self.policy["package"]
         self.assertEqual(
-            set(self.policy["package"]["allowed_actions"]),
-            set(writer_contract.GRANTABLE_ACTIONS),
+            set(package["allowed_actions"]), set(writer_contract.GRANTABLE_ACTIONS)
         )
-        effects = self.policy["effects"]
-        for key, value in effects.items():
+        self.assertEqual(
+            set(package["supported_versions"]),
+            set(writer_contract.SUPPORTED_PACKAGE_VERSIONS),
+        )
+        self.assertEqual(
+            package["max_v2_quality_context_bytes"],
+            writer_contract.MAX_QUALITY_CONTEXT_BYTES,
+        )
+        self.assertEqual(
+            set(package["v2_quality_fields"]),
+            {
+                "acceptance_criteria",
+                "constraints",
+                "non_goals",
+                "behavior",
+                "implementation_context",
+            },
+        )
+        for key, value in self.policy["effects"].items():
             self.assertTrue(value, key)
+        self.assertTrue(self.policy["candidate"]["bind_writer_route"])
 
-    def test_writer_route_and_command_policy(self) -> None:
-        policy = self.policy["writer"]
-        self.assertEqual(policy["role"], writer_process.WRITER_ROUTE.role)
-        self.assertEqual(policy["model"], writer_process.WRITER_ROUTE.model)
-        self.assertEqual(policy["effort"], writer_process.WRITER_ROUTE.effort)
-        self.assertEqual(policy["tier"], writer_process.WRITER_ROUTE.tier)
-        self.assertEqual(policy["sandbox"], writer_process.WRITER_ROUTE.sandbox)
-        self.assertEqual(policy["attempts"], 1)
-        self.assertEqual(policy["retry"], 0)
-        self.assertEqual(policy["upgrade"], "none")
-        self.assertFalse(policy["network"])
-        self.assertFalse(policy["shell_tool"])
-        self.assertFalse(policy["code_mode"])
-        self.assertFalse(policy["multi_agent"])
+    def test_fixed_sol_writer_and_command_policy(self) -> None:
+        writer = self.policy["writer"]
+        binding = writer_process.writer_binding_record()
+        route = binding["route"]
+        limits = binding["limits"]
+        self.assertEqual(writer["selection"], binding["selection"])
+        self.assertEqual(writer["role"], route["role"])
+        self.assertEqual(writer["model"], route["model"])
+        self.assertEqual(writer["effort"], route["effort"])
+        self.assertEqual(writer["tier"], "inherit")
+        self.assertIsNone(route["tier"])
+        self.assertEqual(writer["package_version"], binding["package_version"])
+        for key, value in limits.items():
+            self.assertEqual(writer[key], value)
+        self.assertTrue(writer["requires_quality_context"])
+        self.assertEqual(writer["attempts"], 1)
+        self.assertEqual(writer["retry"], 0)
+        self.assertEqual(writer["upgrade"], "none")
+        self.assertEqual(writer["sandbox"], "workspace-write")
+        self.assertFalse(writer["network"])
+        self.assertFalse(writer["shell_tool"])
+        self.assertFalse(writer["code_mode"])
+        self.assertFalse(writer["multi_agent"])
         command = writer_process._build_command(
             codex_prefix=["codex"],
             cwd=Path("/isolated"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit CLI for the isolated Worktree Writer v1 runtime."""
+"""Explicit CLI for the isolated Worktree Writer v2 runtime."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ except ModuleNotFoundError:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="isolated Worktree Writer v1 candidate runtime"
+        description="isolated Worktree Writer v2 candidate runtime"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

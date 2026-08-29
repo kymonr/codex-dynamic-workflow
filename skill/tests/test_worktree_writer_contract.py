@@ -15,9 +15,25 @@ import writer_contract
 
 def valid_raw() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "name": "bounded-change",
         "objective": "Create one bounded UTF-8 document.",
+        "acceptance_criteria": [
+            "The declared verification command passes.",
+            "Only the owned UTF-8 text target changes.",
+        ],
+        "constraints": [
+            "Preserve public behavior outside the owned targets."
+        ],
+        "non_goals": ["Do not refactor adjacent modules."],
+        "behavior": {
+            "before": "The bounded target does not contain the requested change.",
+            "after": "The bounded target contains the requested deterministic change.",
+        },
+        "implementation_context": {
+            "relevant_symbols": ["docs/new.md", "check.py"],
+            "analysis_summary": "The change is bounded and verified locally.",
+        },
         "base": {
             "repository_full_name": "owner/repo",
             "expected_head_sha": "a" * 40,
@@ -53,6 +69,22 @@ class WriterContractTests(unittest.TestCase):
         self.assertEqual(first.value, second.value)
         self.assertEqual(first.digest, second.digest)
         self.assertEqual(len(first.digest), 64)
+
+    def test_package_v1_is_rejected(self) -> None:
+        raw = valid_raw()
+        raw["version"] = 1
+        for key in (
+            "acceptance_criteria",
+            "constraints",
+            "non_goals",
+            "behavior",
+            "implementation_context",
+        ):
+            raw.pop(key)
+        with self.assertRaisesRegex(
+            writer_contract.WriterContractError, "version must be integer 2"
+        ):
+            writer_contract.validate_package(raw)
 
     def test_closed_schema_and_integer_types(self) -> None:
         raw = valid_raw()

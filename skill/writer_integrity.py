@@ -1,4 +1,4 @@
-"""Deep, read-only integrity validation for Worktree Writer v1 evidence."""
+"""Deep, read-only integrity validation for Worktree Writer v2 evidence."""
 
 from __future__ import annotations
 
@@ -29,7 +29,13 @@ try:
         sha256_file,
     )
     from skill.writer_candidate_effects import reconcile_candidate
-    from skill.writer_process import REVIEWER_ROUTE, WRITER_ROUTE
+    from skill.writer_process import (
+        REVIEWER_ROUTE,
+        WriterProcessError,
+        WRITER_ROUTE,
+        validate_writer_package,
+        writer_binding_record,
+    )
     from skill.writer_review import (
         REVIEWER_AGENT_TYPE,
         terminal_state_for_verdict,
@@ -55,7 +61,13 @@ except ModuleNotFoundError:
         sha256_file,
     )
     from writer_candidate_effects import reconcile_candidate
-    from writer_process import REVIEWER_ROUTE, WRITER_ROUTE
+    from writer_process import (
+        REVIEWER_ROUTE,
+        WriterProcessError,
+        WRITER_ROUTE,
+        validate_writer_package,
+        writer_binding_record,
+    )
     from writer_review import (
         REVIEWER_AGENT_TYPE,
         terminal_state_for_verdict,
@@ -87,6 +99,7 @@ CHECKPOINT_KEYS = frozenset(
         "created_at",
         "finished_at",
         "package_digest",
+        "writer_binding",
         "canonical_repository",
         "worktree_path",
         "lock_path",
@@ -119,9 +132,12 @@ CANDIDATE_CHECKPOINT_KEYS = frozenset(
 CANDIDATE_PACKAGE_KEYS = frozenset(
     {
         "candidate_package_version",
+        "package_version",
         "package_digest",
         "package_name",
         "objective",
+        "quality_context",
+        "writer_binding",
         "repository_full_name",
         "base",
         "worktree",
@@ -216,7 +232,9 @@ LOCK_KEYS = frozenset(
         "status",
         "run_id",
         "pid",
+        "package_version",
         "package_digest",
+        "writer_binding",
         "repository",
         "repository_full_name",
         "created_at",
@@ -262,6 +280,23 @@ def _hex64(value: Any, *, where: str) -> str:
     if not isinstance(value, str) or HEX64_RE.fullmatch(value) is None:
         raise WriterIntegrityError(f"{where} must be 64 lowercase hex")
     return value
+
+
+def _validated_writer_binding(
+    value: Any, package: WriterPackage
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise WriterIntegrityError("writer binding record must be an object")
+    try:
+        validate_writer_package(package)
+    except WriterProcessError as exc:
+        raise WriterIntegrityError(str(exc)) from exc
+    expected = writer_binding_record()
+    if value != expected:
+        raise WriterIntegrityError(
+            "writer binding record does not match the trusted fixed route"
+        )
+    return expected
 
 
 def _strict_regular_file(path: Path, *, label: str, maximum: int | None = None) -> Path:
@@ -554,6 +589,7 @@ def _validate_candidate(
     effect_manifest: Mapping[str, Any],
     writer: Mapping[str, Any],
     verification_results: Sequence[Mapping[str, Any]],
+    writer_binding: Mapping[str, Any],
 ) -> tuple[dict[str, Any], Path, Path]:
     candidate = _closed(
         checkpoint_candidate,
@@ -597,7 +633,7 @@ def _validate_candidate(
         where="candidate package",
         keys=CANDIDATE_PACKAGE_KEYS,
     )
-    if value["candidate_package_version"] != 1:
+    if value["candidate_package_version"] != 2:
         raise WriterIntegrityError("candidate package version is invalid")
     basis = dict(value)
     recorded_revision = basis.pop("candidate_revision")
@@ -607,6 +643,12 @@ def _validate_candidate(
         raise WriterIntegrityError("candidate revision binding is invalid")
     if revision != recorded_revision:
         raise WriterIntegrityError("candidate checkpoint revision mismatch")
+    if value["package_version"] != package.version:
+        raise WriterIntegrityError("candidate package source version mismatch")
+    if value["quality_context"] != package.quality_context:
+        raise WriterIntegrityError("candidate package quality context mismatch")
+    if value["writer_binding"] != writer_binding:
+        raise WriterIntegrityError("candidate package writer binding mismatch")
     for key, expected in (
         ("package_digest", package.digest),
         ("package_name", package.name),
@@ -696,6 +738,7 @@ def _validate_lock(
     checkpoint: Mapping[str, Any],
     *,
     package: WriterPackage,
+    writer_binding: Mapping[str, Any],
     cleaned: bool,
 ) -> None:
     run_copy = _strict_regular_file(root / "writer-lock.json", label="writer lock copy", maximum=64 * 1024)
@@ -704,11 +747,13 @@ def _validate_lock(
         where="writer lock copy",
         keys=LOCK_KEYS,
     )
-    if copy_value["lock_version"] != 1 or copy_value["status"] != "active":
+    if copy_value["lock_version"] != 2 or copy_value["status"] != "active":
         raise WriterIntegrityError("writer lock copy identity is invalid")
     expected = {
         "run_id": checkpoint["run_id"],
+        "package_version": package.version,
         "package_digest": package.digest,
+        "writer_binding": writer_binding,
         "repository": checkpoint["canonical_repository"],
         "repository_full_name": package.repository_full_name,
         "worktree_path": checkpoint["worktree_path"],
@@ -779,7 +824,7 @@ def validate_run_integrity(
         keys=CHECKPOINT_KEYS,
     )
     summary = _strict_json(summary_path, label="writer summary", maximum=16 * 1024 * 1024)
-    if checkpoint["runtime"] != "worktree-writer-v1" or checkpoint["runtime_version"] != 1:
+    if checkpoint["runtime"] != "worktree-writer-v2" or checkpoint["runtime_version"] != 2:
         raise WriterIntegrityError("writer runtime identity is invalid")
     _bounded_text(checkpoint["run_id"], where="writer run_id", maximum=200)
     package_digest = _hex64(checkpoint["package_digest"], where="writer package digest")
@@ -809,7 +854,8 @@ def validate_run_integrity(
         key: checkpoint.get(key)
         for key in (
             "runtime", "runtime_version", "run_id", "state", "terminal", "phase",
-            "created_at", "finished_at", "package_digest", "canonical_repository",
+            "created_at", "finished_at", "package_digest", "writer_binding",
+            "canonical_repository",
             "worktree_path", "lock_path", "writer", "effect_manifest",
             "verification_results", "candidate", "reviewer", "error", "cleanup",
         )
@@ -824,6 +870,7 @@ def validate_run_integrity(
     package = validate_package(_strict_json(package_path, label="resolved writer package", maximum=1024 * 1024))
     if package.digest != package_digest:
         raise WriterIntegrityError("resolved writer package digest mismatch")
+    binding_record = _validated_writer_binding(checkpoint["writer_binding"], package)
     authorization = _strict_json(
         _strict_regular_file(root / "writer-authorization.json", label="writer authorization", maximum=1024 * 1024),
         label="writer authorization",
@@ -832,8 +879,10 @@ def validate_run_integrity(
     if not isinstance(authorization, dict):
         raise WriterIntegrityError("writer authorization must be an object")
     expected_authorization = {
-        "authorization_version": 1,
+        "authorization_version": 2,
+        "package_version": package.version,
         "package_digest": package.digest,
+        "writer_binding": binding_record,
         "expected_head_sha": package.expected_head_sha,
         "ack_isolated_worktree_write": True,
         "owned_targets": list(package.owned_targets),
@@ -909,6 +958,7 @@ def validate_run_integrity(
             effect_manifest=effect_manifest,
             writer=writer,
             verification_results=verification_results,
+            writer_binding=binding_record,
         )
     else:
         candidate_package = None
@@ -948,6 +998,7 @@ def validate_run_integrity(
         root,
         checkpoint,
         package=package,
+        writer_binding=binding_record,
         cleaned=cleanup["cleaned"],
     )
     canonical = repository_root(checkpoint["canonical_repository"])

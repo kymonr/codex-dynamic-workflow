@@ -42,9 +42,20 @@ class WriterPreflightTests(unittest.TestCase):
             git(root, "commit", "-m", "base")
             package = writer_contract.validate_package(
                 {
-                    "version": 1,
+                    "version": 2,
                     "name": "metadata-only",
                     "objective": "Modify one exact file.",
+                    "acceptance_criteria": ["The fixed verification command passes."],
+                    "constraints": ["Preserve unrelated repository behavior."],
+                    "non_goals": ["Do not expand authority."],
+                    "behavior": {
+                        "before": "The requested bounded change is absent.",
+                        "after": "The requested bounded change is present.",
+                    },
+                    "implementation_context": {
+                        "relevant_symbols": ["owned.txt"],
+                        "analysis_summary": "Only declared targets are relevant.",
+                    },
                     "base": {
                         "repository_full_name": "owner/repo",
                         "expected_head_sha": git(root, "rev-parse", "HEAD"),

@@ -1,8 +1,9 @@
-# Worktree Writer v1 is an explicit, isolated candidate producer. It is not a
+# Worktree Writer v2 is an explicit, isolated candidate producer. It is not a
 # Workflow IR node kind and cannot be activated by Auto Planner or Bounded Loop.
 
 [worktree_writer]
-runtime_version = 1
+runtime_version = 2
+writer_route_binding_version = 1
 explicit_cli_only = true
 single_active_writer_per_repository = true
 auto_planner_activation = false
@@ -19,15 +20,32 @@ automatic_deploy = false
 [worktree_writer.package]
 closed_schema = true
 canonical_digest = "sha256-canonical-json"
+supported_versions = [2]
+max_v2_quality_context_bytes = 131072
+v2_quality_fields = [
+  "acceptance_criteria",
+  "constraints",
+  "non_goals",
+  "behavior",
+  "implementation_context",
+]
 allowed_actions = ["create", "modify"]
 repo_relative_posix_paths = true
 case_insensitive_uniqueness = true
 
 [worktree_writer.writer]
-role = "luna"
-model = "gpt-5.6-luna"
-effort = "max"
-tier = "fast"
+selection = "fixed-host-route"
+role = "sol"
+model = "gpt-5.6-sol"
+effort = "high"
+tier = "inherit"
+package_version = 2
+max_owned_targets = 8
+max_changed_files = 8
+max_patch_bytes = 524288
+max_created_file_bytes = 262144
+max_total_candidate_bytes = 2097152
+requires_quality_context = true
 attempts = 1
 retry = 0
 upgrade = "none"
@@ -64,4 +82,5 @@ forbid_external_write = true
 text_only_patch = true
 capture_untracked_content = true
 freeze_before_review = true
+bind_writer_route = true
 terminal_verdicts = ["ship_candidate", "fix_first", "rethink"]

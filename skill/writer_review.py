@@ -1,4 +1,4 @@
-"""Fresh artifact-bound Sol review contract for Worktree Writer v1."""
+"""Fresh artifact-bound Sol review contract for Worktree Writer v2."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ VERDICTS = frozenset({"ship", "fix-first", "rethink"})
 PRIORITIES = frozenset({"P1", "P2", "P3"})
 MAX_REVIEW_TEXT = 8_000
 MAX_REVIEW_ITEMS = 128
-MAX_REVIEW_PROMPT_CHARS = 240_000
+MAX_REVIEW_PROMPT_CHARS = 900_000
 
 
 class WriterReviewError(RuntimeError):
@@ -165,7 +165,7 @@ def build_review_prompt(*, candidate_package, patch_text: str) -> str:
     except WriterContractError as exc:
         raise WriterReviewError(str(exc)) from exc
     prompt = (
-        "WORKTREE_WRITER_V1_FRESH_SOL_REVIEW\n"
+        "WORKTREE_WRITER_V2_FRESH_SOL_REVIEW\n"
         f"agent_type={REVIEWER_AGENT_TYPE}\n"
         "fork_turns=none\n"
         "access=read_only\n"

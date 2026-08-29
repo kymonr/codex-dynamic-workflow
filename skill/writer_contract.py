@@ -1,8 +1,8 @@
-"""Closed Worktree Writer v1 package contract.
+"""Closed Worktree Writer package contract.
 
 The package is data, never authorization outside the exact host binding supplied
 on the writer CLI. This module performs no filesystem writes and no model calls.
-It deliberately accepts only the v1 create/modify text-file surface.
+Package v2 requires digest-bound quality context for the fixed Sol writer.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
-PACKAGE_VERSION = 1
+PACKAGE_VERSION = 2
+SUPPORTED_PACKAGE_VERSIONS = frozenset({PACKAGE_VERSION})
 MAX_PACKAGE_BYTES = 1024 * 1024
 MAX_NAME_CHARS = 50
 MAX_OBJECTIVE_CHARS = 16_000
@@ -23,6 +24,11 @@ MAX_OWNED_TARGETS = 32
 MAX_VERIFICATION_COMMANDS = 16
 MAX_ARGV_ITEMS = 32
 MAX_ARGV_CHARS = 8_192
+MAX_QUALITY_ITEMS = 64
+MAX_QUALITY_ITEM_CHARS = 4_000
+MAX_RELEVANT_SYMBOLS = 128
+MAX_SYMBOL_CHARS = 512
+MAX_QUALITY_CONTEXT_BYTES = 128 * 1024
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
@@ -30,7 +36,20 @@ HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 
 TOP_KEYS = frozenset(
-    {"version", "name", "objective", "base", "authority", "limits", "verification"}
+    {
+        "version",
+        "name",
+        "objective",
+        "base",
+        "authority",
+        "limits",
+        "verification",
+        "acceptance_criteria",
+        "constraints",
+        "non_goals",
+        "behavior",
+        "implementation_context",
+    }
 )
 BASE_KEYS = frozenset(
     {"repository_full_name", "expected_head_sha", "expected_tree_sha"}
@@ -46,6 +65,8 @@ LIMIT_KEYS = frozenset(
 )
 VERIFICATION_KEYS = frozenset({"required_verification_ids", "commands"})
 COMMAND_KEYS = frozenset({"id", "argv", "timeout_seconds"})
+BEHAVIOR_KEYS = frozenset({"before", "after"})
+IMPLEMENTATION_CONTEXT_KEYS = frozenset({"relevant_symbols", "analysis_summary"})
 GRANTABLE_ACTIONS = frozenset({"create", "modify"})
 
 WINDOWS_RESERVED = {
@@ -71,7 +92,7 @@ LIMIT_RANGES: dict[str, tuple[int, int]] = {
 
 
 class WriterContractError(RuntimeError):
-    """The Worktree Writer v1 package or binding cannot continue safely."""
+    """The Worktree Writer package or binding cannot continue safely."""
 
 
 @dataclass(frozen=True)
@@ -80,6 +101,10 @@ class WriterPackage:
 
     value: dict[str, Any]
     digest: str
+
+    @property
+    def version(self) -> int:
+        return self.value["version"]
 
     @property
     def name(self) -> str:
@@ -116,6 +141,23 @@ class WriterPackage:
     @property
     def verification(self) -> Mapping[str, Any]:
         return self.value["verification"]
+
+    @property
+    def quality_context(self) -> Mapping[str, Any]:
+        return {
+            "acceptance_criteria": list(self.value["acceptance_criteria"]),
+            "constraints": list(self.value["constraints"]),
+            "non_goals": list(self.value["non_goals"]),
+            "behavior": dict(self.value["behavior"]),
+            "implementation_context": {
+                "relevant_symbols": list(
+                    self.value["implementation_context"]["relevant_symbols"]
+                ),
+                "analysis_summary": self.value["implementation_context"][
+                    "analysis_summary"
+                ],
+            },
+        }
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -213,6 +255,27 @@ def _text(value: Any, *, where: str, maximum: int, strip: bool = True) -> str:
     return result
 
 
+def _text_list(
+    value: Any,
+    *,
+    where: str,
+    minimum_items: int,
+    maximum_items: int,
+    item_maximum: int,
+) -> list[str]:
+    if not isinstance(value, list) or not minimum_items <= len(value) <= maximum_items:
+        raise WriterContractError(
+            f"{where} must contain {minimum_items}..{maximum_items} strings"
+        )
+    normalized = [
+        _text(item, where=f"{where}[{index}]", maximum=item_maximum)
+        for index, item in enumerate(value)
+    ]
+    if len({item.casefold() for item in normalized}) != len(normalized):
+        raise WriterContractError(f"{where} must be case-insensitively unique")
+    return normalized
+
+
 def _integer(value: Any, *, where: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise WriterContractError(f"{where} must be an integer")
@@ -295,15 +358,89 @@ def _validate_validation_argv(argv: Any, *, where: str) -> list[str]:
 
 
 def validate_package(raw: Any) -> WriterPackage:
+    if not isinstance(raw, dict):
+        raise WriterContractError("package must be an object")
+    version = raw.get("version")
+    if isinstance(version, bool) or version != PACKAGE_VERSION:
+        raise WriterContractError(
+            f"package.version must be integer {PACKAGE_VERSION}"
+        )
     top = _closed_object(raw, where="package", keys=TOP_KEYS)
-    if isinstance(top["version"], bool) or top["version"] != PACKAGE_VERSION:
-        raise WriterContractError(f"package.version must be integer {PACKAGE_VERSION}")
     name = _text(top["name"], where="package.name", maximum=MAX_NAME_CHARS)
     if NAME_RE.fullmatch(name) is None:
         raise WriterContractError("package.name must be a lowercase identifier")
     objective = _text(
         top["objective"], where="package.objective", maximum=MAX_OBJECTIVE_CHARS
     )
+
+    acceptance_criteria = _text_list(
+        top["acceptance_criteria"],
+        where="package.acceptance_criteria",
+        minimum_items=1,
+        maximum_items=MAX_QUALITY_ITEMS,
+        item_maximum=MAX_QUALITY_ITEM_CHARS,
+    )
+    constraints = _text_list(
+        top["constraints"],
+        where="package.constraints",
+        minimum_items=0,
+        maximum_items=MAX_QUALITY_ITEMS,
+        item_maximum=MAX_QUALITY_ITEM_CHARS,
+    )
+    non_goals = _text_list(
+        top["non_goals"],
+        where="package.non_goals",
+        minimum_items=0,
+        maximum_items=MAX_QUALITY_ITEMS,
+        item_maximum=MAX_QUALITY_ITEM_CHARS,
+    )
+    behavior_raw = _closed_object(
+        top["behavior"], where="package.behavior", keys=BEHAVIOR_KEYS
+    )
+    behavior = {
+        "before": _text(
+            behavior_raw["before"],
+            where="package.behavior.before",
+            maximum=MAX_OBJECTIVE_CHARS,
+        ),
+        "after": _text(
+            behavior_raw["after"],
+            where="package.behavior.after",
+            maximum=MAX_OBJECTIVE_CHARS,
+        ),
+    }
+    context_raw = _closed_object(
+        top["implementation_context"],
+        where="package.implementation_context",
+        keys=IMPLEMENTATION_CONTEXT_KEYS,
+    )
+    implementation_context = {
+        "relevant_symbols": _text_list(
+            context_raw["relevant_symbols"],
+            where="package.implementation_context.relevant_symbols",
+            minimum_items=0,
+            maximum_items=MAX_RELEVANT_SYMBOLS,
+            item_maximum=MAX_SYMBOL_CHARS,
+        ),
+        "analysis_summary": _text(
+            context_raw["analysis_summary"],
+            where="package.implementation_context.analysis_summary",
+            maximum=MAX_OBJECTIVE_CHARS,
+        ),
+    }
+    quality_context = {
+        "acceptance_criteria": acceptance_criteria,
+        "constraints": constraints,
+        "non_goals": non_goals,
+        "behavior": behavior,
+        "implementation_context": implementation_context,
+    }
+    quality_bytes = len(canonical_json_bytes(quality_context))
+    if quality_bytes > MAX_QUALITY_CONTEXT_BYTES:
+        raise WriterContractError(
+            "package v2 quality context exceeds "
+            f"{MAX_QUALITY_CONTEXT_BYTES} canonical UTF-8 bytes"
+        )
 
     base = _closed_object(top["base"], where="package.base", keys=BASE_KEYS)
     repository = _text(
@@ -444,7 +581,7 @@ def validate_package(raw: Any) -> WriterPackage:
         )
 
     normalized = {
-        "version": PACKAGE_VERSION,
+        "version": version,
         "name": name,
         "objective": objective,
         "base": {
@@ -462,6 +599,7 @@ def validate_package(raw: Any) -> WriterPackage:
             "commands": commands,
         },
     }
+    normalized.update(quality_context)
     return WriterPackage(normalized, canonical_digest(normalized))
 
 
@@ -474,6 +612,15 @@ def package_contract() -> dict[str, Any]:
 
     return {
         "contract_version": PACKAGE_VERSION,
+        "supported_package_versions": sorted(SUPPORTED_PACKAGE_VERSIONS),
+        "max_v2_quality_context_bytes": MAX_QUALITY_CONTEXT_BYTES,
+        "v2_quality_fields": [
+            "acceptance_criteria",
+            "constraints",
+            "non_goals",
+            "behavior",
+            "implementation_context",
+        ],
         "grantable_actions": sorted(GRANTABLE_ACTIONS),
         "forbidden_effects": [
             "delete",

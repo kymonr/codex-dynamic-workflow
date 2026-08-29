@@ -54,9 +54,25 @@ class Fixture:
 
     def write_package(self, *, validation_script: str = "check.py") -> writer_contract.WriterPackage:
         raw = {
-            "version": 1,
+            "version": 2,
             "name": "writer-fixture",
             "objective": "Create docs/new.md with a short deterministic document.",
+            "acceptance_criteria": [
+                "The declared verification command passes.",
+                "Only the owned UTF-8 text target changes.",
+            ],
+            "constraints": [
+                "Preserve public behavior outside the owned targets."
+            ],
+            "non_goals": ["Do not refactor adjacent modules."],
+            "behavior": {
+                "before": "The target document does not exist.",
+                "after": "The deterministic target document exists.",
+            },
+            "implementation_context": {
+                "relevant_symbols": ["docs/new.md", "check.py"],
+                "analysis_summary": "The change is bounded and verified locally.",
+            },
             "base": {
                 "repository_full_name": "owner/repo",
                 "expected_head_sha": git(self.repo, "rev-parse", "HEAD"),
@@ -122,7 +138,7 @@ class FakeProcessAdapter:
         attempt_dir = kwargs["attempt_dir"]
         attempt_dir.mkdir(parents=True, exist_ok=False)
         (attempt_dir / "cmd.json").write_text("[]", encoding="utf-8")
-        if route.role == "luna":
+        if route.role == "sol":
             if self.writer_error:
                 raise writer_process.WriterProcessError("fixture interruption")
             cwd = kwargs["cwd"]
@@ -137,10 +153,10 @@ class FakeProcessAdapter:
                 effects = []
             return {
                 "status": "succeeded",
-                "role": "luna",
-                "model": "gpt-5.6-luna",
-                "effort": "max",
-                "tier": "fast",
+                "role": route.role,
+                "model": route.model,
+                "effort": route.effort,
+                "tier": route.tier,
                 "requested_sandbox": "workspace-write",
                 "observed_sandbox": "fixture",
                 "attempt_count": 1,
@@ -225,7 +241,7 @@ class WriterRuntimeTests(unittest.TestCase):
         adapter = FakeProcessAdapter(verdict="ship")
         result = self._run(adapter)
         self.assertEqual(result["state"], "ship_candidate")
-        self.assertEqual(adapter.calls, ["luna", "dynamic_workflow_sol_reviewer"])
+        self.assertEqual(adapter.calls, ["sol", "dynamic_workflow_sol_reviewer"])
         self.assertEqual(git(self.fixture.repo, "rev-parse", "HEAD"), before_head)
         self.assertEqual(git(self.fixture.repo, "status", "--porcelain"), before_status)
         run_dir = Path(result["candidate"]["candidate_package_path"]).parent
@@ -272,14 +288,14 @@ class WriterRuntimeTests(unittest.TestCase):
         adapter = FakeProcessAdapter(writer_effect="unowned")
         result = self._run(adapter)
         self.assertEqual(result["state"], "effect_violation")
-        self.assertEqual(adapter.calls, ["luna"])
+        self.assertEqual(adapter.calls, ["sol"])
         self.assertTrue(Path(result["worktree_path"]).exists())
 
     def test_interrupted_writer_is_not_replayed_and_worktree_is_preserved(self) -> None:
         adapter = FakeProcessAdapter(writer_error=True)
         result = self._run(adapter)
         self.assertEqual(result["state"], "attention_required")
-        self.assertEqual(adapter.calls, ["luna"])
+        self.assertEqual(adapter.calls, ["sol"])
         self.assertTrue(Path(result["worktree_path"]).exists())
         with self.fixture.environment(), self.fixture.preflight():
             with self.assertRaisesRegex(writer_runtime.WriterRuntimeError, "lock"):
@@ -297,7 +313,7 @@ class WriterRuntimeTests(unittest.TestCase):
         adapter = FakeProcessAdapter()
         result = self._run(adapter)
         self.assertEqual(result["state"], "validation_failed")
-        self.assertEqual(adapter.calls, ["luna"])
+        self.assertEqual(adapter.calls, ["sol"])
 
 
 if __name__ == "__main__":

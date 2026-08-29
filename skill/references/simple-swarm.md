@@ -79,7 +79,7 @@ Read-only is the default.
 
 When the user explicitly asks for implementation, Simple Swarm may use one scoped native writer while other branches remain read-only. The root must not write the same targets concurrently.
 
-Worktree Writer v1 is a different explicit mode. A normal implementation request does not automatically authorize it.
+Worktree Writer v2 is a different explicit mode. A normal implementation request does not automatically authorize it.
 
 ## Final output
 

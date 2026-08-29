@@ -50,7 +50,7 @@ Add one closed authority manifest:
 
 Tell the writer unrelated edits may exist and must be preserved. Only one native writer is active by default, and root must not write the same targets concurrently. If a user-requested Grok conversation task writes beside the native writer, both need disjoint closed `owned_targets`—including temporary artifacts—and separate worktrees under [worktree-parallel-dispatch.md](worktree-parallel-dispatch.md). If ownership overlaps or isolation is unavailable, serialize the writers.
 
-Worktree Writer v1 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v1.md](worktree-writer-v1.md).
+Worktree Writer v2 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v2.md](worktree-writer-v2.md). It accepts package v2 only and uses one host-fixed Sol/high Writer; the v1 contract is historical.
 
 ## Managed Workflow packet
 

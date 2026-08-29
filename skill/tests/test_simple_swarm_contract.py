@@ -111,6 +111,7 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "managed-workflow-is-explicit",
             "writer-workflow-is-explicit",
             "wide-child-package-is-resplit",
+            "worktree-writer-route-is-fixed-sol-high",
         ):
             self.assertIn(name, names)
 

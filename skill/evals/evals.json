@@ -270,13 +270,19 @@
       "id": 45,
       "name": "writer-workflow-is-explicit",
       "prompt": "比较“修复一个小 bug”和“请在隔离 worktree 生成不可变 candidate，再由 fresh reviewer 审核”。",
-      "expected_output": "The small bug may use one scoped native writer because implementation was requested. Only the explicit isolated-candidate request selects Writer Workflow / Worktree Writer v1."
+      "expected_output": "The small bug may use one scoped native writer because implementation was requested. Only the explicit isolated-candidate request selects Writer Workflow / Worktree Writer v2."
     },
     {
       "id": 46,
       "name": "wide-child-package-is-resplit",
       "prompt": "计划把 CLI、runtime、Writer 安全、测试和覆盖率全部交给一个 Luna，主线程也会同步检查其中两项。",
       "expected_output": "Reject the package as too broad. Re-split it into narrow, non-overlapping branches and remove root duplication before dispatch."
+    },
+    {
+      "id": 47,
+      "name": "worktree-writer-route-is-fixed-sol-high",
+      "prompt": "显式请求 Worktree Writer v2 隔离 candidate，并询问 package 是否可以选择 Luna 或把 Sol effort 改成 xhigh。",
+      "expected_output": "Use package v2 with the host-fixed Sol/high Writer and fresh read-only Sol/xhigh reviewer. The package and CLI cannot select, downgrade, or upgrade the Writer route."
     }
   ]
 }

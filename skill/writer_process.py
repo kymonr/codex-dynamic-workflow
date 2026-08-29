@@ -18,12 +18,12 @@ try:
 except ModuleNotFoundError:
     import runner as legacy
 
-WRITER_MODEL = "gpt-5.6-luna"
-WRITER_EFFORT = "max"
-WRITER_TIER = "fast"
+WRITER_MODEL = "gpt-5.6-sol"
+WRITER_EFFORT = "high"
+WRITER_TIER = None
 REVIEWER_MODEL = "gpt-5.6-sol"
 REVIEWER_EFFORT = "xhigh"
-MAX_PROMPT_BYTES = 512 * 1024
+MAX_PROMPT_BYTES = 1024 * 1024
 MAX_SCHEMA_BYTES = 256 * 1024
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -42,10 +42,65 @@ class ProcessRoute:
     sandbox: str
 
 
-WRITER_ROUTE = ProcessRoute("luna", WRITER_MODEL, WRITER_EFFORT, WRITER_TIER, "workspace-write")
+WRITER_ROUTE = ProcessRoute(
+    "sol", WRITER_MODEL, WRITER_EFFORT, WRITER_TIER, "workspace-write"
+)
 REVIEWER_ROUTE = ProcessRoute(
     "dynamic_workflow_sol_reviewer", REVIEWER_MODEL, REVIEWER_EFFORT, None, "read-only"
 )
+
+WRITER_BINDING_VERSION = 1
+WRITER_PACKAGE_VERSION = 2
+WRITER_MAX_OWNED_TARGETS = 8
+WRITER_MAX_CHANGED_FILES = 8
+WRITER_MAX_PATCH_BYTES = 512 * 1024
+WRITER_MAX_CREATED_FILE_BYTES = 256 * 1024
+WRITER_MAX_TOTAL_CANDIDATE_BYTES = 2 * 1024 * 1024
+
+
+def writer_binding_record() -> dict[str, Any]:
+    return {
+        "writer_binding_version": WRITER_BINDING_VERSION,
+        "selection": "fixed-host-route",
+        "route": {
+            "role": WRITER_ROUTE.role,
+            "model": WRITER_ROUTE.model,
+            "effort": WRITER_ROUTE.effort,
+            "tier": WRITER_ROUTE.tier,
+            "sandbox": WRITER_ROUTE.sandbox,
+        },
+        "package_version": WRITER_PACKAGE_VERSION,
+        "limits": {
+            "max_owned_targets": WRITER_MAX_OWNED_TARGETS,
+            "max_changed_files": WRITER_MAX_CHANGED_FILES,
+            "max_patch_bytes": WRITER_MAX_PATCH_BYTES,
+            "max_created_file_bytes": WRITER_MAX_CREATED_FILE_BYTES,
+            "max_total_candidate_bytes": WRITER_MAX_TOTAL_CANDIDATE_BYTES,
+        },
+        "requires_quality_context": True,
+    }
+
+
+def validate_writer_package(package: Any) -> None:
+    if package.version != WRITER_PACKAGE_VERSION:
+        raise WriterProcessError(
+            f"fixed Sol writer requires package v{WRITER_PACKAGE_VERSION}"
+        )
+    if len(package.owned_targets) > WRITER_MAX_OWNED_TARGETS:
+        raise WriterProcessError(
+            f"fixed Sol writer allows at most {WRITER_MAX_OWNED_TARGETS} owned targets"
+        )
+    maxima = {
+        "max_changed_files": WRITER_MAX_CHANGED_FILES,
+        "max_patch_bytes": WRITER_MAX_PATCH_BYTES,
+        "max_created_file_bytes": WRITER_MAX_CREATED_FILE_BYTES,
+        "max_total_candidate_bytes": WRITER_MAX_TOTAL_CANDIDATE_BYTES,
+    }
+    for key, maximum in maxima.items():
+        if package.limits[key] > maximum:
+            raise WriterProcessError(
+                f"fixed Sol writer requires package.limits.{key} <= {maximum}"
+            )
 
 
 def writer_output_schema() -> dict[str, Any]:
