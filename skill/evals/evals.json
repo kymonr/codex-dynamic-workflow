@@ -30,7 +30,7 @@
       "id": 5,
       "name": "single-active-writer-with-owning-precedence",
       "prompt": "请求实现两个模块并验证；判断 Dynamic Workflow 是否允许同时有两个写者，以及专用并发写 workflow 完整拥有流程时如何处理。",
-      "expected_output": "Dynamic Workflow defaults to one active native writer. A user-requested Grok conversation task may write beside a native writer only with disjoint owned_targets and separate worktrees; overlapping or unisolated writes stay serial. A dedicated workflow that completely owns concurrent writes still takes precedence."
+      "expected_output": "Dynamic Workflow permits at most one active native writer. Sol is the default writer, but a user's explicit supported native model selection takes precedence, so explicitly selected Luna may be the scoped writer. Grok remains read-only. A dedicated workflow that completely owns concurrent writes still takes precedence."
     },
     {
       "id": 6,
@@ -54,7 +54,7 @@
       "id": 9,
       "name": "access-based-large-ordinary-work",
       "prompt": "这个改动涉及很多文件：普通实现、测试和文档核对可以拆开，结论最后统一整合；没有架构、安全、最终裁决或难回滚决定。判断如何委派。",
-      "expected_output": "Select Simple Swarm, route ordinary read-only and scoped implementation lanes independently, keep at most one active native writer, and do not select Managed Workflow, Sol, or Grok from file count alone."
+      "expected_output": "Select Simple Swarm, route ordinary read-only lanes independently, serialize scoped implementation through one Sol writer, and do not select Managed Workflow or Grok from file count alone."
     },
     {
       "id": 10,
@@ -160,9 +160,9 @@
     },
     {
       "id": 27,
-      "name": "luna-ordinary-sol-complex-writer-routing",
+      "name": "sol-defaults-ordinary-and-complex-writes",
       "prompt": "分别判断三个普通分支：A，只读调查并规划；B，跨模块行为修改，必须理解调用链并修改多个相关文件；C，未指定代理，一个短小、边界清楚、低风险且可本地验证的单文件修改。",
-      "expected_output": "Use Simple Swarm for the three lanes, keep A read-only, and serialize the two writing branches so only one native writer is active: Sol for the complex cross-module change and Luna for the later bounded single-file change. Root retains effects and acceptance."
+      "expected_output": "Use Simple Swarm for the three lanes, keep A read-only on Luna when delegated, and serialize B and C through Sol because neither writing branch has an explicit native model selection. Root retains effects and acceptance."
     },
     {
       "id": 28,
@@ -196,21 +196,21 @@
     },
     {
       "id": 33,
-      "name": "isolated-luna-grok-thread-parallel-write",
+      "name": "parent-cannot-auto-select-luna-or-grok-writer",
       "prompt": "用户明确要求新建 Grok 对话任务；主线程已给 Luna 与 Grok 线程互不重叠的文件范围和独立 worktree，让两者同时写。",
-      "expected_output": "Allow one native Luna writer and the user-requested Grok conversation task to write concurrently because root issued disjoint owned_targets and separate-worktree isolation; have root integrate after both are terminal."
+      "expected_output": "Reject both parent-selected write assignments: Luna writing requires explicit user selection, while Grok is only a visible read-only second review after candidate freeze. Route the authorized implementation to the default Sol writer; worktree isolation does not expand route authority."
     },
     {
       "id": 34,
-      "name": "overlapping-write-stays-serial",
-      "prompt": "Luna 与用户明确要求的新 Grok 对话任务都要改同一个文件，主线程没有给出隔离范围。",
-      "expected_output": "Keep writing serial with one active writer; an explicit Grok conversation task does not override overlapping targets or missing isolation."
+      "name": "explicit-luna-writer-precedes-default-sol",
+      "prompt": "用户显式指定 Luna 修改一个文件，同时要求 Grok 对话任务也修改同一个文件。判断实际路由。",
+      "expected_output": "Honor the explicit Luna selection and use Luna as the one scoped native writer instead of the default Sol route. Reject Grok writing; after the Luna candidate is frozen, create Grok only as a separate visible read-only second review if the user still wants it."
     },
     {
       "id": 35,
-      "name": "grok-thread-method-freedom",
+      "name": "grok-thread-is-review-only",
       "prompt": "用户明确要求新建 Grok 对话任务完成复杂实现。主线程应该给它多细的工具和文件操作限制？",
-      "expected_output": "Give the Grok task a clear outcome, primary scope, safety boundary, and completion standard while leaving investigation, implementation, tool choice, necessary adjacent-file changes, and extra verification to Grok. Temporary analysis artifacts are allowed when useful but should not remain in the final change."
+      "expected_output": "Do not give implementation to Grok. Route the authorized write to Sol, freeze the resulting candidate, and only then create the explicitly requested visible Grok task with a bounded read-only second-review question, evidence scope, and no file, Git, runtime, or external effects."
     },
     {
       "id": 36,
@@ -222,31 +222,31 @@
       "id": 37,
       "name": "explicit-grok-thread-is-not-native-subagent",
       "prompt": "请新建一个 Grok 对话任务独立完成这个实现，并允许我之后直接进入那个任务继续交流。",
-      "expected_output": "Create a separate user-visible Grok conversation task rather than a native subagent, use a separate worktree for Git writing by default, pass the broad outcome-and-boundary handoff, and keep its lifecycle outside native route recovery and interruption rules."
+      "expected_output": "Do not assign implementation to Grok. Route the write to Sol; after the candidate is frozen, create a separate user-visible Grok conversation only as an explicitly requested read-only second review, and keep it outside native routing, recovery, and final acceptance."
     },
     {
       "id": 38,
       "name": "native-grok-route-is-rejected",
       "prompt": "请在 Dynamic Workflow 里把这个实现直接派给原生 grok_writer subagent；不要新建对话任务。",
-      "expected_output": "Reject grok_writer as a native route because Grok is not an installed Dynamic Workflow subagent or fallback. Do not silently substitute a Grok reviewer or executor; use the applicable native v2 route, or ask the user to explicitly request a separate visible Grok task if that different outcome is actually wanted."
+      "expected_output": "Reject grok_writer as a native route because Grok is not a Dynamic Workflow subagent, writer, native reviewer, fallback, or recovery route. Use Sol for the authorized implementation; a Grok task is available only as an explicitly requested separate visible read-only second review after candidate freeze."
     },
     {
       "id": 39,
       "name": "grok-is-not-native-independent-reviewer",
       "prompt": "请让 Grok 作为 Dynamic Workflow 的原生独立 reviewer 做最终验收。",
-      "expected_output": "Do not route Grok through the native independent-review overlay or the Sol reviewer role. Explain that Grok can only be a separate user-visible conversation task when explicitly requested; native final acceptance follows the dedicated reviewer contract."
+      "expected_output": "Do not route Grok through the native independent-review overlay or the Sol reviewer role. Explain that Grok can only be an explicitly requested separate user-visible read-only second review after candidate freeze; native final acceptance follows the dedicated reviewer contract."
     },
     {
       "id": 40,
-      "name": "serial-versus-concurrent-grok-freedom",
+      "name": "grok-writing-is-always-rejected",
       "prompt": "比较两种 Grok 对话写入：A，Grok 是唯一 writer；B，Grok 与 Luna 同时写同一 Git repo。分别说明文件自由度。",
-      "expected_output": "In A, give Grok broad method freedom and treat listed files as primary entry points within the authorized goal. In B, require separate worktrees and disjoint closed owned_targets including temporary-artifact locations; adjacent files outside the manifest require stopping to serialize or reassign ownership."
+      "expected_output": "Reject Grok writing in both A and B. Use Sol as the default writer, or Luna only when the user explicitly selected Luna as the scoped writer. Grok may only inspect a frozen candidate in an explicitly requested separate visible read-only second-review task."
     },
     {
       "id": 41,
       "name": "native-route-ladder-remains-visible",
       "prompt": "Dynamic Workflow 已由另一条实质支线触发。分别路由：一个窄而明确的只读代码问题、一个短小机械低风险但需要核对若干已知输出的只读验证支线、一个普通实现、一个复杂高影响跨模块实现。",
-      "expected_output": "Use Explorer for the bounded codebase question when its pre-route applies, Spark for the short mechanical read, Luna for ordinary implementation, and Sol for the complex high-impact branch. Keep Grok outside native routing."
+      "expected_output": "Use Explorer for the bounded codebase question when its pre-route applies, Spark for the short mechanical read, and Sol for both unspecified implementation branches because Sol is the default writer and complex route. Luna remains read-only unless explicitly selected for scoped writing; keep Grok outside native routing."
     },
     {
       "id": 42,

@@ -1,13 +1,9 @@
 name = "grok_writer"
-description = "Disabled native Grok fallback retained only as rollback reference; do not load or dispatch this role."
+description = "Disabled historical Grok writer reference; never load, enable, or dispatch this role."
 model = "xai/grok-4.6"
 model_reasoning_effort = "high"
 service_tier = "default"
 developer_instructions = """
-Act only as the one named writer for delegated complex cross-module implementation, nontrivial behavior changes, or substantial refactors.
-When the user or parent explicitly assigns a read-only Grok audit, remain strictly read-only and return findings without effects.
-Other work may be present: preserve unrelated state, do not revert another agent, and do not spawn subagents.
-Use the smallest defensible scoped change, run focused non-destructive verification, and report exact effects and evidence to the parent.
-Always leave scope expansion, credentials, destructive or high-risk external actions, production or database work, publication, commit, push, merge, deployment, and final acceptance to the parent.
-On Windows, inspect target files in place with Get-Content and bounded rg; after locating the relevant symbols, read only the needed ranges and patch owned targets directly. Source-inspection artifacts such as `_r*.txt`, excerpt files, and dump or helper scripts are outside the assignment and must not be created. If a read or patch command fails, switch to a shorter native read or correct the patch once from the reported error.
+This role is disabled historical material and must never be loaded, enabled, dispatched, or used for writing, native review, fallback, or recovery.
+An explicitly requested Grok second review runs only as a separate visible read-only conversation task after the candidate is frozen; it does not use this role file.
 """

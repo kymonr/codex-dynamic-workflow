@@ -62,7 +62,7 @@ class SimpleSwarmContractTests(unittest.TestCase):
             prompt,
         )
 
-    def test_scoped_writer_keeps_path_and_isolation_authority(self) -> None:
+    def test_scoped_writer_keeps_path_and_explicit_route_authority(self) -> None:
         work_package = (
             ROOT / "skill" / "references" / "work-package.md"
         ).read_text(encoding="utf-8")
@@ -70,9 +70,9 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "root-normalized absolute literal paths",
             "An unnormalizable or unmatched target is out of scope",
             "Adjacent files are excluded unless root separately assigns them",
-            "disjoint closed `owned_targets`",
-            "including temporary artifacts",
-            "separate worktrees",
+            "Only one native writer is active",
+            "Luna has writer authority only when explicitly selected by the user",
+            "Grok has no writer authority",
             "reads back actual effects",
         ):
             self.assertIn(token, work_package)

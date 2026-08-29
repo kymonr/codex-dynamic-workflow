@@ -77,7 +77,7 @@ Success metrics are useful result adoption, less duplicate work, lower total del
 
 Read-only is the default.
 
-When the user explicitly asks for implementation, Simple Swarm may use one scoped native writer while other branches remain read-only. The root must not write the same targets concurrently.
+When the user explicitly asks for implementation, Simple Swarm may use one scoped native writer while other branches remain read-only. Sol is the default writer; an explicit supported native model selection takes precedence, so user-selected Luna may be the one scoped writer. Grok never writes. The root must not write the same targets concurrently.
 
 Worktree Writer v2 is a different explicit mode. A normal implementation request does not automatically authorize it.
 

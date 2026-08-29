@@ -30,7 +30,7 @@ A read-only Simple Swarm packet does **not** require a JSON authority manifest, 
 
 ## Scoped native writer packet
 
-Use this only when the user explicitly asks to implement, change, build, or fix something and root chooses one ordinary native writer.
+Use this only when the user explicitly asks to implement, change, build, or fix something and root chooses one native writer. Sol is the default; explicit supported native model selection takes precedence.
 
 Add one closed authority manifest:
 
@@ -48,7 +48,7 @@ Add one closed authority manifest:
 
 `delete` and `external_write` are observable effect classes, never grantable child actions. If either is observed, stop and return control to root. Root reads back actual effects and reconciles them against the authority manifest and live state before acceptance.
 
-Tell the writer unrelated edits may exist and must be preserved. Only one native writer is active by default, and root must not write the same targets concurrently. If a user-requested Grok conversation task writes beside the native writer, both need disjoint closed `owned_targets`—including temporary artifacts—and separate worktrees under [worktree-parallel-dispatch.md](worktree-parallel-dispatch.md). If ownership overlaps or isolation is unavailable, serialize the writers.
+Tell the writer unrelated edits may exist and must be preserved. Only one native writer is active, and root must not write the same targets concurrently. Sol is the default; Luna has writer authority only when explicitly selected by the user. Grok has no writer authority.
 
 Worktree Writer v2 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v2.md](worktree-writer-v2.md). It accepts package v2 only and uses one host-fixed Sol/high Writer; the v1 contract is historical.
 

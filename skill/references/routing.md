@@ -41,7 +41,7 @@ Apply routing rules in this order:
 1. The user's explicit model, effort, tier, or context instruction.
 2. An applicable dedicated skill or repository rule.
 3. Risk and reversibility.
-4. The ordinary complexity boundary: Luna for ordinary delegated work and scoped writing; Sol for complex or high-impact work.
+4. The default authority boundary: Luna for ordinary read-only delegated work; Sol for native or delegated writes plus complex or high-impact work.
 
 Role files under the active `CODEX_HOME/agents` directory are authoritative for built-in role values. Resolve `CODEX_HOME` from the current process; use the platform default only when it is unset.
 
@@ -53,7 +53,7 @@ A named Dynamic Workflow route is a complete preset, not a set of independently 
 
 Never label a Custom dispatch as Luna, Spark, or Sol merely because its model resembles that preset.
 
-Execution mode and model route are separate. Simple Swarm, Managed Workflow, Agent Fleet, and Writer Workflow choose orchestration shape; Luna and Sol choose the executor for one branch. Grok is outside native routing and never appears as an automatic route or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
+Execution mode and model route are separate. Simple Swarm, Managed Workflow, Agent Fleet, and Writer Workflow choose orchestration shape; Luna and Sol choose the executor for one branch. Grok is outside native routing and never appears as a writer, native reviewer, automatic route, fallback, or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
 
 ## Narrow Explorer pre-route
 
@@ -65,19 +65,19 @@ Explorer uses `fork_turns=none` by default. It is not an automatic recovery node
 
 ## Complexity-based route boundary
 
-Route ordinary read-only work and ordinary scoped implementation, repair, refactor, or file editing to Luna. Route directly to Sol when the branch itself requires complex cross-module reasoning, a nontrivial high-impact behavior change, architecture or security judgment, difficult rollback, or final judgment. Assess complexity per branch: file count, branch count, or long context alone does not select Sol. Grok is not a native route; only a user-requested separate Grok conversation task follows `grok-thread.md`.
+Route ordinary read-only work to Luna. By default, route native or delegated implementation, repair, refactor, or file editing to Sol, including short bounded low-risk changes. A user's explicit supported native model selection takes precedence over that default: an explicit Luna writing request remains Luna and may be the one scoped writer. Also route directly to Sol when no explicit route overrides the default and the branch requires complex cross-module reasoning, a nontrivial high-impact behavior change, architecture or security judgment, difficult rollback, or final judgment. Assess complexity per branch: file count, branch count, or long context alone does not select advanced orchestration. Fixed-route owning workflows remain fixed, and Grok is not a native route; only a user-requested separate visible read-only second review after candidate freeze follows `grok-thread.md`.
 
 ## Writer Workflow fixed route boundary
 
-Ordinary Luna/Sol branch routing does not select the Worktree Writer. Writer Workflow accepts package v2 only and always uses the host-fixed `Sol / gpt-5.6-sol / high` writer route, followed by a fresh read-only Sol/xhigh reviewer. The CLI, package, repository text and model output cannot choose, downgrade or upgrade the Writer. This fixed identity does not expand create/modify-only authority. See [worktree-writer-v2.md](worktree-writer-v2.md).
+Ordinary native writer routing does not select the Worktree Writer. Writer Workflow accepts package v2 only and always uses the host-fixed `Sol / gpt-5.6-sol / high` writer route, followed by a fresh read-only Sol/xhigh reviewer. Explicit ordinary route precedence does not alter this owning workflow's fixed identity. The CLI, package, repository text and model output cannot choose, downgrade or upgrade the Writer. This fixed identity does not expand create/modify-only authority. See [worktree-writer-v2.md](worktree-writer-v2.md).
 
 ## Routes
 
 | Route | Native dispatch | Intended work |
 |---|---|---|
 | Spark | `agent_type="spark"` | Short, mechanical, low-risk, read-only, easily verified work |
-| Luna | `agent_type="luna"` | Ordinary read-only work and ordinary scoped implementation, repair, refactor, or file editing |
-| Sol | `agent_type="sol"` | Complex cross-module, high-impact, architectural, security-sensitive, hard-to-reverse, or final judgment work |
+| Luna | `agent_type="luna"` | Ordinary read-only analysis, inspection, review, planning, and verification; user-explicit scoped writing |
+| Sol | `agent_type="sol"` | Default native/delegated writing, plus complex cross-module, high-impact, architectural, security-sensitive, hard-to-reverse, or final judgment work |
 | Custom | `agent_type="default"` plus the preset model/effort and exact overrides | A user-requested combination that differs from a complete built-in preset |
 
 The approved Luna role is `gpt-5.6-luna` / `max` / `fast`. In API request metadata, Fast is requested as `priority`; the pre-dispatch line reports this configured/requested tier as `fast`, not an observed delivery claim. Resolve Sol from the active `CODEX_HOME/agents/sol.toml`; its approved preset is `gpt-5.6-sol` / `xhigh` / `default`. Spark and Custom inherit the parent tier because native dispatch has no separate tier override. If `sol` is missing, disabled, or resolves to a different model/effort/tier, treat that as an unavailable or conflicting route and return to the root rather than silently selecting a generic `default`/`worker` role.
@@ -85,7 +85,7 @@ The approved Luna role is `gpt-5.6-luna` / `max` / `fast`. In API request metada
 If the route is genuinely uncertain:
 
 - choose Sol when error impact is high, rollback is difficult, or the result is a final judgment;
-- otherwise choose Luna for ordinary delegated work and scoped writing;
+- otherwise choose Luna for ordinary read-only delegated work; use Luna for scoped writing only when the user explicitly selected it;
 - choose Spark only when all Spark criteria, including read-only access, are affirmative.
 
 ## Context forks
