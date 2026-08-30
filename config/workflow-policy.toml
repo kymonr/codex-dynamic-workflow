@@ -20,6 +20,46 @@ root_duplicates_active_scope = false
 managed_workflow_auto_trigger = false
 worktree_writer_auto_trigger = false
 
+[agent_fleet]
+implementation = "native_subagents"
+supported_sizes = [4, 6, 8]
+default_size = 6
+disclose_before_start = true
+confirmation_after_disclosure = false
+visible_top_level = true
+fork_turns = "none"
+read_only = true
+nested_delegation = false
+direct_agent_messages = false
+majority_vote = false
+root_final_decision = true
+root_must_address_sol = true
+reproduced_severe_cannot_be_outvoted = true
+unresolved_conflict = "unknown"
+exact_unsupported_count = "conflict"
+candidate_check = "phase_boundary"
+candidate_drift = "unknown_stop"
+technical_failure_replacement_limit = 1
+
+[agent_fleet.size_4]
+discovery_luna = 1
+challenge_luna = 1
+reproduction_luna = 1
+sol_final_review = 1
+
+[agent_fleet.size_6]
+discovery_luna = 3
+challenge_luna = 1
+reproduction_luna = 1
+sol_final_review = 1
+
+[agent_fleet.size_8]
+discovery_luna = 4
+challenge_luna = 1
+reproduction_luna = 1
+sol_evidence_review = 1
+sol_system_review = 1
+
 [paths]
 state_home_env = "DYNWF_HOME"
 runs_root_env = "DYNWF_RUNS_ROOT"

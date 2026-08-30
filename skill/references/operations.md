@@ -60,9 +60,9 @@ and therefore do not create task directories.
 
 Replace the example `workdir` with one deliberately sanitized repository before running it. Only complete Bounded Loop v1 instances are executable; legacy `loop` declarations remain instance-level validated-only and are explicitly rejected. A declared `workflow_timeout_seconds` is an absolute deadline that survives resume and includes human-gate pause time.
 
-## Agent Fleet operations
+## Native Agent Fleet has no operator commands
 
-Agent Fleet has its own package lifecycle: `fleet-plan` freezes and previews the candidate without model calls or run-directory writes; `fleet-run` creates revision-bound evidence and conditionally invokes one Sol arbiter; `fleet-status` performs zero-model integrity reconstruction. It does not use `plan-ir`, `run-ir`, or `resume-ir`.
+Native Agent Fleet uses UI-visible native subagents and conversation-bound phase evidence. It has no plan, run, status, package, or run-directory command. Use these Workflow IR operator commands only for Managed Workflow.
 
 ## Run status
 

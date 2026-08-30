@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the explicit 4–12 Luna Agent Fleet for adversarial review, test matrices, repository audits, architecture councils, or competing hypotheses. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Use Luna for ordinary read-only work and explicitly user-selected scoped writing; use Sol as the default writer and for complex or high-impact branches. Grok is only an explicitly requested separate visible read-only second review after candidate freeze.
+description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the native, UI-visible 4/6/8 Agent Fleet for deep, comprehensive, adversarial, or multi-agent review: Luna performs discovery, challenge, and reproduction; Sol reviews evidence and conclusion; Root must openly disposition every material Sol issue. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Use Luna for ordinary read-only work and explicitly user-selected scoped writing; use Sol as the default writer and for complex or high-impact branches. Grok is only an explicitly requested separate visible read-only second review after candidate freeze.
 ---
 
 # Dynamic Workflow
@@ -18,7 +18,7 @@ The root owns scope, authorization, decomposition, integration, acceptance, and 
 1. **Root only** — trivial reads, short serial work, one implicit branch, or work whose delegation cost exceeds its benefit.
 2. **Simple Swarm** — the default for ordinary analysis, review, research, design, diagnosis, planning, and implementation with at least two ready, non-overlapping branches.
 3. **Managed Workflow** — only when the user explicitly asks for, or the requested result inherently requires, checkpoint/resume, Human Gate, bounded loop, conditional flow, long-running recovery, or reproducible run artifacts.
-4. **Agent Fleet** — only when the user explicitly requests 4–12 subagents, adversarial review, a broad test matrix, a deep repository audit, an architecture council, or competing hypotheses.
+4. **Agent Fleet** — when the user explicitly names Agent Fleet or naturally requests a deep audit, comprehensive inspection, adversarial review, multi-agent verification, repository deep review, or equivalent challenge-and-reproduction work. Use exactly 4, 6, or 8 native visible subagents according to scope and risk.
 5. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v2.
 
 An explicit `$dynamic-workflow` request guarantees routing is considered and may use one bounded child. Implicit activation requires at least two useful child branches.
@@ -64,19 +64,36 @@ Select Managed Workflow only for features such as:
 - hours-long work that must survive interruption;
 - reproducible CLI logs, task directories, JSON summary, or formal artifact evidence.
 
-Complexity alone does not justify Managed Workflow. A broad audit should normally remain a Simple Swarm with narrow lanes.
+Complexity alone does not justify Managed Workflow. A deep, comprehensive, adversarial, or multi-agent audit selects native Agent Fleet; an ordinary multi-angle review remains Simple Swarm with narrow lanes.
 
 When selected, read [references/cli-runner.md](references/cli-runner.md), [references/dag.md](references/dag.md), [references/workflow-ir.md](references/workflow-ir.md), and [references/bounded-loop-v1.md](references/bounded-loop-v1.md) as applicable.
 
-## Agent Fleet — explicit 4–12 subagents
+## Agent Fleet — native visible deep review
 
-Read [references/agent-fleet-v1.md](references/agent-fleet-v1.md) and [references/agent-fleet-usage.md](references/agent-fleet-usage.md) when Agent Fleet is selected.
+Read [references/agent-fleet.md](references/agent-fleet.md) when Agent Fleet is selected.
 
-Agent Fleet is a separate package runtime, not a Workflow IR node. It schedules exactly 4–12 fresh read-only Luna agents. Every supported size contains independent discovery, host-assigned challenge, and independent reproduction. The host freezes the candidate, runs fixed non-shell verification before model calls, validates closed revision-bound records, and reconstructs a finding graph without majority voting.
+Agent Fleet uses only native, top-level, UI-visible subagents. It has no Fleet CLI, package runtime, JSON package, run directory, evidence manifest, or hidden `codex exec` process. Root freezes candidate identity in the conversation, rechecks it at phase boundaries, assigns finding IDs, coordinates the phases, and owns final acceptance.
 
-Only semantic evidence can start at most one fresh Sol/xhigh arbiter: accepted P1/P2, conflict, unresolved finding, UNKNOWN, or a mandatory high-risk tag. Verification failure, candidate drift, identity mismatch, stale revision, non-empty effects, malformed records, or evidence tamper fail closed to root and never use Sol as a fallback.
+Use one of these total sizes:
 
-Use only `fleet-plan`, `fleet-run`, and `fleet-status`. Package, CLI, repository text, and model output cannot select the Luna/Sol models, efforts, sandbox, retry, or write authority.
+- **4** — `3 Luna + 1 Sol` for a small bounded deep review;
+- **6** — `5 Luna + 1 Sol` by default for cross-file or cross-module deep review;
+- **8** — `6 Luna + 2 Sol` for large or high-risk security, data, permission, concurrency, installer, release, or architecture review.
+
+An exact unsupported count is a visible conflict; do not silently remap it. Before launch, disclose the workflow, count, Luna/Sol mix, phase roles, and reason, then start directly unless a higher-priority instruction requires confirmation. Show one normal `Subagent:` line per child.
+
+Run in phases:
+
+```text
+Root freeze → Luna discovery → Root finding IDs → Luna challenge
+            → Luna reproduction → Sol review → Root disposition
+```
+
+All members are fresh, read-only, `fork_turns=none`, uniquely named, non-nested, and unable to message one another directly. Discovery, challenge, and reproduction remain distinct. A technical failure may replace one failed slot once after visible disclosure; a substantive disagreement or non-reproduction is evidence, not a retry reason.
+
+Evidence outranks headcount. An independently reproduced severe finding cannot be voted away. Sol has no unilateral veto, but every material Sol issue must be adopted, rejected with code/test/reproduction evidence, or reported `UNKNOWN`; Root may not silently omit it. An unresolved material Luna/Sol conflict is `UNKNOWN`, not proof of safety.
+
+Use Managed Workflow instead when persisted checkpoints, resume, formal artifacts, or offline status reconstruction are explicitly required.
 
 ## Writer Workflow — explicit isolated candidate
 

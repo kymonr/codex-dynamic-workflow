@@ -8,6 +8,7 @@
 |---|---|---|
 | Skill 主合同 | `skill/SKILL.md` | root 权限、模式选择、委派与结果采用规则 |
 | Simple Swarm | `skill/references/simple-swarm.md` | 普通任务的 2–6 个窄分支、无嵌套、默认只读 |
+| Native Agent Fleet | `config/workflow-policy.toml`, `skill/references/agent-fleet.md` | 4/6/8 个界面可见的 Luna/Sol 分阶段深审、finding ID、无多数票、Root 公开裁决 |
 | 路由策略 | `config/workflow-policy.toml`, `config/agents/*.toml` | Spark、Luna、Sol、reviewer 的模型、effort、tier 与访问边界 |
 | 工作区接入 | `integration/AGENTS.dynamic-workflow.md` | 把 Skill 触发与授权边界合并进具体工作区 |
 | Portable CLI router | `skill/cli.py` | 把显式命令路由到各独立功能面，不扩大权限 |

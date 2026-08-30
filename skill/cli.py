@@ -36,8 +36,6 @@ def main(argv: list[str] | None = None) -> int:
     configure_utf8_stdio()
     arguments = list(sys.argv[1:] if argv is None else argv)
 
-    if arguments and arguments[0] in {"fleet-plan", "fleet-run", "fleet-status"}:
-        return _main("skill.fleet_cli", "fleet_cli")(arguments)
     if arguments and arguments[0] in {"run-ir", "resume-ir"}:
         return _main("skill.ir_runner", "ir_runner")(arguments)
     if arguments and arguments[0] in {

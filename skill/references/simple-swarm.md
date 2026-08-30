@@ -6,7 +6,7 @@ Simple Swarm is the default Dynamic Workflow mode for ordinary multi-branch work
 decompose → dispatch → collect → integrate → finish
 ```
 
-It does not create Workflow IR, checkpoints, resume state, Human Gates, bounded loops, Agent Fleet records, formal evidence packages, or Worktree Writer runs.
+It does not create Workflow IR, checkpoints, resume state, Human Gates, bounded loops, native Agent Fleet phases, formal evidence packages, or Worktree Writer runs.
 
 ## Activation
 
@@ -20,7 +20,7 @@ Implicit activation requires at least two branches that are:
 
 A single implicit branch stays with root. An explicit `$dynamic-workflow` invocation or explicit request for a subagent may dispatch one bounded branch.
 
-Default child count is 2–6. More than 6 requires an explicit user request or Managed Workflow. The hard Simple Swarm ceiling is 8. A request for an exact 4–12-agent adversarial review, test matrix, repository audit, architecture council, or competing hypotheses uses Agent Fleet instead of widening Simple Swarm.
+Default child count is 2–6. More than 6 requires an explicit user request or Managed Workflow. The hard Simple Swarm ceiling is 8. A deep, comprehensive, adversarial, multi-agent, or challenge-and-reproduction review uses native Agent Fleet instead of widening Simple Swarm. An ordinary four-branch review with no such requirement remains Simple Swarm. Agent Fleet itself supports only total sizes 4, 6, and 8.
 
 ## Smallest useful branch
 
@@ -56,7 +56,7 @@ Use the compact packet in [work-package.md](work-package.md). A read-only Simple
 
 Do not require a JSON authority manifest for read-only work.
 
-Simple Swarm forbids nested delegation. If a branch needs its own decomposition, return it to root for re-splitting or use Managed Workflow. If the user explicitly wants many coordinated reviewers with cross-challenge, use Agent Fleet rather than nesting inside a Simple Swarm child.
+Simple Swarm forbids nested delegation. If a branch needs its own decomposition, return it to root for re-splitting or use Managed Workflow. If the user wants deep coordinated review with discovery, challenge, reproduction, and Sol judgment, use the native contract in [agent-fleet.md](agent-fleet.md) rather than nesting inside a Simple Swarm child.
 
 ## Waiting
 

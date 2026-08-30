@@ -6,8 +6,7 @@
 
 ### Added
 
-- Agent Fleet v1：独立 `fleet-plan` / `fleet-run` / `fleet-status` package runtime，exact 4–12 个 fresh read-only Luna；每个规模均含 discovery、challenge 与 reproduction，宿主构建 finding graph，不采用多数投票，并按语义证据 zero-or-one 调用 fresh Sol/xhigh。
-- 七个只读 preset：`adversarial-review`、`competing-hypotheses`、`architecture-council`、`security-red-blue`、`test-matrix`、`repository-audit` 与 `research-synthesis`。
+- 原生 Agent Fleet：根据任务规模使用 4、6、8 个界面可见的顶层 subagent，固定配比为 `3 Luna + 1 Sol`、`5 Luna + 1 Sol`、`6 Luna + 2 Sol`；Luna 分阶段 discovery/challenge/reproduction，Sol 复核证据和结论，Root 必须公开处理每个重要 Sol 意见。
 - 新增唯一人工可读版本源 `skill/VERSION`，以及独立的 `version-bump` 命令；支持默认升级与显式 `--prerelease`、`--release`、`--patch`、`--minor`、`--major`，但不自动 commit、tag 或 release。
 - 新增个人安装管理模块与 `install-plan`、`install-apply`、`install-status`、`install-rollback`：记录 `skill_version`、source commit/dirty state、逐文件 SHA-256、active manifest 和 before backup，并对 managed drift 与路径 reparse fail closed。
 - 新增个人运维说明和功能模块地图，记录当前功能边界与明确排除项。
@@ -24,6 +23,11 @@
 - 将 checkpoint/resume、Human Gate、bounded loop 与正式 evidence 归入按需 `Managed Workflow`；Worktree Writer v2 保持为显式授权模式，只接受 package v2。
 - 简化 read-only child packet、等待策略和结果采用规则，避免宽工作包、无限 wait 和为编排而编排。
 - 取消 Writer profile 选择，统一使用 Sol/high Writer；仍保持单 attempt、无 retry、无自动 apply，并以 8 个 owned targets / changed files 为硬上限。
+- 将“深度审核、全面检查、对抗审核、多代理复核”等自然请求路由到原生 Agent Fleet；普通检查和普通多分支审核仍使用 Root 或 Simple Swarm。
+
+### Removed
+
+- 删除未发布的 Agent Fleet CLI/package runtime、`fleet-plan` / `fleet-run` / `fleet-status`、JSON package、run directory、证据 manifest、七个 package preset、独立策略文件及其 runtime 测试；需要持久化正式证据时改用 Managed Workflow。
 
 ## [1.0.0-rc.1] - 2026-08-28
 

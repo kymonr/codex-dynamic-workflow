@@ -9,7 +9,7 @@
 - Simple Swarm 禁止嵌套委派。一次 bounded wait 后只做一次进度检查；第二次仍无有效交付且阻塞完成时，关闭并重新拆小或由 root 接管。
 - Spark / Explorer 处理窄只读问题；Luna 默认处理普通只读任务；未显式指定 native 模型的写入默认使用 Sol，用户显式指定 Luna 写入时可由 Luna 担任唯一 scoped writer；Sol 也处理复杂或高影响任务。
 - 只有明确需要 checkpoint/resume、Human Gate、bounded loop、长时间恢复或正式运行产物时，才启用 Managed Workflow。
-- 用户明确要求 4–12 个子代理、对抗性审核、测试矩阵、仓库深审、架构委员会或竞争根因时，使用 Agent Fleet v1：exact 4–12 个 read-only Luna，每个规模包含 discovery、challenge 和 reproduction；宿主重建 finding graph 后按语义证据跳过或调用一个 fresh Sol/xhigh。禁止多数票、嵌套和代理自由通信；执行证据无效时直接返回 root。
+- 用户明确指定 Agent Fleet，或自然要求深度审核、全面检查、对抗审核、多代理复核、仓库深审等需要质疑与独立复现的任务时，使用原生 Agent Fleet。按范围自动选择 4、6、8 个界面可见的顶层 subagent，配比分别为 `3 Luna + 1 Sol`、`5 Luna + 1 Sol`、`6 Luna + 2 Sol`。启动前公开规模、分工和原因后直接开始；Luna 负责 discovery/challenge/reproduction，Sol 复核证据、严重度、共同盲点和结论。root 必须公开处理每个重要 Sol 意见，禁止多数票抵消已复现的严重问题，未解决冲突记为 `UNKNOWN`。
 - 只有用户明确授权隔离 candidate 时，才启用 Writer Workflow / Worktree Writer v2。该模式只接受 package v2，并固定使用 Sol/high Writer 与 fresh read-only Sol/xhigh reviewer；CLI、package 和模型输出都不能选择 Writer。
 - Grok 不作为 native subagent、writer、native reviewer、fallback 或 recovery。只有用户明确要求且 candidate 已冻结时，才创建独立可见的只读二审对话任务。
 - commit、push、PR、merge、release、deploy、cleanup、凭据和其他外部或高风险动作始终由 root 持有。
