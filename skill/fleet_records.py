@@ -129,7 +129,7 @@ def discovery_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
                 "items": finding_schema(),
             },
             "unknown": {"type": "array", "items": {"type": "string"}},
-            "effects": {"type": "array", "maxItems": 0},
+            "effects": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
         },
         "required": [
             "candidate_revision",
@@ -144,7 +144,16 @@ def discovery_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
     }
 
 
-def challenge_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> dict[str, Any]:
+def challenge_schema(
+    *,
+    candidate_revision: str,
+    agent: Mapping[str, Any],
+    valid_finding_ids: Sequence[str],
+) -> dict[str, Any]:
+    assigned_ids = list(valid_finding_ids)
+    finding_id_schema: dict[str, Any] = {"type": "string"}
+    if assigned_ids:
+        finding_id_schema["enum"] = assigned_ids
     return {
         "type": "object",
         "additionalProperties": False,
@@ -155,11 +164,12 @@ def challenge_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
             "phase": {"type": "string", "enum": ["challenge"]},
             "assessments": {
                 "type": "array",
+                "maxItems": len(assigned_ids),
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "finding_id": {"type": "string"},
+                        "finding_id": finding_id_schema,
                         "outcome": {
                             "type": "string",
                             "enum": ["support", "refute", "unresolved"],
@@ -175,7 +185,7 @@ def challenge_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
                 "items": finding_schema(),
             },
             "unknown": {"type": "array", "items": {"type": "string"}},
-            "effects": {"type": "array", "maxItems": 0},
+            "effects": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
         },
         "required": [
             "candidate_revision",
@@ -190,7 +200,16 @@ def challenge_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> di
     }
 
 
-def reproduction_schema(*, candidate_revision: str, agent: Mapping[str, Any]) -> dict[str, Any]:
+def reproduction_schema(
+    *,
+    candidate_revision: str,
+    agent: Mapping[str, Any],
+    valid_finding_ids: Sequence[str],
+) -> dict[str, Any]:
+    assigned_ids = list(valid_finding_ids)
+    finding_id_schema: dict[str, Any] = {"type": "string"}
+    if assigned_ids:
+        finding_id_schema["enum"] = assigned_ids
     return {
         "type": "object",
         "additionalProperties": False,
@@ -201,11 +220,12 @@ def reproduction_schema(*, candidate_revision: str, agent: Mapping[str, Any]) ->
             "phase": {"type": "string", "enum": ["reproduction"]},
             "reproductions": {
                 "type": "array",
+                "maxItems": len(assigned_ids),
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "finding_id": {"type": "string"},
+                        "finding_id": finding_id_schema,
                         "status": {
                             "type": "string",
                             "enum": ["reproduced", "refuted", "inconclusive"],
@@ -222,7 +242,7 @@ def reproduction_schema(*, candidate_revision: str, agent: Mapping[str, Any]) ->
                 "items": finding_schema(),
             },
             "unknown": {"type": "array", "items": {"type": "string"}},
-            "effects": {"type": "array", "maxItems": 0},
+            "effects": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
         },
         "required": [
             "candidate_revision",
@@ -237,17 +257,27 @@ def reproduction_schema(*, candidate_revision: str, agent: Mapping[str, Any]) ->
     }
 
 
-def arbiter_schema(*, candidate_revision: str) -> dict[str, Any]:
+def arbiter_schema(
+    *, candidate_revision: str, valid_finding_ids: Sequence[str]
+) -> dict[str, Any]:
+    accepted_ids = list(valid_finding_ids)
+    accepted_items: dict[str, Any] = {"type": "string"}
+    if accepted_ids:
+        accepted_items["enum"] = accepted_ids
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
             "candidate_revision": {"type": "string", "enum": [candidate_revision]},
             "verdict": {"type": "string", "enum": ["ship", "fix-first", "rethink"]},
-            "accepted_findings": {"type": "array", "items": {"type": "string"}},
+            "accepted_findings": {
+                "type": "array",
+                "items": accepted_items,
+                "maxItems": len(accepted_ids),
+            },
             "rationale": {"type": "string"},
             "evidence": {"type": "array", "items": {"type": "string"}},
-            "effects": {"type": "array", "maxItems": 0},
+            "effects": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
         },
         "required": [
             "candidate_revision",

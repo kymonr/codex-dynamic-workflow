@@ -736,7 +736,9 @@ def run_fleet(
                     findings=assigned_findings,
                 ),
                 schema=challenge_schema(
-                    candidate_revision=candidate["candidate_revision"], agent=agent
+                    candidate_revision=candidate["candidate_revision"],
+                    agent=agent,
+                    valid_finding_ids=assigned,
                 ),
                 route=LUNA_ROUTE,
                 timeout_seconds=MAX_AGENT_TIMEOUT_SECONDS,
@@ -802,7 +804,9 @@ def run_fleet(
                     findings=assigned_findings,
                 ),
                 schema=reproduction_schema(
-                    candidate_revision=candidate["candidate_revision"], agent=agent
+                    candidate_revision=candidate["candidate_revision"],
+                    agent=agent,
+                    valid_finding_ids=assigned,
                 ),
                 route=LUNA_ROUTE,
                 timeout_seconds=MAX_AGENT_TIMEOUT_SECONDS,
@@ -866,6 +870,7 @@ def run_fleet(
 
         if decision["requires_sol"]:
             assert_candidate_stable(root, package, candidate)
+            valid_finding_ids = [item["finding_id"] for item in findings]
             state["model_calls"] += 1
             entry = process_adapter(
                 attempt_dir=run_dir / "tasks" / "sol-arbiter" / "attempt-01-sol",
@@ -878,7 +883,8 @@ def run_fleet(
                     decision=decision,
                 ),
                 schema=arbiter_schema(
-                    candidate_revision=candidate["candidate_revision"]
+                    candidate_revision=candidate["candidate_revision"],
+                    valid_finding_ids=valid_finding_ids,
                 ),
                 route=SOL_ARBITER_ROUTE,
                 timeout_seconds=MAX_SOL_TIMEOUT_SECONDS,
@@ -901,7 +907,7 @@ def run_fleet(
             arbitration = validate_arbiter_record(
                 entry["output"],
                 candidate_revision=candidate["candidate_revision"],
-                valid_finding_ids=[item["finding_id"] for item in findings],
+                valid_finding_ids=valid_finding_ids,
                 severity_by_id=severity_by_id,
             )
             state["sol_arbitration"] = arbitration
