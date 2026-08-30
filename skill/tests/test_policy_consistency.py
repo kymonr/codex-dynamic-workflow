@@ -81,17 +81,13 @@ class PolicyConsistencyTests(unittest.TestCase):
                 self.assertTrue(errors)
 
     def test_agent_fleet_policy_drift_fails_machine_contract_check(self) -> None:
-        policy = checker._load_toml(
-            ROOT / "config" / "agent-fleet-policy.toml"
-        )["agent_fleet"]
+        policy = checker._load_toml(ROOT / "config" / "workflow-policy.toml")
         drifted = copy.deepcopy(policy)
-        drifted["maximum_agents"] = 11
+        drifted["agent_fleet"]["size_8"]["sol_system_review"] = 0
         errors: list[str] = []
-        checker._validate_agent_fleet_policy(
-            ROOT, errors, policy_override=drifted
-        )
-        self.assertIn(
-            "Agent Fleet maximum_agents disagrees with runtime",
+        checker._validate_native_agent_fleet_policy(drifted, errors)
+        self.assertTrue(
+            any("size_8" in item for item in errors),
             errors,
         )
 

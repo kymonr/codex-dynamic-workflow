@@ -445,7 +445,7 @@ class RepositoryInstallContractTests(unittest.TestCase):
                 state_root=root / "state",
             )
         self.assertTrue(result["ready"])
-        self.assertEqual(result["skill_version"], "1.0.0-rc.2")
+        self.assertEqual(result["skill_version"], "1.0.0-rc.3")
         targets = {entry["target"] for entry in result["managed_files"]}
         self.assertIn("skills/dynamic-workflow/VERSION", targets)
         self.assertIn("skills/dynamic-workflow/versioning.py", targets)

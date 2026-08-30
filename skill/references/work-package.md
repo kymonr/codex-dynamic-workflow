@@ -52,11 +52,15 @@ Tell the writer unrelated edits may exist and must be preserved. Only one native
 
 Worktree Writer v2 is a separate explicit mode governed by [worktree-writer-usage.md](worktree-writer-usage.md) and [worktree-writer-v2.md](worktree-writer-v2.md). It accepts package v2 only and uses one host-fixed Sol/high Writer; the v1 contract is historical.
 
-## Agent Fleet packet
+## Native Agent Fleet branch packets
 
-Agent Fleet uses a closed JSON package rather than a free-form Workflow IR declaration. Root supplies one preset, objective, acceptance criteria, scope, exclusions, exact 4–12 agent count, frozen repository identity/HEAD/changed-file set, risk tags, fixed verification commands, and resource limits.
+Agent Fleet does not use a closed JSON package. Root first records the candidate scope, repository root, Git HEAD, worktree status, changed-file set, acceptance question, exclusions, approved 4/6/8 scale, and phase allocation in the conversation.
 
-The package cannot select model, effort, tier, sandbox, retry, write authority, or direct messages. Every supported size includes discovery, challenge, and reproduction. Stage records bind the candidate revision and `effects=[]`; challenge/reproduction records must cover all assigned finding IDs exactly once. Invalid execution evidence returns root rather than invoking Sol.
+Each native child receives one ordinary bounded packet: unique objective, non-overlapping scope, required evidence, read-only authority, phase role, assigned finding IDs when applicable, verification request, and exclusions. Every child is top-level, uniquely named, `fork_turns=none`, non-nested, unable to message peers directly, and prohibited from repository/Git/external effects.
+
+Discovery reports location, claim, impact, evidence, confidence, and uncertainty. Root de-duplicates and assigns stable finding IDs. Challenge and reproduction receive only Root-assigned IDs and must not silently rename or invent IDs. Sol receives the integrated finding state and audits evidence, severity, blind spots, conflict, and the proposed conclusion. Root must explicitly disposition every material Sol issue.
+
+Candidate identity is rechecked at phase boundaries. Drift or unresolved material conflict makes unsupported conclusions `UNKNOWN`. Agent Fleet does not create a run directory, evidence manifest, offline status record, or hidden CLI process; use Managed Workflow when persisted formal artifacts are required.
 
 ## Managed Workflow packet
 

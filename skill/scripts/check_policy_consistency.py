@@ -52,20 +52,9 @@ REQUIRED_RUNTIME_FILES = (
     "skill/runtime/condition.py",
     "skill/runtime/human_gate.py",
     "skill/runtime/deadline.py",
-    "skill/fleet_contract.py",
-    "skill/fleet_candidate.py",
-    "skill/fleet_presets.py",
-    "skill/fleet_findings.py",
-    "skill/fleet_records.py",
-    "skill/fleet_escalation.py",
-    "skill/fleet_process.py",
-    "skill/fleet_integrity.py",
-    "skill/fleet_runtime.py",
-    "skill/fleet_cli.py",
     "skill/references/workflow-ir.md",
     "skill/references/bounded-loop-v1.md",
-    "skill/references/agent-fleet-v1.md",
-    "skill/references/agent-fleet-usage.md",
+    "skill/references/agent-fleet.md",
 )
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"[A-Za-z]:[/\\]Users[/\\][^/\\\s]+", re.IGNORECASE),
@@ -396,182 +385,98 @@ def _validate_capability_surfaces(
 
 
 
-def _validate_agent_fleet_policy(
-    root: Path,
-    errors: list[str],
-    *,
-    policy_override: dict[str, Any] | None = None,
+def _validate_native_agent_fleet_policy(
+    policy: dict[str, Any], errors: list[str]
 ) -> None:
-    path = root / "config" / "agent-fleet-policy.toml"
-    if policy_override is None and not path.is_file():
-        errors.append("config/agent-fleet-policy.toml is missing")
-        return
-    try:
-        policy = (
-            policy_override
-            if policy_override is not None
-            else _load_toml(path)["agent_fleet"]
-        )
-        import fleet_contract
-        import fleet_escalation
-        import fleet_findings
-        import fleet_presets
-        import fleet_process
-        import fleet_records
-        import fleet_runtime
-    except Exception as exc:
-        errors.append(f"cannot load Agent Fleet policy/runtime: {exc}")
+    fleet = policy.get("agent_fleet")
+    if not isinstance(fleet, dict):
+        errors.append("native Agent Fleet policy is missing")
         return
 
     expected_root = {
-        "runtime_version": fleet_runtime.FLEET_RUNTIME_VERSION,
-        "explicit_or_advanced_only": True,
-        "minimum_agents": fleet_contract.MIN_AGENTS,
-        "default_agents": fleet_contract.DEFAULT_AGENTS,
-        "maximum_agents": fleet_contract.MAX_AGENTS,
+        "implementation": "native_subagents",
+        "supported_sizes": [4, 6, 8],
+        "default_size": 6,
+        "disclose_before_start": True,
+        "confirmation_after_disclosure": False,
+        "visible_top_level": True,
+        "fork_turns": "none",
+        "read_only": True,
+        "nested_delegation": False,
         "direct_agent_messages": False,
         "majority_vote": False,
-        "automatic_retry": False,
-        "automatic_write": False,
-        "automatic_commit": False,
-        "automatic_push": False,
-        "automatic_merge": False,
-        "automatic_release": False,
-        "automatic_deploy": False,
+        "root_final_decision": True,
+        "root_must_address_sol": True,
+        "reproduced_severe_cannot_be_outvoted": True,
+        "unresolved_conflict": "unknown",
+        "exact_unsupported_count": "conflict",
+        "candidate_check": "phase_boundary",
+        "candidate_drift": "unknown_stop",
+        "technical_failure_replacement_limit": 1,
     }
     for key, expected in expected_root.items():
-        if policy.get(key) != expected:
-            errors.append(f"Agent Fleet {key} disagrees with runtime")
+        if fleet.get(key) != expected:
+            errors.append(
+                f"native Agent Fleet {key}={fleet.get(key)!r}, requires {expected!r}"
+            )
 
-    package = policy.get("package")
-    if not isinstance(package, dict):
-        errors.append("Agent Fleet package policy is missing")
-    else:
-        expected_package = {
-            "version": fleet_contract.FLEET_PACKAGE_VERSION,
-            "closed_schema": True,
-            "canonical_digest": "sha256-canonical-json",
-            "model_selectable": False,
-            "max_inline_context_bytes": fleet_contract.MAX_INLINE_CONTEXT_BYTES,
-        }
-        for key, expected in expected_package.items():
-            if package.get(key) != expected:
-                errors.append(f"Agent Fleet package {key} disagrees with runtime")
-        if set(package.get("risk_tags", [])) != set(fleet_contract.RISK_TAGS):
-            errors.append("Agent Fleet risk tags disagree with runtime")
-
-    contract = fleet_process.process_contract()
-    for section, route_key in (("luna", "luna"), ("sol_arbiter", "sol_arbiter")):
-        configured = policy.get(section)
-        if not isinstance(configured, dict):
-            errors.append(f"Agent Fleet {section} policy is missing")
+    expected_allocations = {
+        "size_4": {
+            "discovery_luna": 1,
+            "challenge_luna": 1,
+            "reproduction_luna": 1,
+            "sol_final_review": 1,
+        },
+        "size_6": {
+            "discovery_luna": 3,
+            "challenge_luna": 1,
+            "reproduction_luna": 1,
+            "sol_final_review": 1,
+        },
+        "size_8": {
+            "discovery_luna": 4,
+            "challenge_luna": 1,
+            "reproduction_luna": 1,
+            "sol_evidence_review": 1,
+            "sol_system_review": 1,
+        },
+    }
+    expected_mixes = {4: (3, 1), 6: (5, 1), 8: (6, 2)}
+    for table_name, expected in expected_allocations.items():
+        actual = fleet.get(table_name)
+        if actual != expected:
+            errors.append(
+                f"native Agent Fleet {table_name}={actual!r}, requires {expected!r}"
+            )
             continue
-        route = contract[route_key]
-        for key in ("role", "model", "effort", "sandbox"):
-            if configured.get(key) != route[key]:
-                errors.append(f"Agent Fleet {section} {key} disagrees with runtime")
-        expected_tier = "inherit" if route["tier"] is None else route["tier"]
-        if configured.get("tier") != expected_tier:
-            errors.append(f"Agent Fleet {section} tier disagrees with runtime")
-        for key in ("attempts", "retry", "nested_agents"):
-            if configured.get(key) != contract[key]:
-                errors.append(f"Agent Fleet {section} {key} disagrees with runtime")
-        if configured.get("fresh") is not True:
-            errors.append(f"Agent Fleet {section} must be fresh")
+        size = int(table_name.removeprefix("size_"))
+        total = sum(actual.values())
+        luna = sum(value for key, value in actual.items() if key.endswith("_luna"))
+        sol = sum(value for key, value in actual.items() if key.startswith("sol_"))
+        if total != size:
+            errors.append(f"native Agent Fleet {table_name} totals {total}, not {size}")
+        if (luna, sol) != expected_mixes[size]:
+            errors.append(
+                f"native Agent Fleet {table_name} mix={(luna, sol)!r}, "
+                f"requires {expected_mixes[size]!r}"
+            )
 
-    luna = policy.get("luna", {})
-    for key in ("network", "shell_tool", "code_mode"):
-        if luna.get(key) is not False:
-            errors.append(f"Agent Fleet Luna {key} must be false")
-    sol = policy.get("sol_arbiter", {})
-    if sol.get("conditional") is not True or sol.get("write_authority") is not False:
-        errors.append("Agent Fleet Sol arbiter boundary disagrees with runtime")
-
-
-    phases = policy.get("phases")
-    if not isinstance(phases, dict):
-        errors.append("Agent Fleet phase policy is missing")
-    else:
-        expected_phase_scalars = {
-            "order": [
-                "discovery",
-                "challenge",
-                "reproduction",
-                "host-aggregation",
-                "conditional-sol",
-            ],
-            "minimum_discovery_agents": 2,
-            "maximum_discovery_agents": 8,
-            "minimum_challenge_agents": 1,
-            "maximum_challenge_agents": 2,
-            "minimum_reproduction_agents": 1,
-            "maximum_reproduction_agents": 2,
-            "proposer_may_self_challenge": False,
-            "proposer_may_self_reproduce": False,
-        }
-        for key, expected in expected_phase_scalars.items():
-            if phases.get(key) != expected:
-                errors.append(f"Agent Fleet phase {key} disagrees with runtime")
-        for count in range(fleet_contract.MIN_AGENTS, fleet_contract.MAX_AGENTS + 1):
-            allocation = fleet_presets.phase_counts(count)
-            if sum(allocation.values()) != count:
-                errors.append(f"Agent Fleet phase allocation does not sum to {count}")
-            if not 2 <= allocation["discovery"] <= 8:
-                errors.append(f"Agent Fleet discovery allocation is invalid for {count}")
-            if not 1 <= allocation["challenge"] <= 2:
-                errors.append(f"Agent Fleet challenge allocation is invalid for {count}")
-            if not 1 <= allocation["reproduction"] <= 2:
-                errors.append(f"Agent Fleet reproduction allocation is invalid for {count}")
-
-    findings = policy.get("findings")
-    expected_findings = {
-        "max_findings_per_record": fleet_records.MAX_FINDINGS_PER_RECORD,
-        "max_graph_findings": fleet_findings.MAX_GRAPH_FINDINGS,
-    }
-    if findings != expected_findings:
-        errors.append("Agent Fleet finding bounds disagree with runtime")
-
-    presets = policy.get("presets")
-    if not isinstance(presets, dict) or set(presets.get("values", [])) != set(
-        fleet_contract.PRESETS
+    routes = policy.get("routes")
+    if not isinstance(routes, dict):
+        return
+    for route_name, model, effort in (
+        ("luna", "gpt-5.6-luna", "max"),
+        ("sol", "gpt-5.6-sol", "xhigh"),
     ):
-        errors.append("Agent Fleet presets disagree with runtime")
+        route = routes.get(route_name)
+        if not isinstance(route, dict):
+            errors.append(f"native Agent Fleet route is missing: {route_name}")
+            continue
+        if route.get("model") != model or route.get("effort") != effort:
+            errors.append(
+                f"native Agent Fleet {route_name} identity disagrees with route policy"
+            )
 
-    escalation = policy.get("escalation")
-    expected_triggers = {
-        "accepted-blocker",
-        "agent-unknown",
-        "finding-conflict",
-        "finding-unresolved",
-        "high-risk-scope",
-    }
-    if not isinstance(escalation, dict):
-        errors.append("Agent Fleet escalation policy is missing")
-    else:
-        if set(escalation.get("mandatory_risk_tags", [])) != set(
-            fleet_escalation.MANDATORY_SOL_RISK_TAGS
-        ):
-            errors.append("Agent Fleet mandatory risk tags disagree with runtime")
-        if set(escalation.get("triggers", [])) != expected_triggers:
-            errors.append("Agent Fleet escalation triggers disagree with runtime")
-
-    evidence = policy.get("evidence")
-    expected_evidence = {
-        "candidate_revision": "sha256-canonical-json",
-        "manifest_sha256": True,
-        "bind_process_identity": True,
-        "bind_process_output_digest": True,
-        "rebuild_findings_on_status": True,
-        "recompute_escalation_on_status": True,
-        "require_live_candidate_match": True,
-        "observed_sandbox": "unknown",
-    }
-    if not isinstance(evidence, dict):
-        errors.append("Agent Fleet evidence policy is missing")
-    else:
-        for key, expected in expected_evidence.items():
-            if evidence.get(key) != expected:
-                errors.append(f"Agent Fleet evidence {key} disagrees with runtime")
 
 def _validate_worktree_writer_policy(root: Path, errors: list[str]) -> None:
     path = root / "config" / "worktree-writer-policy.toml"
@@ -731,7 +636,7 @@ def validate_repository(root: Path) -> tuple[list[str], list[str]]:
         errors.append("grok_writer.toml.disabled rollback reference is missing")
 
     _validate_runtime_contract(root, policy, errors)
-    _validate_agent_fleet_policy(root, errors)
+    _validate_native_agent_fleet_policy(policy, errors)
     _validate_worktree_writer_policy(root, errors)
     _validate_public_surfaces(root, policy, errors)
     _validate_repository_paths(root, errors)

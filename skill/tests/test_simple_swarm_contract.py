@@ -106,18 +106,18 @@ class SimpleSwarmContractTests(unittest.TestCase):
         )
         names = {item["name"] for item in data["evals"]}
         for name in (
-            "broad-audit-splits-into-narrow-simple-swarm",
+            "natural-deep-audit-uses-native-agent-fleet",
             "root-does-not-duplicate-active-child",
             "managed-workflow-is-explicit",
             "writer-workflow-is-explicit",
             "wide-child-package-is-resplit",
             "worktree-writer-route-is-fixed-sol-high",
             "explicit-eight-agent-adversarial-review-uses-fleet",
-            "ordinary-broad-audit-does-not-imply-agent-fleet",
+            "ordinary-check-does-not-imply-agent-fleet",
             "fleet-roles-are-distinct",
-            "twelve-agent-test-matrix-is-flat-and-host-mediated",
+            "unsupported-twelve-agent-request-is-not-silently-remapped",
             "minority-reproduced-blocker-defeats-majority",
-            "clean-low-risk-fleet-skips-sol",
+            "clean-low-risk-fleet-still-uses-sol",
         ):
             self.assertIn(name, names)
 

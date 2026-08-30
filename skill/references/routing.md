@@ -7,12 +7,12 @@ Choose execution mode before model route:
 1. **Root only** for trivial reads, short serial work, one implicit branch, or delegation whose coordination cost exceeds its value.
 2. **Simple Swarm** for ordinary work with at least two dependency-ready, non-overlapping branches. This is the default.
 3. **Managed Workflow** only when checkpoint/resume, Human Gate, bounded loop, conditional flow, long-running recovery, or formal run artifacts are explicitly needed.
-4. **Agent Fleet** only when the user explicitly requests 4–12 subagents, adversarial review, a broad test matrix, a deep repository audit, an architecture council, or competing hypotheses.
+4. **Agent Fleet** when the user explicitly names Agent Fleet or naturally requests a deep audit, comprehensive inspection, adversarial review, multi-agent verification, repository deep review, or equivalent challenge-and-reproduction work. Use exactly 4, 6, or 8 native visible subagents according to scope and risk.
 5. **Writer Workflow** only when the user explicitly authorizes an isolated Worktree Writer candidate.
 
 An explicit `$dynamic-workflow` or explicit subagent request may route one bounded branch. Implicit activation requires at least two useful child branches.
 
-Complexity, repository size, file count, security wording, or the word `audit` does not by itself select Managed Workflow, Agent Fleet, or Writer Workflow.
+Complexity, repository size, or file count alone does not select an advanced mode. Natural deep/comprehensive/adversarial/multi-agent review wording selects Agent Fleet; ordinary `check`, `inspect`, `review`, `检查`, or `看看代码` wording does not.
 
 ## Simple Swarm branch width
 
@@ -28,11 +28,19 @@ Use one bounded wait, one progress request after the first timeout, and one fina
 
 ## Agent Fleet boundary
 
-Agent Fleet is an explicit package runtime for exactly 4–12 fresh read-only Luna agents. Use it when the user requests a fleet/team/council, adversarial challenge, independent reproduction, a broad test matrix, repository-wide evidence lanes, architecture competition, or competing hypotheses. An ordinary audit with 2–6 useful non-overlapping questions remains Simple Swarm.
+Agent Fleet is a native orchestration mode, not a package runtime. It starts only fresh, top-level, UI-visible native subagents with unique task names, `fork_turns=none`, read-only instructions, no nesting, and no direct child messaging. Root owns candidate freeze, phase sequencing, finding IDs, live verification, Sol accountability, and final acceptance. See [agent-fleet.md](agent-fleet.md).
 
-Every supported Fleet size contains discovery, challenge, and reproduction. The host assigns findings, requires each challenge/reproduction record to cover every assigned finding exactly once, and reconstructs a finding graph. A reproduced P1/P2 cannot be outvoted by clean agents; proposer count is evidence metadata, not a vote.
+Select exactly one approved size:
 
-At most one fresh Sol/xhigh arbiter is conditionally invoked for accepted P1/P2, conflict, unresolved findings, UNKNOWN, or mandatory high-risk tags. Invalid identity, candidate drift, non-empty effects, malformed evidence, or process failure returns root without Sol fallback. Agent Fleet forbids nested delegation, direct agent messaging, and repository writes. See [agent-fleet-v1.md](agent-fleet-v1.md).
+- 4 total: 3 Luna + 1 Sol;
+- 6 total: 5 Luna + 1 Sol, the default;
+- 8 total: 6 Luna + 2 Sol for large or high-risk work.
+
+An exact unsupported count is a visible conflict. Do not silently convert 5, 7, 12, or another count into an approved size.
+
+Before spawning, disclose the workflow, total count, model mix, phase roles, and reason, then start directly. Luna performs discovery, challenge, and reproduction in ordered phases; Root assigns stable finding IDs between phases. Sol reviews evidence, severity, shared blind spots, unresolved conflict, and the proposed conclusion rather than repeating the whole scan.
+
+There is no majority vote. A reproduced severe finding cannot be outvoted. Sol has no unilateral veto, but Root must explicitly adopt, reject with evidence, or mark `UNKNOWN` every material Sol issue. Candidate drift or unresolved material Luna/Sol conflict stops unsupported acceptance and yields `UNKNOWN`.
 
 ## Precedence
 
@@ -53,7 +61,7 @@ A named Dynamic Workflow route is a complete preset, not a set of independently 
 
 Never label a Custom dispatch as Luna, Spark, or Sol merely because its model resembles that preset.
 
-Execution mode and model route are separate. Simple Swarm, Managed Workflow, Agent Fleet, and Writer Workflow choose orchestration shape; Luna and Sol choose the executor for one branch. Grok is outside native routing and never appears as a writer, native reviewer, automatic route, fallback, or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not the ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
+Execution mode and model route are separate. Simple Swarm, Managed Workflow, Agent Fleet, and Writer Workflow choose orchestration shape; Luna and Sol choose the executor for one branch. Agent Fleet fixes its total Luna/Sol mix from the approved 4/6/8 table. Grok is outside native routing and never appears as a writer, native reviewer, automatic route, fallback, or recovery node. A dedicated reviewer is a separate exception role and lifecycle, not an Agent Fleet Sol role or ordinary Sol executor route. Trigger it only from the entry-point independent-review rule.
 
 ## Narrow Explorer pre-route
 
@@ -96,11 +104,11 @@ Use `fork_turns=all` only when full conversation history is more important than 
 
 An explicit model or effort override takes precedence over `all`: use `none` or a finite positive fork and restate the required context. If the user explicitly makes both full-history inheritance and a different model/effort non-negotiable, stop and ask which constraint to retain; never silently discard either one.
 
-Sol-to-Luna nested work never uses `all` and is unavailable in Simple Swarm. Agent Fleet also forbids nested delegation; its Luna members are fresh top-level package-runtime processes with host-mediated artifacts.
+Sol-to-Luna nested work never uses `all` and is unavailable in Simple Swarm. Agent Fleet also forbids nested delegation; all Luna and Sol members are fresh top-level native subagents coordinated by Root.
 
 ## Pre-dispatch disclosure
 
-Before calling `spawn_agent`, first show one compact line per child:
+For Agent Fleet, first show the workflow, total count, Luna/Sol mix, phase roles, and reason. For every mode, before calling `spawn_agent`, show one compact line per child:
 
 `Subagent: <branch> -> <route> (<model>/<effort>/<tier>, fork=<range>)`
 

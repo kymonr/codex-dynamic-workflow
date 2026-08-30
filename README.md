@@ -28,7 +28,7 @@ Writer only when explicitly authorized
 ## 高级模式按需开启
 
 - **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、长时间恢复或可复现运行产物时才启用。
-- **Agent Fleet**：用户明确要求 4–12 个相互质疑的只读子代理、对抗审核、测试矩阵、仓库深审、架构委员会或竞争假设时启用。每个规模都包含 discovery、challenge 与 reproduction；宿主按 finding graph 聚合，不采用多数投票，并仅在语义证据需要时调用一个 fresh Sol/xhigh。
+- **Agent Fleet**：用户明确指定 Agent Fleet，或自然要求深度审核、全面检查、对抗审核、多代理复核、仓库深审等需要相互质疑和独立复现的任务时启用。只使用 4、6、8 个界面可见的原生子代理：分别为 `3 Luna + 1 Sol`、`5 Luna + 1 Sol`、`6 Luna + 2 Sol`。Luna 负责发现、质疑、复现；Sol 复核证据、严重度、共同盲点和最终结论。
 - **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。v2 只接受含验收、约束、非目标、行为和实现上下文的 package v2，并固定使用 Sol/high Writer；随后由 fresh read-only Sol/xhigh reviewer 审核。CLI 和 package 都不能选择或降级 Writer。
 - **Independent Review**：只有用户明确要求独立、全新、第二方或最终验收时才创建 dedicated reviewer。
 
@@ -41,7 +41,7 @@ Writer only when explicitly authorized
 
 Simple Swarm 禁止嵌套委派，最多只允许一个 native writer。默认 writer 是 Sol；用户显式指定受支持的 native 模型时优先，显式 Luna 可承担 scoped writing。Grok 始终没有写入权限。
 
-机器可读的角色、Simple Swarm、资源限制与路径合同位于 `config/workflow-policy.toml`；Agent Fleet 的 package、4–12 阶段、固定 Luna/Sol 路由与完整性边界位于 `config/agent-fleet-policy.toml`；Worktree Writer 合同位于 `config/worktree-writer-policy.toml`。三者都由一致性检查核对运行时代码。
+机器可读的角色、Simple Swarm、原生 Agent Fleet、资源限制与路径合同统一位于 `config/workflow-policy.toml`；Worktree Writer 合同位于 `config/worktree-writer-policy.toml`。一致性检查会核对 4/6/8 的 Luna/Sol 配比、界面可见性、Root/Sol 责任和其他运行边界。
 
 ## 执行路径
 
@@ -88,25 +88,31 @@ py -3.12 skill\cli.py resume `
 
 所有成功结果都会生成 SHA-256 内容寻址 artifact。小结果仍可内联；超过累计 inline budget 时，下游只收到带摘要、哈希和精确只读路径的 `UPSTREAM_ARTIFACT_REFERENCE`，避免重复复制大对象。
 
-## Agent Fleet v1
+## 原生 Agent Fleet
 
-Agent Fleet 是独立于 Workflow IR 的显式只读 package runtime。先冻结 live Git candidate 并运行固定验证，再调度 4–12 个 fresh Luna：
+Agent Fleet 不再是后台 CLI 或 package runtime，而是 Codex 界面中可见的原生多代理深审流程：
 
 ```text
-discovery → challenge → reproduction → host finding graph
-                                  ├─ clean / only P3 → accept
-                                  └─ blocker / conflict / UNKNOWN / high risk → one fresh Sol/xhigh
+Root 冻结范围和 Git 状态
+→ Luna 独立发现
+→ Root 去重并分配 F-001 等 finding ID
+→ Luna 逐项质疑
+→ Luna 独立复现
+→ Sol 复核证据、风险和遗漏
+→ Root 公开采用、拒绝或标记 UNKNOWN
 ```
 
-每个 challenge 与 reproduction 记录必须恰好覆盖宿主分配的全部 finding。代理 identity、candidate revision、effects、schema 或证据完整性无效时直接 fail closed 返回 root；Sol 不作为执行失败兜底。
+自动规模：
 
-```powershell
-python skill\cli.py fleet-plan --package fleet.json --repository D:\repo --expected-package-digest <digest>
-python skill\cli.py fleet-run --package fleet.json --repository D:\repo --expected-package-digest <digest> --ack-read-only-agent-fleet
-python skill\cli.py fleet-status --run-dir <run-directory>
-```
+- 4 个：`3 Luna + 1 Sol`，用于小而明确、风险较低的深审；
+- 6 个：`5 Luna + 1 Sol`，作为跨文件或跨模块深审的默认规模；
+- 8 个：`6 Luna + 2 Sol`，用于安全、数据、权限、并发、安装器、发布或大型架构等高风险范围。
 
-完整合同与用法见 `skill/references/agent-fleet-v1.md` 和 `skill/references/agent-fleet-usage.md`.
+启动前先公开 workflow、总数、Luna/Sol 配比、阶段分工和选择原因，然后直接启动。每个成员都是 fresh、顶层、唯一命名、`fork_turns=none`、只读且界面可见的 native subagent；禁止嵌套、代理间直接通信、仓库写入和隐藏的 Fleet `codex exec` 进程。
+
+证据优先于人数。被独立复现的严重问题不能被多数“未发现”抵消。Sol 没有单方面否决权，但 Root 必须逐项公开处理每个重要 Sol 意见：采用、给出代码/测试/复现依据后拒绝，或标记 `UNKNOWN`。无法解决的 Luna/Sol 重大冲突必须保留为 `UNKNOWN`，不能包装成审核通过。
+
+Agent Fleet 不再提供机器化 candidate digest、JSON records、run directory、evidence manifest 或离线状态重建。明确需要 checkpoint/resume 或正式持久化证据时，使用 Managed Workflow。完整合同见 `skill/references/agent-fleet.md`。
 
 ## Workflow IR v3
 
@@ -121,8 +127,7 @@ py -3.12 skill\cli.py validate-ir --spec workflow-v3.json
 ## 仓库结构
 
 ```text
-config/workflow-policy.toml      机器可读路由、限制与路径合同
-config/agent-fleet-policy.toml   Agent Fleet package、路由与完整性合同
+config/workflow-policy.toml      机器可读路由、原生 Agent Fleet、限制与路径合同
 config/worktree-writer-policy.toml Worktree Writer v2 profile 与安全合同
 config/agents/                   配套 native agent 角色模板
 integration/                     工作区 AGENTS.md 接入片段
@@ -130,9 +135,8 @@ skill/VERSION                    人工可读的严格语义版本
 skill/versioning.py              显式版本递增与原子 VERSION 更新
 skill/SKILL.md                   Dynamic Workflow Skill 主规则
 skill/references/simple-swarm.md 默认轻量多代理合同
-skill/references/agent-fleet-v1.md 4–12 Agent Fleet 可信合同
-skill/fleet_runtime.py           Agent Fleet package runtime
-skill/cli.py                     跨平台 CLI 入口
+skill/references/agent-fleet.md  4/6/8 原生可见 Agent Fleet 合同
+skill/cli.py                     Managed Workflow、Writer 与个人运维 CLI 入口
 skill/install_cli.py             个人版本与安装管理 CLI
 skill/installation/              安装合同、安全文件操作、计划、状态与单步回滚
 skill/platform_paths.py          本地状态、产物与 worktree 路径解析
