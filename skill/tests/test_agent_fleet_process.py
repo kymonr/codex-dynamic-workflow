@@ -173,20 +173,45 @@ class FleetProcessTests(unittest.TestCase):
             ("reproduction", fleet_records.reproduction_schema),
         ):
             agent = next(item for item in schedule["agents"] if item["phase"] == phase)
-            schema = builder(candidate_revision=revision, agent=agent)
+            kwargs = {"candidate_revision": revision, "agent": agent}
+            if phase != "discovery":
+                kwargs["valid_finding_ids"] = ["F-one", "F-two"]
+            schema = builder(**kwargs)
             self.assertFalse(schema["additionalProperties"])
             self.assertEqual(
                 schema["properties"]["candidate_revision"]["enum"], [revision]
             )
             self.assertEqual(schema["properties"]["effects"]["maxItems"], 0)
+            self.assertEqual(
+                schema["properties"]["effects"]["items"], {"type": "string"}
+            )
             bounded_key = "findings" if phase == "discovery" else "new_findings"
             self.assertEqual(
                 schema["properties"][bounded_key]["maxItems"],
                 fleet_records.MAX_FINDINGS_PER_RECORD,
             )
-        arbiter = fleet_records.arbiter_schema(candidate_revision=revision)
+            if phase != "discovery":
+                reference_key = (
+                    "assessments" if phase == "challenge" else "reproductions"
+                )
+                self.assertEqual(
+                    schema["properties"][reference_key]["items"]["properties"]
+                    ["finding_id"]["enum"],
+                    ["F-one", "F-two"],
+                )
+        arbiter = fleet_records.arbiter_schema(
+            candidate_revision=revision,
+            valid_finding_ids=["F-one", "F-two"],
+        )
         self.assertFalse(arbiter["additionalProperties"])
         self.assertEqual(arbiter["properties"]["effects"]["maxItems"], 0)
+        self.assertEqual(
+            arbiter["properties"]["effects"]["items"], {"type": "string"}
+        )
+        self.assertEqual(
+            arbiter["properties"]["accepted_findings"]["items"]["enum"],
+            ["F-one", "F-two"],
+        )
 
     def test_challenge_and_reproduction_cover_every_assignment(self) -> None:
         pkg = package()
