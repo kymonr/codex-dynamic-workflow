@@ -47,7 +47,7 @@ Bounded Loop v1 用于以下确定性流程：
   "kind": "agent",
   "depends_on": ["converge-design"],
   "config": {
-    "profile": "luna",
+    "profile": "sol",
     "access": "read_only",
     "prompt": "根据受限循环状态修订候选。状态：{{loop_state}}",
     "output_schema": {
@@ -62,6 +62,8 @@ Bounded Loop v1 用于以下确定性流程：
   }
 }
 ```
+
+设计示例使用 Sol 修订、Luna 验证；显式用户路由优先级仍然适用。通用 runtime 合同不因此改变。
 
 最后一个模板必须是 verifier，并使用运行时固定的 `accept | reject | unknown` Schema：
 

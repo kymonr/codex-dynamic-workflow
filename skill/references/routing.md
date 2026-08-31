@@ -10,7 +10,17 @@ Choose execution mode before model route:
 4. **Agent Fleet** when the user explicitly names Agent Fleet or naturally requests a deep audit, comprehensive inspection, adversarial review, multi-agent verification, repository deep review, or equivalent challenge-and-reproduction work. Use exactly 4, 6, or 8 native visible subagents according to scope and risk.
 5. **Writer Workflow** only when the user explicitly authorizes an isolated Worktree Writer candidate.
 
+Before any dispatch, resolve the request to exactly one orchestration mode: Root only, Simple Swarm, Managed Workflow, Agent Fleet, or Writer Workflow. The modes are mutually exclusive and must not be combined or nested.
+
+A mode is applicable only when its prerequisites are authorized and it can satisfy every mandatory orchestration capability. If the user explicitly selects a mode, use it only when applicable. Otherwise, disclose the exact conflict and stop before dispatch; do not silently remap the mode, combine modes, or drop a required capability.
+
+When no mode is explicit, select the first applicable mode in this order: **Writer Workflow → Managed Workflow → Agent Fleet → Simple Swarm → Root only**. Use the applicability criteria above rather than task size alone.
+
+Mode selection governs orchestration only. It does not grant write or external effects, select a branch route or model, or trigger independent review or final acceptance. Effects remain bounded by current authority; route selection happens after mode selection; Root retains adoption and acceptance. Emit the Workflow/Mode marker once only for the four Dynamic Workflow modes; Root only emits no Dynamic Workflow marker.
+
 An explicit `$dynamic-workflow` or explicit subagent request may route one bounded branch. Implicit activation requires at least two useful child branches.
+
+Root selects the execution mode before dispatch, preserves explicit user route precedence, and owns effect readback, adoption, and final acceptance.
 
 Complexity, repository size, or file count alone does not select an advanced mode. Natural deep/comprehensive/adversarial/multi-agent review wording selects Agent Fleet; ordinary `check`, `inspect`, `review`, `检查`, or `看看代码` wording does not.
 
@@ -24,7 +34,7 @@ Do not dispatch a combined package such as “CLI + runtime + Writer authority +
 
 Active branches should not substantially duplicate files or responsibility. Root must not repeat an active child’s investigation. Simple Swarm forbids nested delegation.
 
-Use one bounded wait, one progress request after the first timeout, and one final bounded wait. If the second wait still produces no useful delivery and the branch blocks completion, close and re-split it or return the scope to root.
+Coordination waits are bounded and event-driven only to keep Root responsive; they are not a child lifecycle budget or deadline. After the first timeout, allow at most one non-interrupting partial/progress request. A healthy running child may continue through longer bounded waits with useful user updates and no repeated progress prompts or status polling. A later timeout, wait count, or silence alone never authorizes interrupt, close, re-split, reroute, replay, or duplicate execution. Terminal or hard-stop conditions follow [dag.md](dag.md); reconcile effects after a hard stop. A temporarily slow healthy child stays Simple. Managed Workflow is for checkpoint/resume, Human Gate, conditional flow, bounded loops, persistent long-running recovery, or formal artifacts, not merely more than two waits. Live behavior beyond two waits is unproven and remains `UNKNOWN`; this contract makes no executable liveness claim.
 
 ## Agent Fleet boundary
 
@@ -49,7 +59,7 @@ Apply routing rules in this order:
 1. The user's explicit model, effort, tier, or context instruction.
 2. An applicable dedicated skill or repository rule.
 3. Risk and reversibility.
-4. The default authority boundary: Luna for ordinary read-only delegated work; Sol for native or delegated writes plus complex or high-impact work.
+4. The default authority boundary: Luna for facts, constraints, current-state inspection, non-selecting organization, evidence verification, and formatting an already-decided plan; Sol for design candidates and judgments, native or delegated writes, and complex or high-impact work.
 
 Role files under the active `CODEX_HOME/agents` directory are authoritative for built-in role values. Resolve `CODEX_HOME` from the current process; use the platform default only when it is unset.
 
@@ -73,7 +83,7 @@ Explorer uses `fork_turns=none` by default. It is not an automatic recovery node
 
 ## Complexity-based route boundary
 
-Route ordinary read-only work to Luna. By default, route native or delegated implementation, repair, refactor, or file editing to Sol, including short bounded low-risk changes. A user's explicit supported native model selection takes precedence over that default: an explicit Luna writing request remains Luna and may be the one scoped writer. Also route directly to Sol when no explicit route overrides the default and the branch requires complex cross-module reasoning, a nontrivial high-impact behavior change, architecture or security judgment, difficult rollback, or final judgment. Assess complexity per branch: file count, branch count, or long context alone does not select advanced orchestration. Fixed-route owning workflows remain fixed, and Grok is not a native route; only a user-requested separate visible read-only second review after candidate freeze follows `grok-thread.md`.
+Route by deliverable, after Root has selected the execution mode. Luna handles facts, constraints, current-state inspection, non-selecting organization, evidence verification, and formatting an already-decided plan. Sol creates or revises design candidates, chooses alternatives, resolves material tradeoffs, recommends a target design, and makes design judgments; Sol is also the default native/delegated writer and the route for complex cross-module reasoning, a nontrivial high-impact behavior change, architecture or security judgment, or difficult rollback. A user's explicit supported native model selection takes precedence over those defaults: an explicit Luna writing request remains Luna and may be the one scoped writer. Assess complexity per branch: file count, branch count, or long context alone does not select advanced orchestration. Fixed-route owning workflows remain fixed, and Grok is not a native route; only a user-requested separate visible read-only second review after candidate freeze follows `grok-thread.md`.
 
 ## Writer Workflow fixed route boundary
 
@@ -84,16 +94,16 @@ Ordinary native writer routing does not select the Worktree Writer. Writer Workf
 | Route | Native dispatch | Intended work |
 |---|---|---|
 | Spark | `agent_type="spark"` | Short, mechanical, low-risk, read-only, easily verified work |
-| Luna | `agent_type="luna"` | Ordinary read-only analysis, inspection, review, planning, and verification; user-explicit scoped writing |
-| Sol | `agent_type="sol"` | Default native/delegated writing, plus complex cross-module, high-impact, architectural, security-sensitive, hard-to-reverse, or final judgment work |
+| Luna | `agent_type="luna"` | Facts, constraints, current-state inspection, non-selecting organization, evidence verification, and formatting an already-decided plan; user-explicit scoped writing |
+| Sol | `agent_type="sol"` | Create or revise design candidates, choose alternatives, resolve material tradeoffs, recommend a target design, and make design judgments; default native/delegated writing plus complex cross-module, high-impact, architectural, security-sensitive, or hard-to-reverse work |
 | Custom | `agent_type="default"` plus the preset model/effort and exact overrides | A user-requested combination that differs from a complete built-in preset |
 
 The approved Luna role is `gpt-5.6-luna` / `max` / `fast`. In API request metadata, Fast is requested as `priority`; the pre-dispatch line reports this configured/requested tier as `fast`, not an observed delivery claim. Resolve Sol from the active `CODEX_HOME/agents/sol.toml`; its approved preset is `gpt-5.6-sol` / `xhigh` / `default`. Spark and Custom inherit the parent tier because native dispatch has no separate tier override. If `sol` is missing, disabled, or resolves to a different model/effort/tier, treat that as an unavailable or conflicting route and return to the root rather than silently selecting a generic `default`/`worker` role.
 
 If the route is genuinely uncertain:
 
-- choose Sol when error impact is high, rollback is difficult, or the result is a final judgment;
-- otherwise choose Luna for ordinary read-only delegated work; use Luna for scoped writing only when the user explicitly selected it;
+- choose Sol for creating or revising design candidates, choosing alternatives, resolving material tradeoffs, recommending a target design, or making a design judgment; also choose Sol when error impact is high, rollback is difficult, or the result is a final judgment;
+- otherwise choose Luna for facts, constraints, current-state inspection, non-selecting organization, evidence verification, or formatting an already-decided plan; use Luna for scoped writing only when the user explicitly selected it;
 - choose Spark only when all Spark criteria, including read-only access, are affirmative.
 
 ## Context forks

@@ -121,11 +121,21 @@ class SwarmPresetCompilerTests(unittest.TestCase):
                 "finalize-rejected",
             ],
         )
+        self.assertEqual(_node(raw, "brief-analysis")["config"]["profile"], "luna")
+        self.assertEqual(
+            _node(raw, "perspective-planner")["config"]["profile"],
+            "luna",
+        )
         self.assertEqual(_node(raw, "design-options")["config"]["item_limit"], 6)
+        self.assertEqual(
+            _node(raw, "design-options")["config"]["template"]["profile"],
+            "sol",
+        )
         self.assertEqual(
             _node(raw, "verify-designs")["config"]["target"],
             "design-options",
         )
+        self.assertEqual(_node(raw, "verify-designs")["config"]["profile"], "luna")
         self.assertEqual(_node(raw, "synthesize-design")["config"]["profile"], "sol")
         self.assertEqual(
             _node(raw, "review-gate")["config"]["options"],
@@ -141,6 +151,10 @@ class SwarmPresetCompilerTests(unittest.TestCase):
         scope_prompt = _prompt(_node(raw, "scope-discovery"))
         self.assertIn("performance and test/CI evidence", scope_prompt)
         self.assertEqual(_node(raw, "review-findings")["config"]["item_limit"], 7)
+        self.assertEqual(
+            _node(raw, "review-findings")["config"]["template"]["profile"],
+            "luna",
+        )
         self.assertEqual(
             _node(raw, "verify-findings")["config"]["target"],
             "review-findings",
@@ -172,6 +186,10 @@ class SwarmPresetCompilerTests(unittest.TestCase):
         self.assertEqual(projection["verify_child_upper_bound"], 10)
         self.assertEqual(projection["total_upper_bound"], 24)
         self.assertEqual(_node(raw, "audit-modules")["config"]["item_limit"], 10)
+        self.assertEqual(
+            _node(raw, "audit-modules")["config"]["template"]["profile"],
+            "luna",
+        )
         ids = {node["id"] for node in raw["nodes"]}
         self.assertNotIn("finalize-accepted", ids)
         self.assertNotIn("finalize-rejected", ids)

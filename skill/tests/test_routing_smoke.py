@@ -105,6 +105,23 @@ class RoutingSmokeTests(unittest.TestCase):
                     sorted(case.routes),
                 )
 
+    def test_agent_fleet_mode_is_accepted_by_synthetic_evaluator(self) -> None:
+        case = smoke.SmokeCase(
+            name="agent-fleet-mode",
+            prompt="",
+            workflow=True,
+            routes=("Luna", "Luna", "Luna", "Sol"),
+            mode="execute",
+            orchestration_mode="agent-fleet",
+        )
+        result = smoke.evaluate_transcript(
+            case, smoke._synthetic_transcript(case)
+        )
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(
+            result["observed"]["orchestration_mode"], "agent-fleet"
+        )
+
     def test_implicit_single_branch_stays_root(self) -> None:
         case = smoke.CASES["implicit-single-negative"]
         result = smoke.evaluate_transcript(

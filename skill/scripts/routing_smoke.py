@@ -39,6 +39,7 @@ _VALID_PROTOCOL_MODES = (None, "execute")
 _VALID_ORCHESTRATION_MODES = {
     "simple-swarm",
     "managed-workflow",
+    "agent-fleet",
     "writer-workflow",
 }
 _TOOL_CALL_TYPES = {

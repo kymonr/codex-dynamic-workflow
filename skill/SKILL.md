@@ -1,6 +1,6 @@
 ---
 name: dynamic-workflow
-description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the native, UI-visible 4/6/8 Agent Fleet for deep, comprehensive, adversarial, or multi-agent review: Luna performs discovery, challenge, and reproduction; Sol reviews evidence and conclusion; Root must openly disposition every material Sol issue. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Use Luna for ordinary read-only work and explicitly user-selected scoped writing; use Sol as the default writer and for complex or high-impact branches. Grok is only an explicitly requested separate visible read-only second review after candidate freeze.
+description: Default to a lightweight Simple Swarm for ordinary multi-branch work. Use the native, UI-visible 4/6/8 Agent Fleet for deep, comprehensive, adversarial, or multi-agent review: Luna performs discovery, challenge, and reproduction; Sol reviews evidence and conclusion; Root must openly disposition every material Sol issue. Keep Managed Workflow and Worktree Writer explicit or requirement-driven. Route Luna to facts, constraints, current-state inspection, non-selecting organization, evidence verification, and formatting an already-decided plan; route Sol to creating or revising design candidates, choosing alternatives, resolving material tradeoffs, recommending a target design, design judgment, default writing, and complex or high-impact branches. Grok is only an explicitly requested separate visible read-only second review after candidate freeze.
 ---
 
 # Dynamic Workflow
@@ -21,9 +21,17 @@ The root owns scope, authorization, decomposition, integration, acceptance, and 
 4. **Agent Fleet** — when the user explicitly names Agent Fleet or naturally requests a deep audit, comprehensive inspection, adversarial review, multi-agent verification, repository deep review, or equivalent challenge-and-reproduction work. Use exactly 4, 6, or 8 native visible subagents according to scope and risk.
 5. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v2.
 
+Before any dispatch, resolve the request to exactly one orchestration mode: Root only, Simple Swarm, Managed Workflow, Agent Fleet, or Writer Workflow. The modes are mutually exclusive and must not be combined or nested.
+
+A mode is applicable only when its prerequisites are authorized and it can satisfy every mandatory orchestration capability. If the user explicitly selects a mode, use it only when applicable. Otherwise, disclose the exact conflict and stop before dispatch; do not silently remap the mode, combine modes, or drop a required capability.
+
+When no mode is explicit, select the first applicable mode in this order: **Writer Workflow → Managed Workflow → Agent Fleet → Simple Swarm → Root only**. Use the applicability criteria above rather than task size alone.
+
+Mode selection governs orchestration only. It does not grant write or external effects, select a branch route or model, or trigger independent review or final acceptance. Effects remain bounded by current authority; route selection happens after mode selection; Root retains adoption and acceptance.
+
 An explicit `$dynamic-workflow` request guarantees routing is considered and may use one bounded child. Implicit activation requires at least two useful child branches.
 
-When selected, show once:
+For the four Dynamic Workflow modes, show once before dispatch. Root only emits no Dynamic Workflow marker:
 
 ```text
 Workflow: dynamic-workflow
@@ -49,7 +57,7 @@ Rules:
 - Simple Swarm forbids nested delegation. Re-split at the root if a child needs internal orchestration.
 - Read-only is the default. If the user explicitly asks for implementation, allow at most one active native writer. Use Sol by default; an explicit supported native model selection takes precedence, so the user may select Luna as the scoped writer.
 - Do not create Workflow IR, checkpoints, Human Gates, bounded loops, formal evidence packages, or Worktree Writer runs for ordinary Simple Swarm work.
-- Use one bounded wait. After one timeout, request one partial result or progress signal. After a second bounded wait without useful delivery, close and re-split or return the scope to root if the branch blocks completion.
+- Coordination waits are event-driven and bounded only to keep Root responsive; they are never a child lifecycle budget or deadline. After the first timeout, allow at most one non-interrupting request for a partial result or progress signal. A healthy running child may continue through longer bounded waits with useful user updates, without repeated progress prompts or status polling. A later timeout, wait count, or silence alone never authorizes interrupt, close, re-split, reroute, replay, or duplicate execution. Follow [references/dag.md](references/dag.md) for terminal and hard-stop conditions, and reconcile actual effects after a hard stop. A temporarily slow healthy child remains Simple; choose Managed only for checkpoint/resume, Human Gate, conditional flow, bounded loop, persistent long-running recovery, or formal artifacts—not merely because more than two waits are needed. Live behavior beyond two waits is unproven and remains `UNKNOWN`; this contract does not claim executable liveness.
 - Every child result must be adopted, partially adopted, not adopted, failed, or cancelled. Agent count alone is not success.
 
 A single implicit substantive branch stays with the root. Explicit `$dynamic-workflow` or an explicit subagent request may dispatch one bounded branch.
@@ -107,10 +115,12 @@ Writer Workflow never implies commit, push, merge, release, deploy, cleanup, or 
 
 ## Route each branch
 
+Root selects the execution mode before selecting a branch route. Explicit user route/model instructions take precedence within that mode, while Root retains adoption and final acceptance.
+
 - **Explorer** — one concrete, bounded, read-only codebase question with local verification.
 - **Spark** — short, mechanical, low-risk, read-only work.
-- **Luna** — ordinary read-only analysis, inspection, review, planning, and verification; scoped writing only when the user explicitly selects Luna.
-- **Sol** — the default native/delegated writer, plus complex cross-module reasoning, architecture, security, high-impact changes, difficult rollback, or final technical judgment.
+- **Luna** — facts, constraints, current-state inspection, non-selecting organization, evidence verification, and formatting an already-decided plan; scoped writing only when the user explicitly selects Luna.
+- **Sol** — create or revise design candidates, choose alternatives, resolve material tradeoffs, recommend a target design, and make design judgments; also the default native/delegated writer and route for complex cross-module reasoning, architecture, security, high-impact changes, or difficult rollback.
 - **Grok** — never a native route, writer, native reviewer, fallback, or recovery node. Only a user-requested separate visible read-only second review after candidate freeze follows [references/grok-thread.md](references/grok-thread.md).
 
 Assess complexity per branch, not by repository size, file count, or total number of lanes.

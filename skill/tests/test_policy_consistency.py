@@ -28,10 +28,7 @@ class PolicyConsistencyTests(unittest.TestCase):
     def test_repository_policy_is_consistent(self) -> None:
         errors, warnings = checker.validate_repository(ROOT)
         self.assertEqual(errors, [], "\n".join(errors))
-        self.assertTrue(
-            all("skill/runner.py" in warning for warning in warnings),
-            warnings,
-        )
+        self.assertEqual(warnings, [])
 
     def test_empty_validated_only_capability_is_rendered_as_none(self) -> None:
         policy = checker._load_toml(ROOT / "config" / "workflow-policy.toml")

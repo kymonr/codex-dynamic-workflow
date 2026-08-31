@@ -330,6 +330,7 @@ def _map(
     prompt: str,
     output_schema: dict[str, Any],
     route_reason: str,
+    profile: str = "luna",
     extra_dependencies: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -340,7 +341,7 @@ def _map(
             "over": source,
             "item_limit": item_limit,
             "template": {
-                "profile": "luna",
+                "profile": profile,
                 "route_reason": route_reason,
                 "prompt": prompt,
                 "output_schema": output_schema,
@@ -574,6 +575,7 @@ def _build_design_swarm(
             "design-options",
             "perspective-planner",
             item_limit=6,
+            profile="sol",
             extra_dependencies=["brief-analysis"],
             route_reason="independent bounded design proposal",
             prompt=(
@@ -807,8 +809,8 @@ PRESETS: dict[str, PresetDefinition] = {
     "design-swarm": PresetDefinition(
         name="design-swarm",
         description=(
-            "Six parallel Luna design perspectives, adversarial verification, "
-            "Sol synthesis, and an explicit human decision."
+            "Luna brief, perspective planning, and verification; six parallel Sol "
+            "design proposals, Sol synthesis, and an explicit human decision."
         ),
         builder=_build_design_swarm,
         expected_claims=19,

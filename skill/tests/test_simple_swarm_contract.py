@@ -20,7 +20,7 @@ class SimpleSwarmContractTests(unittest.TestCase):
         self.assertEqual(contract["hard_max_children"], 8)
         self.assertEqual(contract["typical_max_primary_files_per_branch"], 3)
         self.assertEqual(contract["max_objectives_per_branch"], 1)
-        self.assertEqual(contract["max_wait_timeouts"], 2)
+        self.assertNotIn("max_wait_timeouts", contract)
         self.assertTrue(contract["default_read_only"])
         self.assertFalse(contract["nested_delegation"])
         self.assertFalse(contract["root_duplicates_active_scope"])
@@ -61,6 +61,33 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "Simple Swarm as the default: split ordinary work into 2–6",
             prompt,
         )
+        line = next(
+            line
+            for line in prompt.splitlines()
+            if line.strip().startswith("short_description:")
+        )
+        description = line.split('"', 2)[1]
+        self.assertIn("explicit isolated Writer Workflow", description)
+        self.assertGreaterEqual(len(description), 25)
+        self.assertLessEqual(len(description), 64)
+
+    def test_mode_selection_is_exactly_one_and_axis_separated(self) -> None:
+        surfaces = (
+            (ROOT / "skill" / "SKILL.md").read_text(encoding="utf-8"),
+            (ROOT / "skill" / "references" / "routing.md").read_text(
+                encoding="utf-8"
+            ),
+        )
+        for surface in surfaces:
+            for token in (
+                "exactly one orchestration mode",
+                "mutually exclusive",
+                "Writer Workflow → Managed Workflow → Agent Fleet → Simple Swarm → Root only",
+                "stop before dispatch",
+                "Mode selection governs orchestration only",
+                "Root only emits no Dynamic Workflow marker",
+            ):
+                self.assertIn(token, surface)
 
     def test_scoped_writer_keeps_path_and_explicit_route_authority(self) -> None:
         work_package = (
@@ -90,6 +117,8 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "The root must not repeat an active child",
             "Simple Swarm forbids nested delegation",
             "After the first timeout",
+            "later timeout, wait count, or silence alone never authorizes",
+            "Live behavior beyond two waits is unproven",
         ):
             self.assertIn(token, contract)
         self.assertIn(
@@ -98,14 +127,58 @@ class SimpleSwarmContractTests(unittest.TestCase):
         )
         self.assertIn("Scoped native writer packet", work_package)
 
+    def test_design_routes_by_deliverable_and_root_accepts(self) -> None:
+        skill = (ROOT / "skill" / "SKILL.md").read_text(encoding="utf-8")
+        for token in (
+            "facts, constraints, current-state inspection, non-selecting organization",
+            "formatting an already-decided plan",
+            "create or revise design candidates, choose alternatives",
+            "resolve material tradeoffs, recommend a target design",
+            "Root retains adoption and final acceptance",
+        ):
+            self.assertIn(token, skill)
+
+    def test_routing_table_and_uncertain_fallback_keep_design_work_on_sol(self) -> None:
+        routing = (ROOT / "skill" / "references" / "routing.md").read_text(
+            encoding="utf-8"
+        )
+        luna_row = next(
+            line for line in routing.splitlines() if line.startswith("| Luna |")
+        )
+        sol_row = next(
+            line for line in routing.splitlines() if line.startswith("| Sol |")
+        )
+        design_tokens = (
+            "design candidates",
+            "choose alternatives",
+            "material tradeoffs",
+            "target design",
+            "design judgment",
+        )
+        for token in design_tokens:
+            self.assertNotIn(token, luna_row)
+            self.assertIn(token, sol_row)
+
+        fallback = routing.split("If the route is genuinely uncertain:", 1)[1]
+        precedence = routing.split("## Precedence", 1)[1].split(
+            "Role files under the active", 1
+        )[0]
+        self.assertNotIn("Luna for ordinary read-only delegated work", precedence)
+        self.assertIn("Sol for design candidates and judgments", precedence)
+        self.assertIn("choose Sol for creating or revising design candidates", fallback)
+        self.assertIn("otherwise choose Luna for facts, constraints", fallback)
+        self.assertIn("only when the user explicitly selected it", fallback)
+
     def test_tabletop_evals_cover_mode_boundaries(self) -> None:
         data = json.loads(
             (ROOT / "skill" / "evals" / "evals.json").read_text(
                 encoding="utf-8"
             )
         )
-        names = {item["name"] for item in data["evals"]}
+        evals = {item["name"]: item["expected_output"] for item in data["evals"]}
         for name in (
+            "event-driven-native-coordination",
+            "healthy-long-running-child-is-not-interrupted",
             "natural-deep-audit-uses-native-agent-fleet",
             "root-does-not-duplicate-active-child",
             "managed-workflow-is-explicit",
@@ -118,8 +191,18 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "unsupported-twelve-agent-request-is-not-silently-remapped",
             "minority-reproduced-blocker-defeats-majority",
             "clean-low-risk-fleet-still-uses-sol",
+            "design-routing-by-deliverable",
         ):
-            self.assertIn(name, names)
+            self.assertIn(name, evals)
+        self.assertIn(
+            "Later timeout, wait count, or silence alone never authorizes",
+            evals["event-driven-native-coordination"],
+        )
+        self.assertIn(
+            "Keep the healthy child in Simple Swarm",
+            evals["healthy-long-running-child-is-not-interrupted"],
+        )
+        self.assertIn("Route B to Sol", evals["design-routing-by-deliverable"])
 
 
 if __name__ == "__main__":

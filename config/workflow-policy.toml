@@ -13,7 +13,6 @@ default_max_children = 6
 hard_max_children = 8
 typical_max_primary_files_per_branch = 3
 max_objectives_per_branch = 1
-max_wait_timeouts = 2
 default_read_only = true
 nested_delegation = false
 root_duplicates_active_scope = false

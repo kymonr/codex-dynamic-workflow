@@ -1110,6 +1110,11 @@ class BoundedLoopValidationTests(unittest.TestCase):
         self.assertEqual(loop["executable_contract"], "bounded-loop-v1")
         self.assertEqual(loop["initial_source"], "initial-design")
         self.assertEqual(loop["loop_claim_upper_bound"], 6)
+        nodes = {node["id"]: node for node in raw["nodes"]}
+        self.assertEqual(nodes["initial-design"]["config"]["profile"], "sol")
+        self.assertEqual(nodes["revise-template"]["config"]["profile"], "sol")
+        self.assertEqual(nodes["verify-template"]["config"]["profile"], "luna")
+        self.assertEqual(nodes["final-report"]["config"]["profile"], "sol")
         self.assertEqual(plan["model_calls"], 0)
         self.assertEqual(plan["writes"], [])
         self.assertFalse(plan["workdir_preflight"]["performed"])
