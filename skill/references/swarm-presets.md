@@ -1,7 +1,10 @@
-# Static Luna swarm presets
+# Static swarm presets
 
 `preset-list` and `preset-ir` provide deterministic, zero-model Workflow IR v3
-templates for high-parallelism read-only work. They do not inspect the declared
+templates for high-parallelism read-only work. Luna handles the brief, perspective
+and verification work; `design-swarm` maps six independent proposals to Sol and
+uses Sol for synthesis. `ultra-review` and `repo-sweep` keep their map lanes on
+Luna and use Sol for synthesis. They do not inspect the declared
 `workdir`, create a run directory, call Codex, decide a human gate, or grant
 workspace/Git write access.
 
@@ -36,7 +39,7 @@ fails closed when the selected `max_agents` is too small.
 
 | Preset | Default upper bound | Shape |
 |---|---:|---|
-| `design-swarm` | 19 | brief + six Luna designs + six adversarial verifiers + Sol synthesis + human gate + branch closeout |
+| `design-swarm` | 19 | Luna brief/perspectives + six Sol proposals + six Luna adversarial verifiers + Sol synthesis + human gate + branch closeout |
 | `ultra-review` | 23 | seven Luna review assignments covering eight dimensions + seven verifiers + Luna cross-check + Sol judgment + clean/blocker branch + gate + closeout |
 | `repo-sweep` | 24 | up to ten Luna module audits + ten verifiers + Sol repository synthesis + gate + branch-specific terminal record |
 
@@ -84,3 +87,8 @@ agent, map, verify, reduce, conditional, human_gate
 They do not implement or execute `loop`, Auto Planner, arbitrary model-generated
 workflow code, workspace writers, Git writers, worktree merging, hidden retry,
 or automatic model upgrades.
+
+Auto Planner selections bind the preset registry and each rendered preset's
+semantic digest. If a preset graph, prompt, schema, profile, budget, or limit
+changes, any prior selection fails closed on digest drift and must be regenerated;
+there is no migration bypass.

@@ -60,12 +60,14 @@ Simple Swarm forbids nested delegation. If a branch needs its own decomposition,
 
 ## Waiting
 
-1. Start one bounded event-driven wait.
-2. After the first timeout, request one partial result or progress signal.
-3. Wait once more.
-4. If the second wait produces no useful delivery and the branch blocks completion, close it and re-split, return the scope to root, or report it `UNKNOWN`.
+Coordination waits are bounded and event-driven only to keep Root responsive; they are not a child lifecycle budget or deadline.
 
-Do not poll repeatedly. Long-running work that legitimately needs multiple wait cycles belongs in Managed Workflow.
+1. Start a bounded event-driven wait.
+2. After the first timeout, allow at most one non-interrupting request for a partial result or progress signal.
+3. If the child is healthy, continue with longer bounded waits and useful user updates; do not repeat progress prompts or status polling.
+4. A later timeout, wait count, or silence alone never authorizes interrupt, close, re-split, reroute, replay, or duplicate execution. Let a healthy child finish naturally.
+
+Terminal and hard-stop conditions follow [dag.md](dag.md). Use the native cancellation or close primitive only for the explicit cancellation, scope revocation, identity mismatch, unauthorized/external/destructive/credential effect, or imminent safety conditions described there, and reconcile actual effects after a hard stop. Temporarily slow but healthy work remains Simple. Managed Workflow is for checkpoint/resume, Human Gate, conditional flow, bounded loops, persistent long-running recovery, or formal artifacts—not merely for needing more than two waits. Live behavior beyond two waits is unproven and remains `UNKNOWN`; this contract does not claim executable liveness.
 
 ## Adoption
 

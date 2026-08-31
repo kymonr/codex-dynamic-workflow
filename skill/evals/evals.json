@@ -114,7 +114,7 @@
       "id": 19,
       "name": "event-driven-native-coordination",
       "prompt": "三个 native 子代理仍在运行，当前没有新的完成、异常或 mailbox 事件。判断是否应反复 list_agents 加短 wait。",
-      "expected_output": "Use one bounded event-driven wait. After the first timeout request one partial result or progress signal, then wait once more; if the second wait still yields no useful delivery and blocks completion, close and re-split or return the scope to root. Do not poll repeatedly."
+      "expected_output": "Use event-driven bounded waits only for Root responsiveness, never as a child deadline. After the first timeout allow at most one non-interrupting partial/progress request; if the child is healthy, continue longer bounded waits with useful user updates and no repeated prompts or status polling. Later timeout, wait count, or silence alone never authorizes interrupt, close, re-split, reroute, replay, or duplicate execution. Live behavior beyond two waits remains unproven and UNKNOWN."
     },
     {
       "id": 20,
@@ -186,7 +186,7 @@
       "id": 31,
       "name": "healthy-long-running-child-is-not-interrupted",
       "prompt": "一个子代理已正常运行 20 分钟，没有错误、越权或模型不匹配，但暂时没有新的进度消息；主线程已经有部分证据。判断下一步。",
-      "expected_output": "In Simple Swarm, treat a 20-minute silent child as an over-broad branch: after one progress request and a second bounded wait, close and re-split or return scope to root if it blocks completion. Only Managed Workflow may continue long-running persistent waits."
+      "expected_output": "Keep the healthy child in Simple Swarm. Coordination waits remain event-driven and bounded only for Root responsiveness; after the first timeout allow at most one non-interrupting partial/progress request, then continue longer bounded waits with useful updates and no repeated prompts or status polling. Do not interrupt, close, re-split, reroute, replay, or duplicate execution based on elapsed time, wait count, or silence alone. Managed Workflow is selected only for checkpoint/resume, Human Gate, conditional flow, bounded loop, persistent long-running recovery, or formal artifacts—not merely a slow child or more than two waits. Live behavior beyond two waits is unproven and UNKNOWN."
     },
     {
       "id": 32,
@@ -331,6 +331,12 @@
       "name": "clean-low-risk-fleet-still-uses-sol",
       "prompt": "6 个 Agent Fleet 成员完成 discovery、challenge、reproduction；所有 finding 被反驳，无 UNKNOWN 或冲突。是否跳过 Sol？",
       "expected_output": "Do not skip Sol: the approved six-member mix is 5 Luna plus 1 Sol. Sol reviews evidence quality, shared blind spots, severity, and the clean conclusion; Root then explicitly dispositions any material Sol issue."
+    },
+    {
+      "id": 56,
+      "name": "design-routing-by-deliverable",
+      "prompt": "比较两个设计工作分支：A，只读整理现有事实、约束、当前状态和证据，并把已经决定的方案格式化；B，提出多个设计候选、选择替代方案、解决关键取舍并推荐目标设计。没有其他显式路由。判断各自应交给谁以及谁负责最终采纳。",
+      "expected_output": "Route A to Luna for facts, constraints, current-state inspection, evidence verification, and formatting an already-decided plan. Route B to Sol for creating design candidates, choosing alternatives, resolving material tradeoffs, recommending the target design, and design judgment. Root selects the execution mode, retains adoption and final acceptance, and explicit user route precedence still applies."
     }
-  ]
+]
 }

@@ -25,7 +25,7 @@
       "kind": "agent",
       "depends_on": [],
       "config": {
-        "profile": "luna",
+        "profile": "sol",
         "access": "read_only",
         "route_reason": "create one bounded initial candidate",
         "prompt": "只读形成一个结构化初始设计候选，不修改仓库。",
@@ -55,7 +55,7 @@
       "kind": "agent",
       "depends_on": ["converge-design"],
       "config": {
-        "profile": "luna",
+        "profile": "sol",
         "access": "read_only",
         "route_reason": "bounded loop revision template",
         "prompt": "根据以下受限循环状态修订候选，不修改仓库：{{loop_state}}。当前迭代：{{iteration}}。",

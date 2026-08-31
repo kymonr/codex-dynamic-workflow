@@ -23,11 +23,13 @@ Writer only when explicitly authorized
 
 每个分支通常只负责一个问题、一个模块或 1–3 个主要文件。主线程不重复调查仍在运行的子代理范围。普通 Simple Swarm 不创建 Workflow IR、checkpoint、Human Gate、bounded loop、正式 evidence package 或 Worktree Writer run。
 
+协调等待只为保持 root 响应而采用有界、事件驱动方式，不是 child 生命周期预算或 deadline。首次 timeout 最多允许一次非中断的 partial/progress 请求；健康运行中的 child 可继续更长的 bounded wait，并提供有用的用户更新，不得反复提示进度或轮询状态。后续 timeout、等待次数或静默本身绝不授权 interrupt、close、重新拆分、reroute、replay 或重复执行。终止和 hard-stop 遵循 `skill/references/dag.md`，hard-stop 后先核对实际 effects；健康但暂时变慢的 child 仍留在 Simple。只有 checkpoint/resume、Human Gate、conditional flow、bounded loop、持久长运行恢复或正式 artifacts 才启用 Managed Workflow，不因超过两次等待而启用。两次以上等待的 live 行为仍是未证明的 `UNKNOWN`，不得声称已有可执行 liveness。
+
 详细规则见 `skill/references/simple-swarm.md`。
 
 ## 高级模式按需开启
 
-- **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、长时间恢复或可复现运行产物时才启用。
+- **Managed Workflow**：明确需要 checkpoint/resume、Human Gate、bounded loop、条件分支、持久长时间恢复或可复现运行产物时才启用；不会仅因等待超过两次而启用。
 - **Agent Fleet**：用户明确指定 Agent Fleet，或自然要求深度审核、全面检查、对抗审核、多代理复核、仓库深审等需要相互质疑和独立复现的任务时启用。只使用 4、6、8 个界面可见的原生子代理：分别为 `3 Luna + 1 Sol`、`5 Luna + 1 Sol`、`6 Luna + 2 Sol`。Luna 负责发现、质疑、复现；Sol 复核证据、严重度、共同盲点和最终结论。
 - **Writer Workflow**：只有用户明确授权隔离 Worktree Writer candidate 时才启用。v2 只接受含验收、约束、非目标、行为和实现上下文的 package v2，并固定使用 Sol/high Writer；随后由 fresh read-only Sol/xhigh reviewer 审核。CLI 和 package 都不能选择或降级 Writer。
 - **Independent Review**：只有用户明确要求独立、全新、第二方或最终验收时才创建 dedicated reviewer。
@@ -35,11 +37,11 @@ Writer only when explicitly authorized
 ## 当前路由
 
 - Spark / Explorer：窄而明确、低风险、可本地核对的只读调查。
-- Luna：默认处理普通只读委派任务；用户显式指定 Luna 写入时，可作为唯一 scoped writer。
-- Sol：默认处理 native / delegated 写入，以及复杂、跨模块、高影响、架构/安全判断或最终技术判断。
+- Luna：负责 facts、constraints、current-state inspection、non-selecting organization、evidence verification 和格式化已决定的 plan；用户显式指定 Luna 写入时，可作为唯一 scoped writer。
+- Sol：负责创建/修订 design candidates、选择 alternatives、解决 material tradeoffs、推荐 target design 和 design judgment；默认处理 native / delegated 写入，以及复杂、跨模块、高影响、架构/安全判断或最终技术判断。
 - Grok：不属于 native subagent 路由，也不是 writer、native reviewer 或自动 fallback；只有用户明确要求时，才在 candidate 冻结后创建独立可见的只读二审对话任务。
 
-Simple Swarm 禁止嵌套委派，最多只允许一个 native writer。默认 writer 是 Sol；用户显式指定受支持的 native 模型时优先，显式 Luna 可承担 scoped writing。Grok 始终没有写入权限。
+Root 先选择 Root-only、Simple Swarm 或其他执行模式，再按交付物选择路由；显式用户 route/model 优先。Root 保留 effects 读回、结果 adoption 和 final acceptance。Simple Swarm 禁止嵌套委派，最多只允许一个 native writer。默认 writer 是 Sol；用户显式指定受支持的 native 模型时优先，显式 Luna 可承担 scoped writing。Grok 始终没有写入权限。
 
 机器可读的角色、Simple Swarm、原生 Agent Fleet、资源限制与路径合同统一位于 `config/workflow-policy.toml`；Worktree Writer 合同位于 `config/worktree-writer-policy.toml`。一致性检查会核对 4/6/8 的 Luna/Sol 配比、界面可见性、Root/Sol 责任和其他运行边界。
 
@@ -73,6 +75,8 @@ py -3.12 skill\cli.py resume `
 ```
 
 `run` 会持续写入 `events.jsonl` 和 `checkpoint.json`。显式 `resume` 会核对计划摘要，只恢复未完成节点；已成功节点通过内容寻址 artifact 复用，不重新把完整结果塞入主线程或下游 prompt。
+
+Auto Planner selection 会绑定 preset registry 与渲染结果的 semantic digest。preset 的 DAG、prompt、schema、profile、budget 或 limit 发生变化时，旧 selection 会因 digest drift fail closed，必须重新生成；不存在 migration bypass。
 
 ## 资源和结果边界
 
