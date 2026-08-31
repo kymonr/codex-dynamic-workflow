@@ -61,6 +61,33 @@ class SimpleSwarmContractTests(unittest.TestCase):
             "Simple Swarm as the default: split ordinary work into 2–6",
             prompt,
         )
+        line = next(
+            line
+            for line in prompt.splitlines()
+            if line.strip().startswith("short_description:")
+        )
+        description = line.split('"', 2)[1]
+        self.assertIn("explicit isolated Writer Workflow", description)
+        self.assertGreaterEqual(len(description), 25)
+        self.assertLessEqual(len(description), 64)
+
+    def test_mode_selection_is_exactly_one_and_axis_separated(self) -> None:
+        surfaces = (
+            (ROOT / "skill" / "SKILL.md").read_text(encoding="utf-8"),
+            (ROOT / "skill" / "references" / "routing.md").read_text(
+                encoding="utf-8"
+            ),
+        )
+        for surface in surfaces:
+            for token in (
+                "exactly one orchestration mode",
+                "mutually exclusive",
+                "Writer Workflow → Managed Workflow → Agent Fleet → Simple Swarm → Root only",
+                "stop before dispatch",
+                "Mode selection governs orchestration only",
+                "Root only emits no Dynamic Workflow marker",
+            ):
+                self.assertIn(token, surface)
 
     def test_scoped_writer_keeps_path_and_explicit_route_authority(self) -> None:
         work_package = (

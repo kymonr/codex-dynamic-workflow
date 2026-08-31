@@ -10,6 +10,14 @@ Choose execution mode before model route:
 4. **Agent Fleet** when the user explicitly names Agent Fleet or naturally requests a deep audit, comprehensive inspection, adversarial review, multi-agent verification, repository deep review, or equivalent challenge-and-reproduction work. Use exactly 4, 6, or 8 native visible subagents according to scope and risk.
 5. **Writer Workflow** only when the user explicitly authorizes an isolated Worktree Writer candidate.
 
+Before any dispatch, resolve the request to exactly one orchestration mode: Root only, Simple Swarm, Managed Workflow, Agent Fleet, or Writer Workflow. The modes are mutually exclusive and must not be combined or nested.
+
+A mode is applicable only when its prerequisites are authorized and it can satisfy every mandatory orchestration capability. If the user explicitly selects a mode, use it only when applicable. Otherwise, disclose the exact conflict and stop before dispatch; do not silently remap the mode, combine modes, or drop a required capability.
+
+When no mode is explicit, select the first applicable mode in this order: **Writer Workflow → Managed Workflow → Agent Fleet → Simple Swarm → Root only**. Use the applicability criteria above rather than task size alone.
+
+Mode selection governs orchestration only. It does not grant write or external effects, select a branch route or model, or trigger independent review or final acceptance. Effects remain bounded by current authority; route selection happens after mode selection; Root retains adoption and acceptance. Emit the Workflow/Mode marker once only for the four Dynamic Workflow modes; Root only emits no Dynamic Workflow marker.
+
 An explicit `$dynamic-workflow` or explicit subagent request may route one bounded branch. Implicit activation requires at least two useful child branches.
 
 Root selects the execution mode before dispatch, preserves explicit user route precedence, and owns effect readback, adoption, and final acceptance.

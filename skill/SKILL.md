@@ -21,9 +21,17 @@ The root owns scope, authorization, decomposition, integration, acceptance, and 
 4. **Agent Fleet** — when the user explicitly names Agent Fleet or naturally requests a deep audit, comprehensive inspection, adversarial review, multi-agent verification, repository deep review, or equivalent challenge-and-reproduction work. Use exactly 4, 6, or 8 native visible subagents according to scope and risk.
 5. **Writer Workflow** — only when the user explicitly authorizes an isolated Worktree Writer candidate. A normal implementation request may authorize one scoped native writer, but it does not automatically authorize Worktree Writer v2.
 
+Before any dispatch, resolve the request to exactly one orchestration mode: Root only, Simple Swarm, Managed Workflow, Agent Fleet, or Writer Workflow. The modes are mutually exclusive and must not be combined or nested.
+
+A mode is applicable only when its prerequisites are authorized and it can satisfy every mandatory orchestration capability. If the user explicitly selects a mode, use it only when applicable. Otherwise, disclose the exact conflict and stop before dispatch; do not silently remap the mode, combine modes, or drop a required capability.
+
+When no mode is explicit, select the first applicable mode in this order: **Writer Workflow → Managed Workflow → Agent Fleet → Simple Swarm → Root only**. Use the applicability criteria above rather than task size alone.
+
+Mode selection governs orchestration only. It does not grant write or external effects, select a branch route or model, or trigger independent review or final acceptance. Effects remain bounded by current authority; route selection happens after mode selection; Root retains adoption and acceptance.
+
 An explicit `$dynamic-workflow` request guarantees routing is considered and may use one bounded child. Implicit activation requires at least two useful child branches.
 
-When selected, show once:
+For the four Dynamic Workflow modes, show once before dispatch. Root only emits no Dynamic Workflow marker:
 
 ```text
 Workflow: dynamic-workflow
