@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "deprecated": true,
+  "canonical_skill": "codex-dynamic-workflow",
+  "implicit_invocation": false
+}

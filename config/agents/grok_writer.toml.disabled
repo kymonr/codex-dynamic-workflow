@@ -1,9 +1,0 @@
-name = "grok_writer"
-description = "Disabled historical Grok writer reference; never load, enable, or dispatch this role."
-model = "xai/grok-4.6"
-model_reasoning_effort = "high"
-service_tier = "default"
-developer_instructions = """
-This role is disabled historical material and must never be loaded, enabled, dispatched, or used for writing, native review, fallback, or recovery.
-An explicitly requested Grok second review runs only as a separate visible read-only conversation task after the candidate is frozen; it does not use this role file.
-"""

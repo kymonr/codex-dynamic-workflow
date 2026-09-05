@@ -1,0 +1,6 @@
+interface:
+  display_name: "Native Dispatch (deprecated)"
+  short_description: "Deprecated alias for Codex Dynamic Workflow"
+  default_prompt: "Use $codex-dynamic-workflow for the current task; $dispatching-native-agents is a deprecated compatibility alias only."
+policy:
+  allow_implicit_invocation: false

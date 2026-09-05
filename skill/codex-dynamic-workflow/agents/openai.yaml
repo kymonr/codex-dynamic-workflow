@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex Dynamic Workflow"
+  short_description: "Raw-source-first adaptive native workflows"
+  default_prompt: "Use $codex-dynamic-workflow for an evidence-driven native workflow within the current authorization and budget."
+policy:
+  allow_implicit_invocation: true

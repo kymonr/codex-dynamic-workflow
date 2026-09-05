@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "skill_version": "2.0.2",
+  "priority": [
+    "quality",
+    "automation",
+    "latency",
+    "cost",
+    "observability",
+    "recovery"
+  ],
+  "backend": "native-only",
+  "evidence": "raw-source-first",
+  "child_spawn": false,
+  "peer_messaging": false,
+  "default_writer_count": 1,
+  "overlapping_writers": false,
+  "required_high_risk_verification": "independent-capable-raw-source",
+  "budget": {
+    "enforcement": "instruction-only-unless-host-enforced",
+    "max_concurrent_children": 4,
+    "absolute_child_launches": 24,
+    "approved_child_launches": 20,
+    "preauthorized_economy_reserve": 4,
+    "approved_strong_child_launches": 8,
+    "max_dependency_depth": 6,
+    "max_fix_cycles": 3,
+    "dry_optional_expansions": 2,
+    "root_usage": "record-observed-otherwise-unknown"
+  },
+  "profiles": {
+    "capable_reader": "cwf_reader",
+    "capable_writer": "cwf_writer",
+    "economy_mechanical": "cwf_mechanical"
+  },
+  "permissions": {
+    "default": "read-only",
+    "fix_implementation": "scoped-write-test-review-repair",
+    "commit": "explicit-only",
+    "push": "separate-explicit-only",
+    "merge": "separate-explicit-and-host-gates"
+  },
+  "future_only": [
+    "persistent-dag",
+    "host-enforced-budget",
+    "atomic-writer-locks",
+    "automatic-resume",
+    "nested-workflows",
+    "runtime-handoff"
+  ],
+  "skill_name": "codex-dynamic-workflow",
+  "legacy_alias": "dispatching-native-agents"
+}
