@@ -1,0 +1,22 @@
+{
+  "root": "tests/fixtures",
+  "goal": "Characterize the deliberate invoice fixture; do not modify it.",
+  "backend": "exec",
+  "implement": false,
+  "bounds": {
+    "capacity": 1, "approved": 1, "reserve": 0, "absolute": 1,
+    "strong_approved": 1, "max_nodes": 1, "max_attempts": 1,
+    "deadline_seconds": 600
+  },
+  "nodes": [
+    {
+      "id": "inspect",
+      "role": "explorer",
+      "task": "Open invoice.py. Check amount_due(100,10) and amount_due(100,0), report actual behavior versus its discount contract. Do not repair the intentional fixture.",
+      "sources": ["invoice.py"],
+      "checks": ["original source opened", "discount outputs checked"],
+      "risk": "low",
+      "tier": "strong"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "kind": "actual-native-bridge",
+  "status": "BLOCKED",
+  "native_launches": 0,
+  "ok": false,
+  "reason": "Tool safety blocked completion of the live native-host test harness before execution. No retry through an alternative route was attempted.",
+  "deterministic_bridge_tests": "PASS; not a substitute for actual native model dispatch",
+  "effective_child_model": "UNKNOWN",
+  "closure_verified": false
+}
