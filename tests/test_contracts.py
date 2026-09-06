@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import json
 from pathlib import Path
 import shutil
@@ -346,6 +347,16 @@ class InstallationTests(unittest.TestCase):
 
     def tearDown(self):self.temp.cleanup()
 
+    def _same_path(self, left, right):
+        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+
+    def _under_home(self, path):
+        try:
+            return os.path.commonpath([os.path.normcase(os.path.abspath(path)),
+                                       os.path.normcase(os.path.abspath(self.home))]) == os.path.normcase(os.path.abspath(self.home))
+        except ValueError:
+            return False
+
     def install(self, **options):
         # The migration fixture grants only the literal legacy preimage, once.
         if not (self.root / '.delivery/install-state.json').exists():
@@ -398,7 +409,7 @@ class InstallationTests(unittest.TestCase):
         original=installer.atomic_write; fired=[False]
         def stop_once(path,data):
             original(path,data)
-            if path.is_relative_to(self.home) and not fired[0]:
+            if self._under_home(path) and not fired[0]:
                 fired[0]=True;raise KeyboardInterrupt('after destination replace')
         with patch.object(installer,'atomic_write',side_effect=stop_once):
             with self.assertRaises(KeyboardInterrupt):self.install(apply=True)
@@ -422,7 +433,7 @@ class InstallationTests(unittest.TestCase):
             if path.name=='receipt.json' and changed[0] and not failed[0]:
                 failed[0]=True;raise OSError('receipt unavailable once')
             original(path,data)
-            if path.is_relative_to(self.home):changed[0]=True
+            if self._under_home(path):changed[0]=True
         with patch.object(installer,'atomic_write',side_effect=fail_receipt_once):
             with self.assertRaises(OSError):self.install(apply=True)
         self.assertEqual(self.legacy_skill.read_bytes(),b'old skill\n')
@@ -488,7 +499,7 @@ class InstallationTests(unittest.TestCase):
     def test_inplace_does_not_replace_locked_skill(self):
         original=installer.atomic_write
         def forbid_skill_replace(path,data):
-            if path==self.legacy_skill:raise PermissionError('replacement unavailable')
+            if self._same_path(path,self.legacy_skill):raise PermissionError('replacement unavailable')
             original(path,data)
         with patch.object(installer,'atomic_write',side_effect=forbid_skill_replace):
             result=self.install(apply=True,inplace_skill=True)
@@ -559,7 +570,7 @@ class InstallationTests(unittest.TestCase):
     def test_adoption_drift_between_precheck_and_plan_is_rejected(self):
         original=installer.read_if_file; reads=[0]
         def racing_read(path):
-            if path==self.legacy_skill:
+            if self._same_path(path,self.legacy_skill):
                 reads[0]+=1
                 if reads[0]==2:path.write_bytes(b'concurrent user edit')
             return original(path)
