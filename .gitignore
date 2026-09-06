@@ -1,17 +1,6 @@
-# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.coverage
-.venv/
-
-# Local runtime artifacts
-/runs/
-/.codex-dynamic-workflow/
-*.tmp
-
-# Local indexes and machine overrides
-.codegraph/
-config/agents/*.local.toml
+*.pyc
+.delivery/
+reports/*.jsonl
+reports/*.stderr.log
+reports/install-backup-*/

@@ -1,0 +1,759 @@
+"""Single-machine workflow controller. SQLite is authority; hosts are trusted.
+
+No arbitrary tool execution, automatic write replay, or publication occurs here.
+File identities detect observed drift; they do not freeze the filesystem.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import sqlite3
+import stat
+import time
+from typing import Any
+import uuid
+
+from .policy import budget_admission
+
+VERSION = '3.0.0'
+SCHEMA = 1
+MAX_SOURCE_BYTES = 4 * 1024 * 1024
+MAX_JSON_BYTES = 1024 * 1024
+ROLES = {'explorer', 'verifier', 'reproducer', 'designer', 'writer', 'reviewer'}
+DEFAULTS = dict(approved=20, reserve=4, absolute=24, strong_approved=8,
+                capacity=4, max_nodes=64, max_depth=6, max_attempts=3,
+                deadline_seconds=1800)
+DEFAULT_ROUTES = {
+    'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
+    'economy': {'model': 'gpt-5.6-luna', 'effort': 'medium', 'profile': 'cwf_mechanical'},
+    'writer': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_writer'},
+}
+
+
+class WorkflowError(ValueError):
+    """A contract, state, permission, or consistency gate rejected the operation."""
+
+
+def unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise WorkflowError(f'duplicate JSON key: {key}')
+        result[key] = value
+    return result
+
+
+def loads(text: str) -> Any:
+    if not isinstance(text, str):
+        raise WorkflowError('JSON input must be text')
+    if len(text.encode('utf-8')) > MAX_JSON_BYTES:
+        raise WorkflowError('JSON input too large')
+    try:
+        return json.loads(text, object_pairs_hook=unique_pairs,
+                          parse_constant=lambda x: (_ for _ in ()).throw(WorkflowError('nonfinite JSON number')))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise WorkflowError(f'invalid JSON: {exc}') from exc
+
+
+def dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def sha(value: Any) -> str:
+    return hashlib.sha256(dump(value).encode()).hexdigest()
+
+
+def text(value, label, limit=16000):
+    if not isinstance(value, str) or not value.strip() or len(value) > limit or '\x00' in value:
+        raise WorkflowError(f'{label} must be a bounded nonempty string')
+    return value
+
+
+def identifier(value, label='id'):
+    if not isinstance(value, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', value) is None:
+        raise WorkflowError(f'invalid {label}')
+    return value
+
+
+def mapping(value, allowed, required, label):
+    if not isinstance(value, dict) or set(value) - allowed or not required <= set(value):
+        raise WorkflowError(f'{label}: missing or unexpected fields')
+    return value
+
+
+def boolean(value, label):
+    if type(value) is not bool:
+        raise WorkflowError(f'{label} must be boolean')
+    return value
+
+
+def integer(value, label, minimum=0, maximum=100000):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise WorkflowError(f'{label} must be an integer in [{minimum}, {maximum}]')
+    return value
+
+
+def clean_relative(value):
+    text(value, 'path', 1024)
+    value = value.replace('\\', '/')
+    p = PurePosixPath(value)
+    if p.is_absolute() or ':' in value or any(c in value for c in '*?\x00'):
+        raise WorkflowError('absolute, wildcard, or stream path refused')
+    if any(part in {'', '.', '..'} for part in value.split('/')):
+        raise WorkflowError('path traversal/noncanonical path refused')
+    if any(part.rstrip(' .') != part for part in p.parts):
+        raise WorkflowError('ambiguous Windows path refused')
+    if any(part.lower() in {'.git', '.codex', '.delivery', '.cwf', '__pycache__'} for part in p.parts):
+        raise WorkflowError('control/state directory is not a source target')
+    if p.name.lower() in {'auth.json', 'credentials.json'} or (p.name.lower().startswith('.env') and p.name.lower() not in {'.env.example', '.env.sample'}):
+        raise WorkflowError('credential source target refused')
+    if any(re.fullmatch(r'(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part, re.I) for part in p.parts):
+        raise WorkflowError('Windows device path refused')
+    return p.as_posix()
+
+
+def regular_path(root: Path, relative: str, missing=False):
+    current = root
+    for part in PurePosixPath(clean_relative(relative)).parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            if missing:
+                continue
+            raise WorkflowError(f'missing source: {relative}')
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 1024:
+            raise WorkflowError(f'link/reparse path refused: {relative}')
+    if not current.resolve().is_relative_to(root):
+        raise WorkflowError('source escaped declared root')
+    if current.exists() and current.stat().st_nlink != 1:
+        raise WorkflowError(f'hard-linked source refused: {relative}')
+    if current.exists() and not current.is_file():
+        raise WorkflowError(f'source is not a regular file: {relative}')
+    return current
+
+
+def fingerprint(root: Path, paths: list[str], missing: set[str] = frozenset()):
+    result = {}
+    for relative in paths:
+        p = regular_path(root, relative, relative in missing)
+        if not p.exists():
+            result[relative] = None
+            continue
+        with p.open('rb') as stream:
+            a = os.fstat(stream.fileno())
+            if a.st_size > MAX_SOURCE_BYTES:
+                raise WorkflowError(f'source exceeds {MAX_SOURCE_BYTES} bytes: {relative}')
+            content = stream.read(MAX_SOURCE_BYTES + 1)
+            b = os.fstat(stream.fileno())
+        if len(content) > MAX_SOURCE_BYTES or (a.st_size, a.st_mtime_ns) != (b.st_size, b.st_mtime_ns):
+            raise WorkflowError(f'source changed during read: {relative}')
+        result[relative] = hashlib.sha256(content).hexdigest()
+    return result
+
+
+def path_list(value, label, empty=False):
+    if not isinstance(value, list) or len(value) > 128 or (not empty and not value):
+        raise WorkflowError(f'{label} requires a bounded explicit path list')
+    out = [clean_relative(p) for p in value]
+    if len({p.casefold() for p in out}) != len(out):
+        raise WorkflowError(f'duplicate/aliased path in {label}')
+    return out
+
+
+def physical(root, paths):
+    return [os.path.normcase(str(Path(root) / p)).replace('\\', '/').casefold() for p in paths]
+
+
+def overlap(left, right):
+    return any(a == b or a.startswith(b + '/') or b.startswith(a + '/') for a in left for b in right)
+
+
+DDL = '''
+CREATE TABLE meta(version INTEGER NOT NULL);
+INSERT INTO meta VALUES(1);
+CREATE TABLE runs(id TEXT PRIMARY KEY, root TEXT NOT NULL, backend TEXT NOT NULL,
+ goal TEXT NOT NULL, contract TEXT NOT NULL, contract_hash TEXT NOT NULL,
+ status TEXT NOT NULL, created REAL NOT NULL, deadline REAL NOT NULL,
+ used INTEGER NOT NULL DEFAULT 0, reserve_used INTEGER NOT NULL DEFAULT 0,
+ strong_used INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE nodes(run_id TEXT NOT NULL, id TEXT NOT NULL, spec TEXT NOT NULL,
+ snapshot TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+ result TEXT, current_token TEXT, PRIMARY KEY(run_id,id),
+ FOREIGN KEY(run_id) REFERENCES runs(id));
+CREATE TABLE deps(run_id TEXT NOT NULL, node_id TEXT NOT NULL, dep_id TEXT NOT NULL,
+ PRIMARY KEY(run_id,node_id,dep_id),
+ FOREIGN KEY(run_id,node_id) REFERENCES nodes(run_id,id),
+ FOREIGN KEY(run_id,dep_id) REFERENCES nodes(run_id,id));
+CREATE TABLE attempts(token TEXT PRIMARY KEY, run_id TEXT NOT NULL, node_id TEXT NOT NULL,
+ state TEXT NOT NULL, external_id TEXT, released INTEGER NOT NULL DEFAULT 0,
+ result TEXT, usage TEXT, created REAL NOT NULL, ended REAL,
+ FOREIGN KEY(run_id,node_id) REFERENCES nodes(run_id,id));
+CREATE TABLE claims(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, node_id TEXT NOT NULL,
+ attempt TEXT NOT NULL, data TEXT NOT NULL, disposition TEXT NOT NULL DEFAULT 'UNKNOWN',
+ revision INTEGER NOT NULL DEFAULT 1, FOREIGN KEY(attempt) REFERENCES attempts(token));
+CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+ at REAL NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
+ FOREIGN KEY(run_id) REFERENCES runs(id));
+CREATE TRIGGER event_no_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT,'append-only events'); END;
+CREATE TRIGGER event_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'append-only events'); END;
+CREATE INDEX holds ON attempts(released,run_id);
+'''
+
+
+class Runtime:
+    def __init__(self, db, *, initialize=False, read_only=False):
+        self.path = Path(db).absolute()
+        if self.path.is_symlink():
+            raise WorkflowError('database symlink refused')
+        if initialize and read_only:
+            raise WorkflowError('cannot initialize read-only')
+        if not initialize and not self.path.is_file():
+            raise WorkflowError('database does not exist; explicit init required')
+        if initialize:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.path.as_uri() + ('?mode=ro' if read_only else '?mode=rwc' if initialize else '?mode=rw'),
+                                    uri=True, timeout=5, isolation_level=None)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute('PRAGMA foreign_keys=ON')
+        self.conn.execute('PRAGMA busy_timeout=5000')
+        try:
+            exists = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
+            if not exists:
+                if not initialize:
+                    raise WorkflowError('uninitialized database')
+                # No implicit import/migration of an unrelated database.
+                if self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
+                    raise WorkflowError('unrecognized nonempty database')
+                self.conn.executescript('BEGIN IMMEDIATE;\n' + DDL + '\nCOMMIT;')
+            rows = self.conn.execute('SELECT version FROM meta').fetchall()
+            if len(rows) != 1 or rows[0][0] != SCHEMA:
+                raise WorkflowError('unsupported runtime database schema')
+        except BaseException:
+            self.conn.close()
+            raise
+
+    def close(self):
+        self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    @contextmanager
+    def tx(self):
+        self.conn.execute('BEGIN IMMEDIATE')
+        try:
+            yield
+            self.conn.execute('COMMIT')
+        except BaseException:
+            self.conn.execute('ROLLBACK')
+            raise
+
+    def event(self, run, kind, data):
+        self.conn.execute('INSERT INTO events(run_id,at,kind,data) VALUES(?,?,?,?)', (run, time.time(), kind, dump(data)))
+
+    def run(self, run):
+        row = self.conn.execute('SELECT * FROM runs WHERE id=?', (run,)).fetchone()
+        if row is None:
+            raise WorkflowError('unknown run')
+        return dict(row)
+
+    def node(self, run, node):
+        row = self.conn.execute('SELECT * FROM nodes WHERE run_id=? AND id=?', (run, node)).fetchone()
+        if row is None:
+            raise WorkflowError('unknown node')
+        return dict(row)
+
+    def attempt(self, token):
+        row = self.conn.execute('SELECT * FROM attempts WHERE token=?', (token,)).fetchone()
+        if row is None:
+            raise WorkflowError('unknown attempt')
+        return dict(row)
+
+    def create(self, *, root, goal, backend, bounds=None, routes=None, implement=False, run_id=None):
+        if backend not in {'native', 'exec'}:
+            raise WorkflowError('backend must be native or exec')
+        source = Path(root).absolute()
+        if source.is_symlink() or not source.is_dir() or getattr(source.lstat(), 'st_file_attributes', 0) & 1024:
+            raise WorkflowError('project root must be an existing non-link directory')
+        source = source.resolve()
+        goal = text(goal, 'goal')
+        boolean(implement, 'implement')
+        options = dict(DEFAULTS)
+        if bounds is not None:
+            mapping(bounds, set(DEFAULTS), set(), 'bounds')
+            options.update(bounds)
+        for key, value in options.items():
+            integer(value, key, 0 if key in {'reserve', 'strong_approved'} else 1)
+        if options['approved'] + options['reserve'] > options['absolute'] or options['strong_approved'] > options['approved']:
+            raise WorkflowError('inconsistent allowance bounds')
+        routing = loads(dump(DEFAULT_ROUTES if routes is None else routes))
+        mapping(routing, {'strong', 'economy', 'writer'}, {'strong', 'economy', 'writer'}, 'routes')
+        for route in routing.values():
+            mapping(route, {'model', 'effort', 'profile'}, {'model', 'effort', 'profile'}, 'route')
+            for key in ('model', 'profile'):
+                if not isinstance(route[key], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', route[key]):
+                    raise WorkflowError('invalid route identity')
+            if route['effort'] not in {'low', 'medium', 'high', 'xhigh'}:
+                raise WorkflowError('unsupported effort')
+        rid = identifier(run_id or uuid.uuid4().hex)
+        contract = {'version': VERSION, 'bounds': options, 'routes': routing, 'implement': implement,
+                    'backend': backend, 'root': str(source), 'goal': goal}
+        now = time.time()
+        with self.tx():
+            self.conn.execute('INSERT INTO runs(id,root,backend,goal,contract,contract_hash,status,created,deadline) VALUES(?,?,?,?,?,?,?,?,?)',
+                              (rid, str(source), backend, goal, dump(contract), sha(contract), 'open', now, now + options['deadline_seconds']))
+            self.event(rid, 'run.created', contract)
+        return rid
+
+    def open_run(self, run):
+        r = self.run(run)
+        if r['status'] != 'open':
+            raise WorkflowError(f"run is {r['status']}")
+        if time.time() >= r['deadline']:
+            raise WorkflowError('run deadline reached')
+        contract = loads(r['contract'])
+        if contract.get('version') != VERSION or sha(contract) != r['contract_hash']:
+            raise WorkflowError('runtime/contract identity changed; recovery requires explicit migration')
+        return r, contract
+
+    def add(self, run, specs, *, reason):
+        text(reason, 'expansion reason', 2000)
+        if not isinstance(specs, list) or not specs:
+            raise WorkflowError('nonempty node batch required')
+        with self.tx():
+            r, c = self.open_run(run)
+            existing = {row['id']: loads(row['spec']) for row in self.conn.execute('SELECT id,spec FROM nodes WHERE run_id=?', (run,))}
+            if len(existing) + len(specs) > c['bounds']['max_nodes']:
+                raise WorkflowError('graph node limit reached')
+            additions = {}
+            for raw in specs:
+                allowed = {'id', 'role', 'task', 'sources', 'writes', 'depends', 'checks', 'risk', 'tier', 'required', 'economy_qualified', 'verifies'}
+                mapping(raw, allowed, {'id', 'role', 'task', 'sources', 'checks'}, 'node')
+                s = dict(raw)
+                identifier(s['id']); text(s['task'], 'task')
+                if s['id'] in existing or s['id'] in additions:
+                    raise WorkflowError('duplicate node id')
+                if s['role'] not in ROLES:
+                    raise WorkflowError('unknown logical role')
+                s['sources'] = path_list(s['sources'], 'sources')
+                s['writes'] = path_list(s.get('writes', []), 'writes', True)
+                s.setdefault('depends', []); s.setdefault('risk', 'medium'); s.setdefault('tier', 'strong')
+                s.setdefault('required', True); s.setdefault('economy_qualified', False); s.setdefault('verifies', None)
+                boolean(s['required'], 'required'); boolean(s['economy_qualified'], 'economy_qualified')
+                if s['risk'] not in {'low', 'medium', 'high'} or s['tier'] not in {'strong', 'economy'}:
+                    raise WorkflowError('invalid risk/tier')
+                if s['tier'] == 'economy' and not (s['economy_qualified'] and s['risk'] == 'low' and s['role'] == 'explorer'):
+                    raise WorkflowError('economy quality/capability not established')
+                if not isinstance(s['depends'], list) or any(not isinstance(d,str) for d in s['depends']) or len(s['depends']) != len(set(s['depends'])):
+                    raise WorkflowError('invalid dependency list')
+                for dep in s['depends']:
+                    identifier(dep, 'dependency')
+                if not isinstance(s['checks'], list) or not s['checks'] or len(s['checks']) > 32:
+                    raise WorkflowError('explicit acceptance check names required')
+                for check in s['checks']:
+                    text(check, 'check', 200)
+                if len(s['checks']) != len(set(s['checks'])):
+                    raise WorkflowError('duplicate check name')
+                if s['role'] == 'writer':
+                    if not c['implement'] or not s['writes'] or s['tier'] != 'strong':
+                        raise WorkflowError('writer requires explicit implement authority, scope, strong route')
+                    if r['backend'] == 'exec':
+                        raise WorkflowError('v3 exec adapter is read-only; select native for authorized writes')
+                elif s['writes']:
+                    raise WorkflowError('non-writer cannot own writes')
+                if s['verifies'] is not None:
+                    identifier(s['verifies'], 'verification target')
+                    if s['role'] not in {'verifier', 'reviewer'} or s['tier'] != 'strong' or s['verifies'] not in s['depends']:
+                        raise WorkflowError('verification requires capable role and target dependency')
+                additions[s['id']] = s
+            graph = existing | additions
+            depth = {}
+            def visit(n, active):
+                if n in active:
+                    raise WorkflowError('dependency cycle')
+                if n not in graph:
+                    raise WorkflowError('unknown dependency')
+                if n not in depth:
+                    depth[n] = 1 + max([visit(d, active | {n}) for d in graph[n]['depends']] or [0])
+                return depth[n]
+            for n in graph:
+                if visit(n, set()) > c['bounds']['max_depth']:
+                    raise WorkflowError('dependency depth limit reached')
+            for s in additions.values():
+                paths = sorted(set(s['sources'] + s['writes']))
+                snap = fingerprint(Path(r['root']), paths, set(s['writes']))
+                self.conn.execute('INSERT INTO nodes(run_id,id,spec,snapshot,state) VALUES(?,?,?,?,?)',
+                                  (run, s['id'], dump(s), dump(snap), 'pending'))
+            for s in additions.values():
+                for dep in s['depends']:
+                    self.conn.execute('INSERT INTO deps VALUES(?,?,?)', (run, s['id'], dep))
+            self.event(run, 'graph.expanded', {'reason': reason, 'nodes': list(additions)})
+        return list(additions)
+
+    def _assert_snapshot(self, r, n, post=False):
+        s = loads(n['spec']); expected = loads(n['snapshot'])
+        if post and n['result']:
+            expected = loads(n['result']).get('snapshot', expected)
+        current = fingerprint(Path(r['root']), list(expected), set(s['writes']))
+        if current != expected:
+            raise WorkflowError(f"candidate drift: {n['id']}")
+        return current
+
+    def _held_conflict(self, r, s):
+        reads = physical(r['root'], s['sources']); writes = physical(r['root'], s['writes'])
+        rows = self.conn.execute('SELECT runs.root,nodes.spec FROM attempts JOIN runs ON runs.id=attempts.run_id JOIN nodes ON nodes.run_id=attempts.run_id AND nodes.id=attempts.node_id WHERE attempts.released=0').fetchall()
+        for row in rows:
+            other = loads(row['spec'])
+            other_reads = physical(row['root'], other['sources']); other_writes = physical(row['root'], other['writes'])
+            if writes and other_writes:  # One writer per coordination DB, even across worktrees.
+                return True
+            if overlap(writes, other_reads + other_writes) or overlap(reads, other_writes):
+                return True
+        return False
+
+    def acquire(self, run, *, backend):
+        with self.tx():
+            r, c = self.open_run(run)
+            if backend != r['backend']:
+                raise WorkflowError('backend mismatch; no automatic handoff')
+            nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid', (run,))]
+            by_id = {n['id']: n for n in nodes}
+            pending = [n for n in nodes if loads(n['spec'])['required'] and n['state'] in {'pending', 'failed', 'partial', 'interrupted', 'unknown'}]
+            mandatory = len(pending)
+            mandatory_strong = sum(loads(n['spec'])['tier'] == 'strong' for n in pending)
+            # Capacity is shared across this controller DB, including retained native threads.
+            active = self.conn.execute('SELECT COUNT(*) FROM attempts WHERE released=0').fetchone()[0]
+            reasons = []
+            for n in sorted(nodes, key=lambda n: not loads(n['spec'])['required']):
+                s = loads(n['spec'])
+                if n['state'] != 'pending':
+                    continue
+                if not all(by_id[d]['state'] == 'completed' for d in s['depends']):
+                    reasons.append({'node': n['id'], 'reason': 'dependencies-incomplete'}); continue
+                # A declared required independent check must exist before risky work starts.
+                if s['role'] == 'writer' or (s['risk'] == 'high' and s['role'] not in {'verifier', 'reviewer'}):
+                    if not any(loads(x['spec'])['verifies'] == n['id'] and loads(x['spec'])['required'] for x in nodes):
+                        reasons.append({'node': n['id'], 'reason': 'required-verifier-not-declared'}); continue
+                if self._held_conflict(r, s):
+                    reasons.append({'node': n['id'], 'reason': 'source-writer-lock'}); continue
+                try:
+                    self._assert_snapshot(r, n)
+                    for dep in s['depends']:
+                        self._historical_write_evidence(r, by_id[dep], nodes)
+                except WorkflowError as exc:
+                    reasons.append({'node': n['id'], 'reason': str(exc)}); continue
+                b = c['bounds']
+                decision = budget_admission(approved=b['approved'], reserve=b['reserve'], absolute=b['absolute'],
+                    used=r['used'], reserve_used=r['reserve_used'], strong_used=r['strong_used'], strong_approved=b['strong_approved'],
+                    economy=s['tier'] == 'economy', economy_qualified=s['economy_qualified'], active=active, capacity=b['capacity'],
+                    mandatory_pending=mandatory, mandatory_strong_pending=mandatory_strong,
+                    optional=not s['required'], consumes_mandatory=s['required'])
+                if decision.outcome != 'allow':
+                    reasons.append({'node': n['id'], 'reason': decision.reason}); continue
+                if n['attempts'] >= b['max_attempts']:
+                    reasons.append({'node': n['id'], 'reason': 'attempt-limit'}); continue
+                token = uuid.uuid4().hex
+                self.conn.execute('INSERT INTO attempts(token,run_id,node_id,state,created) VALUES(?,?,?,?,?)', (token, run, n['id'], 'reserved', time.time()))
+                self.conn.execute('UPDATE nodes SET state=?,attempts=attempts+1,current_token=? WHERE run_id=? AND id=?', ('active', token, run, n['id']))
+                self.conn.execute('UPDATE runs SET used=used+1,reserve_used=reserve_used+?,strong_used=strong_used+? WHERE id=?',
+                                  (int(decision.reason == 'cumulative-economy-reserve'), int(s['tier'] == 'strong'), run))
+                self.event(run, 'attempt.reserved', {'node': n['id'], 'attempt': token, 'allowance': decision.reason})
+                route = c['routes']['writer' if s['role'] == 'writer' else s['tier']]
+                return {'admitted': True, 'run_id': run, 'node_id': n['id'], 'attempt': token, 'backend': backend,
+                        'contract_hash': r['contract_hash'], 'root': r['root'], 'goal': r['goal'],
+                        'task': s, 'snapshot': loads(n['snapshot']), 'route': route, 'deadline': r['deadline'],
+                        'permissions': {'write_files': s['writes'], 'delete_files': False, 'publication': False, 'child_spawn': False, 'peer_messaging': False}}
+            self.event(run, 'admission.deferred', {'reasons': reasons})
+            return {'admitted': False, 'reasons': reasons}
+
+    def bind(self, token, external_id, *, backend):
+        text(external_id, 'external_id', 256)
+        with self.tx():
+            a = self.attempt(token); r, _ = self.open_run(a['run_id'])
+            if backend != r['backend']:
+                raise WorkflowError('backend mismatch')
+            n = self.node(a['run_id'], a['node_id'])
+            if n['current_token'] != token or a['released'] or a['state'] not in {'reserved', 'running'}:
+                raise WorkflowError('stale/terminal attempt cannot bind')
+            if a['external_id'] is not None and a['external_id'] != external_id:
+                raise WorkflowError('external identity already bound')
+            if a['external_id'] == external_id:
+                return
+            self.conn.execute('UPDATE attempts SET state=?,external_id=? WHERE token=?', ('running', external_id, token))
+            self.event(a['run_id'], 'attempt.bound', {'attempt': token, 'external_id': external_id})
+
+    def complete(self, token, result, *, external_id, backend, usage=None):
+        # The host, not the model result, supplies identity, usage and terminal attestation.
+        mapping(result, {'outcome','summary','sources_opened','checks','changed_files','claims'},
+                {'outcome','summary','sources_opened','checks','changed_files','claims'}, 'result')
+        text(result['summary'], 'summary')
+        text(result['outcome'], 'result outcome', 20)
+        if result['outcome'] not in {'completed', 'partial', 'failed'}:
+            raise WorkflowError('invalid result outcome')
+        if usage is not None:
+            mapping(usage, {'input_tokens','output_tokens','cached_input_tokens'}, {'input_tokens','output_tokens'}, 'usage')
+            for k, v in usage.items(): integer(v, k, 0, 10**12)
+            if usage.get('cached_input_tokens',0) > usage['input_tokens']:
+                raise WorkflowError('invalid cached usage')
+        with self.tx():
+            a = self.attempt(token); r = self.run(a['run_id']); n = self.node(a['run_id'], a['node_id']); s = loads(n['spec'])
+            if r['backend'] != backend or a['external_id'] is None or a['external_id'] != external_id:
+                raise WorkflowError('result identity/backend mismatch')
+            envelope = {'payload':result, 'usage':usage}
+            if a['state'] in {'completed','partial','failed'} and a['result']:
+                old = loads(a['result'])
+                if old['submission'] == envelope:
+                    return {'state':a['state'], 'idempotent':True}
+                raise WorkflowError('conflicting duplicate completion')
+            if n['current_token'] != token or a['released'] or a['state'] not in {'reserved','running'}:
+                raise WorkflowError('stale/fenced completion')
+            opened = path_list(result['sources_opened'], 'sources_opened', result['outcome'] != 'completed')
+            changed = path_list(result['changed_files'], 'changed_files', True)
+            if not set(opened) <= set(s['sources']) or not set(changed) <= set(s['writes']):
+                raise WorkflowError('result exceeds source/write scope')
+            if result['outcome'] == 'completed' and set(opened) != set(s['sources']):
+                raise WorkflowError('required raw sources not all opened')
+            checks = result['checks']
+            if not isinstance(checks,list) or len(checks) > 64:
+                raise WorkflowError('invalid checks')
+            named = {}
+            for check in checks:
+                mapping(check, {'name','status'}, {'name','status'}, 'check')
+                text(check['name'],'check name',200)
+                text(check['status'], 'check status', 20)
+                if check['name'] in named or check['status'] not in {'PASS','FAIL','UNKNOWN','NOT_RUN'}:
+                    raise WorkflowError('invalid/duplicate check result')
+                named[check['name']] = check['status']
+            if result['outcome'] == 'completed' and any(named.get(k) != 'PASS' for k in s['checks']):
+                raise WorkflowError('mandatory acceptance checks incomplete')
+            claims = result['claims']
+            if not isinstance(claims,list) or len(claims)>64:
+                raise WorkflowError('invalid claims')
+            for claim in claims:
+                mapping(claim, {'proposition','evidence','existence','applicability','impact'}, {'proposition','evidence','existence','applicability','impact'}, 'claim')
+                text(claim['proposition'],'proposition'); text(claim['impact'],'impact')
+                text(claim['existence'], 'claim existence', 20)
+                text(claim['applicability'], 'claim applicability', 20)
+                evidence = path_list(claim['evidence'],'claim evidence')
+                if not set(evidence) <= set(opened) or claim['existence'] not in {'supported','disproved','unknown'} or claim['applicability'] not in {'supported','disproved','unknown'}:
+                    raise WorkflowError('claim lacks valid opened-source evidence')
+            before = loads(n['snapshot'])
+            current = fingerprint(Path(r['root']), list(before), set(s['writes']))
+            drift = [p for p in before if current[p] != before[p]]
+            outcome = result['outcome']
+            if s['role'] == 'writer':
+                if not set(drift) <= set(s['writes']) or set(changed) != set(drift):
+                    raise WorkflowError('writer changed-file receipt does not match observed source effects')
+                if any(before[p] is not None and current[p] is None for p in drift):
+                    outcome = 'partial'  # Deletions need manual effect reconciliation in v3.
+            elif drift:
+                outcome = 'partial'
+            saved = {'submission':envelope,'snapshot':current,'evidence_snapshot':before,'drift':drift,
+                     'blocked_effects':['deletion:'+p for p in drift if before[p] is not None and current[p] is None],
+                     'provenance':'trusted-host-attestation; sources are observed fingerprints'}
+            self.conn.execute('UPDATE attempts SET state=?,result=?,usage=?,ended=? WHERE token=?',
+                              (outcome,dump(saved),dump(usage) if usage is not None else None,time.time(),token))
+            self.conn.execute('UPDATE nodes SET state=?,result=? WHERE run_id=? AND id=?', (outcome,dump(saved),a['run_id'],a['node_id']))
+            for index, claim in enumerate(claims):
+                data={'claim':claim,'snapshot':before,'evidence_valid':not drift}
+                self.conn.execute('INSERT INTO claims(id,run_id,node_id,attempt,data) VALUES(?,?,?,?,?)',
+                                  (f'{token}-{index}',a['run_id'],a['node_id'],token,dump(data)))
+            self.event(a['run_id'],'attempt.completed',{'attempt':token,'state':outcome,'drift':drift,'blocked_effects':saved['blocked_effects'],'usage':usage})
+            return {'state':outcome,'idempotent':False}
+
+    def release(self, token, *, external_id, confirmed, reason):
+        if confirmed is not True: raise WorkflowError('explicit host termination/closure confirmation required')
+        text(reason,'release reason',2000)
+        with self.tx():
+            a=self.attempt(token)
+            if external_id != a['external_id']:
+                raise WorkflowError('termination identity mismatch')
+            if a['released']: return
+            if a['state'] in {'reserved','running'}:
+                self.conn.execute('UPDATE attempts SET state=?,ended=? WHERE token=?',('interrupted',time.time(),token))
+                self.conn.execute('UPDATE nodes SET state=? WHERE run_id=? AND id=? AND current_token=?',('interrupted',a['run_id'],a['node_id'],token))
+            self.conn.execute('UPDATE attempts SET released=1 WHERE token=?',(token,))
+            self.event(a['run_id'],'attempt.released',{'attempt':token,'external_id':external_id,'reason':reason,'host_confirmed':True})
+
+    def retry(self, run, node, *, reason):
+        text(reason,'retry reason',2000)
+        with self.tx():
+            r,c=self.open_run(run); n=self.node(run,node); s=loads(n['spec'])
+            if s['writes'] or s['role']=='writer': raise WorkflowError('automatic/manual runtime writer replay is not supported')
+            if n['state'] not in {'failed','partial','interrupted','unknown'}: raise WorkflowError('node is not retryable')
+            a=self.attempt(n['current_token'])
+            if not a['released']: raise WorkflowError('termination must be confirmed before retry')
+            if n['attempts']>=c['bounds']['max_attempts']: raise WorkflowError('attempt limit reached')
+            self._assert_snapshot(r,n)
+            self.conn.execute('UPDATE nodes SET state=?,result=NULL,current_token=NULL WHERE run_id=? AND id=?',('pending',run,node))
+            self.event(run,'node.retry_requested',{'node':node,'previous_attempt':a['token'],'reason':reason})
+
+    def resume(self, run, *, contract_hash, reason, extend_deadline_seconds=0):
+        """Explicit trusted-controller resume; never infer termination or replay a writer."""
+        text(reason, 'resume reason', 2000)
+        integer(extend_deadline_seconds, 'deadline extension', 0, 86400)
+        with self.tx():
+            r = self.run(run); c = loads(r['contract'])
+            if r['status'] != 'open' or contract_hash != r['contract_hash'] or sha(c) != contract_hash or c.get('version') != VERSION:
+                raise WorkflowError('run state or current contract identity does not permit resume')
+            if self.conn.execute('SELECT 1 FROM attempts WHERE run_id=? AND released=0', (run,)).fetchone():
+                raise WorkflowError('all prior host activity must be reconciled before resume')
+            if time.time() >= r['deadline'] and not extend_deadline_seconds:
+                raise WorkflowError('expired deadline needs explicit controller extension')
+            retry_nodes = []
+            for row in self.conn.execute('SELECT * FROM nodes WHERE run_id=?', (run,)):
+                n = dict(row); s = loads(n['spec'])
+                if s['role'] == 'writer' and n['attempts']:
+                    raise WorkflowError('mixed/write execution recovery is not implemented; inspect effects manually')
+                self._assert_snapshot(r, n, n['state'] == 'completed')
+                if n['state'] in {'failed','partial','interrupted','unknown'}:
+                    if n['attempts'] >= c['bounds']['max_attempts']:
+                        raise WorkflowError('retry attempt limit reached')
+                    retry_nodes.append(n['id'])
+            for node in retry_nodes:
+                self.conn.execute('UPDATE nodes SET state=?,result=NULL,current_token=NULL WHERE run_id=? AND id=?', ('pending',run,node))
+            if extend_deadline_seconds:
+                self.conn.execute('UPDATE runs SET deadline=? WHERE id=?', (max(time.time(),r['deadline'])+extend_deadline_seconds,run))
+            self.event(run,'run.resumed',{'nodes':retry_nodes,'reason':reason,'contract_hash':contract_hash,
+                       'deadline_extension':extend_deadline_seconds,'budget_reset':False})
+        return self.status(run)
+
+    def _historical_write_evidence(self, r, n, nodes):
+        """Recognize only explicit descendant writes as superseding historical bytes.
+
+        This does NOT make an earlier analysis evidence about the new candidate.
+        Final writer and reviewer gates still apply to the actual current bytes.
+        """
+        expected = loads(n['result'])['snapshot']
+        current = fingerprint(Path(r['root']), list(expected), set(loads(n['spec'])['writes']))
+        if current == expected:
+            return []
+        descendants = {n['id']}
+        changed = True
+        while changed:
+            old = set(descendants)
+            descendants |= {x['id'] for x in nodes if set(loads(x['spec'])['depends']) & descendants}
+            changed = descendants != old
+        writers = [x for x in nodes if x['id'] != n['id'] and x['id'] in descendants and x['state']=='completed' and loads(x['spec'])['role']=='writer']
+        writers.sort(key=lambda x: self.attempt(x['current_token'])['ended'])
+        historical = []
+        for path, before in expected.items():
+            if current[path] == before:
+                continue
+            chain = before
+            for w in writers:
+                ws = loads(w['spec']); wr = loads(w['result'])
+                if path in ws['writes'] and wr['evidence_snapshot'].get(path) == chain:
+                    chain = wr['snapshot'].get(path)
+            if chain != current[path]:
+                raise WorkflowError(f"candidate drift not explained by an authorized descendant writer: {n['id']}:{path}")
+            historical.append(path)
+        return historical
+
+    def refresh(self, run, node, *, reason):
+        """Explicitly rebind a NEVER EXECUTED pending task, e.g. post-writer review."""
+        text(reason,'refresh reason',2000)
+        with self.tx():
+            r,_=self.open_run(run); n=self.node(run,node); s=loads(n['spec'])
+            if n['state']!='pending' or n['attempts']!=0: raise WorkflowError('only never-executed pending nodes may refresh; create a successor otherwise')
+            before=loads(n['snapshot']); after=fingerprint(Path(r['root']),list(before),set(s['writes']))
+            self.conn.execute('UPDATE nodes SET snapshot=? WHERE run_id=? AND id=?',(dump(after),run,node))
+            self.event(run,'node.source_rebound',{'node':node,'before':before,'after':after,'reason':reason})
+
+    def cancel(self, run, *, reason):
+        text(reason,'cancellation reason',2000)
+        with self.tx():
+            r=self.run(run)
+            if r['status'] in {'completed','cancelled'}: raise WorkflowError('run already closed')
+            self.conn.execute('UPDATE runs SET status=? WHERE id=?',('cancelled',run))
+            self.conn.execute("UPDATE nodes SET state='cancelled' WHERE run_id=? AND state='pending'",(run,))
+            self.event(run,'run.cancelled',{'reason':reason,'active_termination':'host must confirm release'})
+
+    def decide(self, claim_id, disposition, *, reason):
+        if disposition not in {'ADOPT','REJECT','UNKNOWN','contested'}: raise WorkflowError('invalid disposition')
+        text(reason,'decision reason',2000)
+        with self.tx():
+            row=self.conn.execute('SELECT * FROM claims WHERE id=?',(claim_id,)).fetchone()
+            if row is None: raise WorkflowError('unknown claim')
+            r,_=self.open_run(row['run_id']); n=self.node(row['run_id'],row['node_id'])
+            if disposition in {'ADOPT','REJECT'}:
+                if row['attempt'] != n['current_token']:
+                    raise WorkflowError('historical attempt claim cannot inherit current acceptance')
+                if n['state']!='completed' or not loads(row['data'])['evidence_valid']: raise WorkflowError('unverified evidence cannot be adopted')
+                self._assert_snapshot(r,n,True)
+                self._quality_gate(r,n)
+            self.conn.execute('UPDATE claims SET disposition=?,revision=revision+1 WHERE id=?',(disposition,claim_id))
+            self.event(row['run_id'],'claim.decided',{'claim':claim_id,'disposition':disposition,'reason':reason,'revision':row['revision']+1})
+
+    def _quality_gate(self,r,n,*,allow_historical=False):
+        s=loads(n['spec'])
+        if s['verifies'] is not None or (s['risk']!='high' and not s['writes']): return
+        target=loads(n['result'])['snapshot']
+        for other in self.conn.execute("SELECT * FROM nodes WHERE run_id=? AND state='completed' AND id<>?",(r['id'],n['id'])):
+            o=loads(other['spec'])
+            if o['verifies']==n['id'] and o['tier']=='strong' and o['role'] in {'verifier','reviewer'}:
+                author = self.attempt(n['current_token'])
+                checker = self.attempt(other['current_token'])
+                if author['external_id'] == checker['external_id']:
+                    continue  # A renamed node on the same host agent is not a non-author.
+                snap=loads(other['snapshot'])
+                if all(p in snap and snap[p]==h for p,h in target.items()):
+                    if allow_historical:
+                        nodes=[dict(x) for x in self.conn.execute('SELECT * FROM nodes WHERE run_id=?',(r['id'],))]
+                        self._historical_write_evidence(r,dict(other),nodes)
+                    else:
+                        self._assert_snapshot(r,dict(other),True)
+                    return
+        raise WorkflowError(f"independent current-candidate verification missing: {n['id']}")
+
+    def finish(self,run):
+        with self.tx():
+            r,_=self.open_run(run)
+            nodes=[dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=?',(run,))]
+            if not nodes: raise WorkflowError('empty graph is not completed work')
+            if self.conn.execute('SELECT 1 FROM attempts WHERE run_id=? AND released=0',(run,)).fetchone(): raise WorkflowError('live/unreleased attempts remain')
+            historical = {}
+            for n in nodes:
+                s=loads(n['spec'])
+                if n['state']=='completed':
+                    paths = self._historical_write_evidence(r,n,nodes)
+                    if paths: historical[n['id']] = paths
+                    self._quality_gate(r,n,allow_historical=True)
+                elif s['required'] or n['state'] in {'pending','active'}:
+                    raise WorkflowError(f"incomplete scope: {n['id']} ({n['state']})")
+            self.conn.execute('UPDATE runs SET status=? WHERE id=?',('completed',run))
+            self.event(run,'run.completed',{'nodes':len(nodes),'scope':'declared graph only','historical_write_evidence':historical})
+        return self.status(run)
+
+    def status(self,run):
+        r=self.run(run)
+        nodes=[dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
+        issues=[]; historical={}
+        for n in nodes:
+            if n['state']=='completed':
+                try:
+                    superseded = self._historical_write_evidence(r,n,nodes)
+                    if superseded: historical[n['id']] = superseded
+                except (OSError,WorkflowError) as exc: issues.append(str(exc))
+        attempts=[dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=? ORDER BY created',(run,))]
+        return {'run_id':run,'backend':r['backend'],'status':r['status'],'current_evidence_valid':not issues,'drift':issues,'historical_evidence':historical,
+                'contract_hash':r['contract_hash'],'deadline':r['deadline'],
+                'budget':{'used':r['used'],'reserve_used':r['reserve_used'],'strong_used':r['strong_used'],
+                          'active_holds':sum(not a['released'] for a in attempts),
+                          'unknown_usage_attempts':sum(a['usage'] is None for a in attempts)},
+                'nodes':[{'id':n['id'],'state':n['state'],'attempts':n['attempts'],'required':loads(n['spec'])['required']} for n in nodes],
+                'attempts':[{'attempt':a['token'],'node':a['node_id'],'state':a['state'],'external_id':a['external_id'],'released':bool(a['released']),
+                             'usage':loads(a['usage']) if a['usage'] is not None else None} for a in attempts]}
+
+    def events(self,run,after=0):
+        self.run(run); integer(after,'after',0,10**12)
+        return [{'seq':e['seq'],'at':e['at'],'kind':e['kind'],'data':loads(e['data'])}
+                for e in self.conn.execute('SELECT * FROM events WHERE run_id=? AND seq>? ORDER BY seq',(run,after))]

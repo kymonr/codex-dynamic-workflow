@@ -1,0 +1,28 @@
+{
+  "root": "tests/fixtures",
+  "goal": "Independently characterize the invoice discount expression without modifying the fixture.",
+  "backend": "native",
+  "implement": false,
+  "nodes": [
+    {
+      "id": "inspect",
+      "role": "explorer",
+      "task": "Open invoice.py. Compare its discount contract with the actual expression. Report observed values and any discrepancy; do not fix the fixture.",
+      "sources": ["invoice.py"],
+      "checks": ["discount behavior characterized"],
+      "risk": "high",
+      "tier": "strong"
+    },
+    {
+      "id": "verify",
+      "role": "verifier",
+      "task": "Independently open invoice.py, evaluate the claimed discount semantics against the code, and check the 100/10 case without editing files. Do not assume the explorer is correct.",
+      "sources": ["invoice.py"],
+      "checks": ["discount behavior independently checked"],
+      "depends": ["inspect"],
+      "verifies": "inspect",
+      "risk": "low",
+      "tier": "strong"
+    }
+  ]
+}
