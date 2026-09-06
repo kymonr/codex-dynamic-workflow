@@ -31,6 +31,7 @@ DEFAULTS = dict(approved=20, reserve=4, absolute=24, strong_approved=8,
                 deadline_seconds=1800)
 DEFAULT_ROUTES = {
     'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
+    'ordinary': {'model': 'gpt-5.6-luna', 'effort': 'max', 'profile': 'cwf_general'},
     'economy': {'model': 'gpt-5.6-luna', 'effort': 'medium', 'profile': 'cwf_mechanical'},
     'writer': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_writer'},
 }
@@ -288,9 +289,14 @@ class Runtime:
             raise WorkflowError('unknown attempt')
         return dict(row)
 
-    def create(self, *, root, goal, backend, bounds=None, routes=None, implement=False, run_id=None):
+    def create(self, *, root, goal, backend, bounds=None, routes=None, implement=False, run_id=None,
+               capacity_scope=None, execution_pool=None):
         if backend not in {'native', 'exec'}:
             raise WorkflowError('backend must be native or exec')
+        if capacity_scope not in (None, 'database', 'backend'):
+            raise WorkflowError('capacity_scope must be database or backend')
+        if execution_pool not in (None, 'luna'):
+            raise WorkflowError('execution_pool must be luna when selected')
         source = Path(root).absolute()
         if source.is_symlink() or not source.is_dir() or getattr(source.lstat(), 'st_file_attributes', 0) & 1024:
             raise WorkflowError('project root must be an existing non-link directory')
@@ -308,17 +314,27 @@ class Runtime:
         if options['approved'] + options['reserve'] > options['absolute'] or options['strong_approved'] > options['approved']:
             raise WorkflowError('inconsistent allowance bounds')
         routing = loads(dump(DEFAULT_ROUTES if routes is None else routes))
-        mapping(routing, {'strong', 'economy', 'writer'}, {'strong', 'economy', 'writer'}, 'routes')
+        # Explicit legacy route sets stay exact; never inject a model into a saved allowance.
+        mapping(routing, {'strong', 'ordinary', 'economy', 'writer'}, {'strong', 'economy', 'writer'}, 'routes')
         for route in routing.values():
             mapping(route, {'model', 'effort', 'profile'}, {'model', 'effort', 'profile'}, 'route')
             for key in ('model', 'profile'):
                 if not isinstance(route[key], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', route[key]):
                     raise WorkflowError('invalid route identity')
-            if route['effort'] not in {'low', 'medium', 'high', 'xhigh'}:
+            if route['effort'] not in {'low', 'medium', 'high', 'xhigh', 'max'}:
                 raise WorkflowError('unsupported effort')
+        if execution_pool == 'luna':
+            if backend != 'exec' or implement or capacity_scope != 'backend' or options['strong_approved'] != 0:
+                raise WorkflowError('Luna pool requires exec, backend capacity, readonly scope and strong_approved=0')
+            for tier in ('ordinary', 'economy'):
+                if any(routing.get(tier, {}).get(k) != DEFAULT_ROUTES[tier][k] for k in ('model', 'effort')):
+                    raise WorkflowError('Luna pool requires ordinary Luna/max and economy Luna/medium routes')
         rid = identifier(run_id or uuid.uuid4().hex)
         contract = {'version': VERSION, 'bounds': options, 'routes': routing, 'implement': implement,
                     'backend': backend, 'root': str(source), 'goal': goal}
+        # Keep omitted fields and saved legacy contract hashes unchanged.
+        if capacity_scope is not None: contract['capacity_scope'] = capacity_scope
+        if execution_pool is not None: contract['execution_pool'] = execution_pool
         now = time.time()
         with self.tx():
             self.conn.execute('INSERT INTO runs(id,root,backend,goal,contract,contract_hash,status,created,deadline) VALUES(?,?,?,?,?,?,?,?,?)',
@@ -348,7 +364,7 @@ class Runtime:
                 raise WorkflowError('graph node limit reached')
             additions = {}
             for raw in specs:
-                allowed = {'id', 'role', 'task', 'sources', 'writes', 'depends', 'checks', 'risk', 'tier', 'required', 'economy_qualified', 'verifies'}
+                allowed = {'id', 'role', 'task', 'sources', 'writes', 'depends', 'checks', 'risk', 'tier', 'required', 'economy_qualified', 'ordinary_qualified', 'verifies'}
                 mapping(raw, allowed, {'id', 'role', 'task', 'sources', 'checks'}, 'node')
                 s = dict(raw)
                 identifier(s['id']); text(s['task'], 'task')
@@ -358,11 +374,21 @@ class Runtime:
                     raise WorkflowError('unknown logical role')
                 s['sources'] = path_list(s['sources'], 'sources')
                 s['writes'] = path_list(s.get('writes', []), 'writes', True)
-                s.setdefault('depends', []); s.setdefault('risk', 'medium'); s.setdefault('tier', 'strong')
+                s.setdefault('depends', []); s.setdefault('risk', 'medium')
+                s.setdefault('ordinary_qualified', False)
                 s.setdefault('required', True); s.setdefault('economy_qualified', False); s.setdefault('verifies', None)
                 boolean(s['required'], 'required'); boolean(s['economy_qualified'], 'economy_qualified')
-                if s['risk'] not in {'low', 'medium', 'high'} or s['tier'] not in {'strong', 'economy'}:
+                boolean(s['ordinary_qualified'], 'ordinary_qualified')
+                s.setdefault('tier', 'ordinary' if s['ordinary_qualified'] else 'strong')
+                if s['risk'] not in {'low', 'medium', 'high'} or s['tier'] not in {'strong', 'ordinary', 'economy'}:
                     raise WorkflowError('invalid risk/tier')
+                if c.get('execution_pool') == 'luna' and (s['tier'] == 'strong' or s['risk'] == 'high' or s['role'] == 'writer'):
+                    raise WorkflowError('Luna pool accepts only qualified low/medium-risk readonly ordinary/economy nodes')
+                if s['tier'] == 'ordinary':
+                    if not s['ordinary_qualified'] or s['risk'] not in {'low', 'medium'} or s['role'] == 'writer':
+                        raise WorkflowError('ordinary quality/capability not established')
+                    if 'ordinary' not in c['routes']:
+                        raise WorkflowError('ordinary route absent from this run contract; select an explicit available tier')
                 if s['tier'] == 'economy' and not (s['economy_qualified'] and s['risk'] == 'low' and s['role'] == 'explorer'):
                     raise WorkflowError('economy quality/capability not established')
                 if not isinstance(s['depends'], list) or any(not isinstance(d,str) for d in s['depends']) or len(s['depends']) != len(set(s['depends'])):
@@ -384,7 +410,7 @@ class Runtime:
                     raise WorkflowError('non-writer cannot own writes')
                 if s['verifies'] is not None:
                     identifier(s['verifies'], 'verification target')
-                    if s['role'] not in {'verifier', 'reviewer'} or s['tier'] != 'strong' or s['verifies'] not in s['depends']:
+                    if s['role'] not in {'verifier', 'reviewer'} or s['tier'] not in {'strong', 'ordinary'} or s['verifies'] not in s['depends']:
                         raise WorkflowError('verification requires capable role and target dependency')
                 additions[s['id']] = s
             graph = existing | additions
@@ -400,6 +426,11 @@ class Runtime:
             for n in graph:
                 if visit(n, set()) > c['bounds']['max_depth']:
                     raise WorkflowError('dependency depth limit reached')
+                s = graph[n]
+                if s['verifies'] is not None:
+                    target = graph[s['verifies']]
+                    if (target['risk'] == 'high' or target['role'] == 'writer') and s['tier'] != 'strong':
+                        raise WorkflowError('high-risk and writer verification requires a strong route')
             snapshots = {row['id']: loads(row['snapshot']) for row in self.conn.execute('SELECT id,snapshot FROM nodes WHERE run_id=?', (run,))}
             def bind_sources(s):
                 if s['id'] in snapshots:
@@ -468,8 +499,11 @@ class Runtime:
             pending = [n for n in nodes if loads(n['spec'])['required'] and n['state'] in {'pending', 'failed', 'partial', 'interrupted', 'unknown'}]
             mandatory = len(pending)
             mandatory_strong = sum(loads(n['spec'])['tier'] == 'strong' for n in pending)
-            # Capacity is shared across this controller DB, including retained native threads.
-            active = self.conn.execute('SELECT COUNT(*) FROM attempts WHERE released=0').fetchone()[0]
+            # Opt-in separation changes capacity only, never the DB-wide source locks.
+            if c.get('capacity_scope', 'database') == 'backend':
+                active = self.conn.execute('SELECT COUNT(*) FROM attempts JOIN runs ON runs.id=attempts.run_id WHERE attempts.released=0 AND runs.backend=?', (backend,)).fetchone()[0]
+            else:
+                active = self.conn.execute('SELECT COUNT(*) FROM attempts WHERE released=0').fetchone()[0]
             reasons = []
             for n in sorted(nodes, key=lambda n: not loads(n['spec'])['required']):
                 s = loads(n['spec'])
@@ -492,7 +526,9 @@ class Runtime:
                 b = c['bounds']
                 decision = budget_admission(approved=b['approved'], reserve=b['reserve'], absolute=b['absolute'],
                     used=r['used'], reserve_used=r['reserve_used'], strong_used=r['strong_used'], strong_approved=b['strong_approved'],
-                    economy=s['tier'] == 'economy', economy_qualified=s['economy_qualified'], active=active, capacity=b['capacity'],
+                    economy=s['tier'] != 'strong',
+                    economy_qualified=s.get('ordinary_qualified', False) if s['tier'] == 'ordinary' else s['economy_qualified'],
+                    reserve_eligible=s['tier'] == 'economy', active=active, capacity=b['capacity'],
                     mandatory_pending=mandatory, mandatory_strong_pending=mandatory_strong,
                     optional=not s['required'], consumes_mandatory=s['required'])
                 if decision.outcome != 'allow':
@@ -788,6 +824,13 @@ class Runtime:
 
     def _quality_gate(self,r,n,*,allow_historical=False):
         s=loads(n['spec'])
+        if s['tier'] == 'ordinary' and s['verifies'] is not None:
+            target_node = self.node(r['id'], s['verifies'])
+            target = loads(target_node['result'])['snapshot']
+            snap = loads(n['snapshot'])
+            if (self.attempt(n['current_token'])['external_id'] == self.attempt(target_node['current_token'])['external_id']
+                    or not all(p in snap and snap[p] == h for p,h in target.items())):
+                raise WorkflowError(f"independent current-candidate verification missing: {n['id']}")
         if s['verifies'] is not None or (s['risk']!='high' and not s['writes']): return
         target=loads(n['result'])['snapshot']
         for other in self.conn.execute("SELECT * FROM nodes WHERE run_id=? AND state='completed' AND id<>?",(r['id'],n['id'])):

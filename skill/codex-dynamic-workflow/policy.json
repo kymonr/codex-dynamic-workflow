@@ -10,6 +10,7 @@
     "recovery"
   ],
   "backend": "native-only",
+  "luna_readonly_backend": "native",
   "evidence": "raw-source-first",
   "child_spawn": false,
   "peer_messaging": false,
@@ -31,6 +32,7 @@
   "profiles": {
     "capable_reader": "cwf_reader",
     "capable_writer": "cwf_writer",
+    "ordinary_reader": "cwf_general",
     "economy_mechanical": "cwf_mechanical"
   },
   "permissions": {
@@ -54,8 +56,7 @@
     "version": "3.0.0",
     "entrypoint": "scripts/cwf.py",
     "backends": [
-      "native",
-      "exec"
+      "native"
     ],
     "backend_per_run": 1,
     "state": "sqlite-with-append-only-events",

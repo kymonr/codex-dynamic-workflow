@@ -1,0 +1,36 @@
+{
+  "root": ".",
+  "goal": "RETIRED compatibility fixture: current native-only CLI rejects this exec pool plan. Historical purpose: two bounded independent source checks.",
+  "backend": "exec",
+  "execution_pool": "luna",
+  "capacity_scope": "backend",
+  "bounds": {
+    "approved": 2,
+    "reserve": 0,
+    "absolute": 2,
+    "strong_approved": 0,
+    "capacity": 2,
+    "max_attempts": 1,
+    "deadline_seconds": 900
+  },
+  "nodes": [
+    {
+      "id": "fixture-behavior",
+      "role": "explorer",
+      "risk": "low",
+      "ordinary_qualified": true,
+      "task": "Read the deliberate invoice fixture and characterize its documented example against its expression. Return a numeric counterexample if supported, with original evidence. Do not edit it or claim production impact. Stop when the one function and documented example have been examined.",
+      "sources": ["tests/fixtures/invoice.py"],
+      "checks": ["documented example and implementation compared"]
+    },
+    {
+      "id": "fixture-instructions",
+      "role": "explorer",
+      "risk": "low",
+      "ordinary_qualified": true,
+      "task": "Read the fixture instructions and enumerate their testing limitations and authorized read-only uses. Quote file locations, preserve any unknowns, and stop after covering this one document. Do not inspect other project files.",
+      "sources": ["tests/fixtures/README.md"],
+      "checks": ["fixture purpose and limitations enumerated"]
+    }
+  ]
+}

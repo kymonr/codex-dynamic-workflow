@@ -1,6 +1,6 @@
 ---
 name: codex-dynamic-workflow
-description: "Use for adaptive native-agent workflows: independent substantial branches, deep repository review, or authorized implementation with investigation, verification and review. Dynamically add bounded branches from new evidence. Use for 并行、派工、深度审核、Agent Fleet; not trivial solo questions or JavaScript/codex exec orchestration."
+description: "Use for adaptive native-agent workflows: independent substantial branches, deep repository review, or authorized implementation with investigation, verification and review. Use native Luna for bounded exploration and verification alongside native Astra for complex judgment. Use for 并行、派工、深度审核、Agent Fleet; not trivial solo questions or generic JavaScript/CLI orchestration."
 metadata:
   version: "3.0.0"
 ---
@@ -8,26 +8,33 @@ metadata:
 # Codex Dynamic Workflow — raw-source-first
 
 Quality > automation > latency > cost > observability > recovery.
-Root owns the objective, authorization and final acceptance. Skill-only mode uses
-**native** agent tools, never CLI children. When Runtime is explicitly selected,
-its SQLite ledger owns admission, attempts and reservations for the chosen backend.
+Root owns the objective, authorization and final acceptance. All model delegation
+uses **native** agent tools: Luna for qualified exploration/verification and Astra
+for complex judgment and critical acceptance. Both share the actual host's native
+capacity. Runtime, when selected, owns admission and attempts through its SQLite ledger.
 Skill-only bookkeeping is not persistent; neither mode is a hard token/currency cap.
 
 ## Runtime selection
 
-Use ordinary native Skill-only mode for ordinary sessions. When the user selects
-Runtime or persistent task state, read [Runtime protocol](references/runtime.md),
+Use native Skill-only mode for ordinary work. When Runtime or persistent task state
+is selected, read [Runtime protocol](references/runtime.md),
 then use the bundled `scripts/cwf.py` with one explicit database and backend.
 Root proposes the graph; Runtime alone admits nodes and charges attempts. Never
 dispatch a runtime node before `next` grants its fenced attempt. Native mode uses
-actual host tools and explicit bind/result/release receipts; exec mode is a separate,
-explicitly selected read-only adapter, not native fallback. No background daemon.
+actual host tools and explicit bind/result/release receipts. CLI model dispatch is
+disabled; retained exec records and regression adapters are not native fallback.
+The local Python controller manages state only; it does not launch the native model.
 Track real native readonly execution and host-resource cleanup as separate gates.
 The current collaboration adapter supports host-observed readonly turn completion;
 that receipt does not prove session closure or released host slots. Consult the
 Runtime protocol and actual run receipts for qualification. Deterministic tests and
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
+
+Batch useful native Luna exploration within available host capacity and keep room
+for needed native Astra. Dispatch ready critical work without waiting for unrelated
+Luna siblings. No Luna slot exemption exists in the current native tool contract;
+queue excess work rather than pretending it is outside the host's capacity.
 
 ## Before work
 
@@ -55,6 +62,18 @@ host, another backend or a weaker model. Do not change configuration or permissi
    materially improves coverage or latency. No fixed agent quota or model ratio.
 2. Pick the logical role: explorer, verifier, reproducer, designer, writer or
    reviewer. Select a compatible execution profile **separately** from that role.
+   Prefer Luna/max for ordinary bounded read-only tasks with sufficient source-based
+   checks; Luna/medium for mechanical checks; Astra for complex judgment and critical
+   acceptance. Apply the qualification and escalation rules in host and routing.
+   Name the concrete deliverable and evidence/coverage checks before
+   selecting Luna. Root owns conclusions whose completeness cannot be established
+   by those checks, with capable independent review where required.
+   The answer need not be known in advance. Batch distinct bounded exploration or
+   verification directions; coverage, evidence collected or a deadline can define
+   the stop rule. Unknown answers are not automatically high-risk judgments.
+   Split useful independent evidence collection, comparisons or checks from complex
+   judgment when each branch has its own deliverable. Use actual scope and risk,
+   not a role name such as "reviewer", to select the model; no quota or artificial split.
 3. Give each node its own scope, dependencies, raw sources, acceptance/stop rule,
    permissions and budget. Root alone may dispatch or approve scope expansion.
 4. Process ready results immediately. Open the cited original evidence before

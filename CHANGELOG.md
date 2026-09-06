@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — native-only routing correction
+
+- Route both Luna and Astra through native host agent tools; preserve bounded exploratory/verification batches and necessary capable review within shared host capacity.
+- Disable CLI model-dispatch entrypoints and new exec controller plans. Preserve historical exec records and deterministic regression adapters without using them for current dispatch.
+- Supersede the earlier independent Luna pool default at the user's explicit request; no native slot exemption is claimed.
+
+## Unreleased — independent Luna exploration pool
+
+- Permit bounded unknown-answer exploration and verification batches, with source/coverage evidence and normal parallel native Astra dispatch.
+- Persist the user's independent Luna route as the exploration/verification default, with explicit task overrides and no repeated per-batch confirmation.
+- Add an explicitly selected finite readonly Luna CLI pool with per-worker connections, transactional admission, bounded concurrency and owned-process cleanup. Disable nested native agents per ephemeral invocation.
+- Separate optional backend capacity from DB-wide source/writer locks. Preserve omitted legacy contract fields, retained holds and cumulative per-run allowance accounting.
+- Keep Luna pool routes readonly and fixed to qualified ordinary/max or mechanical/medium; strong/high-risk/writer work stays outside the pool. No automatic retry, daemon, budget reset or cross-run evidence acceptance.
+
+## Unreleased — ordinary Luna routing
+
+- Require a concrete recomputable/source-checkable Luna deliverable; keep broader defect-absence, repair-completeness and acceptance judgments with Root/capable review when named checks cannot establish coverage. Distinguish routing validation from comparative task quality.
+- Prefer Luna/max for qualified bounded ordinary readonly work through the new cwf_general profile; retain Luna/medium mechanical inspection and Astra complex judgment/critical acceptance.
+- Add an ordinary Runtime tier with explicit qualification, source-bound independent checks and approved non-strong accounting. High-risk/writer verification remains strong; ordinary work cannot spend the mechanical reserve.
+- Preserve explicit three-route contracts, persisted nodes, cumulative budgets, existing user Luna profiles and global defaults. Host model identity and profile activation require separate observations.
+
 ## Unreleased — 2026-09-06 runtime and installation repairs
 
 - Separate host-observed readonly execution completion from physical resource release; retain conservative resource reservations and explicit capacity limits.

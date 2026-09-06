@@ -41,7 +41,7 @@ class PackageTests(unittest.TestCase):
     def test_native_and_raw_contracts_remain_visible(self):
         text=(ROOT/SKILL/'SKILL.md').read_text(encoding='utf-8')
         for marker in ['native', 'directly opens', 'UNKNOWN', 'Root also counts as a writer',
-                       'No overlapping', 'never CLI children', 'No fixed refuter count']:
+                       'No overlapping', 'not native fallback', 'No fixed refuter count']:
             with self.subTest(marker=marker): self.assertIn(marker, text)
 
     def test_contract_priority_and_future_boundary(self):

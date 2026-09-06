@@ -26,7 +26,7 @@ def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
                      economy: bool, economy_qualified: bool,
                      active: int, capacity: int | None, mandatory_pending: int = 0,
                      optional: bool = False, mandatory_strong_pending: int = 0,
-                     consumes_mandatory: bool = False) -> Decision:
+                     consumes_mandatory: bool = False, reserve_eligible: bool = True) -> Decision:
     """Pure admission check; the caller must atomically apply the result.
 
     `used` includes in-flight and failed attempts. `mandatory_pending` includes
@@ -35,6 +35,8 @@ def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
     extra allowance. It cannot be combined with optional=True. Mandatory checks
     are funded from approved allowance; the economy reserve is discretionary.
     Every allow preserves the remaining total/approved/strong reservations.
+    Ordinary Luna work counts as non-strong, but is funded only from approved
+    allowance; reserve_eligible is separate from sufficient model capability.
     """
     values = locals().copy()
     for key in ('approved', 'reserve', 'absolute', 'used', 'reserve_used',
@@ -43,7 +45,7 @@ def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
         natural(values[key], key)
     if capacity is not None:
         natural(capacity, 'capacity')
-    for key in ('economy', 'economy_qualified', 'optional', 'consumes_mandatory'):
+    for key in ('economy', 'economy_qualified', 'optional', 'consumes_mandatory', 'reserve_eligible'):
         if type(values[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
     if capacity == 0 or approved + reserve > absolute or strong_approved > approved:
@@ -84,7 +86,7 @@ def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
         return Decision('defer', 'preserve-mandatory-strong-allowance')
     if base_used + 1 + remaining <= approved:
         return Decision('allow', 'approved-allowance')
-    if economy and economy_qualified and not consumes_mandatory and reserve_used < reserve:
+    if economy and economy_qualified and reserve_eligible and not consumes_mandatory and reserve_used < reserve:
         return Decision('allow', 'cumulative-economy-reserve')
     if remaining:
         return Decision('defer', 'preserve-mandatory-check-allowance')

@@ -223,11 +223,23 @@ def execute_one(runtime, run, *, executable=None, transport=run_owned, timeout=6
     prefix=codex_prefix(executable)
     packet=runtime.acquire(run,backend='exec')
     if not packet['admitted']: return packet
+    return _execute_admitted(runtime,packet,prefix=prefix,transport=transport,timeout=timeout)
+
+
+def _execute_admitted(runtime, packet, *, prefix, transport=run_owned, timeout=600):
+    """Run an already fenced exec packet; caller owns admission and thread lifetime."""
+    run=packet['run_id']
     token=packet['attempt']; external=[None]; usage=None; result=None
+    if runtime.run(run)['status'] != 'open':
+        runtime.release(token,external_id=None,confirmed=True,reason='controller cancelled before this executor launched')
+        return {'admitted':True,'attempt':token,'state':'interrupted'}
     schema=Path(__file__).with_name('result.schema.json')
     argv=prefix+['exec','--json','--sandbox','read-only','--skip-git-repo-check',
                  '-m',packet['route']['model'],'-c','model_reasoning_effort='+json.dumps(packet['route']['effort']),
                  '--output-schema',str(schema),'-']
+    if loads(runtime.run(run)['contract']).get('execution_pool') == 'luna':
+        # Explicitly selected standalone pool: no nested native agents or saved thread.
+        argv[1 + len(prefix):1 + len(prefix)] = ['--ephemeral','--disable','multi_agent','--disable','multi_agent_v2']
     prompt=build_prompt(packet)
     def started(pid):
         external[0]=pid

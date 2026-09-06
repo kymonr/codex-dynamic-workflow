@@ -15,6 +15,9 @@ requested or when an allowance decision blocks progress. Defaults are upper boun
 never a target headcount.
 Use the stricter applicable host/authorization constraint. The reserve is per run,
 not per node, wave, retry or model. Unknown cost/risk is not eligible for economy reserve.
+Ordinary Luna/max work consumes approved non-strong allowance. Its sufficient task
+capability does not qualify it for the mechanical economy reserve; keep that reserve
+for explicitly qualified Luna/medium mechanical work. Both tiers count as launches.
 
 Concurrency has no fixed Skill ceiling: `max_concurrent_children: null` follows the
 actual host's available capacity, including retained child sessions. A positive
@@ -22,6 +25,13 @@ explicit limit may further restrict it. Runtime `capacity: null` likewise adds n
 controller cap; Root checks host capacity before admission/dispatch. Cumulative
 launch allowances and required-check reservations still apply. If capacity is
 unknown, inspect the host once and queue work on a capacity failure.
+
+All Luna and Astra work uses native agents and shares native host capacity. Broad
+Luna exploration can increase the declared useful scope and approved launch allowance,
+but cannot bypass the host's actual slot limit. Admit ready directions in batches,
+queue the rest, and keep capacity and approved strong calls for needed Astra work.
+Do not wait for unrelated Luna siblings before dispatching a ready critical check.
+No model is exempt from accounting, and low assumed cost is not zero account usage.
 
 All child launches count, including failed attempts, repair turns, verifiers,
 reviewers and retries. Keep active capacity separate from cumulative spending.
