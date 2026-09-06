@@ -348,14 +348,21 @@ class InstallationTests(unittest.TestCase):
     def tearDown(self):self.temp.cleanup()
 
     def _same_path(self, left, right):
-        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+        try:
+            return os.path.samefile(left, right)
+        except OSError:
+            return os.path.normcase(os.path.realpath(left)) == os.path.normcase(os.path.realpath(right))
 
     def _under_home(self, path):
-        try:
-            return os.path.commonpath([os.path.normcase(os.path.abspath(path)),
-                                       os.path.normcase(os.path.abspath(self.home))]) == os.path.normcase(os.path.abspath(self.home))
-        except ValueError:
-            return False
+        current=Path(path)
+        while True:
+            try:
+                if os.path.samefile(current, self.home): return True
+            except OSError:
+                pass
+            parent=current.parent
+            if parent==current: return False
+            current=parent
 
     def install(self, **options):
         # The migration fixture grants only the literal legacy preimage, once.

@@ -39,7 +39,7 @@
   "profiles/cwf_mechanical.toml": "90c94b76070e2c741de27f057ec3b77c8adb73b13ef3f5d11ab76672f329d68e",
   "profiles/cwf_reader.toml": "ab332f4da22e9eed9ecbe35e587a3d960e41795717f92eef8754b77b97de7d0c",
   "profiles/cwf_writer.toml": "9bc8691ad9e356c9769051d29ff37e45645d86fe5e1f8849d57efa6bac95339d",
-  "tests/test_contracts.py": "6d6720339557d43f2a4fc736264164a992237c5a7b9c38709b3e4e7340d39273",
+  "tests/test_contracts.py": "b847b8a2e34296d8fe4bf00b173dda5bad47b790c24527abd8b72797593e61b8",
   "tests/test_runtime.py": "afce3046b5c7ede14ed640db6343b745cdde125b2dffc3c3f2dab78f58626ea2",
   "tests/test_runtime_package.py": "4543ef465ea74895270f3e7be8f329bf691b42db5d2a1d5f56e328c24ef678d6",
   "tests/test_runtime_review.py": "c3c6d944b4778a01fb838cca06b9056726d5308b2d05bdef3fecac14c422ad98",
