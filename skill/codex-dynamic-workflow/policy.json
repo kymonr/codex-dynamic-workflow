@@ -18,7 +18,7 @@
   "required_high_risk_verification": "independent-capable-raw-source",
   "budget": {
     "enforcement": "instruction-only-unless-host-enforced",
-    "max_concurrent_children": 4,
+    "max_concurrent_children": null,
     "absolute_child_launches": 24,
     "approved_child_launches": 20,
     "preauthorized_economy_reserve": 4,
@@ -62,6 +62,6 @@
     "recovery": "explicit-read-only",
     "exec_writes": false,
     "authority": "runtime-when-selected",
-    "release_validation": "exec-live-tested; native-bridge-live-test-blocked"
+    "release_validation": "exec-live-tested; native-readonly-execution-live-tested; native-host-resource-release-unknown"
   }
 }

@@ -8,10 +8,20 @@ small low-cost expansion **inside** those ceilings. Strong-model extension outsi
 the approved allowance needs the user; a previously approved strong call does not.
 
 `policy.json` contains initial planning defaults, not empirically optimal values.
-Before the first dispatch, state the effective values, user overrides, native host
-limits and measurement gaps. Defaults are upper bounds, never a target headcount.
+Before the first dispatch, record the effective values, user overrides, native host
+limits, mandatory-check reservations and measurement gaps in internal bookkeeping.
+Keep user-facing dispatch updates to task + model; explain budget details only when
+requested or when an allowance decision blocks progress. Defaults are upper bounds,
+never a target headcount.
 Use the stricter applicable host/authorization constraint. The reserve is per run,
 not per node, wave, retry or model. Unknown cost/risk is not eligible for economy reserve.
+
+Concurrency has no fixed Skill ceiling: `max_concurrent_children: null` follows the
+actual host's available capacity, including retained child sessions. A positive
+explicit limit may further restrict it. Runtime `capacity: null` likewise adds no
+controller cap; Root checks host capacity before admission/dispatch. Cumulative
+launch allowances and required-check reservations still apply. If capacity is
+unknown, inspect the host once and queue work on a capacity failure.
 
 All child launches count, including failed attempts, repair turns, verifiers,
 reviewers and retries. Keep active capacity separate from cumulative spending.

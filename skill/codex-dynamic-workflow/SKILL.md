@@ -22,10 +22,12 @@ Root proposes the graph; Runtime alone admits nodes and charges attempts. Never
 dispatch a runtime node before `next` grants its fenced attempt. Native mode uses
 actual host tools and explicit bind/result/release receipts; exec mode is a separate,
 explicitly selected read-only adapter, not native fallback. No background daemon.
-This delivery passed an actual readonly exec smoke; native Runtime bridge live
-qualification is still blocked/unverified. Do not report native Runtime operational
-acceptance from deterministic tests or ordinary Skill-only native use. Host
-permissions, model capability and source access must still be checked before use.
+Track real native readonly execution and host-resource cleanup as separate gates.
+The current collaboration adapter supports host-observed readonly turn completion;
+that receipt does not prove session closure or released host slots. Consult the
+Runtime protocol and actual run receipts for qualification. Deterministic tests and
+ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
+permissions, model capability and source access before use.
 
 ## Before work
 
@@ -36,7 +38,7 @@ Do not repeat a workspace preflight already completed for this task.
 
 Read [host and routing](references/host-routing.md) before the first dispatch;
 [evidence](references/evidence.md) before evidence collection;
-[budget](references/budget.md) before expansion;
+[budget](references/budget.md) and [policy defaults](policy.json) before the first dispatch;
 and [writes](references/writes.md) before any writer.
 Use [patterns](references/patterns.md) only for the selected workflow shapes.
 [Policy defaults](policy.json) are editable planning defaults, not capability claims.
@@ -133,9 +135,11 @@ This is a compact Markdown contract, not a request for private reasoning. A miss
 or malformed return gets at most one concrete input/format repair; otherwise retain
 its partial evidence and mark the unresolved branch. Do not retry indefinitely.
 
-Before dispatch, briefly show the branch, role/profile, purpose and allowance.
-Report effective model/effort from observed host receipts when available; configuration
-is declared intent, not proof of which model ran.
+Before each child launch or follow-up, give one short line: task + requested model
+(for example, "复核预算预留 — Astra/high"). Keep routing and budget bookkeeping
+internal; explain a permission, capacity or budget gap only when it affects progress.
+Report an observed model mismatch when available; the requested model is not proof
+of which model ran.
 
 ## Lifecycle and completion
 
@@ -154,8 +158,10 @@ although it creates no new bug. No fixed three-wave ceiling.
 For authorized implementation, continue investigation → decided change → focused
 tests → independent review → bounded repair without requesting approval at every
 step. These are available shapes, not a compulsory pipeline for every task.
-Root also counts as a writer. No overlapping concurrent writers, even in different
-worktrees. Commit/push/merge require the separate authority in [writes](references/writes.md).
+Root also counts as a writer. No overlapping owned write sets, even in different
+worktrees. Skill-only parallel writing requires the explicit authorization and isolation
+contract in [writes](references/writes.md); Runtime v3 serializes writers within its DB.
+Commit/push/merge require the separate authority in that contract.
 
 Finish with actual changes or findings, actual verification, remaining risks/gaps,
 coverage accounting and any blocked permission/budget boundary. A successful audit

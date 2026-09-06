@@ -24,7 +24,7 @@ def natural(value: object, name: str) -> int:
 def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
                      reserve_used: int, strong_used: int, strong_approved: int,
                      economy: bool, economy_qualified: bool,
-                     active: int, capacity: int, mandatory_pending: int = 0,
+                     active: int, capacity: int | None, mandatory_pending: int = 0,
                      optional: bool = False, mandatory_strong_pending: int = 0,
                      consumes_mandatory: bool = False) -> Decision:
     """Pure admission check; the caller must atomically apply the result.
@@ -38,9 +38,11 @@ def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
     """
     values = locals().copy()
     for key in ('approved', 'reserve', 'absolute', 'used', 'reserve_used',
-                'strong_used', 'strong_approved', 'active', 'capacity',
+                'strong_used', 'strong_approved', 'active',
                 'mandatory_pending', 'mandatory_strong_pending'):
         natural(values[key], key)
+    if capacity is not None:
+        natural(capacity, 'capacity')
     for key in ('economy', 'economy_qualified', 'optional', 'consumes_mandatory'):
         if type(values[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
@@ -68,7 +70,7 @@ def budget_admission(*, approved: int, reserve: int, absolute: int, used: int,
         return Decision('ask', 'mandatory-reservations-exceed-approved')
     if strong_used + mandatory_strong_pending > strong_approved:
         return Decision('ask', 'mandatory-reservations-exceed-strong')
-    if active >= capacity:
+    if capacity is not None and active >= capacity:
         return Decision('queue', 'live-capacity')
     if economy and not economy_qualified:
         return Decision('blocked', 'economy-quality-not-established')

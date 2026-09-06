@@ -142,7 +142,10 @@ def validate(root: Path = ROOT) -> list[str]:
     budget = policy.get('budget', {})
     if not isinstance(budget, dict):
         errors.append('budget must be an object'); budget = {}
-    numeric = ('max_concurrent_children', 'absolute_child_launches', 'approved_child_launches',
+    capacity = budget.get('max_concurrent_children')
+    if 'max_concurrent_children' not in budget or (capacity is not None and (type(capacity) is not int or capacity <= 0)):
+        errors.append('max_concurrent_children must be null or a positive integer')
+    numeric = ('absolute_child_launches', 'approved_child_launches',
                'preauthorized_economy_reserve', 'approved_strong_child_launches',
                'max_dependency_depth', 'max_fix_cycles', 'dry_optional_expansions')
     if any(type(budget.get(k)) is not int or budget[k] <= 0 for k in numeric):

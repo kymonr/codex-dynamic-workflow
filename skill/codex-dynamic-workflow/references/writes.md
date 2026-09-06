@@ -36,13 +36,17 @@ case-insensitively where the filesystem does, resolve links/aliases, include sha
 config/lock/generated files and serialized integration. Same-file writers conflict
 even across distinct worktrees; worktrees are not an exception to ownership rules.
 When exclusivity, isolation or baseline cannot be proven, use one writer.
+These conditional parallel-write rules apply to Skill-only coordination. Runtime v3
+serializes writers within one coordination database even when their write sets are
+disjoint; separate databases do not grant parallel-write authorization.
 
 For an applicable worktree contract, preserve a dirty baseline rather than silently
 starting from clean HEAD. Do not invent a second worktree protocol. No automatic
 worktree removal, branch switching, reset, commit, merge or cleanup. Native child
 cwd instructions are not a hard directory sandbox. Verify actual changed files.
 
-Root must not write while a child writer is active. Unrelated source reads can
+Root follows the same writer rules and is included in any explicit parallel-write
+contract; otherwise Root must not write while a child writer is active. Unrelated source reads can
 continue only when they do not observe a changing candidate. An interrupted writer
 retains its ownership until termination is confirmed and effects are inspected.
 

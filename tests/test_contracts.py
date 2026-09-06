@@ -616,5 +616,64 @@ class InstallationTests(unittest.TestCase):
         self.install(apply=True)
         self.assertEqual(self.install(apply=True)['changed_files'],0)
 
+    def remove_legacy_fixture(self):
+        target=self.legacy_skill.parent.resolve()
+        self.assertTrue(target.is_relative_to(Path(self.temp.name).resolve()))
+        self.assertEqual(target.name,'dispatching-native-agents')
+        shutil.rmtree(target)
+
+    def test_retire_absent_legacy_persists_and_rolls_back_ownership_only(self):
+        self.install(apply=True);self.remove_legacy_fixture()
+        state=self.root/'.delivery/install-state.json';before=state.read_bytes()
+        with self.assertRaisesRegex(ValueError,'missing owned destination'):self.install()
+        plan=self.install(retire_missing_legacy=True)
+        self.assertFalse(plan['legacy_enabled']);self.assertTrue(plan['retire_legacy_ownership'])
+        self.assertEqual(plan['changes'],[]);self.assertEqual(state.read_bytes(),before)
+        result=self.install(apply=True,retire_missing_legacy=True)
+        current=json.loads(state.read_text())
+        self.assertFalse(current['legacy_enabled'])
+        self.assertFalse(any(p.startswith('skills/dispatching-native-agents/') for p in current['hashes']))
+        self.assertEqual(self.install()['changes'],[])
+        self.assertFalse(self.legacy_skill.parent.exists())
+        installer.rollback(self.root,self.home,Path(result['receipt']))
+        self.assertEqual(state.read_bytes(),before)
+        self.assertFalse(self.legacy_skill.parent.exists())
+
+    def test_retirement_refuses_existing_legacy_files(self):
+        self.install(apply=True)
+        before=self.legacy_skill.read_bytes()
+        with self.assertRaisesRegex(ValueError,'absent legacy directory'):
+            self.install(apply=True,retire_missing_legacy=True)
+        self.assertEqual(self.legacy_skill.read_bytes(),before)
+
+    def test_retirement_preserves_other_owned_file_drift_guard(self):
+        self.install(apply=True);self.remove_legacy_fixture()
+        self.skill.write_bytes(b'external edit')
+        with self.assertRaisesRegex(ValueError,'externally changed'):
+            self.install(apply=True,retire_missing_legacy=True)
+        self.assertEqual(self.skill.read_bytes(),b'external edit')
+
+    def test_retired_legacy_reappearance_is_not_silently_ignored(self):
+        self.install(apply=True);self.remove_legacy_fixture()
+        self.install(apply=True,retire_missing_legacy=True)
+        self.legacy_skill.parent.mkdir();self.legacy_skill.write_bytes(b'user restored alias')
+        with self.assertRaisesRegex(ValueError,'absent legacy directory'):self.install()
+        self.assertEqual(self.legacy_skill.read_bytes(),b'user restored alias')
+
+    def test_retirement_rechecks_absence_before_ownership_commit(self):
+        self.install(apply=True);self.remove_legacy_fixture()
+        state=self.root/'.delivery/install-state.json';before=state.read_bytes()
+        profile=self.root/'profiles/cwf_reader.toml';profile.write_text(profile.read_text()+'\n# scoped upgrade\n')
+        original=installer.atomic_write;changed=[False]
+        def reappear_once(path,data):
+            original(path,data)
+            if self._under_home(path) and not changed[0]:
+                changed[0]=True;self.legacy_skill.parent.mkdir();self.legacy_skill.write_bytes(b'concurrent user alias')
+        with patch.object(installer,'atomic_write',side_effect=reappear_once):
+            with self.assertRaisesRegex(ValueError,'absent legacy directory'):
+                self.install(apply=True,retire_missing_legacy=True)
+        self.assertEqual(state.read_bytes(),before)
+        self.assertEqual(self.legacy_skill.read_bytes(),b'concurrent user alias')
+
 
 if __name__ == '__main__':unittest.main()

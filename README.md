@@ -39,6 +39,15 @@ cwf_mechanical 为 Luna/medium、机械只读。职责与这些 profile 分离�
 已拥有文件与记录不一致（包括被删除）时停止；同名现有文件没有 ownership 时也停止，
 即使其内容恰好等于发布包也不会隐式接管。正常升级不需要额外授权参数。
 
+已停用并移除旧 `dispatching-native-agents` 目录时，先运行：
+```text
+python -B scripts/install.py --codex-home <已确认路径> --retire-missing-legacy
+```
+核对 dry-run 后，沿用同一命令加 `--apply`。该选项要求正式 Skill 已存在且旧目录完全缺失，
+只登记 `legacy_enabled=false` 并移除旧入口的 ownership 条目，不删除或恢复文件。
+后续常规升级沿用停用状态，无须重复该选项。若旧目录重新出现，安装器停止并保留其内容。
+回滚恢复本次范围的文件和原 ownership 前像，不重建此前已经缺失的旧入口。
+
 迁移或明确采用安装目录中的人工修改时，先逐文件检查内容，再对精确路径显式提供前像：
 
 ```text
@@ -84,10 +93,12 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite init
 python -B scripts/workflow.py --db .delivery/runtime.sqlite create --plan examples/runtime-readonly.json
 python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 ```
-`RUN_ID` 使用 create 的真实返回值。原生模式由 Root 领取任务，再调用实际 native 工具，回填准确 child ID、结果和关闭回执；Python 不伪装提供 native spawn。exec 模式使用显式选择的只读 `codex exec` 执行器，CLI 一次执行一个就绪节点，不启动后台服务。
+`RUN_ID` 使用 create 的真实返回值。原生模式由 Root 领取任务，再调用实际 native 工具，回填准确 child ID、结果及对应生命周期回执；Python 不伪装提供 native spawn。exec 模式使用显式选择的只读 `codex exec` 执行器，CLI 一次执行一个就绪节点，不启动后台服务。
 
 安装副本自带完整 Runtime：`python -B <Skill安装目录>/scripts/cwf.py ...`，不依赖源码目录或额外 pip 安装。根目录旧 `scripts/policy_reference.py` 只是兼容导入；真正预算函数与 Runtime 共享同一份实现。安装器排除 `__pycache__`/字节码，不把运行缓存接管成受管源码。
 
 恢复必须显式确认旧进程/线程终结，并重新检查来源、合同、模型和宿主权限；保留已经消耗的调用预算。只读任务可重试/恢复，执行过写入的混合任务不能自动重放。默认单 writer；跨 run 的互斥要求它们使用同一个 DB，不能保护来自其他数据库或非 Runtime 工具的写入。
 
 确定性测试覆盖真实 SQLite、竞争准入、负面状态、隔离安装副本及无害本机进程；这些不是实际模型或 native 子代理的端到端证明。真实调用和独立模型 review 的状态以 `reports/` 本轮记录为准。未完成的 live 集成验收不能标记为通过。
+
+2026-09-06 已通过两代理真实 native readonly 执行验收，使用安装副本完成准入、实际身份绑定、原文检查、独立验证、宿主完成观察及 SQLite 重开读回。执行协调与宿主资源释放分别记账：本次 `execution_holds=0`，两条 `host_resource_holds` 仍保留，物理回收状态为 `UNKNOWN`。本地完整证据位于 `reports/native-readonly-live-20260906/report.md`；可分发源码副本不包含本地报告。
