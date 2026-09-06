@@ -58,6 +58,38 @@ class RuntimeTests(unittest.TestCase):
         p=self.base/'absent.sqlite'
         with self.assertRaises(WorkflowError):Runtime(p,read_only=True)
         self.assertFalse(p.exists())
+    def test_optional_unfinished_work_cannot_finish(self):
+        for outcome in ('failed','partial','interrupted'):
+            with self.subTest(outcome=outcome):
+                self.run=self.rt.create(root=self.root,goal='optional '+outcome,backend='native')
+                self.add(spec(required=False))
+                if outcome=='interrupted':
+                    p=self.acquire(); self.rt.bind(p['attempt'],'stopped-child',backend='native')
+                    self.rt.release(p['attempt'],external_id='stopped-child',confirmed=True,reason='test host stopped')
+                else:
+                    self.done(result=reply(outcome=outcome,checks=[]))
+                with self.assertRaisesRegex(WorkflowError,'incomplete scope'):
+                    self.rt.finish(self.run)
+                status=self.rt.status(self.run)
+                self.assertEqual(status['status'],'open')
+                self.assertFalse(status['current_evidence_valid'])
+                self.assertFalse(status['scope_complete'])
+                self.assertEqual(status['incomplete_nodes'],[dict(id='n1',state=outcome,required=False)])
+                self.assertNotIn('run.completed',[e['kind'] for e in self.rt.events(self.run)])
+    def test_optional_failure_remains_visible_beside_completed_work(self):
+        self.add(spec('required'),spec('optional',required=False))
+        self.done();self.done(result=reply(outcome='failed',checks=[]))
+        with self.assertRaisesRegex(WorkflowError,'incomplete scope'):
+            self.rt.finish(self.run)
+        status=self.rt.status(self.run)
+        self.assertTrue(status['current_evidence_valid'])
+        self.assertFalse(status['scope_complete'])
+        self.rt.retry(self.run,'optional',reason='changed test input')
+        self.done();status=self.rt.finish(self.run)
+        self.assertTrue(status['scope_complete']);self.assertEqual(status['incomplete_nodes'],[])
+    def test_empty_graph_has_no_valid_evidence(self):
+        status=self.rt.status(self.run)
+        self.assertFalse(status['current_evidence_valid']);self.assertFalse(status['scope_complete'])
     def test_append_only_events(self):
         with self.assertRaises(sqlite3.IntegrityError):self.rt.conn.execute('DELETE FROM events')
         with self.assertRaises(sqlite3.IntegrityError):self.rt.conn.execute("UPDATE events SET kind='fake'")
@@ -112,6 +144,20 @@ class RuntimeTests(unittest.TestCase):
         self.add(spec(risk='high'))
         self.assertFalse(self.acquire()['admitted'])
         self.assertEqual(self.rt.status(self.run)['budget']['used'],0)
+    def test_standalone_high_risk_review_roles_preserve_budget(self):
+        for role in ('reviewer', 'verifier'):
+            with self.subTest(role=role):
+                run=self.rt.create(root=self.root,goal='bounded review',backend='native',
+                    bounds={'approved':1,'reserve':0,'absolute':1,'strong_approved':1})
+                self.rt.add(run,[spec(role=role,risk='high')],reason='test')
+                packet=self.rt.acquire(run,backend='native')
+                self.assertFalse(packet['admitted'])
+                self.assertEqual(self.rt.status(run)['budget']['used'],0)
+    def test_high_risk_review_with_declared_checker_completes(self):
+        self.add(spec('target',role='reviewer',risk='high'),
+                 spec('check',role='verifier',risk='high',verifies='target',depends=['target']))
+        self.done();self.done()
+        self.assertEqual(self.rt.finish(self.run)['status'],'completed')
     def test_independent_verification_gate(self):
         self.add(spec('target',risk='high'),spec('check',role='verifier',verifies='target',depends=['target']))
         self.done()
@@ -138,6 +184,17 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.acquire()['admitted'])
         self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='thread closure confirmed')
         self.assertTrue(self.acquire()['admitted'])
+    def test_default_capacity_allows_more_than_four_active_children(self):
+        self.add(*(spec('n'+str(i)) for i in range(6)))
+        packets=[self.acquire() for _ in range(6)]
+        self.assertTrue(all(p['admitted'] for p in packets))
+        self.assertEqual(self.rt.status(self.run)['budget']['active_holds'],6)
+        for p in packets:self.done(p)
+        self.assertEqual(self.rt.finish(self.run)['status'],'completed')
+    def test_capacity_rejects_invalid_explicit_values(self):
+        for value in (True,0,-1,'host'):
+            with self.subTest(value=value),self.assertRaises(WorkflowError):
+                self.rt.create(root=self.root,goal='invalid capacity',backend='native',bounds={'capacity':value})
     def test_admission_is_atomic_between_competing_connections(self):
         self.add(spec())
         def acquire(_):

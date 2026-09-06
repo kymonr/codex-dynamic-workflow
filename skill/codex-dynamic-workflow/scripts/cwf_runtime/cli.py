@@ -28,6 +28,7 @@ def parser():
     c=sub.add_parser('bind'); c.add_argument('--attempt',required=True); c.add_argument('--external-id',required=True); c.add_argument('--backend',choices=['native','exec'],required=True)
     c=sub.add_parser('complete'); c.add_argument('--attempt',required=True); c.add_argument('--external-id',required=True); c.add_argument('--backend',choices=['native','exec'],required=True); c.add_argument('--result',required=True); c.add_argument('--usage')
     c=sub.add_parser('release'); c.add_argument('--attempt',required=True); c.add_argument('--external-id'); c.add_argument('--confirmed',action='store_true'); c.add_argument('--reason',required=True)
+    c.add_argument('--kind',choices=['host-resource','readonly-turn-completed'],default='host-resource'); c.add_argument('--receipt')
     for name in ('retry','refresh'):
         c=sub.add_parser(name); c.add_argument('--run',required=True); c.add_argument('--node',required=True); c.add_argument('--reason',required=True)
     c=sub.add_parser('resume'); c.add_argument('--run',required=True); c.add_argument('--contract-hash',required=True); c.add_argument('--reason',required=True); c.add_argument('--extend-deadline-seconds',type=int,default=0)
@@ -56,7 +57,7 @@ def main(argv=None):
             elif op=='next': result=rt.acquire(args.run,backend=args.backend)
             elif op=='bind': result=rt.bind(args.attempt,args.external_id,backend=args.backend)
             elif op=='complete': result=rt.complete(args.attempt,read_json(args.result),external_id=args.external_id,backend=args.backend,usage=read_json(args.usage) if args.usage else None)
-            elif op=='release': result=rt.release(args.attempt,external_id=args.external_id,confirmed=args.confirmed,reason=args.reason)
+            elif op=='release': result=rt.release(args.attempt,external_id=args.external_id,confirmed=args.confirmed,reason=args.reason,kind=args.kind,receipt=read_json(args.receipt) if args.receipt else None)
             elif op=='retry': result=rt.retry(args.run,args.node,reason=args.reason)
             elif op=='refresh': result=rt.refresh(args.run,args.node,reason=args.reason)
             elif op=='resume': result=rt.resume(args.run,contract_hash=args.contract_hash,reason=args.reason,extend_deadline_seconds=args.extend_deadline_seconds)

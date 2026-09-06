@@ -6,8 +6,10 @@ File identities detect observed drift; they do not freeze the filesystem.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -25,7 +27,7 @@ MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
 ROLES = {'explorer', 'verifier', 'reproducer', 'designer', 'writer', 'reviewer'}
 DEFAULTS = dict(approved=20, reserve=4, absolute=24, strong_approved=8,
-                capacity=4, max_nodes=64, max_depth=6, max_attempts=3,
+                capacity=None, max_nodes=64, max_depth=6, max_attempts=3,
                 deadline_seconds=1800)
 DEFAULT_ROUTES = {
     'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
@@ -89,6 +91,15 @@ def boolean(value, label):
     if type(value) is not bool:
         raise WorkflowError(f'{label} must be boolean')
     return value
+
+
+def checked_usage(usage):
+    if usage is not None:
+        mapping(usage, {'input_tokens','output_tokens','cached_input_tokens'}, {'input_tokens','output_tokens'}, 'usage')
+        for k, v in usage.items(): integer(v, k, 0, 10**12)
+        if usage.get('cached_input_tokens',0) > usage['input_tokens']:
+            raise WorkflowError('invalid cached usage')
+    return usage
 
 
 def integer(value, label, minimum=0, maximum=100000):
@@ -291,6 +302,8 @@ class Runtime:
             mapping(bounds, set(DEFAULTS), set(), 'bounds')
             options.update(bounds)
         for key, value in options.items():
+            if key == 'capacity' and value is None:
+                continue  # Host capacity applies; no additional controller ceiling.
             integer(value, key, 0 if key in {'reserve', 'strong_approved'} else 1)
         if options['approved'] + options['reserve'] > options['absolute'] or options['strong_approved'] > options['approved']:
             raise WorkflowError('inconsistent allowance bounds')
@@ -387,9 +400,20 @@ class Runtime:
             for n in graph:
                 if visit(n, set()) > c['bounds']['max_depth']:
                     raise WorkflowError('dependency depth limit reached')
+            snapshots = {row['id']: loads(row['snapshot']) for row in self.conn.execute('SELECT id,snapshot FROM nodes WHERE run_id=?', (run,))}
+            def bind_sources(s):
+                if s['id'] in snapshots:
+                    return snapshots[s['id']]
+                missing = set(s['writes'])
+                target = graph.get(s['verifies'])
+                if target is not None and target['role'] == 'writer':
+                    original = bind_sources(target)
+                    missing |= {p for p in target['writes'] if original[p] is None} & set(s['sources'])
+                snap = fingerprint(Path(r['root']), sorted(set(s['sources'] + s['writes'])), missing)
+                snapshots[s['id']] = snap
+                return snap
             for s in additions.values():
-                paths = sorted(set(s['sources'] + s['writes']))
-                snap = fingerprint(Path(r['root']), paths, set(s['writes']))
+                snap = bind_sources(s)
                 self.conn.execute('INSERT INTO nodes(run_id,id,spec,snapshot,state) VALUES(?,?,?,?,?)',
                                   (run, s['id'], dump(s), dump(snap), 'pending'))
             for s in additions.values():
@@ -402,15 +426,30 @@ class Runtime:
         s = loads(n['spec']); expected = loads(n['snapshot'])
         if post and n['result']:
             expected = loads(n['result']).get('snapshot', expected)
+        if s['role'] != 'writer' and any(h is None for h in expected.values()):
+            raise WorkflowError(f"deferred review sources require explicit refresh: {n['id']}")
         current = fingerprint(Path(r['root']), list(expected), set(s['writes']))
         if current != expected:
             raise WorkflowError(f"candidate drift: {n['id']}")
         return current
 
+    def _readonly_turn_receipt(self, attempt):
+        rows = self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='attempt.readonly_turn_completed' ORDER BY seq", (attempt['run_id'],))
+        for row in rows:
+            data = loads(row['data'])
+            if data['attempt'] == attempt['token']:
+                return data['receipt']
+        return None
+
+    def _execution_reconciled(self, attempt):
+        return bool(attempt['released']) or self._readonly_turn_receipt(attempt) is not None
+
     def _held_conflict(self, r, s):
         reads = physical(r['root'], s['sources']); writes = physical(r['root'], s['writes'])
-        rows = self.conn.execute('SELECT runs.root,nodes.spec FROM attempts JOIN runs ON runs.id=attempts.run_id JOIN nodes ON nodes.run_id=attempts.run_id AND nodes.id=attempts.node_id WHERE attempts.released=0').fetchall()
+        rows = self.conn.execute('SELECT attempts.token,attempts.run_id,attempts.released,runs.root,nodes.spec FROM attempts JOIN runs ON runs.id=attempts.run_id JOIN nodes ON nodes.run_id=attempts.run_id AND nodes.id=attempts.node_id WHERE attempts.released=0').fetchall()
         for row in rows:
+            if self._execution_reconciled(row):
+                continue
             other = loads(row['spec'])
             other_reads = physical(row['root'], other['sources']); other_writes = physical(row['root'], other['writes'])
             if writes and other_writes:  # One writer per coordination DB, even across worktrees.
@@ -439,7 +478,7 @@ class Runtime:
                 if not all(by_id[d]['state'] == 'completed' for d in s['depends']):
                     reasons.append({'node': n['id'], 'reason': 'dependencies-incomplete'}); continue
                 # A declared required independent check must exist before risky work starts.
-                if s['role'] == 'writer' or (s['risk'] == 'high' and s['role'] not in {'verifier', 'reviewer'}):
+                if s['role'] == 'writer' or (s['risk'] == 'high' and s['verifies'] is None):
                     if not any(loads(x['spec'])['verifies'] == n['id'] and loads(x['spec'])['required'] for x in nodes):
                         reasons.append({'node': n['id'], 'reason': 'required-verifier-not-declared'}); continue
                 if self._held_conflict(r, s):
@@ -498,11 +537,7 @@ class Runtime:
         text(result['outcome'], 'result outcome', 20)
         if result['outcome'] not in {'completed', 'partial', 'failed'}:
             raise WorkflowError('invalid result outcome')
-        if usage is not None:
-            mapping(usage, {'input_tokens','output_tokens','cached_input_tokens'}, {'input_tokens','output_tokens'}, 'usage')
-            for k, v in usage.items(): integer(v, k, 0, 10**12)
-            if usage.get('cached_input_tokens',0) > usage['input_tokens']:
-                raise WorkflowError('invalid cached usage')
+        checked_usage(usage)
         with self.tx():
             a = self.attempt(token); r = self.run(a['run_id']); n = self.node(a['run_id'], a['node_id']); s = loads(n['spec'])
             if r['backend'] != backend or a['external_id'] is None or a['external_id'] != external_id:
@@ -569,19 +604,66 @@ class Runtime:
             self.event(a['run_id'],'attempt.completed',{'attempt':token,'state':outcome,'drift':drift,'blocked_effects':saved['blocked_effects'],'usage':usage})
             return {'state':outcome,'idempotent':False}
 
-    def release(self, token, *, external_id, confirmed, reason):
+    def release(self, token, *, external_id, confirmed, reason, kind='host-resource', receipt=None, usage=None):
         if confirmed is not True: raise WorkflowError('explicit host termination/closure confirmation required')
         text(reason,'release reason',2000)
+        checked_usage(usage)
+        text(kind,'release kind',40)
+        if kind not in {'host-resource', 'readonly-turn-completed'}:
+            raise WorkflowError('unknown release kind')
+        if kind == 'host-resource' and receipt is not None:
+            raise WorkflowError('turn receipt requires readonly-turn-completed kind')
         with self.tx():
             a=self.attempt(token)
             if external_id != a['external_id']:
                 raise WorkflowError('termination identity mismatch')
+            if usage is not None:
+                if kind != 'host-resource' or self.run(a['run_id'])['backend'] != 'exec':
+                    raise WorkflowError('release usage requires confirmed exec resource release')
+                if a['usage'] is not None and loads(a['usage']) != usage:
+                    raise WorkflowError('conflicting observed usage')
+                self.conn.execute('UPDATE attempts SET usage=? WHERE token=?', (dump(usage),token))
+            if kind == 'readonly-turn-completed':
+                r=self.run(a['run_id']); n=self.node(a['run_id'],a['node_id']); s=loads(n['spec'])
+                if (r['backend'] != 'native' or not external_id or a['state'] != 'completed'
+                        or not a['result'] or n['current_token'] != token or s['role']=='writer' or s['writes']):
+                    raise WorkflowError('turn completion receipt requires an accepted current native readonly result')
+                fields={'attempt','external_id','status','observed_via','observed_at','tools_settled'}
+                mapping(receipt, fields, fields, 'host turn receipt')
+                text(receipt['observed_at'],'host observation time',100)
+                try:
+                    observed=datetime.fromisoformat(receipt['observed_at'].replace('Z','+00:00'))
+                    if observed.utcoffset() != timezone.utc.utcoffset(observed):
+                        raise ValueError('UTC required')
+                    observed_seconds=observed.timestamp()
+                except (ValueError, OverflowError):
+                    raise WorkflowError('host observation time must be a UTC ISO timestamp') from None
+                # datetime truncates to microseconds; a Windows 100ns clock tick
+                # may round across that boundary when stored as a float. Allow
+                # one receipt quantum plus one float ULP only at completion.
+                completion_tolerance = 1e-6 + math.ulp(a['ended'])
+                if a['ended'] - observed_seconds > completion_tolerance or observed_seconds > time.time():
+                    raise WorkflowError('host observation must follow accepted completion and not be in the future')
+                if (receipt['attempt'] != token or receipt['external_id'] != external_id
+                        or receipt['status'] != 'completed' or receipt['observed_via'] != 'collaboration.list_agents'
+                        or receipt['tools_settled'] is not True):
+                    raise WorkflowError('host turn receipt identity, completed status and settled tools are required')
+                previous=self._readonly_turn_receipt(a)
+                if previous is not None:
+                    if previous != receipt: raise WorkflowError('conflicting host turn receipt')
+                    return {'execution_reconciled':True,'host_resources_released':bool(a['released']),'idempotent':True}
+                if a['released']: raise WorkflowError('host resources already released')
+                self._assert_snapshot(r,n,True)
+                self.event(a['run_id'],'attempt.readonly_turn_completed',
+                           {'attempt':token,'external_id':external_id,'receipt':receipt,'reason':reason,
+                            'host_resource_state':'UNKNOWN'})
+                return {'execution_reconciled':True,'host_resources_released':False,'idempotent':False}
             if a['released']: return
             if a['state'] in {'reserved','running'}:
                 self.conn.execute('UPDATE attempts SET state=?,ended=? WHERE token=?',('interrupted',time.time(),token))
                 self.conn.execute('UPDATE nodes SET state=? WHERE run_id=? AND id=? AND current_token=?',('interrupted',a['run_id'],a['node_id'],token))
             self.conn.execute('UPDATE attempts SET released=1 WHERE token=?',(token,))
-            self.event(a['run_id'],'attempt.released',{'attempt':token,'external_id':external_id,'reason':reason,'host_confirmed':True})
+            self.event(a['run_id'],'attempt.released',{'attempt':token,'external_id':external_id,'reason':reason,'host_confirmed':True,'usage':usage})
 
     def retry(self, run, node, *, reason):
         text(reason,'retry reason',2000)
@@ -664,7 +746,18 @@ class Runtime:
         with self.tx():
             r,_=self.open_run(run); n=self.node(run,node); s=loads(n['spec'])
             if n['state']!='pending' or n['attempts']!=0: raise WorkflowError('only never-executed pending nodes may refresh; create a successor otherwise')
-            before=loads(n['snapshot']); after=fingerprint(Path(r['root']),list(before),set(s['writes']))
+            before=loads(n['snapshot'])
+            deferred = {p for p,h in before.items() if h is None} if s['role'] != 'writer' else set()
+            if deferred:
+                target=self.node(run,s['verifies']); target_spec=loads(target['spec'])
+                if target_spec['role'] != 'writer' or target['state'] != 'completed' or not self._execution_reconciled(self.attempt(target['current_token'])):
+                    raise WorkflowError('deferred review refresh requires a completed reconciled writer')
+                self._assert_snapshot(r,target,True)
+            after=fingerprint(Path(r['root']),list(before),set(s['writes']))
+            if deferred:
+                created=loads(target['result'])['snapshot']
+                if any(p not in target_spec['writes'] or created.get(p) is None or after[p] != created[p] for p in deferred):
+                    raise WorkflowError('deferred review source was not created by its verified writer')
             self.conn.execute('UPDATE nodes SET snapshot=? WHERE run_id=? AND id=?',(dump(after),run,node))
             self.event(run,'node.source_rebound',{'node':node,'before':before,'after':after,'reason':reason})
 
@@ -719,15 +812,15 @@ class Runtime:
             r,_=self.open_run(run)
             nodes=[dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=?',(run,))]
             if not nodes: raise WorkflowError('empty graph is not completed work')
-            if self.conn.execute('SELECT 1 FROM attempts WHERE run_id=? AND released=0',(run,)).fetchone(): raise WorkflowError('live/unreleased attempts remain')
+            attempts=self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,)).fetchall()
+            if any(not self._execution_reconciled(a) for a in attempts): raise WorkflowError('live/unreconciled execution attempts remain')
             historical = {}
             for n in nodes:
-                s=loads(n['spec'])
                 if n['state']=='completed':
                     paths = self._historical_write_evidence(r,n,nodes)
                     if paths: historical[n['id']] = paths
                     self._quality_gate(r,n,allow_historical=True)
-                elif s['required'] or n['state'] in {'pending','active'}:
+                else:
                     raise WorkflowError(f"incomplete scope: {n['id']} ({n['state']})")
             self.conn.execute('UPDATE runs SET status=? WHERE id=?',('completed',run))
             self.event(run,'run.completed',{'nodes':len(nodes),'scope':'declared graph only','historical_write_evidence':historical})
@@ -744,13 +837,24 @@ class Runtime:
                     if superseded: historical[n['id']] = superseded
                 except (OSError,WorkflowError) as exc: issues.append(str(exc))
         attempts=[dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=? ORDER BY created',(run,))]
-        return {'run_id':run,'backend':r['backend'],'status':r['status'],'current_evidence_valid':not issues,'drift':issues,'historical_evidence':historical,
+        execution={a['token']:self._execution_reconciled(a) for a in attempts}
+        host_holds=sum(not a['released'] for a in attempts)
+        incomplete=[{'id':n['id'],'state':n['state'],'required':loads(n['spec'])['required']}
+                    for n in nodes if n['state']!='completed']
+        return {'run_id':run,'backend':r['backend'],'status':r['status'],
+                'current_evidence_valid':any(n['state']=='completed' for n in nodes) and not issues,
+                'scope_complete':bool(nodes) and not incomplete,'incomplete_nodes':incomplete,
+                'drift':issues,'historical_evidence':historical,
                 'contract_hash':r['contract_hash'],'deadline':r['deadline'],
                 'budget':{'used':r['used'],'reserve_used':r['reserve_used'],'strong_used':r['strong_used'],
-                          'active_holds':sum(not a['released'] for a in attempts),
+                          'active_holds':host_holds,'host_resource_holds':host_holds,
+                          'execution_holds':sum(not execution[a['token']] for a in attempts),
                           'unknown_usage_attempts':sum(a['usage'] is None for a in attempts)},
+                'host_resources_released':host_holds==0,
+                'host_resource_state':'RELEASE_CONFIRMED' if host_holds==0 else 'UNKNOWN',
                 'nodes':[{'id':n['id'],'state':n['state'],'attempts':n['attempts'],'required':loads(n['spec'])['required']} for n in nodes],
                 'attempts':[{'attempt':a['token'],'node':a['node_id'],'state':a['state'],'external_id':a['external_id'],'released':bool(a['released']),
+                             'execution_reconciled':execution[a['token']],
                              'usage':loads(a['usage']) if a['usage'] is not None else None} for a in attempts]}
 
     def events(self,run,after=0):

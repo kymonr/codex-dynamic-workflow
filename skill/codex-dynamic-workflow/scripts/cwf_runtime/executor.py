@@ -149,7 +149,7 @@ def parse_exec(stream, returncode):
     """Accept one ordered, successfully terminated turn, never a stale terminal."""
     if returncode != 0: raise WorkflowError(f'codex exec returned {returncode}')
     state = 'before'; messages = []; terminal = None; thread_seen = False
-    for line in stream.splitlines():
+    for line in stream.split('\n'):
         if not line.strip(): continue
         event = loads(line)
         if not isinstance(event, dict) or not isinstance(event.get('type'), str):
@@ -223,7 +223,7 @@ def execute_one(runtime, run, *, executable=None, transport=run_owned, timeout=6
     prefix=codex_prefix(executable)
     packet=runtime.acquire(run,backend='exec')
     if not packet['admitted']: return packet
-    token=packet['attempt']; external=[None]; usage=None
+    token=packet['attempt']; external=[None]; usage=None; result=None
     schema=Path(__file__).with_name('result.schema.json')
     argv=prefix+['exec','--json','--sandbox','read-only','--skip-git-repo-check',
                  '-m',packet['route']['model'],'-c','model_reasoning_effort='+json.dumps(packet['route']['effort']),
@@ -236,25 +236,25 @@ def execute_one(runtime, run, *, executable=None, transport=run_owned, timeout=6
         result=transport(argv,packet['root'],prompt,timeout=min(timeout,max(0.01,packet['deadline']-time.time())),
                          on_started=started,cancelled=lambda:runtime.run(run)['status']!='open')
         if result.stopped:
-            runtime.release(token,external_id=external[0],confirmed=True,reason='owned executor process tree stopped')
             return {'admitted':True,'attempt':token,'state':'interrupted'}
         payload,usage=parse_exec(result.stdout,result.returncode)
         done=runtime.complete(token,payload,external_id=external[0],backend='exec',usage=usage)
-        runtime.release(token,external_id=external[0],confirmed=True,reason='owned executor finished and job closed')
         return {'admitted':True,'attempt':token,**done}
-    except WorkflowError as exc:
+    except BaseException as exc:
         # A transport result was returned only after owned process cleanup.
-        if 'result' in locals():
+        if result is not None:
             failed={'outcome':'failed','summary':str(exc),'sources_opened':[],'checks':[],'changed_files':[],'claims':[]}
             try:
                 a=runtime.attempt(token)
                 if a['state'] in {'reserved','running'}:
                     runtime.complete(token,failed,external_id=external[0],backend='exec',usage=usage)
-            finally:
-                # The returned transport already confirmed tree termination. Even a
-                # missing/unreadable source while recording failure cannot retain a
-                # fictitious running process. release marks an unrecorded result
-                # interrupted; it never marks successful acceptance or refunds it.
-                runtime.release(token,external_id=external[0],confirmed=True,reason='terminal executor protocol failure; source error remains unaccepted')
+            except Exception as recording_error:
+                exc.add_note('Failure result could not be recorded: '+str(recording_error))
         # Unknown transport failures deliberately retain ownership until host reconciliation.
         raise
+    finally:
+        # Only a returned transport confirms owned-tree cleanup. Later parsing,
+        # source reads or controller interruptions cannot leave fictitious activity.
+        if result is not None:
+            runtime.release(token,external_id=external[0],confirmed=True,
+                            reason='owned executor transport confirmed process-tree cleanup',usage=usage)

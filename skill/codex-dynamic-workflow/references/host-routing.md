@@ -53,6 +53,7 @@ A host may cap open threads, not only running turns. Use its actual completion/c
 contract; idle is not automatically closed and interrupt is not confirmed termination.
 On capacity failure inspect once, queue eligible work, and avoid retry loops. A queued
 branch remains accounted for. Never spawn past capacity or free an unconfirmed writer.
+A host-confirmed completed readonly turn with settled tools can reconcile execution through the Runtime protocol while its host-resource reservation remains UNKNOWN. Keep execution completion and host-resource cleanup separate.
 Root alone owns dispatch. No peers, child spawning or autonomous nested workflow.
 
 ## Installation and future backend

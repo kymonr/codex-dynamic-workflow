@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — 2026-09-06 runtime and installation repairs
+
+- Separate host-observed readonly execution completion from physical resource release; retain conservative resource reservations and explicit capacity limits.
+- Accommodate microsecond receipt precision and floating-point clock representation at the completion boundary, retaining strict future-time rejection.
+- Follow actual host capacity by default while retaining cumulative launch budgets and mandatory verification reservations; unfinished graph nodes still block completion.
+- Permit narrowly scoped deferred review binding for a writer's new files, requiring explicit post-completion refresh and full independent coverage.
+- Reconcile confirmed exec cleanup after ordinary errors and controller interruption, preserving parsed usage; keep holds when transport termination is unconfirmed.
+- Split JSONL only at LF, preserving Unicode separator characters inside strings and accepting CRLF records.
+- Reject forgotten ownership outside an upgrade manifest; support explicit retirement of an already absent legacy entry without restoring or deleting it.
+- Clarify authorized Skill-only parallel writes versus Runtime v3's serialized writer lock.
+- Add installed-runtime real-process acceptance and an explicitly invoked one-call readonly model smoke. Validation: 218 deterministic tests (217 pass, one Windows privilege skip), seven real-process cases, and one real readonly exec run completed.
+
 ## 3.0.0 — 2026-09-06
 
 - Added a bundled standard-library SQLite Runtime, transactional graph/admission/events, required-check reservations, fenced attempts and explicit readonly resume.

@@ -21,11 +21,12 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def manifest(root: Path) -> dict[str, bytes]:
+def manifest(root: Path, *, include_legacy: bool = True) -> dict[str, bytes]:
     files = {f'skills/codex-dynamic-workflow/{p.relative_to(root / SKILL).as_posix()}': p.read_bytes()
              for p in sorted((root / SKILL).rglob('*')) if p.is_file() and '__pycache__' not in p.parts and p.suffix not in {'.pyc', '.pyo'}}
-    files.update({f'skills/dispatching-native-agents/{p.relative_to(root / LEGACY_SKILL).as_posix()}': p.read_bytes()
-                  for p in sorted((root / LEGACY_SKILL).rglob('*')) if p.is_file() and '__pycache__' not in p.parts and p.suffix not in {'.pyc', '.pyo'}})
+    if include_legacy:
+        files.update({f'skills/dispatching-native-agents/{p.relative_to(root / LEGACY_SKILL).as_posix()}': p.read_bytes()
+                      for p in sorted((root / LEGACY_SKILL).rglob('*')) if p.is_file() and '__pycache__' not in p.parts and p.suffix not in {'.pyc', '.pyo'}})
     files.update({f'agents/{name}.toml': (root/'profiles'/f'{name}.toml').read_bytes() for name in PROFILE_NAMES})
     return files
 
@@ -125,7 +126,7 @@ def parse_adoptions(items: list[str]) -> dict[str, str]:
 
 def install(root: Path, home: Path, *, apply: bool = False,
             expected_skill_sha: str | None = None, inplace_skill: bool = False,
-            adopt: dict[str, str] | None = None) -> dict:
+            adopt: dict[str, str] | None = None, retire_missing_legacy: bool = False) -> dict:
     errors = validate(root)
     if errors:
         raise ValueError('source validation failed: ' + '; '.join(errors))
@@ -136,7 +137,6 @@ def install(root: Path, home: Path, *, apply: bool = False,
         raise ValueError('existing CODEX_HOME/skills layout not confirmed; no guessed first install')
     expected_rel = ('skills/codex-dynamic-workflow/SKILL.md' if canonical_existing
                     else 'skills/dispatching-native-agents/SKILL.md')
-    payload = manifest(root)
     state_path = root / '.delivery/install-state.json'
     state_before = read_if_file(state_path)
     prior = json.loads(state_before.decode('utf-8')) if state_before is not None else {}
@@ -145,6 +145,22 @@ def install(root: Path, home: Path, *, apply: bool = False,
     if state_before is not None and prior.get('home') != str(home):
         raise ValueError('previous installation belongs to a different home')
     previous_hashes = checked_hashes(prior.get('hashes', {}) if state_before is None else prior.get('hashes'), 'ownership')
+    legacy_enabled = prior.get('legacy_enabled', True)
+    if type(legacy_enabled) is not bool or type(retire_missing_legacy) is not bool:
+        raise ValueError('legacy installation options must be boolean')
+    if retire_missing_legacy:
+        legacy_enabled = False
+    def check_retired_legacy() -> None:
+        if not legacy_enabled:
+            legacy_root = destination(home, 'skills/dispatching-native-agents/SKILL.md').parent
+            if not canonical_existing or legacy_root.exists():
+                raise ValueError('legacy retirement requires the canonical skill and an absent legacy directory; no files are deleted')
+    check_retired_legacy()
+    payload = manifest(root, include_legacy=legacy_enabled)
+    retired = {r for r in previous_hashes if not legacy_enabled and r.startswith('skills/dispatching-native-agents/')}
+    removed = sorted(set(previous_hashes) - set(payload) - retired)
+    if removed:
+        raise ValueError('previously owned paths absent from current manifest; explicit retirement required: ' + ', '.join(removed))
     adoptions = checked_hashes({} if adopt is None else adopt, 'adoption')
     for rel, sha in adoptions.items():
         if rel not in payload:
@@ -174,7 +190,10 @@ def install(root: Path, home: Path, *, apply: bool = False,
         if before != after:
             plan.append((rel, dest, before, after))
     if not apply:
-        return {'status': 'DRY_RUN', 'home': str(home), 'inplace_skill': inplace_skill, 'changes': [r[0] for r in plan]}
+        return {'status': 'DRY_RUN', 'home': str(home), 'inplace_skill': inplace_skill,
+                'legacy_enabled': legacy_enabled, 'retire_legacy_ownership': sorted(r for r in previous_hashes
+                    if not legacy_enabled and r.startswith('skills/dispatching-native-agents/')),
+                'changes': [r[0] for r in plan]}
     backup = root / 'reports' / f'install-backup-{uuid.uuid4().hex[:12]}'
     backup.mkdir(parents=True, exist_ok=False)
     receipt = {'schema': 2, 'home': str(home), 'project': str(root.resolve()),
@@ -192,13 +211,14 @@ def install(root: Path, home: Path, *, apply: bool = False,
                                   'after_sha': digest(after), 'applied': False, 'pending': False,
                                   'write_mode': 'in-place' if inplace_skill and rel.endswith('/SKILL.md') and before is not None else 'atomic'})
     rp = backup / 'receipt.json'
-    state_after = json.dumps({'home': str(home), 'receipt': str(rp),
+    state_after = json.dumps({'home': str(home), 'receipt': str(rp), 'legacy_enabled': legacy_enabled,
                               'hashes': {r: digest(b) for r,b in payload.items()}}, indent=2).encode('utf-8')
     receipt['state_after_sha'] = digest(state_after)
     def save() -> None:
         atomic_write(rp, json.dumps(receipt, ensure_ascii=False, indent=2).encode('utf-8'))
     save()
     try:
+        check_retired_legacy()
         for entry, (rel, dest, before, after) in zip(receipt['entries'], plan):
             dest = destination(home, rel)  # recheck links at the write boundary
             if read_if_file(dest) != before:
@@ -220,10 +240,12 @@ def install(root: Path, home: Path, *, apply: bool = False,
                 raise OSError(f'final installed-content mismatch: {rel}')
         if read_if_file(state_path) != state_before:
             raise ValueError('installation ownership state changed concurrently')
+        check_retired_legacy()
         receipt['status'] = 'ownership-pending'; save()
         atomic_write(state_path, state_after)
         if state_path.read_bytes() != state_after:
             raise OSError('installation ownership state verification failed')
+        check_retired_legacy()
         receipt['status'] = 'installed'; save()
         return {'status': 'INSTALLED', 'changed_files': len(plan), 'verified_files': len(payload),
                 'receipt': str(rp), 'home': str(home)}
@@ -313,6 +335,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--codex-home', type=Path, required=True)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--retire-missing-legacy', action='store_true',
+                        help='Record an already absent legacy alias as disabled; deletes no files and persists for future upgrades')
     parser.add_argument('--in-place-skill', action='store_true',
                         help='Explicit ordinary-write mode for the existing SKILL.md only; not crash-atomic')
     parser.add_argument('--expected-skill-sha', help='Additional main-file drift guard; does not grant adoption')
@@ -325,7 +349,7 @@ def main() -> int:
     try:
         result = (rollback(ROOT, args.codex_home, args.rollback) if args.rollback else
                   install(ROOT, args.codex_home, apply=args.apply, expected_skill_sha=args.expected_skill_sha, inplace_skill=args.in_place_skill,
-                          adopt=parse_adoptions(args.adopt_file)))
+                          adopt=parse_adoptions(args.adopt_file), retire_missing_legacy=args.retire_missing_legacy))
         print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
     except Exception as exc:
         print(json.dumps({'status': 'FAIL', 'error': str(exc)}, ensure_ascii=False)); return 1
