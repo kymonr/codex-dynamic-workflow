@@ -1,6 +1,6 @@
 {
   "root": "tests/fixtures",
-  "goal": "Characterize the deliberate invoice fixture; do not modify it.",
+  "goal": "RETIRED compatibility fixture: current native-only CLI rejects this exec plan. Historical purpose: characterize the deliberate invoice fixture without modification.",
   "backend": "exec",
   "implement": false,
   "bounds": {

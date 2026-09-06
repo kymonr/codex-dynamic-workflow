@@ -1,6 +1,6 @@
 # Codex Dynamic Workflow v3.0.0
 
-原生优先、原始证据优先的 Codex Skill。正式调用名：
+仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 
 ```text
 $codex-dynamic-workflow
@@ -23,15 +23,32 @@ python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME>
 python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME> --apply
 ```
 
-安装默认 dry-run。`--apply` 只更新本包拥有的 Skill 文件和三个新 cwf_* profile；
+安装默认 dry-run。`--apply` 只更新本包拥有的 Skill 文件和 cwf_* profile；
 不改 config.toml、审批、沙箱默认值、旧角色或 Git。安装前检查目标、保存精确前像，
 对被替换的内容做漂移检查，完成后逐文件验证。前像不放在 Skill 扫描目录内。
 不同客户端的 discovery 路径可能不同：此安装器面向现场已有的 CODEX_HOME/skills
 布局；无此已确认布局时先验证 discovery，不能复制到多个位置制造同名 Skill。
 
-角色说明：cwf_reader 为 Astra/high 只读；cwf_writer 为 Astra/high、继承权限；
-cwf_mechanical 为 Luna/medium、机械只读。职责与这些 profile 分离；模型名称
-是初始配置，不是用户账户可用性、价格或质量的保证。原有角色不覆盖。
+普通且范围明确的只读调查、分析和非关键验证优先使用 cwf_general（Luna/max）；
+机械检查使用 cwf_mechanical（Luna/medium）。复杂判断和关键独立验收使用
+cwf_reader（Astra/high）；实施使用 cwf_writer（Astra/high，继承权限）。
+按实际范围、风险和验收方法选择模型，不按「审阅」等角色名称一律升级，也不设调用比例。
+模型名称是初始配置，不代表账户可用性、价格或实测质量。安装保留现有 luna profile 和全局默认值。
+
+分给 Luna 前，先明确具体交付物及其复算或原始证据核对方法。Luna 可以报告「指定清单无哈希差异」
+等已覆盖检查的结果；当检查不足以证明「没有缺陷」「修复完整」「可以验收」时，由主线程或 Astra
+判断，并保留必要的独立复核。范围小、只读或影响低，本身不足以证明问题简单。
+路由和安装测试通过不代表新旧模型方案质量相同；漏报、误报与返工仍需相同真实任务的对照评估。
+
+Luna 也可做答案未知的探索：按独立方向收集候选原因、反例和验证证据，以覆盖范围或截止时间收尾。
+Luna 和 Astra 全部通过原生代理工具派出；同一授权范围和额度内不按批次重复确认。
+Luna 可批量探索和验证，两种模型共同受宿主原生槽位限制，超出的工作排队，并保留必要 Astra 复核空间。
+CLI 模型派工入口已停用；Runtime 的本地 Python 命令只管理任务状态，由主线程调用原生工具执行。
+此前 exec 记录及回归代码保留，不能作为当前派工入口或原生容量不足时的替代路线。
+
+显式 Runtime 通过 `ordinary_qualified: true` 记录普通任务资格；未显式指定 `tier` 时选择 Luna/max。
+高风险任务和 writer 的复核仍要求 strong。普通调用使用已批准的非 strong 额度，机械储备保持独立。
+旧任务的路由与累计预算不变；未包含 ordinary 路由的旧合同不会自动加入模型。详见 [Runtime 协议](skill/codex-dynamic-workflow/references/runtime.md)。
 
 ## 2.0.2 ownership 与元数据校验
 
@@ -84,7 +101,7 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 
 ## v3 Runtime 使用入口
 
-普通 `$codex-dynamic-workflow` 仍可按原生 Skill-only 模式工作；显式选择 Runtime 时，SQLite 统一管理动态图、调用预留、尝试记录和事件。一次 run 只能使用 native 或 exec，不能静默切换。详细协议见 [runtime.md](skill/codex-dynamic-workflow/references/runtime.md)。
+普通 `$codex-dynamic-workflow` 按原生 Skill-only 模式工作；显式选择 Runtime 时，SQLite 统一管理动态图、调用预留、尝试记录和事件。当前新任务全部使用 native，历史 exec 记录保持可读且不改写。详细协议见 [runtime.md](skill/codex-dynamic-workflow/references/runtime.md)。
 
 在本源码目录执行：
 ```text
@@ -93,7 +110,7 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite init
 python -B scripts/workflow.py --db .delivery/runtime.sqlite create --plan examples/runtime-readonly.json
 python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 ```
-`RUN_ID` 使用 create 的真实返回值。原生模式由 Root 领取任务，再调用实际 native 工具，回填准确 child ID、结果及对应生命周期回执；Python 不伪装提供 native spawn。exec 模式使用显式选择的只读 `codex exec` 执行器，CLI 一次执行一个就绪节点，不启动后台服务。
+`RUN_ID` 使用 create 的真实返回值。Root 领取任务后调用实际 native 工具，回填准确 child ID、结果及对应生命周期回执；Python 只管理状态。`exec-one` 与 `luna-pool` 已停用，不能用于当前模型派工。
 
 安装副本自带完整 Runtime：`python -B <Skill安装目录>/scripts/cwf.py ...`，不依赖源码目录或额外 pip 安装。根目录旧 `scripts/policy_reference.py` 只是兼容导入；真正预算函数与 Runtime 共享同一份实现。安装器排除 `__pycache__`/字节码，不把运行缓存接管成受管源码。
 

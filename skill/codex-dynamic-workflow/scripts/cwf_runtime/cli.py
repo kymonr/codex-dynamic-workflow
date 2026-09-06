@@ -5,7 +5,6 @@ from pathlib import Path
 import sqlite3
 import sys
 from .core import Runtime, WorkflowError, VERSION, loads, mapping
-from .executor import execute_one
 
 
 def read_json(path):
@@ -20,11 +19,12 @@ def parser():
     sub.add_parser('init')
     c=sub.add_parser('create'); c.add_argument('--plan',required=True)
     c=sub.add_parser('add'); c.add_argument('--run',required=True); c.add_argument('--nodes',required=True); c.add_argument('--reason',required=True)
-    for name in ('next','status','events','finish','claims','exec-one'):
+    for name in ('next','status','events','finish','claims','exec-one','luna-pool'):
         c=sub.add_parser(name); c.add_argument('--run',required=True)
         if name=='next': c.add_argument('--backend',required=True,choices=['native','exec'])
         if name=='events': c.add_argument('--after',type=int,default=0)
-        if name=='exec-one': c.add_argument('--executable'); c.add_argument('--timeout',type=int,default=600)
+        if name in {'exec-one','luna-pool'}: c.add_argument('--executable'); c.add_argument('--timeout',type=int,default=600)
+        if name=='luna-pool': c.add_argument('--workers',type=int,required=True)
     c=sub.add_parser('bind'); c.add_argument('--attempt',required=True); c.add_argument('--external-id',required=True); c.add_argument('--backend',choices=['native','exec'],required=True)
     c=sub.add_parser('complete'); c.add_argument('--attempt',required=True); c.add_argument('--external-id',required=True); c.add_argument('--backend',choices=['native','exec'],required=True); c.add_argument('--result',required=True); c.add_argument('--usage')
     c=sub.add_parser('release'); c.add_argument('--attempt',required=True); c.add_argument('--external-id'); c.add_argument('--confirmed',action='store_true'); c.add_argument('--reason',required=True)
@@ -40,12 +40,16 @@ def parser():
 def main(argv=None):
     args=parser().parse_args(argv)
     try:
+        if args.command in {'exec-one','luna-pool'} or (args.command == 'next' and args.backend != 'native'):
+            raise WorkflowError('native-only routing: dispatch Luna and Astra through native host agent tools')
         with Runtime(args.db,initialize=args.command=='init',read_only=args.command in {'status','events','claims'}) as rt:
             op=args.command
             if op=='init': result={'schema':1,'version':VERSION}
             elif op=='create':
                 data=read_json(args.plan)
-                mapping(data,{'root','goal','backend','bounds','routes','implement','run_id','nodes'},{'root','goal','backend','nodes'},'plan')
+                mapping(data,{'root','goal','backend','bounds','routes','implement','run_id','nodes','capacity_scope','execution_pool'},{'root','goal','backend','nodes'},'plan')
+                if data['backend'] != 'native' or data.get('execution_pool') is not None:
+                    raise WorkflowError('native-only routing: new controller plans must use backend=native without an exec pool')
                 # Invalid initial plans retain a cancelled audit record, never an executable partial run.
                 specs=data.pop('nodes'); rid=rt.create(**data)
                 try: rt.add(rid,specs,reason='initial explicit plan')
@@ -65,13 +69,11 @@ def main(argv=None):
             elif op=='status': result=rt.status(args.run)
             elif op=='events': result=rt.events(args.run,args.after)
             elif op=='finish': result=rt.finish(args.run)
-            elif op=='exec-one': result=execute_one(rt,args.run,executable=args.executable,timeout=args.timeout)
             elif op=='decide': result=rt.decide(args.claim,args.disposition,reason=args.reason)
             elif op=='claims':
                 rt.run(args.run)
                 result=[{**dict(c),'data':loads(c['data'])} for c in rt.conn.execute('SELECT * FROM claims WHERE run_id=?',(args.run,))]
-            success = not (op == 'exec-one' and result.get('admitted') and result.get('state') != 'completed')
-            print(json.dumps({'ok':success,'result':result},ensure_ascii=False,indent=2)); return 0 if success else 1
+            print(json.dumps({'ok':True,'result':result},ensure_ascii=False,indent=2)); return 0
     except (WorkflowError,ValueError,OSError,sqlite3.Error,TypeError,KeyError) as exc:
         print(json.dumps({'ok':False,'error':str(exc)},ensure_ascii=False)); return 1
 

@@ -13,6 +13,8 @@ def main():
     p.add_argument('--executable',required=True)
     args=p.parse_args()
     installed=args.skill_dir.resolve(strict=True)
+    if 'exec' not in json.loads((installed/'policy.json').read_text(encoding='utf-8'))['runtime']['backends']:
+        raise RuntimeError('native-only routing: this legacy CLI model smoke is disabled')
     output=args.output_dir.resolve(); output.mkdir(parents=True,exist_ok=False)
     sys.path.insert(0,str(installed/'scripts'))
     from cwf_runtime import Runtime

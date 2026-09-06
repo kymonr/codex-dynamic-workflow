@@ -10,7 +10,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = Path('skill/codex-dynamic-workflow')
 LEGACY_SKILL = Path('skill/dispatching-native-agents')
-PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_mechanical')
+PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_general', 'cwf_mechanical')
 
 
 def unique_pairs(pairs: list[tuple]) -> dict:
@@ -132,6 +132,8 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append('core skill exceeds the package 250-line maintenance budget')
     if policy.get('schema_version') != 2 or policy.get('backend') != 'native-only':
         errors.append('unsupported policy schema/backend')
+    if policy.get('luna_readonly_backend') != 'native':
+        errors.append('Luna readonly work must use native agent tools')
     if policy.get('skill_name') != 'codex-dynamic-workflow' or policy.get('legacy_alias') != 'dispatching-native-agents':
         errors.append('skill identity/legacy alias drift')
     if policy.get('priority') != ['quality', 'automation', 'latency', 'cost', 'observability', 'recovery']:
@@ -206,9 +208,9 @@ def validate(root: Path = ROOT) -> list[str]:
                 errors.append(f'invalid local link: {path.relative_to(root)} -> {href}')
     if version.startswith('3.'):
         rt = policy.get('runtime', {})
-        if not isinstance(rt, dict) or rt.get('version') != version or rt.get('backends') != ['native','exec'] or rt.get('backend_per_run') != 1 or rt.get('exec_writes') is not False:
+        if not isinstance(rt, dict) or rt.get('version') != version or rt.get('backends') != ['native'] or rt.get('backend_per_run') != 1 or rt.get('exec_writes') is not False:
             errors.append('runtime identity/backend contract drift')
-        required = ['scripts/cwf.py','scripts/cwf_runtime/__init__.py','scripts/cwf_runtime/__main__.py','scripts/cwf_runtime/core.py','scripts/cwf_runtime/policy.py','scripts/cwf_runtime/executor.py','scripts/cwf_runtime/worker.py','scripts/cwf_runtime/cli.py','scripts/cwf_runtime/result.schema.json','references/runtime.md']
+        required = ['scripts/cwf.py','scripts/cwf_runtime/__init__.py','scripts/cwf_runtime/__main__.py','scripts/cwf_runtime/core.py','scripts/cwf_runtime/policy.py','scripts/cwf_runtime/executor.py','scripts/cwf_runtime/worker.py','scripts/cwf_runtime/luna_pool.py','scripts/cwf_runtime/cli.py','scripts/cwf_runtime/result.schema.json','references/runtime.md']
         for rel in required:
             if not (root/SKILL/rel).is_file(): errors.append('missing runtime delivery file: '+rel)
         try:
