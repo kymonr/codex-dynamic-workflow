@@ -69,7 +69,7 @@ class NativeTurnReceiptTests(unittest.TestCase):
         ]
         for ended,stamp,stale,future in cases:
             with self.subTest(ended=ended):
-                self.run=self.rt.create(root=self.root,goal='clock boundary',backend='native')
+                self.run=self.rt.create(workflow='legacy', root=self.root,goal='clock boundary',backend='native')
                 self.add(spec());p,e,_=self.done(release=False)
                 self.rt.conn.execute('UPDATE attempts SET ended=? WHERE token=?',(ended,p['attempt']))
                 with patch('cwf_runtime.core.time.time',return_value=ended):
@@ -90,7 +90,7 @@ class NativeTurnReceiptTests(unittest.TestCase):
     def test_failed_partial_interrupted_results_cannot_reconcile(self):
         for state in ('failed','partial','interrupted'):
             with self.subTest(state=state):
-                self.run=self.rt.create(root=self.root,goal=state,backend='native')
+                self.run=self.rt.create(workflow='legacy', root=self.root,goal=state,backend='native')
                 self.add(spec())
                 if state=='interrupted':
                     p=self.acquire();e='stopped-child';self.rt.bind(p['attempt'],e,backend='native')
@@ -101,14 +101,14 @@ class NativeTurnReceiptTests(unittest.TestCase):
                 self.assertEqual(self.rt.status(self.run)['budget']['execution_holds'],0 if state=='interrupted' else 1)
 
     def test_writer_cannot_use_readonly_receipt(self):
-        self.run=self.rt.create(root=self.root,goal='writer guard',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='writer guard',backend='native',implement=True)
         self.add(spec('w',role='writer',writes=['a.py']),spec('v',role='reviewer',verifies='w',depends=['w']))
         p,e,_=self.done(release=False)
         with self.assertRaises(WorkflowError):self.reconcile(p,e)
         self.assertEqual(self.rt.status(self.run)['budget']['execution_holds'],1)
 
     def test_exec_cannot_use_native_turn_receipt(self):
-        self.run=self.rt.create(root=self.root,goal='exec guard',backend='exec')
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='exec guard',backend='exec')
         self.add(spec());p=self.rt.acquire(self.run,backend='exec');e='process-1'
         self.rt.bind(p['attempt'],e,backend='exec')
         self.rt.complete(p['attempt'],reply(),external_id=e,backend='exec')
@@ -139,14 +139,14 @@ class NativeTurnReceiptTests(unittest.TestCase):
         self.assertEqual(status['budget']['used'],1)
 
     def test_explicit_resource_capacity_still_blocks_retained_session(self):
-        self.run=self.rt.create(root=self.root,goal='capacity',backend='native',bounds={'capacity':1})
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='capacity',backend='native',bounds={'capacity':1})
         self.add(spec('a'),spec('b'));p,e,_=self.done(release=False);self.reconcile(p,e)
         self.assertFalse(self.acquire()['admitted'])
         self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='real host closure')
         self.assertTrue(self.acquire()['admitted'])
 
     def test_settled_readonly_does_not_block_subsequent_writer(self):
-        self.run=self.rt.create(root=self.root,goal='read then write',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='read then write',backend='native',implement=True)
         self.add(spec('read'),spec('write',role='writer',writes=['a.py'],depends=['read']),
                  spec('verify',role='reviewer',verifies='write',depends=['write']))
         p,e,_=self.done(release=False)

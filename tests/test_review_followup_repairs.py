@@ -18,7 +18,7 @@ class RuntimeRepairTests(unittest.TestCase):
     stream = initial.ExecutorTests.stream
 
     def graph(self, reverse=False):
-        self.run = self.rt.create(root=self.root, goal='create then review', backend='native', implement=True)
+        self.run = self.rt.create(workflow='legacy', root=self.root, goal='create then review', backend='native', implement=True)
         nodes = [spec('w', role='writer', writes=['new.py']),
                  spec('r', role='reviewer', sources=['a.py','new.py'], depends=['w'], verifies='w')]
         self.rt.add(self.run, list(reversed(nodes)) if reverse else nodes, reason='regression')
@@ -64,7 +64,7 @@ class RuntimeRepairTests(unittest.TestCase):
             self.rt.refresh(self.run, 'r', reason='external creation is not writer evidence')
 
     def test_missing_source_exception_is_confined_to_verified_writer_scope(self):
-        self.run = self.rt.create(root=self.root, goal='bound missing paths', backend='native', implement=True)
+        self.run = self.rt.create(workflow='legacy', root=self.root, goal='bound missing paths', backend='native', implement=True)
         w = spec('w', role='writer', writes=['new.py'])
         for bad in [spec('r', sources=['new.py']),
                     spec('r', role='reviewer', sources=['other.py'], depends=['w'], verifies='w')]:
@@ -73,14 +73,14 @@ class RuntimeRepairTests(unittest.TestCase):
         self.assertEqual(self.rt.status(self.run)['nodes'], [])
 
     def test_existing_writer_source_cannot_be_deleted_to_get_deferred_binding(self):
-        self.run = self.rt.create(root=self.root, goal='existing source binding', backend='native', implement=True)
+        self.run = self.rt.create(workflow='legacy', root=self.root, goal='existing source binding', backend='native', implement=True)
         self.rt.add(self.run, [spec('w', role='writer', writes=['b.py'])], reason='writer baseline')
         (self.root/'b.py').unlink()
         with self.assertRaisesRegex(WorkflowError, 'missing source'):
             self.rt.add(self.run, [spec('r',role='reviewer',sources=['a.py','b.py'],depends=['w'],verifies='w')], reason='must not defer existing source')
 
     def test_terminal_permission_error_releases_and_preserves_parsed_usage(self):
-        run = self.rt.create(root=self.root, goal='post-transport read denied', backend='exec')
+        run = self.rt.create(workflow='legacy', root=self.root, goal='post-transport read denied', backend='exec')
         self.rt.add(run, [spec()], reason='regression')
         usage = {'input_tokens':12,'output_tokens':3}
         original = core.fingerprint
@@ -102,7 +102,7 @@ class RuntimeRepairTests(unittest.TestCase):
 
     def test_ordinary_value_error_and_controller_interrupt_release_after_transport(self):
         for error in (ValueError('large integer conversion'), KeyboardInterrupt('controller stopped')):
-            run = self.rt.create(root=self.root, goal='terminal parse failure', backend='exec')
+            run = self.rt.create(workflow='legacy', root=self.root, goal='terminal parse failure', backend='exec')
             self.rt.add(run,[spec()],reason='regression')
             def transport(*args, **kwargs):
                 kwargs['on_started']('ended-process')

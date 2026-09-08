@@ -1,8 +1,8 @@
 ---
 name: codex-dynamic-workflow
-description: "Use for adaptive native-agent workflows: independent substantial branches, deep repository review, or authorized implementation with investigation, verification and review. Use native Luna for bounded exploration and verification alongside native Astra for complex judgment. Use for 并行、派工、深度审核、Agent Fleet; not trivial solo questions or generic JavaScript/CLI orchestration."
+description: "Use for Astra-owned native workflows with aggressive Luna supplemental coverage: implementation, investigation, deep review and independent verification. Astra keeps the complete mainline; Luna probes hunt omissions, counterexamples and missing tests without becoming acceptance dependencies."
 metadata:
-  version: "3.0.0"
+  version: "4.0.0"
 ---
 
 # Codex Dynamic Workflow — raw-source-first
@@ -10,7 +10,7 @@ metadata:
 Quality > automation > latency > cost > observability > recovery.
 Root owns the objective, authorization and final acceptance. All model delegation
 uses **native** agent tools: Luna for qualified exploration/verification and Astra
-for complex judgment and critical acceptance. Both share the actual host's native
+for the complete mainline and critical acceptance. Both share the actual host's native
 capacity. Runtime, when selected, owns admission and attempts through its SQLite ledger.
 Skill-only bookkeeping is not persistent; neither mode is a hard token/currency cap.
 
@@ -31,10 +31,25 @@ Runtime protocol and actual run receipts for qualification. Deterministic tests 
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
 
-Batch useful native Luna exploration within available host capacity and keep room
-for needed native Astra. Dispatch ready critical work without waiting for unrelated
-Luna siblings. No Luna slot exemption exists in the current native tool contract;
-queue excess work rather than pretending it is outside the host's capacity.
+Astra owns a complete end-to-end mainline: removing every Luna probe must still leave
+all work needed for the user's objective and acceptance. For every meaningful,
+non-trivial task, proactively launch at least three distinct native Luna supplemental
+probes when host capacity permits: (1) omissions/coverage, (2) counterexamples/failure
+modes, and (3) missing tests or alternative explanations. Three is a launch-intent
+floor, never a completion barrier or vote. Expand further while distinct high-value
+directions remain. Luna probes are readonly, optional and non-authoritative; they
+cannot satisfy mandatory acceptance or become dependencies of mainline work.
+
+Astra work always has capacity and budget priority. Queue or omit supplemental probes
+rather than delaying a ready mainline step, and never wait for unrelated Luna siblings
+to finish. Returned concrete evidence is not disposable: Root checks applicability to
+the current candidate, deduplicates it, and promotes material verified issues into the
+mainline. Empty agreement and generic advice do not create mainline work.
+
+Read the [v4 supplemental protocol](references/supplemental.md) for launch accounting,
+source isolation, Root triage and separate mainline acceptance. The three-probe floor
+is per meaningful task, not per turn, file or repair cycle. Document capability, capacity,
+budget, cancellation or genuinely insufficient independent directions when fewer run.
 
 ## Before work
 
@@ -57,23 +72,25 @@ host, another backend or a weaker model. Do not change configuration or permissi
 
 ## Control loop
 
-1. Identify the most useful unresolved objective or evidence gap. Use solo when
-   one bounded branch suffices; dispatch independent useful work when parallelism
-   materially improves coverage or latency. No fixed agent quota or model ratio.
+1. Astra/Root identifies and owns the complete unresolved mainline objective. Keep
+   closely dependent reasoning together; do not carve required work out merely to
+   create delegation. In parallel, open at least three distinct supplemental Luna
+   directions for meaningful work when capacity permits, then expand only for new
+   methods or coverage. No result-count or model-ratio success criterion exists.
 2. Pick the logical role: explorer, verifier, reproducer, designer, writer or
    reviewer. Select a compatible execution profile **separately** from that role.
-   Prefer Luna/max for ordinary bounded read-only tasks with sufficient source-based
-   checks; Luna/medium for mechanical checks; Astra for complex judgment and critical
-   acceptance. Apply the qualification and escalation rules in host and routing.
+   Use Astra for mainline reasoning, implementation and required acceptance. Use
+   Luna/max for supplemental investigation/second opinions and Luna/medium for
+   mechanical supplemental checks. Apply the qualification and escalation rules.
    Name the concrete deliverable and evidence/coverage checks before
    selecting Luna. Root owns conclusions whose completeness cannot be established
    by those checks, with capable independent review where required.
    The answer need not be known in advance. Batch distinct bounded exploration or
    verification directions; coverage, evidence collected or a deadline can define
    the stop rule. Unknown answers are not automatically high-risk judgments.
-   Split useful independent evidence collection, comparisons or checks from complex
-   judgment when each branch has its own deliverable. Use actual scope and risk,
-   not a role name such as "reviewer", to select the model; no quota or artificial split.
+   Add supplemental evidence collection, comparisons or checks with distinct
+   deliverables without removing necessary coverage from the Astra mainline.
+   Avoid artificial fragments; the three-probe floor concerns useful extra directions.
 3. Give each node its own scope, dependencies, raw sources, acceptance/stop rule,
    permissions and budget. Root alone may dispatch or approve scope expansion.
 4. Process ready results immediately. Open the cited original evidence before
@@ -90,9 +107,10 @@ selected whole-set ranking require a barrier. Independent verification can start
 while other exploration continues. A design panel is optional and compares real
 alternatives; votes and headcount never establish facts.
 
-Root may do unrelated work while children run, but must not duplicate an active
-child's scope, question and method. Children must not spawn, message peers, broaden
-permissions or restart budgets. Nested workflows and automatic writer replay are not implemented in v3.
+Root may do unrelated work while children run. An independent second opinion may
+revisit code with a stated distinct method or independent-review purpose; otherwise
+do not duplicate an active child's scope, question and method. Children must not spawn, message peers, broaden
+permissions or restart budgets. Nested workflows and automatic writer replay are not implemented in v4.
 
 ## Raw evidence, not inherited conclusions
 
@@ -174,12 +192,17 @@ A low-value or dry-expansion signal stops optional exploration, not mandatory re
 verification or acceptance. Passing a needed independent check is useful progress
 although it creates no new bug. No fixed three-wave ceiling.
 
+At a v4 mainline acceptance point, omit pending supplemental probes and stop further
+optional admissions. Do not wait for unrelated active probes to report mainline acceptance;
+record actual cleanup separately. Handle late material findings before final close. Runtime
+reports mainline_accepted separately from scope_complete and run/host cleanup state.
+
 For authorized implementation, continue investigation → decided change → focused
 tests → independent review → bounded repair without requesting approval at every
 step. These are available shapes, not a compulsory pipeline for every task.
 Root also counts as a writer. No overlapping owned write sets, even in different
 worktrees. Skill-only parallel writing requires the explicit authorization and isolation
-contract in [writes](references/writes.md); Runtime v3 serializes writers within its DB.
+contract in [writes](references/writes.md); Runtime v4 serializes writers within its DB.
 Commit/push/merge require the separate authority in that contract.
 
 Finish with actual changes or findings, actual verification, remaining risks/gaps,

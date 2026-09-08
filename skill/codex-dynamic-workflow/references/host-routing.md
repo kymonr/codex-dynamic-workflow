@@ -25,18 +25,25 @@ This package ships four optional profiles, installed separately from openai.yaml
 |---|---|---|
 | cwf_reader | Astra / high | Bounded read-only raw-source analysis and independent judgment |
 | cwf_writer | Astra / high | Scoped implementation; inherits permissions, never grants writes |
-| cwf_general | Luna / max | Ordinary bounded read-only investigation, analysis, planning and noncritical verification |
+| cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
 
 These are model mappings, not built-in tools or a model quality benchmark. Cost tiers
 are configured assumptions: check current availability and cost suitability. Existing
 Luna/Sol/Spark profiles and global defaults remain unchanged by installation.
 
-Prefer cwf_general for ordinary bounded read-only work when source access and named
+Astra owns the complete mainline by default. Do not move required investigation,
+reasoning, implementation or acceptance to Luna merely because it is bounded or
+read-only. For every meaningful non-trivial task, proactively use cwf_general for
+at least three distinct supplemental probes when capacity permits: omissions/coverage,
+counterexamples/failure modes, and missing tests/alternative explanations. These
+probes add search width; they are not mainline dependencies or votes.
+
+Use cwf_general for supplemental bounded read-only work when source access and named
 checks can establish its deliverable and capability is sufficient. Examples include
 scoped call-site tracing, comparing documented behavior with code, collecting test
-evidence and checking a small noncritical change. Ordinary planning or review does
-not automatically require Astra just because of its logical role. If cwf_general is
+evidence and checking a small noncritical change. A supplemental second opinion does
+not become required acceptance merely because its logical role is reviewer. If cwf_general is
 not exposed yet, an existing luna profile with compatible Luna/max and read-only
 constraints can perform this same task; inspect the actual host profile first.
 
@@ -55,7 +62,8 @@ Treat a clean Luna result as evidence within its checked scope; Root must examin
 the coverage and residual uncertainty even when Luna reports no capability gap.
 
 Use cwf_mechanical for low-risk mechanical work with objective checks and known cost
-suitability. Its economy reserve is narrower than ordinary Luna delegation. Use the
+suitability. In v4 it uses the same isolated supplemental allowance; the separate
+economy reserve remains available only to legacy policy. Use the
 capable route for complex cross-module reasoning, uncertain security impact, high-risk
 conclusions, implementation and critical independent acceptance, including writer review.
 An unknown answer alone does not require Astra. Luna may gather bounded evidence
@@ -63,9 +71,9 @@ about a difficult area while Root/capable review owns its high-risk conclusions.
 Unknown risk or inadequate checks require investigation or the capable route; an
 unqualified task must not be labeled ordinary or mechanical merely to lower cost.
 
-When useful evidence work can be separated from complex judgment, assign the bounded
-branch to Luna instead of absorbing it into Root or a broad Astra task. Keep closely
-dependent work together when decomposition would lose context or add more rework.
+Keep required evidence collection with the complete Astra mainline. Add independent
+Luna probes for extra coverage rather than removing required work from Astra. Keep
+closely dependent work together when decomposition would lose context or add rework.
 Batch distinct bounded exploratory or verification directions when useful, including
 large batches under the user's selected allowance. Stop on coverage/deadline or lack
 of useful new directions. Avoid duplicate or trivial fragments, not unknown outcomes.

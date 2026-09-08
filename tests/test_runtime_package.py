@@ -28,7 +28,7 @@ class RuntimePackageTests(unittest.TestCase):
         self.assertTrue(any('runtime' in e for e in validate(self.root)))
     def test_runtime_version_drift_is_rejected(self):
         p=self.root/SKILL/'scripts/cwf_runtime/core.py'
-        s=p.read_text(encoding='utf-8'); p.write_text(s.replace("VERSION = '3.0.0'","VERSION = '0.0.1'"),encoding='utf-8')
+        s=p.read_text(encoding='utf-8'); p.write_text(s.replace("VERSION = '4.0.0'","VERSION = '0.0.1'"),encoding='utf-8')
         self.assertTrue(any('runtime code version drift' in e for e in validate(self.root)))
     def test_exec_write_capability_cannot_be_silently_enabled(self):
         p=self.root/SKILL/'policy.json'; data=json.loads(p.read_text(encoding='utf-8'))

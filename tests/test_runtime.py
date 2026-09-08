@@ -33,7 +33,7 @@ class RuntimeTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(); self.base=Path(self.temp.name)
         self.root=self.base/'project'; self.root.mkdir(); (self.root/'a.py').write_text('VALUE = 3\n'); (self.root/'b.py').write_text('VALUE = 4\n')
         self.db=self.base/'state.sqlite'; self.rt=Runtime(self.db,initialize=True)
-        self.run=self.rt.create(root=self.root,goal='inspect',backend='native')
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='inspect',backend='native')
     def tearDown(self):
         self.rt.close(); self.temp.cleanup()
     def add(self,*nodes):
@@ -61,7 +61,7 @@ class RuntimeTests(unittest.TestCase):
     def test_optional_unfinished_work_cannot_finish(self):
         for outcome in ('failed','partial','interrupted'):
             with self.subTest(outcome=outcome):
-                self.run=self.rt.create(root=self.root,goal='optional '+outcome,backend='native')
+                self.run=self.rt.create(workflow='legacy', root=self.root,goal='optional '+outcome,backend='native')
                 self.add(spec(required=False))
                 if outcome=='interrupted':
                     p=self.acquire(); self.rt.bind(p['attempt'],'stopped-child',backend='native')
@@ -113,11 +113,11 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaises(WorkflowError):self.add(*nodes)
         self.assertEqual(self.rt.status(self.run)['nodes'],[])
     def test_depth_and_node_bound(self):
-        run=self.rt.create(root=self.root,goal='limited',backend='native',bounds={'max_nodes':2,'max_depth':1})
+        run=self.rt.create(workflow='legacy', root=self.root,goal='limited',backend='native',bounds={'max_nodes':2,'max_depth':1})
         with self.assertRaises(WorkflowError):self.rt.add(run,[spec('a'),spec('b',depends=['a'])],reason='test')
         with self.assertRaises(WorkflowError):self.rt.add(run,[spec('a'),spec('b'),spec('c')],reason='test')
     def test_boolean_not_count(self):
-        with self.assertRaises(WorkflowError):self.rt.create(root=self.root,goal='bad',backend='native',bounds={'capacity':True})
+        with self.assertRaises(WorkflowError):self.rt.create(workflow='legacy', root=self.root,goal='bad',backend='native',bounds={'capacity':True})
     def test_empty_sources_and_checks(self):
         for s in [spec(sources=[]),spec(checks=[])]:
             with self.assertRaises(WorkflowError):self.add(s)
@@ -135,7 +135,7 @@ class RuntimeTests(unittest.TestCase):
     def test_readonly_write_denied(self):
         with self.assertRaises(WorkflowError):self.add(spec(role='writer',writes=['a.py']))
     def test_exec_write_denied_even_with_implement(self):
-        run=self.rt.create(root=self.root,goal='edit',backend='exec',implement=True)
+        run=self.rt.create(workflow='legacy', root=self.root,goal='edit',backend='exec',implement=True)
         with self.assertRaises(WorkflowError):self.rt.add(run,[spec(role='writer',writes=['a.py'])],reason='test')
     def test_economy_not_for_high_risk_or_verifier(self):
         for s in [spec(tier='economy',risk='high',economy_qualified=True),spec(role='verifier',tier='economy',economy_qualified=True),spec(tier='economy')]:
@@ -147,7 +147,7 @@ class RuntimeTests(unittest.TestCase):
     def test_standalone_high_risk_review_roles_preserve_budget(self):
         for role in ('reviewer', 'verifier'):
             with self.subTest(role=role):
-                run=self.rt.create(root=self.root,goal='bounded review',backend='native',
+                run=self.rt.create(workflow='legacy', root=self.root,goal='bounded review',backend='native',
                     bounds={'approved':1,'reserve':0,'absolute':1,'strong_approved':1})
                 self.rt.add(run,[spec(role=role,risk='high')],reason='test')
                 packet=self.rt.acquire(run,backend='native')
@@ -178,7 +178,7 @@ class RuntimeTests(unittest.TestCase):
         self.done(b,result=reply(sources_opened=['b.py']));self.done(a)
         self.rt.finish(self.run)
     def test_native_completed_thread_retains_capacity(self):
-        run=self.rt.create(root=self.root,goal='one at a time',backend='native',bounds={'capacity':1})
+        run=self.rt.create(workflow='legacy', root=self.root,goal='one at a time',backend='native',bounds={'capacity':1})
         self.rt.add(run,[spec('a'),spec('b')],reason='test');self.run=run
         p,e,_=self.done(release=False)
         self.assertFalse(self.acquire()['admitted'])
@@ -194,7 +194,7 @@ class RuntimeTests(unittest.TestCase):
     def test_capacity_rejects_invalid_explicit_values(self):
         for value in (True,0,-1,'host'):
             with self.subTest(value=value),self.assertRaises(WorkflowError):
-                self.rt.create(root=self.root,goal='invalid capacity',backend='native',bounds={'capacity':value})
+                self.rt.create(workflow='legacy', root=self.root,goal='invalid capacity',backend='native',bounds={'capacity':value})
     def test_admission_is_atomic_between_competing_connections(self):
         self.add(spec())
         def acquire(_):
@@ -210,12 +210,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.rt.status(self.run)['budget']['used'],0)
         self.assertEqual(self.rt.status(self.run)['attempts'],[])
     def test_mandatory_strong_reservation_cannot_be_squeezed(self):
-        run=self.rt.create(root=self.root,goal='reserve',backend='native',bounds={'approved':2,'reserve':1,'absolute':3,'strong_approved':1})
+        run=self.rt.create(workflow='legacy', root=self.root,goal='reserve',backend='native',bounds={'approved':2,'reserve':1,'absolute':3,'strong_approved':1})
         self.rt.add(run,[spec('gate'),spec('optional',required=False)],reason='test')
         p=self.rt.acquire(run,backend='native');self.assertEqual(p['node_id'],'gate')
         self.assertFalse(self.rt.acquire(run,backend='native')['admitted'])
     def test_unfundable_required_graph_does_not_launch(self):
-        run=self.rt.create(root=self.root,goal='reserve',backend='native',bounds={'strong_approved':1})
+        run=self.rt.create(workflow='legacy', root=self.root,goal='reserve',backend='native',bounds={'strong_approved':1})
         self.rt.add(run,[spec('a'),spec('b')],reason='test')
         self.assertFalse(self.rt.acquire(run,backend='native')['admitted'])
     def test_duplicate_identical_completion_is_idempotent(self):
@@ -274,8 +274,8 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowError):self.rt.finish(self.run)
         with patch('cwf_runtime.core.time.time',return_value=self.rt.run(self.run)['deadline']+1),self.assertRaises(WorkflowError):self.acquire()
     def test_writer_cross_run_exclusion_and_no_replay(self):
-        a=self.rt.create(root=self.root,goal='edit',backend='native',implement=True)
-        b=self.rt.create(root=self.root,goal='inspect',backend='native')
+        a=self.rt.create(workflow='legacy', root=self.root,goal='edit',backend='native',implement=True)
+        b=self.rt.create(workflow='legacy', root=self.root,goal='inspect',backend='native')
         self.rt.add(a,[spec('w',role='writer',writes=['a.py']),spec('v',role='reviewer',depends=['w'],verifies='w')],reason='test')
         self.rt.add(b,[spec()],reason='test')
         p=self.rt.acquire(a,backend='native');self.assertTrue(p['admitted'])
@@ -283,7 +283,7 @@ class RuntimeTests(unittest.TestCase):
         self.rt.release(p['attempt'],external_id=None,confirmed=True,reason='not launched')
         with self.assertRaises(WorkflowError):self.rt.retry(a,'w',reason='try writer again')
     def test_writer_effects_and_postwrite_review(self):
-        self.run=self.rt.create(root=self.root,goal='edit',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='edit',backend='native',implement=True)
         self.add(spec('w',role='writer',writes=['a.py']),spec('v',role='reviewer',depends=['w'],verifies='w'))
         p=self.acquire();(self.root/'a.py').write_text('VALUE=5\n')
         self.done(p,result=reply(changed_files=['a.py']))
@@ -291,20 +291,20 @@ class RuntimeTests(unittest.TestCase):
         self.rt.refresh(self.run,'v',reason='bind review to actual post-write candidate')
         self.done();self.assertEqual(self.rt.finish(self.run)['status'],'completed')
     def test_explore_write_review_keeps_prewrite_evidence_historical(self):
-        self.run=self.rt.create(root=self.root,goal='edit',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='edit',backend='native',implement=True)
         self.add(spec('explore'),spec('w',role='writer',writes=['a.py'],depends=['explore']),spec('v',role='reviewer',depends=['w'],verifies='w'))
         self.done();p=self.acquire();(self.root/'a.py').write_text('VALUE=5\n');self.done(p,result=reply(changed_files=['a.py']))
         self.rt.refresh(self.run,'v',reason='bind final review to post-write source');self.done()
         self.assertEqual(self.rt.finish(self.run)['status'],'completed')
         event=self.rt.events(self.run)[-1];self.assertIn('explore',event['data']['historical_write_evidence'])
     def test_write_history_does_not_hide_later_external_drift(self):
-        self.run=self.rt.create(root=self.root,goal='edit',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='edit',backend='native',implement=True)
         self.add(spec('explore'),spec('w',role='writer',writes=['a.py'],depends=['explore']),spec('v',role='reviewer',depends=['w'],verifies='w'))
         self.done();p=self.acquire();(self.root/'a.py').write_text('VALUE=5\n');self.done(p,result=reply(changed_files=['a.py']))
         self.rt.refresh(self.run,'v',reason='bind review');self.done();(self.root/'a.py').write_text('OUTSIDE=99')
         with self.assertRaises(WorkflowError):self.rt.finish(self.run)
     def test_writer_requires_reserved_review_even_if_low_risk(self):
-        self.run=self.rt.create(root=self.root,goal='edit',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='edit',backend='native',implement=True)
         self.add(spec('w',role='writer',writes=['a.py']))
         self.assertFalse(self.acquire()['admitted'])
     def test_readonly_resume_after_reopen_keeps_spending(self):
@@ -372,7 +372,7 @@ class ExecutorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'a.py').write_text('VALUE=3');db=root/'state.sqlite'
             with Runtime(db,initialize=True) as r:
-                run=r.create(root=root,goal='inspect',backend='exec');r.add(run,[spec(task='Explain --config without changing it')],reason='test')
+                run=r.create(workflow='legacy', root=root,goal='inspect',backend='exec');r.add(run,[spec(task='Explain --config without changing it')],reason='test')
                 def transport(argv,cwd,prompt,**kw):
                     self.assertEqual(argv[argv.index('--sandbox')+1],'read-only');self.assertEqual(argv[-1],'-');self.assertNotIn('Explain --config',argv)
                     self.assertIn('Explain --config',prompt);kw['on_started']('test-process')
@@ -383,7 +383,7 @@ class ExecutorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'a.py').write_text('VALUE=3')
             with Runtime(root/'db.sqlite',initialize=True) as r:
-                run=r.create(root=root,goal='inspect',backend='exec');r.add(run,[spec()],reason='test')
+                run=r.create(workflow='legacy', root=root,goal='inspect',backend='exec');r.add(run,[spec()],reason='test')
                 def transport(*a,**kw):
                     kw['on_started']('test-process');return ProcessResult('test-process',0,'{}','')
                 with self.assertRaises(WorkflowError):execute_one(r,run,executable=sys.executable,transport=transport)
@@ -392,7 +392,7 @@ class ExecutorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'a.py').write_text('VALUE=3')
             with Runtime(root/'db.sqlite',initialize=True) as r:
-                run=r.create(root=root,goal='inspect',backend='exec');r.add(run,[spec()],reason='test')
+                run=r.create(workflow='legacy', root=root,goal='inspect',backend='exec');r.add(run,[spec()],reason='test')
                 def transport(*a,**kw):kw['on_started']('test-process');raise OSError('unknown host state')
                 with self.assertRaises(OSError):execute_one(r,run,executable=sys.executable,transport=transport)
                 self.assertEqual(r.status(run)['budget']['active_holds'],1);self.assertEqual(r.status(run)['budget']['used'],1)

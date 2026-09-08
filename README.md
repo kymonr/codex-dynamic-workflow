@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v3.0.0
+# Codex Dynamic Workflow v4.0.0
 
 仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 
@@ -11,6 +11,9 @@ $codex-dynamic-workflow
 适用：动态调查、深度审核，以及明确授权后的实现、测试、独立 review 与有限修复。
 主 Skill 在 `skill/codex-dynamic-workflow/`；模型执行 profile 在 `profiles/`。
 旧 `codex-workflow` Python/QuickJS 仓库保持独立。v3 新增显式 Runtime；确定性验收与真实模型集成状态分开记录。
+
+当前协议：[v4 设计](DESIGN_V4.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)。
+确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
 
 ## 本机验证与安装
 
@@ -29,10 +32,12 @@ python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME> --apply
 不同客户端的 discovery 路径可能不同：此安装器面向现场已有的 CODEX_HOME/skills
 布局；无此已确认布局时先验证 discovery，不能复制到多个位置制造同名 Skill。
 
-普通且范围明确的只读调查、分析和非关键验证优先使用 cwf_general（Luna/max）；
-机械检查使用 cwf_mechanical（Luna/medium）。复杂判断和关键独立验收使用
-cwf_reader（Astra/high）；实施使用 cwf_writer（Astra/high，继承权限）。
-按实际范围、风险和验收方法选择模型，不按「审阅」等角色名称一律升级，也不设调用比例。
+Astra 保留完整主线：必要调查、实现、测试与验收不转交给可选 Luna。
+每个有实质工作量的任务，容量允许时主动启动至少 3 个不同方向的 Luna 补充探针：
+查漏覆盖、反例/失败模式、测试缺口/第二意见；有更多独立高价值方向时继续扩展。
+这是每任务的启动意图下限，不是每轮重新开 3 个，也不是等齐结果才能交付。
+主线读取/复核使用 cwf_reader（Astra/high），实施使用 cwf_writer；
+补充探索使用 cwf_general（Luna/max），机械补充使用 cwf_mechanical（Luna/medium）。
 模型名称是初始配置，不代表账户可用性、价格或实测质量。安装保留现有 luna profile 和全局默认值。
 
 分给 Luna 前，先明确具体交付物及其复算或原始证据核对方法。Luna 可以报告「指定清单无哈希差异」
@@ -46,8 +51,10 @@ Luna 可批量探索和验证，两种模型共同受宿主原生槽位限制，
 CLI 模型派工入口已停用；Runtime 的本地 Python 命令只管理任务状态，由主线程调用原生工具执行。
 此前 exec 记录及回归代码保留，不能作为当前派工入口或原生容量不足时的替代路线。
 
-显式 Runtime 通过 `ordinary_qualified: true` 记录普通任务资格；未显式指定 `tier` 时选择 Luna/max。
-高风险任务和 writer 的复核仍要求 strong。普通调用使用已批准的非 strong 额度，机械储备保持独立。
+新 Runtime 默认 `workflow: "astra-mainline"`；Luna 节点必须标记 `supplemental: true`、
+`required: false`，并绑定与当前候选匹配的隔离 `snapshot_root`。默认补充额度 12 次，
+保护未用完的 Astra strong 额度及至少 1 个宿主槽位。新补充调用不能借用旧机械储备。
+主线验收、补充覆盖、执行结束和线程资源清理分别报告；重要补充发现必须由 Root 处置或升级。
 旧任务的路由与累计预算不变；未包含 ordinary 路由的旧合同不会自动加入模型。详见 [Runtime 协议](skill/codex-dynamic-workflow/references/runtime.md)。
 
 ## 2.0.2 ownership 与元数据校验
@@ -87,7 +94,7 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 `policy_reference.py` 的测试验证纯参考逻辑，不是对真实模型行为或宿主安全边界的证明。
 真实 Codex 集成验收另存 `reports/`，区分已观察、失败和未覆盖；不宣称零缺陷。
 
-完整设计见 `DESIGN.md`；本次 review、安装与验收见 `reports/`；
+当前设计见 [DESIGN_V4.md](DESIGN_V4.md)，`DESIGN.md` 与 `DESIGN_V3.md` 保留历史设计；本次 review、安装与验收见 `reports/`；
 变更对照见 [CHANGELOG.md](CHANGELOG.md)。源目录与安装目录是独立副本。
 
 ## Windows 原位更新例外
@@ -99,7 +106,7 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 该例外不具备进程强杀/断电时的文件级原子性：半写状态记为恢复冲突，必须检查前像，
 不会覆盖可能来自其他进程的变化或谎报已恢复。默认模式仍为原子替换。
 
-## v3 Runtime 使用入口
+## v4 Runtime 使用入口
 
 普通 `$codex-dynamic-workflow` 按原生 Skill-only 模式工作；显式选择 Runtime 时，SQLite 统一管理动态图、调用预留、尝试记录和事件。当前新任务全部使用 native，历史 exec 记录保持可读且不改写。详细协议见 [runtime.md](skill/codex-dynamic-workflow/references/runtime.md)。
 
@@ -110,6 +117,8 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite init
 python -B scripts/workflow.py --db .delivery/runtime.sqlite create --plan examples/runtime-readonly.json
 python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 ```
+含 3 个隔离快照探针的示例可用 `python -B scripts/prepare_v4_example.py --output <不存在的任务示例目录>` 生成，再将生成的 `plan.json` 交给 create。
+调度 Luna 时由 Root 将真实宿主观察传入 `next --host-capacity N --host-active M`；不能把示例数值冒充实际容量。
 `RUN_ID` 使用 create 的真实返回值。Root 领取任务后调用实际 native 工具，回填准确 child ID、结果及对应生命周期回执；Python 只管理状态。`exec-one` 与 `luna-pool` 已停用，不能用于当前模型派工。
 
 安装副本自带完整 Runtime：`python -B <Skill安装目录>/scripts/cwf.py ...`，不依赖源码目录或额外 pip 安装。根目录旧 `scripts/policy_reference.py` 只是兼容导入；真正预算函数与 Runtime 共享同一份实现。安装器排除 `__pycache__`/字节码，不把运行缓存接管成受管源码。
@@ -118,4 +127,4 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 
 确定性测试覆盖真实 SQLite、竞争准入、负面状态、隔离安装副本及无害本机进程；这些不是实际模型或 native 子代理的端到端证明。真实调用和独立模型 review 的状态以 `reports/` 本轮记录为准。未完成的 live 集成验收不能标记为通过。
 
-2026-09-06 已通过两代理真实 native readonly 执行验收，使用安装副本完成准入、实际身份绑定、原文检查、独立验证、宿主完成观察及 SQLite 重开读回。执行协调与宿主资源释放分别记账：本次 `execution_holds=0`，两条 `host_resource_holds` 仍保留，物理回收状态为 `UNKNOWN`。本地完整证据位于 `reports/native-readonly-live-20260906/report.md`；可分发源码副本不包含本地报告。
+历史 v3 在 2026-09-06 已通过两代理真实 native readonly 执行验收，使用安装副本完成准入、实际身份绑定、原文检查、独立验证、宿主完成观察及 SQLite 重开读回。执行协调与宿主资源释放分别记账：本次 `execution_holds=0`，两条 `host_resource_holds` 仍保留，物理回收状态为 `UNKNOWN`。本地完整证据位于 `reports/native-readonly-live-20260906/report.md`；可分发源码副本不包含本地报告。

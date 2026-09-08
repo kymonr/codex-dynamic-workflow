@@ -21,7 +21,9 @@ def parser():
     c=sub.add_parser('add'); c.add_argument('--run',required=True); c.add_argument('--nodes',required=True); c.add_argument('--reason',required=True)
     for name in ('next','status','events','finish','claims','exec-one','luna-pool'):
         c=sub.add_parser(name); c.add_argument('--run',required=True)
-        if name=='next': c.add_argument('--backend',required=True,choices=['native','exec'])
+        if name=='next':
+            c.add_argument('--backend',required=True,choices=['native','exec'])
+            c.add_argument('--host-capacity',type=int); c.add_argument('--host-active',type=int)
         if name=='events': c.add_argument('--after',type=int,default=0)
         if name in {'exec-one','luna-pool'}: c.add_argument('--executable'); c.add_argument('--timeout',type=int,default=600)
         if name=='luna-pool': c.add_argument('--workers',type=int,required=True)
@@ -29,11 +31,12 @@ def parser():
     c=sub.add_parser('complete'); c.add_argument('--attempt',required=True); c.add_argument('--external-id',required=True); c.add_argument('--backend',choices=['native','exec'],required=True); c.add_argument('--result',required=True); c.add_argument('--usage')
     c=sub.add_parser('release'); c.add_argument('--attempt',required=True); c.add_argument('--external-id'); c.add_argument('--confirmed',action='store_true'); c.add_argument('--reason',required=True)
     c.add_argument('--kind',choices=['host-resource','readonly-turn-completed'],default='host-resource'); c.add_argument('--receipt')
-    for name in ('retry','refresh'):
+    for name in ('retry','refresh','omit'):
         c=sub.add_parser(name); c.add_argument('--run',required=True); c.add_argument('--node',required=True); c.add_argument('--reason',required=True)
     c=sub.add_parser('resume'); c.add_argument('--run',required=True); c.add_argument('--contract-hash',required=True); c.add_argument('--reason',required=True); c.add_argument('--extend-deadline-seconds',type=int,default=0)
     c=sub.add_parser('cancel'); c.add_argument('--run',required=True); c.add_argument('--reason',required=True)
     c=sub.add_parser('decide'); c.add_argument('--claim',required=True); c.add_argument('--disposition',required=True); c.add_argument('--reason',required=True)
+    c=sub.add_parser('triage'); c.add_argument('--claim',required=True); c.add_argument('--disposition',required=True,choices=['dismissed','advisory','promoted']); c.add_argument('--reason',required=True); c.add_argument('--target')
     return p
 
 
@@ -47,7 +50,7 @@ def main(argv=None):
             if op=='init': result={'schema':1,'version':VERSION}
             elif op=='create':
                 data=read_json(args.plan)
-                mapping(data,{'root','goal','backend','bounds','routes','implement','run_id','nodes','capacity_scope','execution_pool'},{'root','goal','backend','nodes'},'plan')
+                mapping(data,{'root','goal','backend','bounds','routes','implement','run_id','nodes','capacity_scope','execution_pool','workflow'},{'root','goal','backend','nodes'},'plan')
                 if data['backend'] != 'native' or data.get('execution_pool') is not None:
                     raise WorkflowError('native-only routing: new controller plans must use backend=native without an exec pool')
                 # Invalid initial plans retain a cancelled audit record, never an executable partial run.
@@ -58,10 +61,12 @@ def main(argv=None):
                     raise
                 result={'run_id':rid}
             elif op=='add': result={'nodes':rt.add(args.run,read_json(args.nodes),reason=args.reason)}
-            elif op=='next': result=rt.acquire(args.run,backend=args.backend)
+            elif op=='next': result=rt.acquire(args.run,backend=args.backend,host_capacity=args.host_capacity,host_active=args.host_active)
             elif op=='bind': result=rt.bind(args.attempt,args.external_id,backend=args.backend)
             elif op=='complete': result=rt.complete(args.attempt,read_json(args.result),external_id=args.external_id,backend=args.backend,usage=read_json(args.usage) if args.usage else None)
             elif op=='release': result=rt.release(args.attempt,external_id=args.external_id,confirmed=args.confirmed,reason=args.reason,kind=args.kind,receipt=read_json(args.receipt) if args.receipt else None)
+            elif op=='omit': result=rt.omit(args.run,args.node,reason=args.reason)
+            elif op=='triage': result=rt.triage(args.claim,args.disposition,reason=args.reason,target=args.target)
             elif op=='retry': result=rt.retry(args.run,args.node,reason=args.reason)
             elif op=='refresh': result=rt.refresh(args.run,args.node,reason=args.reason)
             elif op=='resume': result=rt.resume(args.run,contract_hash=args.contract_hash,reason=args.reason,extend_deadline_seconds=args.extend_deadline_seconds)

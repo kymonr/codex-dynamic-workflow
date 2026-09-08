@@ -21,14 +21,15 @@ import uuid
 
 from .policy import budget_admission
 
-VERSION = '3.0.0'
+VERSION = '4.0.0'
 SCHEMA = 1
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
 ROLES = {'explorer', 'verifier', 'reproducer', 'designer', 'writer', 'reviewer'}
-DEFAULTS = dict(approved=20, reserve=4, absolute=24, strong_approved=8,
+DEFAULTS = dict(approved=28, reserve=4, absolute=32, strong_approved=8,
                 capacity=None, max_nodes=64, max_depth=6, max_attempts=3,
                 deadline_seconds=1800)
+SUPPLEMENTAL_DEFAULTS = dict(supplemental_approved=12, mainline_capacity_reserve=1)
 DEFAULT_ROUTES = {
     'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
     'ordinary': {'model': 'gpt-5.6-luna', 'effort': 'max', 'profile': 'cwf_general'},
@@ -290,13 +291,17 @@ class Runtime:
         return dict(row)
 
     def create(self, *, root, goal, backend, bounds=None, routes=None, implement=False, run_id=None,
-               capacity_scope=None, execution_pool=None):
+               capacity_scope=None, execution_pool=None, workflow='astra-mainline'):
         if backend not in {'native', 'exec'}:
             raise WorkflowError('backend must be native or exec')
         if capacity_scope not in (None, 'database', 'backend'):
             raise WorkflowError('capacity_scope must be database or backend')
         if execution_pool not in (None, 'luna'):
             raise WorkflowError('execution_pool must be luna when selected')
+        if workflow not in {'astra-mainline', 'legacy'}:
+            raise WorkflowError('unknown workflow policy')
+        if workflow == 'astra-mainline' and (backend != 'native' or execution_pool is not None):
+            raise WorkflowError('Astra mainline requires native execution')
         source = Path(root).absolute()
         if source.is_symlink() or not source.is_dir() or getattr(source.lstat(), 'st_file_attributes', 0) & 1024:
             raise WorkflowError('project root must be an existing non-link directory')
@@ -304,13 +309,15 @@ class Runtime:
         goal = text(goal, 'goal')
         boolean(implement, 'implement')
         options = dict(DEFAULTS)
+        if workflow == 'astra-mainline':
+            options.update(SUPPLEMENTAL_DEFAULTS)
         if bounds is not None:
-            mapping(bounds, set(DEFAULTS), set(), 'bounds')
+            mapping(bounds, set(options), set(), 'bounds')
             options.update(bounds)
         for key, value in options.items():
             if key == 'capacity' and value is None:
                 continue  # Host capacity applies; no additional controller ceiling.
-            integer(value, key, 0 if key in {'reserve', 'strong_approved'} else 1)
+            integer(value, key, 0 if key in {'reserve', 'strong_approved', 'supplemental_approved'} else 1)
         if options['approved'] + options['reserve'] > options['absolute'] or options['strong_approved'] > options['approved']:
             raise WorkflowError('inconsistent allowance bounds')
         routing = loads(dump(DEFAULT_ROUTES if routes is None else routes))
@@ -329,9 +336,13 @@ class Runtime:
             for tier in ('ordinary', 'economy'):
                 if any(routing.get(tier, {}).get(k) != DEFAULT_ROUTES[tier][k] for k in ('model', 'effort')):
                     raise WorkflowError('Luna pool requires ordinary Luna/max and economy Luna/medium routes')
+        if workflow == 'astra-mainline':
+            for tier, model in [('strong', 'gpt-6-astra'), ('writer', 'gpt-6-astra'), ('ordinary', 'gpt-5.6-luna'), ('economy', 'gpt-5.6-luna')]:
+                if routing.get(tier, {}).get('model') != model or routing[tier]['profile'] != DEFAULT_ROUTES[tier]['profile']:
+                    raise WorkflowError('Astra/Luna route identity mismatch; use an explicit legacy policy for other mappings')
         rid = identifier(run_id or uuid.uuid4().hex)
         contract = {'version': VERSION, 'bounds': options, 'routes': routing, 'implement': implement,
-                    'backend': backend, 'root': str(source), 'goal': goal}
+                    'backend': backend, 'root': str(source), 'goal': goal, 'workflow': workflow}
         # Keep omitted fields and saved legacy contract hashes unchanged.
         if capacity_scope is not None: contract['capacity_scope'] = capacity_scope
         if execution_pool is not None: contract['execution_pool'] = execution_pool
@@ -349,7 +360,7 @@ class Runtime:
         if time.time() >= r['deadline']:
             raise WorkflowError('run deadline reached')
         contract = loads(r['contract'])
-        if contract.get('version') != VERSION or sha(contract) != r['contract_hash']:
+        if contract.get('version') not in {'3.0.0', VERSION} or sha(contract) != r['contract_hash']:
             raise WorkflowError('runtime/contract identity changed; recovery requires explicit migration')
         return r, contract
 
@@ -364,7 +375,9 @@ class Runtime:
                 raise WorkflowError('graph node limit reached')
             additions = {}
             for raw in specs:
-                allowed = {'id', 'role', 'task', 'sources', 'writes', 'depends', 'checks', 'risk', 'tier', 'required', 'economy_qualified', 'ordinary_qualified', 'verifies'}
+                allowed = {'id', 'role', 'task', 'sources', 'writes', 'depends', 'checks', 'risk', 'tier', 'required', 'economy_qualified', 'ordinary_qualified', 'verifies', 'supplemental', 'snapshot_root'}
+                if c.get('workflow') != 'astra-mainline':
+                    allowed -= {'supplemental', 'snapshot_root'}
                 mapping(raw, allowed, {'id', 'role', 'task', 'sources', 'checks'}, 'node')
                 s = dict(raw)
                 identifier(s['id']); text(s['task'], 'task')
@@ -376,12 +389,29 @@ class Runtime:
                 s['writes'] = path_list(s.get('writes', []), 'writes', True)
                 s.setdefault('depends', []); s.setdefault('risk', 'medium')
                 s.setdefault('ordinary_qualified', False)
-                s.setdefault('required', True); s.setdefault('economy_qualified', False); s.setdefault('verifies', None)
+                s.setdefault('required', True); s.setdefault('economy_qualified', False); s.setdefault('verifies', None); s.setdefault('supplemental', False)
                 boolean(s['required'], 'required'); boolean(s['economy_qualified'], 'economy_qualified')
-                boolean(s['ordinary_qualified'], 'ordinary_qualified')
+                boolean(s['ordinary_qualified'], 'ordinary_qualified'); boolean(s['supplemental'], 'supplemental')
                 s.setdefault('tier', 'ordinary' if s['ordinary_qualified'] else 'strong')
+                if s['supplemental'] and (s['required'] or s['role'] == 'writer' or s['writes'] or s['verifies'] is not None or s['tier'] == 'strong'):
+                    raise WorkflowError('supplemental nodes must be optional readonly non-verifying Luna work')
                 if s['risk'] not in {'low', 'medium', 'high'} or s['tier'] not in {'strong', 'ordinary', 'economy'}:
                     raise WorkflowError('invalid risk/tier')
+                if c.get('workflow') == 'astra-mainline' and not s['supplemental'] and s['tier'] != 'strong':
+                    raise WorkflowError('mainline requires Astra strong routing')
+                if 'snapshot_root' in s and not s['supplemental']:
+                    raise WorkflowError('only supplemental nodes may bind a snapshot root')
+                if s['supplemental']:
+                    if 'snapshot_root' not in s:
+                        raise WorkflowError('supplemental needs an isolated snapshot_root')
+                    text(s['snapshot_root'], 'snapshot_root', 4096)
+                    sr = Path(s['snapshot_root']).absolute()
+                    if not sr.is_dir() or sr.is_symlink() or getattr(sr.lstat(), 'st_file_attributes', 0) & 1024 or sr.resolve() != sr:
+                        raise WorkflowError('snapshot root must be a canonical non-link directory')
+                    live = Path(r['root'])
+                    if sr == live or sr.is_relative_to(live) or live.is_relative_to(sr):
+                        raise WorkflowError('supplemental snapshot must be isolated from the live candidate')
+                    s['snapshot_root'] = str(sr)
                 if c.get('execution_pool') == 'luna' and (s['tier'] == 'strong' or s['risk'] == 'high' or s['role'] == 'writer'):
                     raise WorkflowError('Luna pool accepts only qualified low/medium-risk readonly ordinary/economy nodes')
                 if s['tier'] == 'ordinary':
@@ -426,6 +456,8 @@ class Runtime:
             for n in graph:
                 if visit(n, set()) > c['bounds']['max_depth']:
                     raise WorkflowError('dependency depth limit reached')
+                if not graph[n].get('supplemental', False) and any(graph[d].get('supplemental', False) for d in graph[n]['depends']):
+                    raise WorkflowError('mainline nodes cannot depend on supplemental work')
                 s = graph[n]
                 if s['verifies'] is not None:
                     target = graph[s['verifies']]
@@ -440,7 +472,9 @@ class Runtime:
                 if target is not None and target['role'] == 'writer':
                     original = bind_sources(target)
                     missing |= {p for p in target['writes'] if original[p] is None} & set(s['sources'])
-                snap = fingerprint(Path(r['root']), sorted(set(s['sources'] + s['writes'])), missing)
+                snap = fingerprint(Path(s.get('snapshot_root', r['root'])), sorted(set(s['sources'] + s['writes'])), missing)
+                if s.get('supplemental') and snap != fingerprint(Path(r['root']), s['sources']):
+                    raise WorkflowError('supplemental snapshot does not match the current candidate')
                 snapshots[s['id']] = snap
                 return snap
             for s in additions.values():
@@ -459,7 +493,7 @@ class Runtime:
             expected = loads(n['result']).get('snapshot', expected)
         if s['role'] != 'writer' and any(h is None for h in expected.values()):
             raise WorkflowError(f"deferred review sources require explicit refresh: {n['id']}")
-        current = fingerprint(Path(r['root']), list(expected), set(s['writes']))
+        current = fingerprint(Path(s.get('snapshot_root', r['root'])), list(expected), set(s['writes']))
         if current != expected:
             raise WorkflowError(f"candidate drift: {n['id']}")
         return current
@@ -476,20 +510,22 @@ class Runtime:
         return bool(attempt['released']) or self._readonly_turn_receipt(attempt) is not None
 
     def _held_conflict(self, r, s):
-        reads = physical(r['root'], s['sources']); writes = physical(r['root'], s['writes'])
+        reads = physical(s.get('snapshot_root', r['root']), s['sources']); writes = physical(r['root'], s['writes'])
         rows = self.conn.execute('SELECT attempts.token,attempts.run_id,attempts.released,runs.root,nodes.spec FROM attempts JOIN runs ON runs.id=attempts.run_id JOIN nodes ON nodes.run_id=attempts.run_id AND nodes.id=attempts.node_id WHERE attempts.released=0').fetchall()
         for row in rows:
             if self._execution_reconciled(row):
                 continue
             other = loads(row['spec'])
-            other_reads = physical(row['root'], other['sources']); other_writes = physical(row['root'], other['writes'])
+            other_reads = physical(other.get('snapshot_root', row['root']), other['sources']); other_writes = physical(row['root'], other['writes'])
             if writes and other_writes:  # One writer per coordination DB, even across worktrees.
                 return True
             if overlap(writes, other_reads + other_writes) or overlap(reads, other_writes):
                 return True
         return False
 
-    def acquire(self, run, *, backend):
+    def acquire(self, run, *, backend, host_capacity=None, host_active=None):
+        if host_capacity is not None: integer(host_capacity, 'host_capacity', 1)
+        if host_active is not None: integer(host_active, 'host_active')
         with self.tx():
             r, c = self.open_run(run)
             if backend != r['backend']:
@@ -504,8 +540,15 @@ class Runtime:
                 active = self.conn.execute('SELECT COUNT(*) FROM attempts JOIN runs ON runs.id=attempts.run_id WHERE attempts.released=0 AND runs.backend=?', (backend,)).fetchone()[0]
             else:
                 active = self.conn.execute('SELECT COUNT(*) FROM attempts WHERE released=0').fetchone()[0]
+            strict = c.get('workflow') == 'astra-mainline'
+            supplemental_used = sum(n['attempts'] for n in nodes if loads(n['spec']).get('supplemental'))
+            capacity = c['bounds']['capacity']
+            if host_capacity is not None:
+                capacity = min(capacity, host_capacity) if capacity is not None else host_capacity
+            active = max(active, host_active or 0)
+            cutoff = self.conn.execute("SELECT 1 FROM events WHERE run_id=? AND kind='mainline.accepted'", (run,)).fetchone() is not None
             reasons = []
-            for n in sorted(nodes, key=lambda n: not loads(n['spec'])['required']):
+            for n in sorted(nodes, key=lambda n: (loads(n['spec']).get('supplemental', False), not loads(n['spec'])['required'])):
                 s = loads(n['spec'])
                 if n['state'] != 'pending':
                     continue
@@ -524,11 +567,20 @@ class Runtime:
                 except WorkflowError as exc:
                     reasons.append({'node': n['id'], 'reason': str(exc)}); continue
                 b = c['bounds']
+                if strict and s.get('supplemental'):
+                    why = None
+                    if cutoff: why = 'supplemental-cutoff-after-mainline-acceptance'
+                    elif supplemental_used >= b['supplemental_approved']: why = 'supplemental-allowance-exhausted'
+                    elif capacity is None: why = 'host-capacity-unknown'
+                    elif active + 1 + b['mainline_capacity_reserve'] > capacity: why = 'mainline-capacity-reserved'
+                    elif r['used'] + 1 + max(mandatory_strong, b['strong_approved'] - r['strong_used']) > min(b['approved'], b['absolute']): why = 'mainline-allowance-reserved'
+                    if why:
+                        reasons.append({'node': n['id'], 'reason': why}); continue
                 decision = budget_admission(approved=b['approved'], reserve=b['reserve'], absolute=b['absolute'],
                     used=r['used'], reserve_used=r['reserve_used'], strong_used=r['strong_used'], strong_approved=b['strong_approved'],
                     economy=s['tier'] != 'strong',
                     economy_qualified=s.get('ordinary_qualified', False) if s['tier'] == 'ordinary' else s['economy_qualified'],
-                    reserve_eligible=s['tier'] == 'economy', active=active, capacity=b['capacity'],
+                    reserve_eligible=s['tier'] == 'economy' and not s.get('supplemental'), active=active, capacity=capacity,
                     mandatory_pending=mandatory, mandatory_strong_pending=mandatory_strong,
                     optional=not s['required'], consumes_mandatory=s['required'])
                 if decision.outcome != 'allow':
@@ -543,7 +595,7 @@ class Runtime:
                 self.event(run, 'attempt.reserved', {'node': n['id'], 'attempt': token, 'allowance': decision.reason})
                 route = c['routes']['writer' if s['role'] == 'writer' else s['tier']]
                 return {'admitted': True, 'run_id': run, 'node_id': n['id'], 'attempt': token, 'backend': backend,
-                        'contract_hash': r['contract_hash'], 'root': r['root'], 'goal': r['goal'],
+                        'contract_hash': r['contract_hash'], 'root': s.get('snapshot_root', r['root']), 'candidate_root': r['root'], 'goal': r['goal'],
                         'task': s, 'snapshot': loads(n['snapshot']), 'route': route, 'deadline': r['deadline'],
                         'permissions': {'write_files': s['writes'], 'delete_files': False, 'publication': False, 'child_spawn': False, 'peer_messaging': False}}
             self.event(run, 'admission.deferred', {'reasons': reasons})
@@ -617,7 +669,7 @@ class Runtime:
                 if not set(evidence) <= set(opened) or claim['existence'] not in {'supported','disproved','unknown'} or claim['applicability'] not in {'supported','disproved','unknown'}:
                     raise WorkflowError('claim lacks valid opened-source evidence')
             before = loads(n['snapshot'])
-            current = fingerprint(Path(r['root']), list(before), set(s['writes']))
+            current = fingerprint(Path(s.get('snapshot_root', r['root'])), list(before), set(s['writes']))
             drift = [p for p in before if current[p] != before[p]]
             outcome = result['outcome']
             if s['role'] == 'writer':
@@ -720,7 +772,7 @@ class Runtime:
         integer(extend_deadline_seconds, 'deadline extension', 0, 86400)
         with self.tx():
             r = self.run(run); c = loads(r['contract'])
-            if r['status'] != 'open' or contract_hash != r['contract_hash'] or sha(c) != contract_hash or c.get('version') != VERSION:
+            if r['status'] != 'open' or contract_hash != r['contract_hash'] or sha(c) != contract_hash or c.get('version') not in {'3.0.0', VERSION}:
                 raise WorkflowError('run state or current contract identity does not permit resume')
             if self.conn.execute('SELECT 1 FROM attempts WHERE run_id=? AND released=0', (run,)).fetchone():
                 raise WorkflowError('all prior host activity must be reconciled before resume')
@@ -782,6 +834,8 @@ class Runtime:
         with self.tx():
             r,_=self.open_run(run); n=self.node(run,node); s=loads(n['spec'])
             if n['state']!='pending' or n['attempts']!=0: raise WorkflowError('only never-executed pending nodes may refresh; create a successor otherwise')
+            if s.get('supplemental'):
+                raise WorkflowError('snapshot probes require a new node, not refresh')
             before=loads(n['snapshot'])
             deferred = {p for p,h in before.items() if h is None} if s['role'] != 'writer' else set()
             if deferred:
@@ -813,6 +867,8 @@ class Runtime:
             row=self.conn.execute('SELECT * FROM claims WHERE id=?',(claim_id,)).fetchone()
             if row is None: raise WorkflowError('unknown claim')
             r,_=self.open_run(row['run_id']); n=self.node(row['run_id'],row['node_id'])
+            if loads(n['spec']).get('supplemental'):
+                raise WorkflowError('supplemental findings require Root triage, not direct adoption')
             if disposition in {'ADOPT','REJECT'}:
                 if row['attempt'] != n['current_token']:
                     raise WorkflowError('historical attempt claim cannot inherit current acceptance')
@@ -835,7 +891,8 @@ class Runtime:
         target=loads(n['result'])['snapshot']
         for other in self.conn.execute("SELECT * FROM nodes WHERE run_id=? AND state='completed' AND id<>?",(r['id'],n['id'])):
             o=loads(other['spec'])
-            if o['verifies']==n['id'] and o['tier']=='strong' and o['role'] in {'verifier','reviewer'}:
+            if (o['verifies']==n['id'] and o['tier']=='strong' and o['role'] in {'verifier','reviewer'}
+                    and (loads(r['contract']).get('workflow') != 'astra-mainline' or o['required'])):
                 author = self.attempt(n['current_token'])
                 checker = self.attempt(other['current_token'])
                 if author['external_id'] == checker['external_id']:
@@ -850,11 +907,145 @@ class Runtime:
                     return
         raise WorkflowError(f"independent current-candidate verification missing: {n['id']}")
 
+    def triage(self, claim_id, disposition, *, reason, target=None):
+        """Root-only classification; model findings cannot grant acceptance."""
+        if disposition not in {'dismissed', 'advisory', 'promoted'}:
+            raise WorkflowError('invalid supplemental triage disposition')
+        text(reason, 'triage reason', 2000)
+        with self.tx():
+            row = self.conn.execute('SELECT * FROM claims WHERE id=?', (claim_id,)).fetchone()
+            if row is None: raise WorkflowError('unknown claim')
+            r = self.run(row['run_id']); c = loads(r['contract'])
+            if r['status'] != 'open' or c.get('workflow') != 'astra-mainline' or sha(c) != r['contract_hash']:
+                raise WorkflowError('triage requires an open Astra mainline contract')
+            n = self.node(r['id'], row['node_id']); s = loads(n['spec'])
+            if not s.get('supplemental'): raise WorkflowError('triage is only for supplemental claims')
+            paths = loads(row['data'])['claim']['evidence']
+            # Root reopens these exact current sources before classifying an old-snapshot finding.
+            candidate = fingerprint(Path(r['root']), paths, set(paths))
+            if disposition == 'promoted':
+                identifier(target, 'promotion target')
+                t = self.node(r['id'], target); ts = loads(t['spec'])
+                if ts.get('supplemental') or not ts['required'] or ts['tier'] != 'strong' or t['attempts']:
+                    raise WorkflowError('promotion needs a never-executed required Astra mainline node')
+                if not set(paths) <= set(ts['sources']):
+                    raise WorkflowError('promotion target must cover the claim evidence')
+                if any(loads(t['snapshot']).get(p) != h for p,h in candidate.items()):
+                    raise WorkflowError('promotion target is not bound to the current candidate')
+            elif target is not None:
+                raise WorkflowError('only promoted findings have a target')
+            self.event(r['id'], 'supplemental.triaged', {'claim':claim_id,
+                'disposition':disposition, 'target':target, 'candidate':candidate, 'reason':reason})
+        return {'claim':claim_id, 'disposition':disposition, 'target':target}
+
+    def _supplemental_claim_gaps(self, r, nodes):
+        by_id = {n['id']:n for n in nodes}; decisions = {}
+        for row in self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='supplemental.triaged' ORDER BY seq", (r['id'],)):
+            d = loads(row['data']); decisions[d['claim']] = d
+        gaps = []
+        for row in self.conn.execute('SELECT * FROM claims WHERE run_id=?', (r['id'],)):
+            if not loads(by_id[row['node_id']]['spec']).get('supplemental'): continue
+            d = decisions.get(row['id'])
+            if d is None:
+                gaps.append({'claim':row['id'],'reason':'untriaged'}); continue
+            if d['disposition'] == 'promoted':
+                target = by_id.get(d['target'])
+                if target is None or target['state'] != 'completed':
+                    gaps.append({'claim':row['id'],'reason':'promoted-mainline-incomplete'})
+            else:
+                try:
+                    now = fingerprint(Path(r['root']), list(d['candidate']), set(d['candidate']))
+                    if now != d['candidate']: raise WorkflowError('triage candidate changed')
+                except (WorkflowError, OSError) as exc:
+                    gaps.append({'claim':row['id'],'reason':str(exc)})
+        return gaps
+
+    def _mainline_gate(self, r, nodes, attempts):
+        mainline = [n for n in nodes if not loads(n['spec']).get('supplemental')]
+        if not mainline: raise WorkflowError('supplemental-only or empty graph is not completed mainline work')
+        ids = {n['id'] for n in mainline}; historical = {}
+        if any(a['node_id'] in ids and not self._execution_reconciled(a) for a in attempts):
+            raise WorkflowError('live/unreconciled mainline execution attempts remain')
+        for n in mainline:
+            if n['state'] != 'completed': raise WorkflowError(f"incomplete scope (mainline): {n['id']} ({n['state']})")
+            paths = self._historical_write_evidence(r, n, mainline)
+            if paths: historical[n['id']] = paths
+            self._quality_gate(r, n, allow_historical=True)
+        if self._supplemental_claim_gaps(r, nodes):
+            raise WorkflowError('supplemental evidence requires current Root triage or completed promotion')
+        return historical
+
+    def _mainline_key(self, run, nodes):
+        mainline = [{k:n[k] for k in ('id','spec','state','snapshot','current_token','result')}
+                    for n in nodes if not loads(n['spec']).get('supplemental')]
+        claims = [dict(c) for c in self.conn.execute('SELECT * FROM claims WHERE run_id=? ORDER BY id', (run,))]
+        triage = [e['data'] for e in self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='supplemental.triaged' ORDER BY seq", (run,))]
+        return sha({'mainline':mainline, 'claims':claims, 'triage':triage})
+
+    def omit(self, run, node, *, reason):
+        text(reason, 'omission reason', 2000)
+        with self.tx():
+            r,c = self.open_run(run); n = self.node(run,node)
+            if c.get('workflow') != 'astra-mainline' or not loads(n['spec']).get('supplemental'):
+                raise WorkflowError('only supplemental nodes may be omitted')
+            if n['state'] != 'pending': raise WorkflowError('omit only pending work; interrupt active work via the host')
+            self.conn.execute("UPDATE nodes SET state='omitted' WHERE run_id=? AND id=?", (run,node))
+            self.event(run,'supplemental.omitted',{'node':node,'reason':reason})
+
+    def _finish_mainline(self, run):
+        with self.tx():
+            r = self.run(run); c = loads(r['contract'])
+            if r['status'] != 'open' or c.get('version') != VERSION or sha(c) != r['contract_hash']:
+                raise WorkflowError('run/contract does not permit mainline acceptance')
+            nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
+            attempts = [dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,))]
+            historical = self._mainline_gate(r, nodes, attempts)
+            for n in nodes:
+                if loads(n['spec']).get('supplemental') and n['state'] == 'pending':
+                    self.conn.execute("UPDATE nodes SET state='omitted' WHERE run_id=? AND id=?", (run,n['id']))
+                    self.event(run,'supplemental.omitted',{'node':n['id'],'reason':'mainline acceptance cutoff'})
+            key = self._mainline_key(run,nodes)
+            self.event(run,'mainline.accepted',{'key':key,'scope':'Astra mainline; received findings triaged',
+                                              'historical_write_evidence':historical})
+            # Return acceptance now; do not claim a running native turn has ended.
+            if all(self._execution_reconciled(a) for a in attempts):
+                self.conn.execute("UPDATE runs SET status='completed' WHERE id=?", (run,))
+                self.event(run,'run.completed',{'mainline_accepted':True,'supplemental_coverage':'reported separately'})
+        return self.status(run)
+
+    def _supplemental_status(self, r, nodes, attempts):
+        probes = [n for n in nodes if loads(n['spec']).get('supplemental')]
+        mainline = [n for n in nodes if not loads(n['spec']).get('supplemental')]
+        gaps = self._supplemental_claim_gaps(r,nodes)
+        gate_error = None
+        try: self._mainline_gate(r,nodes,attempts)
+        except (WorkflowError,OSError) as exc: gate_error = str(exc)
+        last = self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='mainline.accepted' ORDER BY seq DESC LIMIT 1",(r['id'],)).fetchone()
+        accepted = bool(last and not gate_error and r['status'] != 'cancelled'
+                        and loads(last['data'])['key'] == self._mainline_key(r['id'],nodes))
+        return {'mainline_complete':bool(mainline) and all(n['state']=='completed' for n in mainline),
+                'mainline_accepted':accepted,'mainline_gate_error':gate_error,
+                'supplemental_admission_closed':last is not None,
+                'supplemental_claim_gaps':gaps,
+                'supplemental_coverage':{'declared':len(probes),
+                    'launched':sum(n['attempts']>0 for n in probes),
+                    'attempts':sum(n['attempts'] for n in probes),
+                    'completed':sum(n['state']=='completed' for n in probes),
+                    'omitted':sum(n['state']=='omitted' for n in probes),
+                    'unfinished':sum(n['state']!='completed' for n in probes),
+                    'states':{n['id']:n['state'] for n in probes}},
+                'supplemental_execution_holds':sum(not self._execution_reconciled(a) for a in attempts
+                     if a['node_id'] in {n['id'] for n in probes})}
+
     def finish(self,run):
+        if loads(self.run(run)['contract']).get('workflow') == 'astra-mainline':
+            return self._finish_mainline(run)
         with self.tx():
             r,_=self.open_run(run)
             nodes=[dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=?',(run,))]
             if not nodes: raise WorkflowError('empty graph is not completed work')
+            if not any(not loads(n['spec']).get('supplemental', False) for n in nodes):
+                raise WorkflowError('supplemental-only graph is not completed mainline work')
             attempts=self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,)).fetchall()
             if any(not self._execution_reconciled(a) for a in attempts): raise WorkflowError('live/unreconciled execution attempts remain')
             historical = {}
@@ -863,8 +1054,8 @@ class Runtime:
                     paths = self._historical_write_evidence(r,n,nodes)
                     if paths: historical[n['id']] = paths
                     self._quality_gate(r,n,allow_historical=True)
-                else:
-                    raise WorkflowError(f"incomplete scope: {n['id']} ({n['state']})")
+                elif not loads(n['spec']).get('supplemental', False):
+                    raise WorkflowError(f"incomplete scope (mainline): {n['id']} ({n['state']})")
             self.conn.execute('UPDATE runs SET status=? WHERE id=?',('completed',run))
             self.event(run,'run.completed',{'nodes':len(nodes),'scope':'declared graph only','historical_write_evidence':historical})
         return self.status(run)
@@ -874,7 +1065,7 @@ class Runtime:
         nodes=[dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
         issues=[]; historical={}
         for n in nodes:
-            if n['state']=='completed':
+            if n['state']=='completed' and not loads(n['spec']).get('supplemental'):
                 try:
                     superseded = self._historical_write_evidence(r,n,nodes)
                     if superseded: historical[n['id']] = superseded
@@ -882,11 +1073,17 @@ class Runtime:
         attempts=[dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=? ORDER BY created',(run,))]
         execution={a['token']:self._execution_reconciled(a) for a in attempts}
         host_holds=sum(not a['released'] for a in attempts)
-        incomplete=[{'id':n['id'],'state':n['state'],'required':loads(n['spec'])['required']}
+        incomplete=[{'id':n['id'],'state':n['state'],'required':loads(n['spec'])['required'],**({'supplemental': True} if loads(n['spec']).get('supplemental') else {})}
                     for n in nodes if n['state']!='completed']
+        mainline_incomplete=[n for n in incomplete if not n.get('supplemental')]
+        mainline_nodes=[n for n in nodes if not loads(n['spec']).get('supplemental',False)]
+        supplemental=[n for n in nodes if loads(n['spec']).get('supplemental',False)]
         return {'run_id':run,'backend':r['backend'],'status':r['status'],
-                'current_evidence_valid':any(n['state']=='completed' for n in nodes) and not issues,
-                'scope_complete':bool(nodes) and not incomplete,'incomplete_nodes':incomplete,
+                'current_evidence_valid':any(n['state']=='completed' for n in mainline_nodes) and not issues,
+                'scope_complete':bool(nodes) and not incomplete,'mainline_complete':bool(mainline_nodes) and not mainline_incomplete,
+                'supplemental_coverage':{'declared':len(supplemental),'completed':sum(n['state']=='completed' for n in supplemental),'unfinished':sum(n['state']!='completed' for n in supplemental)},
+                'incomplete_nodes':incomplete,
+                **(self._supplemental_status(r,nodes,attempts) if loads(r['contract']).get('workflow')=='astra-mainline' else {}),
                 'drift':issues,'historical_evidence':historical,
                 'contract_hash':r['contract_hash'],'deadline':r['deadline'],
                 'budget':{'used':r['used'],'reserve_used':r['reserve_used'],'strong_used':r['strong_used'],
@@ -895,7 +1092,7 @@ class Runtime:
                           'unknown_usage_attempts':sum(a['usage'] is None for a in attempts)},
                 'host_resources_released':host_holds==0,
                 'host_resource_state':'RELEASE_CONFIRMED' if host_holds==0 else 'UNKNOWN',
-                'nodes':[{'id':n['id'],'state':n['state'],'attempts':n['attempts'],'required':loads(n['spec'])['required']} for n in nodes],
+                'nodes':[{'id':n['id'],'state':n['state'],'attempts':n['attempts'],'required':loads(n['spec'])['required'],**({'supplemental': True} if loads(n['spec']).get('supplemental') else {})} for n in nodes],
                 'attempts':[{'attempt':a['token'],'node':a['node_id'],'state':a['state'],'external_id':a['external_id'],'released':bool(a['released']),
                              'execution_reconciled':execution[a['token']],
                              'usage':loads(a['usage']) if a['usage'] is not None else None} for a in attempts]}

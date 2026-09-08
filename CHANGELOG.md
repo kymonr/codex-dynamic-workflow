@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.0 — 2026-09-09
+
+Astra owns the complete mainline; meaningful tasks proactively launch at least three distinct optional Luna probes when capacity permits, per task rather than per repair cycle.
+
+Added isolated snapshot roots, a 12-attempt supplemental quota, full unused-Astra allowance protection and one-slot capacity reserve. New Runtime contracts enforce Astra mainline routing and prevent supplemental dependencies or mandatory verification.
+
+Added Root triage/promotion, truthful omissions and separate mainline acceptance/coverage/host cleanup. Late findings invalidate prior acceptance; failed-attempt claims cannot disappear through retry. Saved 3.0.0 contracts keep their original identity and semantics.
+
+Fixed package validation skipped by the major-version change. Added v4 boundary, compatibility and lifecycle tests. Native execution and comparative model quality are separately unverified unless an actual run receipt is supplied.
+
 ## Unreleased — native-only routing correction
 
 - Route both Luna and Astra through native host agent tools; preserve bounded exploratory/verification batches and necessary capable review within shared host capacity.

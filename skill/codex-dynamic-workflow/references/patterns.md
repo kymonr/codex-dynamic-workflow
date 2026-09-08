@@ -1,10 +1,13 @@
 # Dynamic shapes, not mandatory stages
 
-Pick the useful shape for the current evidence gap; change it when results warrant.
+Pick the useful Astra mainline shape; change it when results warrant. Add at least three
+distinct optional Luna directions on meaningful tasks when capacity permits. This is
+per task, not per file or repair cycle. Fewer real directions or host/budget constraints
+are disclosed; probes are never a completion barrier. See [supplemental](supplemental.md).
 
 | Shape | Use | Avoid |
 |---|---|---|
-| Solo | One bounded task; coordination adds no value | Spawning to meet a quota |
+| Solo mainline | Astra handles a cohesive task end to end | Moving required work into optional Luna probes |
 | Fan-out | Independent ready questions or evidence methods | Repeating the same search with more agents |
 | Pipeline | Each item can independently move to verification | Waiting for unrelated siblings |
 | Expand | New evidence identifies a distinct missing question | Renaming repeated work to reset budget |

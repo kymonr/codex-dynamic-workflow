@@ -156,6 +156,12 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append('reserve exceeds the absolute ceiling')
     if budget.get('enforcement') != 'instruction-only-unless-host-enforced':
         errors.append('must disclose instruction-only enforcement')
+    if version.startswith('4.'):
+        if policy.get('workflow') != 'astra-mainline': errors.append('v4 workflow must be astra-mainline')
+        for key in ('supplemental_luna_launches', 'minimum_meaningful_luna_probes', 'mainline_capacity_reserve'):
+            if type(budget.get(key)) is not int or budget[key] < 1: errors.append('invalid v4 budget field: '+key)
+        if type(budget.get('minimum_meaningful_luna_probes')) is int and budget['minimum_meaningful_luna_probes'] < 3:
+            errors.append('meaningful-task Luna launch intent must be at least three')
     for name in PROFILE_NAMES:
         try:
             data = tomllib.loads((root / 'profiles' / f'{name}.toml').read_text(encoding='utf-8'))
@@ -206,7 +212,7 @@ def validate(root: Path = ROOT) -> list[str]:
             dest = (path.parent / href.split('#', 1)[0]).resolve()
             if not dest.is_relative_to(root.resolve()) or not dest.is_file():
                 errors.append(f'invalid local link: {path.relative_to(root)} -> {href}')
-    if version.startswith('3.'):
+    if version != 'INVALID' and int(version.split('.')[0]) >= 3:
         rt = policy.get('runtime', {})
         if not isinstance(rt, dict) or rt.get('version') != version or rt.get('backends') != ['native'] or rt.get('backend_per_run') != 1 or rt.get('exec_writes') is not False:
             errors.append('runtime identity/backend contract drift')
@@ -218,6 +224,17 @@ def validate(root: Path = ROOT) -> list[str]:
             tree=ast.parse((root/SKILL/'scripts/cwf_runtime/core.py').read_text(encoding='utf-8'))
             versions=[node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in node.targets) and isinstance(node.value,ast.Constant)]
             if versions != [version]: errors.append('runtime code version drift')
+            if version.startswith('4.'):
+                declarations = {}
+                for node in tree.body:
+                    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'dict':
+                        for target in node.targets:
+                            if isinstance(target, ast.Name): declarations[target.id] = {k.arg:ast.literal_eval(k.value) for k in node.value.keywords}
+                expected = {'approved':'approved_child_launches','reserve':'preauthorized_economy_reserve','absolute':'absolute_child_launches','strong_approved':'approved_strong_child_launches'}
+                expected_supplemental = {'supplemental_approved':'supplemental_luna_launches','mainline_capacity_reserve':'mainline_capacity_reserve'}
+                for table, fields in [('DEFAULTS',expected),('SUPPLEMENTAL_DEFAULTS',expected_supplemental)]:
+                    if any(declarations.get(table,{}).get(k) != budget.get(v) for k,v in fields.items()):
+                        errors.append('v4 runtime/policy budget drift: '+table)
         except (OSError,ValueError,SyntaxError) as exc: errors.append('runtime source error: '+str(exc))
     return errors
 

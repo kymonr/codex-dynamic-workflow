@@ -15,9 +15,15 @@ requested or when an allowance decision blocks progress. Defaults are upper boun
 never a target headcount.
 Use the stricter applicable host/authorization constraint. The reserve is per run,
 not per node, wave, retry or model. Unknown cost/risk is not eligible for economy reserve.
-Ordinary Luna/max work consumes approved non-strong allowance. Its sufficient task
-capability does not qualify it for the mechanical economy reserve; keep that reserve
-for explicitly qualified Luna/medium mechanical work. Both tiers count as launches.
+Supplemental Luna/max work consumes the supplemental portion of approved non-strong
+allowance. Plan up to 12 supplemental launches by default for meaningful work, with
+at least three distinct probes as the normal launch intent when host capacity permits.
+These are ceilings/coverage defaults, never a completion quota. Reserve the strong
+allowance needed for Astra mainline implementation and acceptance before admitting
+supplemental work. In v4, both supplemental tiers use their own approved pool and cannot spill into
+the economy reserve; the reserve is retained for legacy compatibility. All attempts
+still count toward the absolute launch ceiling. The runtime protects all unused
+strong allowance and at least one host slot, not only already declared verifiers.
 
 Concurrency has no fixed Skill ceiling: `max_concurrent_children: null` follows the
 actual host's available capacity, including retained child sessions. A positive
