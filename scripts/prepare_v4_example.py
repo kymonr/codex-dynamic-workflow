@@ -7,6 +7,8 @@ import json
 def prepare(output: Path) -> Path:
     output = output.absolute()
     output.mkdir(parents=True, exist_ok=False)
+    # Windows temporary paths can use 8.3 aliases; Runtime requires canonical roots.
+    output = output.resolve(strict=True)
     fixture = Path(__file__).resolve().parents[1] / 'tests/fixtures/invoice.py'
     content = fixture.read_bytes()
     source = output / 'source'; source.mkdir()

@@ -2,7 +2,7 @@
   ".gitattributes": "4015ea6917bf93230d1937b5a41d557d4e1cfdb3c4ce8d9dc96d9e0645b5f82f",
   ".github/workflows/ci.yml": "a2efe2e830c0d892dc1a19a5bfca7a449ac8ecb0c6e7a61d6ea388e1bca1d653",
   ".gitignore": "5c6484dc07ff55c7f325ffeb65c68b06f04bb1afc0dd552e77cfa4b9ceca9e8f",
-  "CHANGELOG.md": "7011c7c83be8de20ae9498cc63be130365c8c234a22fdbdc05c0d428c79da46d",
+  "CHANGELOG.md": "88ad915ececa3d2c718dfa28054402372b3b9d6522c54ff5881ce0b1df486437",
   "DESIGN.md": "02594387b0129d382bf93150cfb7545b3cbe43baa6509141f4feb2168589f407",
   "DESIGN_V3.md": "cdd92fe2e6787be34f1864c10811ab78dfbe6607c171e4e0f2e057fe0c7800f3",
   "DESIGN_V4.md": "26c90c4a671b3f176f77abca9c1a12174b7697d5d98c39c4ad6cf29bfe5e93ac",
@@ -20,8 +20,8 @@
   "reports/NATIVE_JOINT_ACCEPTANCE_2026-09-06.md": "14c21e0cde6881bfd086eb0215e7d4baca144f5dbfd640cee129b24082635770",
   "reports/NATIVE_ONLY_ROUTING_2026-09-06.md": "5d8cfd85ba83719b9d494e1246366c91fddc30a4c6126fd3a82e44592202b043",
   "reports/V3_FINAL_REPORT.md": "c777d3463f001cf23bc54186771f04bbea35f2a161e8bac0b32c32b7240caef6",
-  "reports/V4_ACCEPTANCE_2026-09-09.md": "ca32ecab893cdca8caf2845eb385ff4d75008fe25ba64a6d41b7a54e1dbe5988",
-  "reports/V4_SELF_REVIEW_2026-09-09.md": "cf8f18dcff8079cb3c8aefca7c273239942445c822f140ddd4a694571246d251",
+  "reports/V4_ACCEPTANCE_2026-09-09.md": "03c611153d51699912e43fb52eeb1a0821f512f890ea74bfc257284217dadab0",
+  "reports/V4_SELF_REVIEW_2026-09-09.md": "dd087fab28e89789c59e47d2a5a55f5d7953dd23f2d07809eeb25f6a052c11df",
   "reports/v3-live-delta-review.md": "cd038d4e1e3b2fcafcf794d6ecfbe0335287984fc9f36cbcd1172ff63e0f2f50",
   "reports/v3-live-native.json": "a98cbafa36e6d273ff91feb22d9ab46e89647617ee03c8df92072dc892d1925b",
   "reports/v3-readonly-final.md": "cbbe45cfbaf28841c4419cbb9c5c3cf0d78d3924e6c4de75e517704bcbec3d69",
@@ -29,7 +29,7 @@
   "reports/v3-readonly-review.md": "fe93e40000c206c84282e08e7f7c0198acdbf69c1b44b24836f0b9b257eae673",
   "scripts/install.py": "5a6ed3067cdb657474505cba2d2940585c92f0548e10ffd47ccc2a682263acc8",
   "scripts/policy_reference.py": "e360e3e7e76bb1dc129be908304dab60bb201360a352b7cbf35c361f7a4efec4",
-  "scripts/prepare_v4_example.py": "806342264fd6f415ca3528016d2875a933e2b8e9651a7927438fc8790a689a08",
+  "scripts/prepare_v4_example.py": "33b2edb6329c425576717cf2d5e4857dfd61f17d389576f9c1141a4a59a5deec",
   "scripts/validate_package.py": "95fa3e2dd29aac203a37c783cd5c901f37a49a4dcb2ffd40265822463c98d419",
   "scripts/verify_installed_exec_smoke.py": "debd22a8a070270154ac9ae07b0b5e4a00bb42812d95705bd534cabdaeafee6a",
   "scripts/verify_installed_luna_pool.py": "ed3c78ac7d699e23960e43c16c502da014472731b0bf1af9edf31e633632d763",
@@ -81,5 +81,5 @@
   "tests/test_v3_followup_findings.py": "7e4b4d998ccb2b7c3bc50d1943a7c3b69a6032a070e09b755cd567ec37e75713",
   "tests/test_v3_independent_findings.py": "3ccafd740213767d721f32638f8d51110a4734041fec53cf75453c4a0fe5aac0",
   "tests/test_v3_live_contract.py": "b7919fbf32ba4ffbec4ed5d209b06a1ec40a499baa53e4c627a54d5dd23a8611",
-  "tests/test_v4_supplemental.py": "8ac1175aae936de2af178c3202ff15d8509f7e34630c4b0f9e0770752380a850"
+  "tests/test_v4_supplemental.py": "8abbeeb6e6f3590cbbf275f36cd992e8ae6524f484970b299701794c77ec1f9a"
 }

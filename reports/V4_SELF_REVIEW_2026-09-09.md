@@ -22,6 +22,20 @@ profiles, Skill references, package validator, generator and regression tests.
 | An old completed/optional node could launder promotion | Fresh required strong target, source coverage and snapshot equality are checked before linking. |
 | Optional failure could be disguised as success | Separate omitted/failed/partial/interrupted states and coverage counters; no success rewrite or usage refund. |
 
+## Windows CI follow-up: keep the strict Runtime contract
+
+The first PR Windows job (102183369180, run 34262405820) failed with 4 failures and
+26 errors because fixtures passed noncanonical temporary paths into snapshot_root.
+Ubuntu passed. Windows can expose a temporary directory through an 8.3 alias.
+The final minimal correction resolves the fixture base and the example output after
+creation, producing canonical source and snapshot paths as the existing contract requires.
+Runtime code and installed Skill payload are unchanged by this follow-up; no path
+validation is weakened. Two added regressions preserve noncanonical-root rejection and
+exercise actual GetShortPathNameW preparation on a supporting Windows volume.
+A broader automatic-normalization prototype was tested then excluded from the candidate.
+Its local draft is retained in `.delivery/ci-path-normalization-prototype/`; it is not
+published code or acceptance evidence for the final minimal change.
+
 ## Residual boundaries
 
 No remaining concrete blocker was identified in the examined source and deterministic

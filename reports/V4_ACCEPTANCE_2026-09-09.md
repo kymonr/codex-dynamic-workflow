@@ -72,3 +72,41 @@ Root capacity observations, source-based triage and semantic acceptance judgment
 trusted inputs. Cooperative DB locks and source hashes are not an operating-system sandbox
 or a hard monetary limit. The change is published for review without claiming these
 additional native/integration gates have passed.
+
+
+## Final Windows CI correction
+
+The first PR Windows job (102183369180, run 34262405820) rejected noncanonical
+fixture snapshot roots; Ubuntu passed. The final fix canonicalizes temporary/output
+paths in tests and example preparation, preserving the Runtime's strict path contract.
+Two additional tests cover continued rejection and actual Windows 8.3 preparation.
+
+Final local regression with standard unittest discovery and closed batch stdin:
+
+```text
+----------------------------------------------------------------------
+Ran 293 tests in 61.322s
+
+OK (skipped=2)
+```
+
+The skips are Windows symlink-creation privilege and unavailable 8.3 aliases on this
+local volume. Actual short-name coverage on GitHub Windows is reported on the PR.
+Two full runs of an earlier, excluded automatic-normalization prototype encountered a
+15-second subprocess timeout in an unchanged native-only refusal test. Focused and
+diagnostic full reruns passed without increasing any timeout or skipping a failure.
+Those historical logs remain in `.delivery/v4-full-path-fix*.log` and
+`.delivery/v4-native-timeout-diagnostic.log`; they are not the final candidate result.
+
+Two attempted prototype Runtime replacements were refused by Windows and the installer
+restored their preimages. The final scope does not change that Runtime file. All 26
+installed managed files again match the final candidate exactly; normal installer
+dry-run reports changes: []. No permissions or unrelated sessions were modified.
+Original v4 installation receipt remains install-backup-169cc1789d96/receipt.json.
+Native dispatch and non-author model review remain unexecuted, not covered by CI.
+
+Final installed-entrypoint controller smoke was rerun against the corrected example:
+28 separate CLI processes passed, with fresh-process readback and three synthetic
+Luna probe identities. Native model calls: 0. Receipts are in
+`.delivery/v4-final-installed-smoke/`; all host completion/closure receipts are fixtures,
+not real native execution or slot-release evidence.

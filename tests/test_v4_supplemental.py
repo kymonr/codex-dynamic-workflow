@@ -28,7 +28,7 @@ def finding():
 
 class SupplementalV4Tests(unittest.TestCase):
     def setUp(self):
-        self.t=tempfile.TemporaryDirectory(); self.base=Path(self.t.name)
+        self.t=tempfile.TemporaryDirectory(); self.base=Path(self.t.name).resolve(strict=True)
         self.root=self.base/'project'; self.root.mkdir(); (self.root/'a.py').write_text('x=1\n')
         self.rt=Runtime(self.base/'state.db', initialize=True)
         self.run=self.rt.create(root=self.root, goal='v4', backend='native')
@@ -266,5 +266,44 @@ class SupplementalV4Tests(unittest.TestCase):
         cli('triage','--claim',probe['attempt']+'-0','--disposition','dismissed','--reason','Root fixture source recheck')
         cli('release','--attempt',probe['attempt'],'--external-id','probe-cli','--confirmed','--reason','fixture closed')
         self.assertEqual(cli('finish','--run',rid)['status'],'completed')
+
+    def test_noncanonical_snapshot_root_still_rejected(self):
+        p=self.probe(); given=Path(p['snapshot_root']); real_resolve=Path.resolve
+        other=self.base/'different-spelling'; other.mkdir()
+        def observed(path,*args,**kwargs):
+            return other if path == given else real_resolve(path,*args,**kwargs)
+        with patch.object(Path,'resolve',new=observed):
+            with self.assertRaisesRegex(WorkflowError,'canonical'): self.add(p)
+        self.assertEqual(self.rt.status(self.run)['nodes'],[])
+
+    @unittest.skipUnless(sys.platform=='win32','Windows short-name API')
+    def test_windows_short_paths_are_normalized_by_preparer(self):
+        import ctypes
+        import importlib.util
+        from ctypes import wintypes
+        fn=ctypes.WinDLL('kernel32',use_last_error=True).GetShortPathNameW
+        fn.argtypes=[wintypes.LPCWSTR,wintypes.LPWSTR,wintypes.DWORD]; fn.restype=wintypes.DWORD
+        size=fn(str(self.base),None,0)
+        if not size: self.fail(str(ctypes.WinError(ctypes.get_last_error())))
+        buf=ctypes.create_unicode_buffer(size); count=fn(str(self.base),buf,size)
+        self.assertGreater(count,0); self.assertLess(count,size)
+        alias=Path(buf.value)
+        if alias == self.base: self.skipTest('volume does not expose an 8.3 alias')
+        self.assertTrue(alias.samefile(self.base))
+        probe=self.probe(snapshot_root=str(alias/'snapshot-probe'))
+        with self.assertRaisesRegex(WorkflowError,'canonical'): self.add(probe)
+        probe['snapshot_root']=str(Path(probe['snapshot_root']).resolve(strict=True))
+        self.add(probe)
+        path=Path(__file__).resolve().parents[1]/'scripts/prepare_v4_example.py'
+        spec=importlib.util.spec_from_file_location('prepare_short_path_fixture',path)
+        module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        plan=json.loads(module.prepare(alias/'short-path-example').read_text(encoding='utf-8'))
+        self.assertEqual(plan['root'],str(Path(plan['root']).resolve(strict=True)))
+        for n in plan['nodes']:
+            if n.get('supplemental'):
+                self.assertEqual(n['snapshot_root'],str(Path(n['snapshot_root']).resolve(strict=True)))
+        nodes=plan.pop('nodes'); run=self.rt.create(**plan)
+        self.rt.add(run,nodes,reason='actual Windows short-name preparation')
+        self.assertEqual(len(self.rt.status(run)['nodes']),5)
 
 if __name__=='__main__': unittest.main()

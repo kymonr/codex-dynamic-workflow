@@ -8,7 +8,7 @@ Added isolated snapshot roots, a 12-attempt supplemental quota, full unused-Astr
 
 Added Root triage/promotion, truthful omissions and separate mainline acceptance/coverage/host cleanup. Late findings invalidate prior acceptance; failed-attempt claims cannot disappear through retry. Saved 3.0.0 contracts keep their original identity and semantics.
 
-Fixed package validation skipped by the major-version change. Added v4 boundary, compatibility and lifecycle tests. Native execution and comparative model quality are separately unverified unless an actual run receipt is supplied.
+Canonicalize Windows temporary/output paths in fixtures and example preparation while retaining Runtime snapshot identity checks. Fixed package validation skipped by the major-version change. Added v4 boundary, compatibility and lifecycle tests. Native execution and comparative model quality are separately unverified unless an actual run receipt is supplied.
 
 ## Unreleased — native-only routing correction
 
