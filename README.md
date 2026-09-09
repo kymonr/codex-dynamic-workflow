@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v4.1.1
+# Codex Dynamic Workflow v4.1.2
 
 仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 

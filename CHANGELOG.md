@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.2 — 2026-09-10
+
+Whole-review follow-up: explicit Astra verification now checks non-author identity and full target coverage even for low-risk targets. Unbound dispatch reservations are added to observed host threads rather than hidden by a maximum. New gates apply to new 4.1.2 contracts; saved contracts retain their recorded semantics. JSON writes cannot exceed the reader limit; large aggregate hash preimages remain supported.
+
+Paired comparison schema 2 retains ordered native turn attempts, separates recovered agent failures from final arm acceptance, requires a shared graded reference defect set, and excludes failed arms from delivery-speed statistics without dropping them. Duplicate JSON keys and malformed input fail qualification. No native-model performance claim is made.
+
 ## 4.1.1 — 2026-09-09
 
 Astra reader/writer profiles no longer pin reasoning effort. Keep high as the Runtime

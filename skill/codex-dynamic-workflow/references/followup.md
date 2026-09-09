@@ -9,7 +9,7 @@ Skill-only remains normal; the commands below apply only to explicitly selected 
 
 New 4.1 contracts carry supplemental_protocol=2 and immutable acceptance_mode=review or
 repair (default repair when implement=true). Repair mode requires implement authority.
-Saved 3.0.0, 4.0.0 and 4.1.0 records retain their exact hashes, fields, budgets and earlier gates.
+Saved 3.0.0, 4.0.0, 4.1.0 and 4.1.1 records retain their exact hashes, fields, budgets and earlier gates.
 They are not rewritten or silently upgraded. No model CLI fallback is enabled.
 
 In 4.1.1, Astra reader/writer profiles keep their model and role constraints but omit
@@ -111,3 +111,19 @@ Mainline acceptance, supplemental coverage, execution reconciliation and physica
 resource release remain separate. Do not wait for all four merely to deliver the mainline.
 
 Resolution evidence must be the promoted investigation itself or its causal mainline descendant; unrelated preexisting completed work cannot close a new finding.
+
+## 4.1.2 review hardening
+Any explicitly declared verifies relationship in a new 4.1.2 contract requires a
+different native author identity and matching coverage of the entire target candidate,
+even when the target is low-risk Astra work. Low-risk work without a declared verifier
+does not acquire a new review requirement. Older saved contracts are not migrated.
+
+Capacity includes unbound unreleased dispatch reservations in addition to the larger of
+known bound holds and the observed host active count. Unbound reservations may not yet
+exist as host threads; a lost launch response is conservatively retained, not refunded.
+This does not authenticate host counts or turn a stop request into resource release.
+
+Serialized database envelopes share the 1 MiB read limit. Oversized results are rejected
+inside the transaction without losing the active attempt, budget charge or earlier
+findings; submit a smaller truthful result. Aggregate hash preimages are not stored
+envelopes and may cover multiple individually bounded records.

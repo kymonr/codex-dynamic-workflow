@@ -17,11 +17,12 @@ class ComparisonTests(unittest.TestCase):
                    profile='cwf_reader' if role=='mainline' else 'cwf_general',sandbox='read-only')
             return dict(id=name,role=role,effective=e,requested=dict(e),direction=direction,status='completed')
         def arm(agents):
-            return dict(provenance='native-host',synthetic=False,capture=cap,agents=agents,started_at=10,finished_at=20,accepted_at=20,
+            return dict(provenance='native-host',synthetic=False,capture=cap,agents=agents,
+                        attempts_complete=True, attempts=[dict(id=a['id']+'-turn1',agent_id=a['id'],status=a['status']) for a in agents],started_at=10,finished_at=20,accepted_at=20,
                         acceptance_passed=True,task_sha256='a'*64,candidate_sha256='b'*64,acceptance_sha256='c'*64,
                         verified_findings=['bug1'],false_findings=[],missed_findings=[],triage_seconds=None,rework_seconds=None,
                         total_tokens=None,host_resources_released=None)
-        self.data=dict(status='OBSERVED',pairs=[dict(trial_id='fixture',astra=arm([agent('baseline')]),
+        self.data=dict(status='OBSERVED',schema_version=2,pairs=[dict(trial_id='fixture',astra=arm([agent('baseline')]),
             astra_luna=arm([agent('mixed')]+[agent('probe'+str(i),'supplemental',str(i)) for i in range(3)]))])
     def tearDown(self):self.t.cleanup()
     def test_missing_live_trials_are_not_a_pass(self):

@@ -2,7 +2,7 @@
 name: codex-dynamic-workflow
 description: "Use for Astra-owned native workflows with aggressive Luna supplemental coverage: implementation, investigation, deep review and independent verification. Astra keeps the complete mainline; Luna probes hunt omissions, counterexamples and missing tests without becoming acceptance dependencies."
 metadata:
-  version: "4.1.1"
+  version: "4.1.2"
 ---
 
 # Codex Dynamic Workflow — raw-source-first

@@ -21,8 +21,8 @@ import uuid
 
 from .policy import budget_admission
 
-VERSION = '4.1.1'
-SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0', '4.1.1'}
+VERSION = '4.1.2'
+SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0', '4.1.1', '4.1.2'}
 SCHEMA = 1
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -40,7 +40,7 @@ DEFAULT_ROUTES = {
 
 
 def followup_contract(contract):
-    return contract.get('version') in {'4.1.0', '4.1.1'} and contract.get('supplemental_protocol') == 2
+    return contract.get('version') in {'4.1.0', '4.1.1', '4.1.2'} and contract.get('supplemental_protocol') == 2
 
 
 class WorkflowError(ValueError):
@@ -68,12 +68,21 @@ def loads(text: str) -> Any:
         raise WorkflowError(f'invalid JSON: {exc}') from exc
 
 
-def dump(value: Any) -> str:
+def _encode(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
 
 
+def dump(value: Any) -> str:
+    encoded = _encode(value)
+    # Do not persist an envelope that the matching reader cannot reopen.
+    if len(encoded.encode('utf-8')) > MAX_JSON_BYTES:
+        raise WorkflowError('JSON output too large')
+    return encoded
+
+
 def sha(value: Any) -> str:
-    return hashlib.sha256(dump(value).encode()).hexdigest()
+    # A hash can cover many separately bounded database records.
+    return hashlib.sha256(_encode(value).encode()).hexdigest()
 
 
 def text(value, label, limit=16000):
@@ -582,7 +591,17 @@ class Runtime:
             capacity = c['bounds']['capacity']
             if host_capacity is not None:
                 capacity = min(capacity, host_capacity) if capacity is not None else host_capacity
-            active = max(active, host_active or 0)
+            if c.get('version') == '4.1.2' and host_active is not None:
+                sql = 'SELECT COUNT(*) FROM attempts JOIN runs ON runs.id=attempts.run_id WHERE released=0 AND external_id IS NULL'
+                params = ()
+                if c.get('capacity_scope', 'database') == 'backend':
+                    sql += ' AND runs.backend=?'; params = (backend,)
+                unbound = self.conn.execute(sql, params).fetchone()[0]
+                # Unbound reservations may not yet appear in the host's thread count.
+                # A lost launch response can double-count; conservatism is intentional.
+                active = max(active - unbound, host_active) + unbound
+            else:
+                active = max(active, host_active or 0)
             cutoff = self._supplemental_cutoff(r)
             reserve_slots = c['bounds'].get('mainline_capacity_reserve', 1)
             if followup_contract(c):
@@ -930,7 +949,8 @@ class Runtime:
 
     def _quality_gate(self,r,n,*,allow_historical=False):
         s=loads(n['spec'])
-        if s['tier'] == 'ordinary' and s['verifies'] is not None:
+        explicit_verification = loads(r['contract']).get('version') == '4.1.2'
+        if (s['tier'] == 'ordinary' or explicit_verification) and s['verifies'] is not None:
             target_node = self.node(r['id'], s['verifies'])
             target = loads(target_node['result'])['snapshot']
             snap = loads(n['snapshot'])
@@ -1081,7 +1101,7 @@ class Runtime:
                     if (ws['role'] != 'writer' or writer['state'] != 'completed'
                             or not loads(writer['result'])['submission']['payload']['changed_files']):
                         raise WorkflowError('fixed requires an observed implementation change')
-                    if c['version'] == '4.1.1' and not follows_investigation(writer['id']):
+                    if c['version'] in {'4.1.1', '4.1.2'} and not follows_investigation(writer['id']):
                         raise WorkflowError('fixed writer must follow the promoted investigation')
                     if self.attempt(n['current_token'])['external_id'] == self.attempt(writer['current_token'])['external_id']:
                         raise WorkflowError('fixed requires a non-author resolution verifier')
@@ -1300,7 +1320,7 @@ class Runtime:
     def _finish_mainline(self, run):
         with self.tx():
             r = self.run(run); c = loads(r['contract'])
-            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0', '4.1.1'} or sha(c) != r['contract_hash']:
+            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0', '4.1.1', '4.1.2'} or sha(c) != r['contract_hash']:
                 raise WorkflowError('run/contract does not permit mainline acceptance')
             nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
             attempts = [dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,))]

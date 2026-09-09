@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v4.1.1
+# Codex Dynamic Workflow v4.1.2
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
 Astra 保留完整主线；有实质工作量时主动启动至少 3 个不同方向的 Luna 补充探针。
