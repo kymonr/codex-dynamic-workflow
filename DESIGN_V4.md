@@ -1,4 +1,6 @@
-# v4 implementation plan and adversarial review
+# v4.0 implementation plan and adversarial review
+
+Historical 4.0 design. New 4.1 contracts follow [DESIGN_V41.md](DESIGN_V41.md).
 
 
 ## Responsibility and proactive coverage

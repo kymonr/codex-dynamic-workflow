@@ -24,6 +24,9 @@ supplemental work. In v4, both supplemental tiers use their own approved pool an
 the economy reserve; the reserve is retained for legacy compatibility. All attempts
 still count toward the absolute launch ceiling. The runtime protects all unused
 strong allowance and at least one host slot, not only already declared verifiers.
+In 4.1 this slot count also covers the known upcoming required frontier and any larger
+explicit Root demand. Both observed host-capacity and host-active counts are required
+before new supplemental admission; a configured ceiling alone is not an observation.
 
 Concurrency has no fixed Skill ceiling: `max_concurrent_children: null` follows the
 actual host's available capacity, including retained child sessions. A positive
@@ -105,3 +108,7 @@ of consuming approved capacity reserved for mandatory checks. Reserve is cumulat
 Mandatory checks themselves use approved allowance. The caller must update launch,
 reserve and pending counters together before dispatch; this pure reference function
 does not perform atomic bookkeeping or enforce the host's actual spending.
+
+Candidate reopening changes neither spending nor the deadline. Unused supplemental
+allowance is not a fresh per-repair three-probe quota. Follow [4.1 closeout](followup.md)
+for bounded continuation ownership; neither the library nor this Skill installs a receiver.

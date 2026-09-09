@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.1.0 — 2026-09-09
+
+Fix all four fixed model/profile/effort routes and validator cross-checks; remove stale writer version text. Preserve saved 3.0.0 and 4.0.0 contracts instead of silently reinterpreting them.
+
+Add bounded informational notes, atomic candidate screening and duplicate links; benign screening restores a current acceptance receipt without rerunning the mainline. Promoted issues require explicit objective-aware resolution, with current causal Astra evidence and actual independently verified writer effects for a fixed outcome. Early reports survive interruption.
+
+Reserve the known next required Astra frontier plus greater explicit demand; require actual host capacity and active-thread observations for Luna. Add explicit changed-candidate supplemental reopening without resetting budgets or omitted nodes. Closeout observations distinguish real bounded receivers, stop requests and unknown cleanup without creating a background scheduler.
+
+Add passive paired-observation validation and a live-host protocol. Deterministic tests and schema discovery do not establish actual native model identity, live joint execution or comparative quality. Real validation status is recorded separately.
+
 ## 4.0.0 — 2026-09-09
 
 Astra owns the complete mainline; meaningful tasks proactively launch at least three distinct optional Luna probes when capacity permits, per task rather than per repair cycle.

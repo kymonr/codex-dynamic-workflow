@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v4.0.0
+# Codex Dynamic Workflow v4.1.0
 
 仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 
@@ -12,7 +12,7 @@ $codex-dynamic-workflow
 主 Skill 在 `skill/codex-dynamic-workflow/`；模型执行 profile 在 `profiles/`。
 旧 `codex-workflow` Python/QuickJS 仓库保持独立。v3 新增显式 Runtime；确定性验收与真实模型集成状态分开记录。
 
-当前协议：[v4 设计](DESIGN_V4.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)。
+当前协议：[v4.1 设计](DESIGN_V41.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)。
 确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
 
 ## 本机验证与安装
@@ -53,8 +53,8 @@ CLI 模型派工入口已停用；Runtime 的本地 Python 命令只管理任务
 
 新 Runtime 默认 `workflow: "astra-mainline"`；Luna 节点必须标记 `supplemental: true`、
 `required: false`，并绑定与当前候选匹配的隔离 `snapshot_root`。默认补充额度 12 次，
-保护未用完的 Astra strong 额度及至少 1 个宿主槽位。新补充调用不能借用旧机械储备。
-主线验收、补充覆盖、执行结束和线程资源清理分别报告；重要补充发现必须由 Root 处置或升级。
+保护未用完的 Astra strong 额度；槽位预留覆盖已知的下一阶段必要主线工作，而不只固定留 1 个。新补充调用不能借用旧机械储备。
+主线验收、补充覆盖、执行结束和线程资源清理分别报告；普通意见由 Root 简短筛查；重要发现升级后必须明确处置，调查完成不等于修复完成。
 旧任务的路由与累计预算不变；未包含 ordinary 路由的旧合同不会自动加入模型。详见 [Runtime 协议](skill/codex-dynamic-workflow/references/runtime.md)。
 
 ## 2.0.2 ownership 与元数据校验
@@ -94,7 +94,7 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 `policy_reference.py` 的测试验证纯参考逻辑，不是对真实模型行为或宿主安全边界的证明。
 真实 Codex 集成验收另存 `reports/`，区分已观察、失败和未覆盖；不宣称零缺陷。
 
-当前设计见 [DESIGN_V4.md](DESIGN_V4.md)，`DESIGN.md` 与 `DESIGN_V3.md` 保留历史设计；本次 review、安装与验收见 `reports/`；
+当前设计见 [DESIGN_V41.md](DESIGN_V41.md)，`DESIGN.md` 与 `DESIGN_V3.md` 保留历史设计；本次 review、安装与验收见 `reports/`；
 变更对照见 [CHANGELOG.md](CHANGELOG.md)。源目录与安装目录是独立副本。
 
 ## Windows 原位更新例外
@@ -106,7 +106,7 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 该例外不具备进程强杀/断电时的文件级原子性：半写状态记为恢复冲突，必须检查前像，
 不会覆盖可能来自其他进程的变化或谎报已恢复。默认模式仍为原子替换。
 
-## v4 Runtime 使用入口
+## v4.1 Runtime 使用入口
 
 普通 `$codex-dynamic-workflow` 按原生 Skill-only 模式工作；显式选择 Runtime 时，SQLite 统一管理动态图、调用预留、尝试记录和事件。当前新任务全部使用 native，历史 exec 记录保持可读且不改写。详细协议见 [runtime.md](skill/codex-dynamic-workflow/references/runtime.md)。
 
@@ -128,3 +128,13 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 确定性测试覆盖真实 SQLite、竞争准入、负面状态、隔离安装副本及无害本机进程；这些不是实际模型或 native 子代理的端到端证明。真实调用和独立模型 review 的状态以 `reports/` 本轮记录为准。未完成的 live 集成验收不能标记为通过。
 
 历史 v3 在 2026-09-06 已通过两代理真实 native readonly 执行验收，使用安装副本完成准入、实际身份绑定、原文检查、独立验证、宿主完成观察及 SQLite 重开读回。执行协调与宿主资源释放分别记账：本次 `execution_holds=0`，两条 `host_resource_holds` 仍保留，物理回收状态为 `UNKNOWN`。本地完整证据位于 `reports/native-readonly-live-20260906/report.md`；可分发源码副本不包含本地报告。
+
+## 4.1 收尾与实际验证
+
+[4.1 协议](skill/codex-dynamic-workflow/references/followup.md)定义 notes/claims 分流、批量 screen、
+显式 resolve、增量 report，以及新候选在剩余额度内重新开放补充检查。
+主线不等全部 Luna，但不把“主线已完成”当作立即中断有效探针的唯一理由。
+继续运行必须有真实结果接收者和有界截止；控制器不创建后台接收机制。
+真实宿主与效果比较按 `reports/V41_NATIVE_VALIDATION_PROTOCOL.md`执行；
+[evaluate_native_comparison.py](scripts/evaluate_native_comparison.py)只是读取实际记录的比较器，不调用模型。
+当前 `reports/V41_NATIVE_COMPARISON_STATUS.json`为 NOT_RUN，不应算作实际联调通过。

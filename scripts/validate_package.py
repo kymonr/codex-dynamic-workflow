@@ -162,9 +162,11 @@ def validate(root: Path = ROOT) -> list[str]:
             if type(budget.get(key)) is not int or budget[key] < 1: errors.append('invalid v4 budget field: '+key)
         if type(budget.get('minimum_meaningful_luna_probes')) is int and budget['minimum_meaningful_luna_probes'] < 3:
             errors.append('meaningful-task Luna launch intent must be at least three')
+    profile_configs = {}
     for name in PROFILE_NAMES:
         try:
             data = tomllib.loads((root / 'profiles' / f'{name}.toml').read_text(encoding='utf-8'))
+            profile_configs[name] = data
             if data.get('name') != name or not data.get('description') or not data.get('developer_instructions'):
                 errors.append(f'invalid role metadata: {name}')
             allowed = {'name', 'description', 'model', 'model_reasoning_effort', 'sandbox_mode', 'developer_instructions'}
@@ -217,6 +219,8 @@ def validate(root: Path = ROOT) -> list[str]:
         if not isinstance(rt, dict) or rt.get('version') != version or rt.get('backends') != ['native'] or rt.get('backend_per_run') != 1 or rt.get('exec_writes') is not False:
             errors.append('runtime identity/backend contract drift')
         required = ['scripts/cwf.py','scripts/cwf_runtime/__init__.py','scripts/cwf_runtime/__main__.py','scripts/cwf_runtime/core.py','scripts/cwf_runtime/policy.py','scripts/cwf_runtime/executor.py','scripts/cwf_runtime/worker.py','scripts/cwf_runtime/luna_pool.py','scripts/cwf_runtime/cli.py','scripts/cwf_runtime/result.schema.json','references/runtime.md']
+        if version != 'INVALID' and tuple(map(int, version.split('.'))) >= (4,1,0):
+            required += ['references/followup.md','scripts/cwf_runtime/result-v41.schema.json']
         for rel in required:
             if not (root/SKILL/rel).is_file(): errors.append('missing runtime delivery file: '+rel)
         try:
@@ -224,6 +228,28 @@ def validate(root: Path = ROOT) -> list[str]:
             tree=ast.parse((root/SKILL/'scripts/cwf_runtime/core.py').read_text(encoding='utf-8'))
             versions=[node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in node.targets) and isinstance(node.value,ast.Constant)]
             if versions != [version]: errors.append('runtime code version drift')
+            # Read literal declarations only: validation never imports the untrusted package.
+            literal_tables = {n.targets[0].id:ast.literal_eval(n.value) for n in tree.body
+                              if isinstance(n,ast.Assign) and len(n.targets)==1
+                              and isinstance(n.targets[0],ast.Name) and isinstance(n.value,(ast.Dict,ast.Set))}
+            routes = literal_tables.get('DEFAULT_ROUTES', {})
+            if tuple(map(int, version.split('.'))) >= (4,1,0):
+                if policy.get('runtime',{}).get('supplemental_protocol') != 2:
+                    errors.append('v4.1 supplemental protocol drift')
+                supported = rt.get('supported_contract_versions')
+                if (not isinstance(supported,list) or any(not isinstance(v,str) for v in supported)
+                        or set(supported) != literal_tables.get('SUPPORTED_CONTRACT_VERSIONS')):
+                    errors.append('supported contract versions drift')
+                if set(routes) != {'strong','writer','ordinary','economy'}:
+                    errors.append('runtime routing table incomplete')
+                for tier,route in routes.items():
+                    if not isinstance(route,dict) or any(not isinstance(route.get(k),str) for k in ('model','profile','effort')):
+                        errors.append('invalid runtime route: '+tier); continue
+                    profile = profile_configs.get(route.get('profile'), {})
+                    if (not profile or profile.get('model') != route.get('model')
+                            or profile.get('model_reasoning_effort') != route.get('effort')):
+                        errors.append('runtime/profile/model/effort drift: '+tier)
+
             if version.startswith('4.'):
                 declarations = {}
                 for node in tree.body:
@@ -235,7 +261,7 @@ def validate(root: Path = ROOT) -> list[str]:
                 for table, fields in [('DEFAULTS',expected),('SUPPLEMENTAL_DEFAULTS',expected_supplemental)]:
                     if any(declarations.get(table,{}).get(k) != budget.get(v) for k,v in fields.items()):
                         errors.append('v4 runtime/policy budget drift: '+table)
-        except (OSError,ValueError,SyntaxError) as exc: errors.append('runtime source error: '+str(exc))
+        except (OSError,ValueError,TypeError,SyntaxError) as exc: errors.append('runtime source error: '+str(exc))
     return errors
 
 

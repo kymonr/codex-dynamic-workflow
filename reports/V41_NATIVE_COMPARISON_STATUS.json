@@ -1,0 +1,25 @@
+{
+  "status": "NOT_RUN",
+  "baseline_commit": "e5f3d6e9b15419724ff6eda5b46a657f61016c58",
+  "reason": "RDC initially had no device, then reconnected. Codex 0.153.4 CLI identity and version-specific app-server schema generation were observed. The tool safety check blocked writing the subsequent native preflight script; no native RPC/model session or paired trial was run. No alternate execution route was used to bypass that block.",
+  "native_model_calls": 0,
+  "non_author_model_review": "NOT_RUN",
+  "local_installation": "PASS",
+  "pairs": [],
+  "host_preflight": {
+    "device_reconnected": true,
+    "codex_version": "0.153.4",
+    "schema_generation": "PASS",
+    "native_rpc_preflight": "BLOCKED_TOOL_SAFETY",
+    "effective_model_identity": "UNKNOWN",
+    "Desktop_session_verified": false
+  },
+  "installed_version": "4.1.0",
+  "installed_managed_files": 28,
+  "installed_controller_smoke": {
+    "status": "PASS",
+    "processes": 39,
+    "native_model_calls": 0,
+    "identities": "SYNTHETIC"
+  }
+}

@@ -28,6 +28,10 @@ This package ships four optional profiles, installed separately from openai.yaml
 | cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
 
+Runtime 4.1 rejects conflicting model/profile/effort triples before creating a new
+Astra-mainline contract; package validation also compares the shipped profile values.
+Requested identity still does not prove the host used it.
+
 These are model mappings, not built-in tools or a model quality benchmark. Cost tiers
 are configured assumptions: check current availability and cost suitability. Existing
 Luna/Sol/Spark profiles and global defaults remain unchanged by installation.

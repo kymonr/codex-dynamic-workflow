@@ -1,0 +1,133 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "partial",
+        "failed"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "sources_opened": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN",
+              "NOT_RUN"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ]
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "proposition": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "existence": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "disproved",
+              "unknown"
+            ]
+          },
+          "applicability": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "disproved",
+              "unknown"
+            ]
+          },
+          "impact": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposition",
+          "evidence",
+          "existence",
+          "applicability",
+          "impact"
+        ]
+      }
+    },
+    "notes": {
+      "description": "v4.1 informational observations only; plausible delivery risks belong in claims.",
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "text",
+          "evidence"
+        ]
+      }
+    }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "sources_opened",
+    "checks",
+    "changed_files",
+    "claims"
+  ]
+}

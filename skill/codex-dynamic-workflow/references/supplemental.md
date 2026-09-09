@@ -1,4 +1,8 @@
-# v4: Astra mainline and supplemental Luna coverage
+# Astra mainline and supplemental Luna coverage
+
+For new 4.1 contracts, [followup](followup.md) refines screening, issue resolution,
+capacity and candidate epochs. The earlier 4.0 behavior below remains the compatibility
+contract for saved 4.0 runs; it is not the full 4.1 operational contract.
 
 ## Responsibility and proactive coverage
 Astra retains the complete mainline, including required investigation, implementation,

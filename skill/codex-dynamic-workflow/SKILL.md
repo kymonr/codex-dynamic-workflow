@@ -2,7 +2,7 @@
 name: codex-dynamic-workflow
 description: "Use for Astra-owned native workflows with aggressive Luna supplemental coverage: implementation, investigation, deep review and independent verification. Astra keeps the complete mainline; Luna probes hunt omissions, counterexamples and missing tests without becoming acceptance dependencies."
 metadata:
-  version: "4.0.0"
+  version: "4.1.0"
 ---
 
 # Codex Dynamic Workflow — raw-source-first
@@ -46,7 +46,7 @@ to finish. Returned concrete evidence is not disposable: Root checks applicabili
 the current candidate, deduplicates it, and promotes material verified issues into the
 mainline. Empty agreement and generic advice do not create mainline work.
 
-Read the [v4 supplemental protocol](references/supplemental.md) for launch accounting,
+Read the [v4.1 follow-up rules](references/followup.md) and [supplemental protocol](references/supplemental.md) for launch accounting,
 source isolation, Root triage and separate mainline acceptance. The three-probe floor
 is per meaningful task, not per turn, file or repair cycle. Document capability, capacity,
 budget, cancellation or genuinely insufficient independent directions when fewer run.
@@ -93,8 +93,8 @@ host, another backend or a weaker model. Do not change configuration or permissi
    Avoid artificial fragments; the three-probe floor concerns useful extra directions.
 3. Give each node its own scope, dependencies, raw sources, acceptance/stop rule,
    permissions and budget. Root alone may dispatch or approve scope expansion.
-4. Process ready results immediately. Open the cited original evidence before
-   adopting material claims. Register claims incrementally; deduplicate by meaning,
+4. Screen concise ready candidates at natural mainline checkpoints; escalate credible
+   severe risks promptly. Open current original evidence before adopting material claims. Register claims incrementally; deduplicate by meaning,
    scope and snapshot. Do not wait for every sibling merely to assign IDs.
 5. New evidence may justify a new branch, design comparison, reproduction or fix.
    State the gap, distinct method, possible decision change and budget impact.
@@ -159,6 +159,7 @@ allowed effects, objective checks, stop rule and this return shape:
 ```text
 NODE: <id / logical role / effective profile-model-effort or UNKNOWN>
 STATUS: completed | partial | blocked | failed | interrupted
+NOTES: <compact non-risk suggestions/coverage observations; plausible risks belong in CLAIMS>
 SOURCES_OPENED: <actual path/ref/range or command + result identity>
 CLAIMS:
 - <proposition; original evidence; supported | inferred | UNVERIFIED>
@@ -181,8 +182,8 @@ of which model ran.
 ## Lifecycle and completion
 
 Use the currently exposed wait/list/interrupt/close contract; do not invent tool
-names, parameters or timeout values. Wait only when Root has no useful independent
-work. A timeout alone is not failure. One bounded progress check can distinguish
+names, parameters or timeout values. Wait for real mainline dependencies, not merely
+because Root is idle while optional Luna probes run. A timeout alone is not failure. One bounded progress check can distinguish
 slow work from no progress. Respect the declared deadline; interrupt task-owned
 work once when needed and mark unconfirmed termination UNKNOWN. Do not release a
 write claim or reuse capacity until the host confirms the relevant state.
@@ -192,9 +193,13 @@ A low-value or dry-expansion signal stops optional exploration, not mandatory re
 verification or acceptance. Passing a needed independent check is useful progress
 although it creates no new bug. No fixed three-wave ceiling.
 
-At a v4 mainline acceptance point, omit pending supplemental probes and stop further
-optional admissions. Do not wait for unrelated active probes to report mainline acceptance;
-record actual cleanup separately. Handle late material findings before final close. Runtime
+At mainline acceptance, omit pending probes and close that candidate
+epoch. Do not wait for all Luna, but do not automatically kill a still-useful probe either.
+Continuation needs a real result receiver and bounded cutoff; without one, perform a
+bounded host closeout and disclose incomplete coverage. A stop request is not release.
+Root may reopen supplementation for changed candidate bytes within the SAME remaining
+budget; no fresh three-probe quota. Handle returned risks through screening and explicit
+issue resolution. Investigation completed does not mean a repair is finished. Runtime
 reports mainline_accepted separately from scope_complete and run/host cleanup state.
 
 For authorized implementation, continue investigation → decided change → focused

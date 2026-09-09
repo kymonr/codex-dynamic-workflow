@@ -41,7 +41,7 @@ class SupplementalV4Tests(unittest.TestCase):
     def add(self,*xs): return self.rt.add(self.run,list(xs),reason='fixture expansion')
     def acquire(self,**kw): return self.rt.acquire(self.run,backend='native',**kw)
     def done(self,p=None,result=None,release=True):
-        p=p or self.acquire(host_capacity=6); ext='child-'+p['attempt']
+        p=p or self.acquire(host_capacity=6,host_active=0); ext='child-'+p['attempt']
         self.rt.bind(p['attempt'],ext,backend='native')
         self.rt.complete(p['attempt'],result or reply(),external_id=ext,backend='native')
         if release: self.rt.release(p['attempt'],external_id=ext,confirmed=True,reason='fixture host closure')
@@ -74,7 +74,7 @@ class SupplementalV4Tests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError,'supplemental-only'): self.rt.finish(self.run)
     def test_mainline_wins_even_when_added_after_probe(self):
         self.add(self.probe(), node('main',required=False))
-        self.assertEqual(self.acquire(host_capacity=6)['node_id'],'main')
+        self.assertEqual(self.acquire(host_capacity=6,host_active=0)['node_id'],'main')
     def test_unknown_capacity_does_not_guess_luna_slots(self):
         self.add(self.probe()); p=self.acquire(); self.assertFalse(p['admitted'])
         self.assertIn('host-capacity-unknown',str(p['reasons']))
@@ -84,32 +84,32 @@ class SupplementalV4Tests(unittest.TestCase):
         self.assertTrue(self.acquire(host_capacity=4,host_active=2)['admitted'])
     def test_full_unused_strong_budget_is_reserved(self):
         self.run=self.rt.create(root=self.root,goal='tight',backend='native',bounds=dict(approved=8,reserve=0,absolute=8,strong_approved=8))
-        self.add(self.probe()); p=self.acquire(host_capacity=6)
+        self.add(self.probe()); p=self.acquire(host_capacity=6,host_active=0)
         self.assertFalse(p['admitted']); self.assertIn('mainline-allowance-reserved',str(p))
     def test_supplemental_quota_counts_failed_attempt_and_retry(self):
         self.run=self.rt.create(root=self.root,goal='retry',backend='native',bounds=dict(supplemental_approved=1))
         self.add(self.probe()); self.done(result=reply(outcome='failed',checks=[]))
         self.rt.retry(self.run,'probe',reason='fixture input repair')
-        p=self.acquire(host_capacity=6); self.assertFalse(p['admitted'])
+        p=self.acquire(host_capacity=6,host_active=0); self.assertFalse(p['admitted'])
         self.assertIn('supplemental-allowance-exhausted',str(p)); self.assertEqual(self.rt.status(self.run)['budget']['used'],1)
     def test_zero_supplemental_budget_preserves_mainline(self):
         self.run=self.rt.create(root=self.root,goal='no probes',backend='native',bounds=dict(supplemental_approved=0))
         self.add(node('main'),self.probe()); self.done()
-        self.assertFalse(self.acquire(host_capacity=6)['admitted']); self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
+        self.assertFalse(self.acquire(host_capacity=6,host_active=0)['admitted']); self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
     def test_failed_partial_and_interrupted_probes_stay_truthful(self):
         for outcome in ['failed','partial','interrupted']:
             with self.subTest(outcome=outcome):
                 self.run=self.rt.create(root=self.root,goal=outcome,backend='native')
                 self.add(node('main'),self.probe()); self.done()
                 if outcome=='interrupted':
-                    p=self.acquire(host_capacity=6); self.rt.bind(p['attempt'],'stopped',backend='native')
+                    p=self.acquire(host_capacity=6,host_active=0); self.rt.bind(p['attempt'],'stopped',backend='native')
                     self.rt.release(p['attempt'],external_id='stopped',confirmed=True,reason='fixture stopped')
                 else: self.done(result=reply(outcome=outcome,checks=[]))
                 s=self.rt.finish(self.run); self.assertTrue(s['mainline_accepted'])
                 self.assertEqual(s['supplemental_coverage']['states']['probe'],outcome)
     def test_running_probe_does_not_block_mainline_acceptance(self):
         self.add(node('main'),self.probe()); self.done()
-        p=self.acquire(host_capacity=6); self.rt.bind(p['attempt'],'slow',backend='native')
+        p=self.acquire(host_capacity=6,host_active=0); self.rt.bind(p['attempt'],'slow',backend='native')
         s=self.rt.finish(self.run); self.assertEqual(s['status'],'open'); self.assertTrue(s['mainline_accepted'])
         self.assertEqual(s['supplemental_execution_holds'],1); self.assertFalse(s['host_resources_released'])
         self.rt.release(p['attempt'],external_id='slow',confirmed=True,reason='fixture stopped')
@@ -130,7 +130,7 @@ class SupplementalV4Tests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError,'triage'): self.rt.finish(self.run)
     def test_late_finding_invalidates_prior_acceptance(self):
         self.add(node('main'),self.probe()); self.done()
-        p=self.acquire(host_capacity=6); self.rt.bind(p['attempt'],'late',backend='native')
+        p=self.acquire(host_capacity=6,host_active=0); self.rt.bind(p['attempt'],'late',backend='native')
         self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
         self.rt.complete(p['attempt'],reply(claims=[finding()]),external_id='late',backend='native')
         self.assertFalse(self.rt.status(self.run)['mainline_accepted'])
@@ -142,7 +142,9 @@ class SupplementalV4Tests(unittest.TestCase):
         self.add(node('resolve'))
         self.rt.triage(p['attempt']+'-0','promoted',reason='bounded current-source investigation needed',target='resolve')
         with self.assertRaises(WorkflowError): self.rt.finish(self.run)
-        self.done(); self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
+        self.done()
+        self.rt.resolve(p['attempt']+'-0','reported',reason='fixture review reports the confirmed issue')
+        self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
     def test_completed_or_optional_target_cannot_launder_finding(self):
         self.add(node('main'),self.probe()); self.done(); p,_=self.done(result=reply(claims=[finding()]))
         with self.assertRaisesRegex(WorkflowError,'never-executed'): self.rt.triage(p['attempt']+'-0','promoted',reason='bad target',target='main')
@@ -150,24 +152,24 @@ class SupplementalV4Tests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError,'required Astra'): self.rt.triage(p['attempt']+'-0','promoted',reason='bad target',target='optional')
     def test_snapshot_reader_does_not_lock_current_writer(self):
         self.run=self.rt.create(root=self.root,goal='write',backend='native',implement=True)
-        self.add(self.probe()); self.acquire(host_capacity=6)
+        self.add(self.probe()); self.acquire(host_capacity=6,host_active=0)
         self.add(node('w',role='writer',writes=['a.py']),node('review',role='reviewer',verifies='w',depends=['w']))
-        self.assertEqual(self.acquire(host_capacity=6)['node_id'],'w')
+        self.assertEqual(self.acquire(host_capacity=6,host_active=0)['node_id'],'w')
     def test_packet_reads_frozen_snapshot_not_working_tree(self):
-        probe=self.probe(); self.add(probe); p=self.acquire(host_capacity=6)
+        probe=self.probe(); self.add(probe); p=self.acquire(host_capacity=6,host_active=0)
         self.assertEqual(p['root'],probe['snapshot_root']); self.assertEqual(p['candidate_root'],str(self.root))
         (self.root/'a.py').write_text('x=2\n')
         self.done(p); self.assertEqual(self.rt.status(self.run)['nodes'][0]['state'],'completed')
     def test_omit_is_supplemental_only_and_not_for_active(self):
         self.add(node('m'),self.probe())
         with self.assertRaises(WorkflowError): self.rt.omit(self.run,'m',reason='bad')
-        self.done(); self.acquire(host_capacity=6)
+        self.done(); self.acquire(host_capacity=6,host_active=0)
         with self.assertRaises(WorkflowError): self.rt.omit(self.run,'probe',reason='still live')
     def test_cutoff_blocks_more_probes_but_not_mainline_repair(self):
-        self.add(node('m'),self.probe()); self.done(); self.acquire(host_capacity=6); self.rt.finish(self.run)
+        self.add(node('m'),self.probe()); self.done(); self.acquire(host_capacity=6,host_active=0); self.rt.finish(self.run)
         self.add(self.probe('extra'),node('repair'))
-        self.assertEqual(self.acquire(host_capacity=6)['node_id'],'repair')
-        self.assertIn('supplemental-cutoff',str(self.acquire(host_capacity=6)))
+        self.assertEqual(self.acquire(host_capacity=6,host_active=0)['node_id'],'repair')
+        self.assertIn('supplemental-cutoff',str(self.acquire(host_capacity=6,host_active=0)))
     def test_v3_contract_reopens_without_rewriting_identity(self):
         self.run=self.rt.create(root=self.root,goal='legacy',backend='native',workflow='legacy')
         c=loads(self.rt.run(self.run)['contract']); c['version']='3.0.0'; c.pop('workflow')
@@ -193,7 +195,7 @@ class SupplementalV4Tests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError,'identity mismatch'):
             self.rt.create(root=self.root,goal='bad profile',backend='native',routes=routes)
     def test_mutated_probe_snapshot_returns_partial(self):
-        p=self.probe(); self.add(p); packet=self.acquire(host_capacity=6)
+        p=self.probe(); self.add(p); packet=self.acquire(host_capacity=6,host_active=0)
         (Path(p['snapshot_root'])/'a.py').write_text('changed')
         self.done(packet); self.assertEqual(self.rt.status(self.run)['nodes'][0]['state'],'partial')
     def test_stale_advisory_must_be_reconsidered(self):
@@ -206,7 +208,7 @@ class SupplementalV4Tests(unittest.TestCase):
         self.run=self.rt.create(root=self.root,goal='concurrent',backend='native',bounds=dict(supplemental_approved=1))
         self.add(self.probe('p1'),self.probe('p2'))
         def launch(_):
-            with Runtime(self.rt.path) as rt: return rt.acquire(self.run,backend='native',host_capacity=8)
+            with Runtime(self.rt.path) as rt: return rt.acquire(self.run,backend='native',host_capacity=8,host_active=0)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool: results=list(pool.map(launch,range(2)))
         self.assertEqual(sum(r['admitted'] for r in results),1)
         self.assertEqual(self.rt.status(self.run)['budget']['used'],1)
@@ -215,7 +217,7 @@ class SupplementalV4Tests(unittest.TestCase):
         with patch('cwf_runtime.core.time.time',return_value=self.rt.run(self.run)['deadline']+1):
             with self.assertRaises(WorkflowError): self.rt.finish(self.run)
     def test_cleanup_can_finish_after_dispatch_deadline(self):
-        self.add(node('m'),self.probe()); self.done(); p=self.acquire(host_capacity=6)
+        self.add(node('m'),self.probe()); self.done(); p=self.acquire(host_capacity=6,host_active=0)
         self.rt.bind(p['attempt'],'slow',backend='native'); self.rt.finish(self.run)
         self.rt.release(p['attempt'],external_id='slow',confirmed=True,reason='fixture stopped')
         with patch('cwf_runtime.core.time.time',return_value=self.rt.run(self.run)['deadline']+1):
@@ -227,7 +229,7 @@ class SupplementalV4Tests(unittest.TestCase):
         module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         plan=json.loads(module.prepare(self.base/'example').read_text(encoding='utf-8'))
         nodes=plan.pop('nodes'); run=self.rt.create(**plan); self.rt.add(run,nodes,reason='prepared fixture')
-        packets=[self.rt.acquire(run,backend='native',host_capacity=6) for _ in range(4)]
+        packets=[self.rt.acquire(run,backend='native',host_capacity=6,host_active=0) for _ in range(4)]
         self.assertEqual(packets[0]['route']['model'],'gpt-6-astra')
         self.assertEqual(len({p['node_id'] for p in packets[1:]}),3)
         self.assertTrue(all(p['route']['model']=='gpt-5.6-luna' for p in packets[1:]))
@@ -236,7 +238,7 @@ class SupplementalV4Tests(unittest.TestCase):
             self.rt.complete(p['attempt'],reply(sources_opened=['invoice.py']),external_id=p['node_id'],backend='native')
             self.rt.release(p['attempt'],external_id=p['node_id'],confirmed=True,reason='fixture host settled')
         for p in packets: end(p)
-        review=self.rt.acquire(run,backend='native',host_capacity=6); self.assertEqual(review['node_id'],'review'); end(review)
+        review=self.rt.acquire(run,backend='native',host_capacity=6,host_active=0); self.assertEqual(review['node_id'],'review'); end(review)
         self.assertTrue(self.rt.finish(run)['mainline_accepted'])
 
     def test_cli_supports_strict_plan_capacity_triage_and_two_phase_finish(self):
@@ -257,7 +259,7 @@ class SupplementalV4Tests(unittest.TestCase):
         cli('bind','--attempt',first['attempt'],'--external-id','main-cli','--backend','native')
         cli('complete','--attempt',first['attempt'],'--external-id','main-cli','--backend','native','--result',str(payload))
         cli('release','--attempt',first['attempt'],'--external-id','main-cli','--confirmed','--reason','fixture host closed')
-        probe=cli('next','--run',rid,'--backend','native','--host-capacity','6')
+        probe=cli('next','--run',rid,'--backend','native','--host-capacity','6','--host-active','0')
         cli('bind','--attempt',probe['attempt'],'--external-id','probe-cli','--backend','native')
         self.assertTrue(cli('finish','--run',rid)['mainline_accepted'])
         payload.write_text(json.dumps(reply(claims=[finding()])),encoding='utf-8')

@@ -21,7 +21,8 @@ import uuid
 
 from .policy import budget_admission
 
-VERSION = '4.0.0'
+VERSION = '4.1.0'
+SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0'}
 SCHEMA = 1
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -36,6 +37,10 @@ DEFAULT_ROUTES = {
     'economy': {'model': 'gpt-5.6-luna', 'effort': 'medium', 'profile': 'cwf_mechanical'},
     'writer': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_writer'},
 }
+
+
+def followup_contract(contract):
+    return contract.get('version') == '4.1.0' and contract.get('supplemental_protocol') == 2
 
 
 class WorkflowError(ValueError):
@@ -178,6 +183,22 @@ def path_list(value, label, empty=False):
     return out
 
 
+def validate_claims(claims, opened):
+    if not isinstance(claims, list) or len(claims) > 64:
+        raise WorkflowError('invalid claims')
+    fields = {'proposition','evidence','existence','applicability','impact'}
+    for claim in claims:
+        mapping(claim, fields, fields, 'claim')
+        text(claim['proposition'], 'proposition'); text(claim['impact'], 'impact')
+        text(claim['existence'], 'claim existence', 20)
+        text(claim['applicability'], 'claim applicability', 20)
+        evidence = path_list(claim['evidence'], 'claim evidence')
+        if (not set(evidence) <= set(opened) or claim['existence'] not in {'supported','disproved','unknown'}
+                or claim['applicability'] not in {'supported','disproved','unknown'}):
+            raise WorkflowError('claim lacks valid opened-source evidence')
+    return claims
+
+
 def physical(root, paths):
     return [os.path.normcase(str(Path(root) / p)).replace('\\', '/').casefold() for p in paths]
 
@@ -291,7 +312,7 @@ class Runtime:
         return dict(row)
 
     def create(self, *, root, goal, backend, bounds=None, routes=None, implement=False, run_id=None,
-               capacity_scope=None, execution_pool=None, workflow='astra-mainline'):
+               capacity_scope=None, execution_pool=None, workflow='astra-mainline', acceptance_mode=None):
         if backend not in {'native', 'exec'}:
             raise WorkflowError('backend must be native or exec')
         if capacity_scope not in (None, 'database', 'backend'):
@@ -308,6 +329,10 @@ class Runtime:
         source = source.resolve()
         goal = text(goal, 'goal')
         boolean(implement, 'implement')
+        if acceptance_mode is None:
+            acceptance_mode = 'repair' if implement else 'review'
+        if acceptance_mode not in {'review', 'repair'} or (acceptance_mode == 'repair' and not implement):
+            raise WorkflowError('repair acceptance requires implementation authority')
         options = dict(DEFAULTS)
         if workflow == 'astra-mainline':
             options.update(SUPPLEMENTAL_DEFAULTS)
@@ -337,12 +362,15 @@ class Runtime:
                 if any(routing.get(tier, {}).get(k) != DEFAULT_ROUTES[tier][k] for k in ('model', 'effort')):
                     raise WorkflowError('Luna pool requires ordinary Luna/max and economy Luna/medium routes')
         if workflow == 'astra-mainline':
-            for tier, model in [('strong', 'gpt-6-astra'), ('writer', 'gpt-6-astra'), ('ordinary', 'gpt-5.6-luna'), ('economy', 'gpt-5.6-luna')]:
-                if routing.get(tier, {}).get('model') != model or routing[tier]['profile'] != DEFAULT_ROUTES[tier]['profile']:
-                    raise WorkflowError('Astra/Luna route identity mismatch; use an explicit legacy policy for other mappings')
+            for tier in ('strong', 'writer', 'ordinary', 'economy'):
+                if any(routing.get(tier, {}).get(k) != DEFAULT_ROUTES[tier][k]
+                       for k in ('model', 'profile', 'effort')):
+                    raise WorkflowError(f'route identity mismatch for {tier}: fixed profile/model/effort must agree')
         rid = identifier(run_id or uuid.uuid4().hex)
         contract = {'version': VERSION, 'bounds': options, 'routes': routing, 'implement': implement,
                     'backend': backend, 'root': str(source), 'goal': goal, 'workflow': workflow}
+        if workflow == 'astra-mainline':
+            contract.update(supplemental_protocol=2, acceptance_mode=acceptance_mode)
         # Keep omitted fields and saved legacy contract hashes unchanged.
         if capacity_scope is not None: contract['capacity_scope'] = capacity_scope
         if execution_pool is not None: contract['execution_pool'] = execution_pool
@@ -360,7 +388,7 @@ class Runtime:
         if time.time() >= r['deadline']:
             raise WorkflowError('run deadline reached')
         contract = loads(r['contract'])
-        if contract.get('version') not in {'3.0.0', VERSION} or sha(contract) != r['contract_hash']:
+        if contract.get('version') not in SUPPORTED_CONTRACT_VERSIONS or sha(contract) != r['contract_hash']:
             raise WorkflowError('runtime/contract identity changed; recovery requires explicit migration')
         return r, contract
 
@@ -523,9 +551,10 @@ class Runtime:
                 return True
         return False
 
-    def acquire(self, run, *, backend, host_capacity=None, host_active=None):
+    def acquire(self, run, *, backend, host_capacity=None, host_active=None, mainline_slots_needed=None):
         if host_capacity is not None: integer(host_capacity, 'host_capacity', 1)
         if host_active is not None: integer(host_active, 'host_active')
+        if mainline_slots_needed is not None: integer(mainline_slots_needed, 'mainline_slots_needed', 1)
         with self.tx():
             r, c = self.open_run(run)
             if backend != r['backend']:
@@ -546,7 +575,15 @@ class Runtime:
             if host_capacity is not None:
                 capacity = min(capacity, host_capacity) if capacity is not None else host_capacity
             active = max(active, host_active or 0)
-            cutoff = self.conn.execute("SELECT 1 FROM events WHERE run_id=? AND kind='mainline.accepted'", (run,)).fetchone() is not None
+            cutoff = self._supplemental_cutoff(r)
+            reserve_slots = c['bounds'].get('mainline_capacity_reserve', 1)
+            if followup_contract(c):
+                # Protect the next known required frontier, not just a single future reviewer.
+                frontier = sum(n['state'] == 'pending' and loads(n['spec'])['required']
+                    and not loads(n['spec']).get('supplemental')
+                    and all(by_id[d]['state'] in {'completed', 'active'} for d in loads(n['spec'])['depends'])
+                    for n in nodes)
+                reserve_slots = max(reserve_slots, frontier, mainline_slots_needed or 1)
             reasons = []
             for n in sorted(nodes, key=lambda n: (loads(n['spec']).get('supplemental', False), not loads(n['spec'])['required'])):
                 s = loads(n['spec'])
@@ -571,8 +608,9 @@ class Runtime:
                     why = None
                     if cutoff: why = 'supplemental-cutoff-after-mainline-acceptance'
                     elif supplemental_used >= b['supplemental_approved']: why = 'supplemental-allowance-exhausted'
-                    elif capacity is None: why = 'host-capacity-unknown'
-                    elif active + 1 + b['mainline_capacity_reserve'] > capacity: why = 'mainline-capacity-reserved'
+                    elif capacity is None or (followup_contract(c) and host_capacity is None): why = 'host-capacity-unknown'
+                    elif followup_contract(c) and host_active is None: why = 'host-active-unknown'
+                    elif active + 1 + reserve_slots > capacity: why = 'mainline-capacity-reserved'
                     elif r['used'] + 1 + max(mandatory_strong, b['strong_approved'] - r['strong_used']) > min(b['approved'], b['absolute']): why = 'mainline-allowance-reserved'
                     if why:
                         reasons.append({'node': n['id'], 'reason': why}); continue
@@ -592,7 +630,9 @@ class Runtime:
                 self.conn.execute('UPDATE nodes SET state=?,attempts=attempts+1,current_token=? WHERE run_id=? AND id=?', ('active', token, run, n['id']))
                 self.conn.execute('UPDATE runs SET used=used+1,reserve_used=reserve_used+?,strong_used=strong_used+? WHERE id=?',
                                   (int(decision.reason == 'cumulative-economy-reserve'), int(s['tier'] == 'strong'), run))
-                self.event(run, 'attempt.reserved', {'node': n['id'], 'attempt': token, 'allowance': decision.reason})
+                self.event(run, 'attempt.reserved', {'node': n['id'], 'attempt': token, 'allowance': decision.reason,
+                    **({'host_capacity':host_capacity, 'host_active':host_active, 'effective_capacity':capacity,
+                        'accounted_active':active, 'mainline_reserve':reserve_slots} if followup_contract(c) else {})})
                 route = c['routes']['writer' if s['role'] == 'writer' else s['tier']]
                 return {'admitted': True, 'run_id': run, 'node_id': n['id'], 'attempt': token, 'backend': backend,
                         'contract_hash': r['contract_hash'], 'root': s.get('snapshot_root', r['root']), 'candidate_root': r['root'], 'goal': r['goal'],
@@ -619,8 +659,10 @@ class Runtime:
 
     def complete(self, token, result, *, external_id, backend, usage=None):
         # The host, not the model result, supplies identity, usage and terminal attestation.
-        mapping(result, {'outcome','summary','sources_opened','checks','changed_files','claims'},
-                {'outcome','summary','sources_opened','checks','changed_files','claims'}, 'result')
+        fields = {'outcome','summary','sources_opened','checks','changed_files','claims'}
+        current_run = self.run(self.attempt(token)['run_id'])
+        allowed = fields | ({'notes'} if followup_contract(loads(current_run['contract'])) else set())
+        mapping(result, allowed, fields, 'result')
         text(result['summary'], 'summary')
         text(result['outcome'], 'result outcome', 20)
         if result['outcome'] not in {'completed', 'partial', 'failed'}:
@@ -657,17 +699,17 @@ class Runtime:
                 named[check['name']] = check['status']
             if result['outcome'] == 'completed' and any(named.get(k) != 'PASS' for k in s['checks']):
                 raise WorkflowError('mandatory acceptance checks incomplete')
-            claims = result['claims']
-            if not isinstance(claims,list) or len(claims)>64:
-                raise WorkflowError('invalid claims')
-            for claim in claims:
-                mapping(claim, {'proposition','evidence','existence','applicability','impact'}, {'proposition','evidence','existence','applicability','impact'}, 'claim')
-                text(claim['proposition'],'proposition'); text(claim['impact'],'impact')
-                text(claim['existence'], 'claim existence', 20)
-                text(claim['applicability'], 'claim applicability', 20)
-                evidence = path_list(claim['evidence'],'claim evidence')
-                if not set(evidence) <= set(opened) or claim['existence'] not in {'supported','disproved','unknown'} or claim['applicability'] not in {'supported','disproved','unknown'}:
-                    raise WorkflowError('claim lacks valid opened-source evidence')
+            claims = validate_claims(result['claims'], opened)
+            if followup_contract(loads(r['contract'])):
+                claims = [{**claim,'evidence':path_list(claim['evidence'],'claim evidence')} for claim in claims]
+            notes = result.get('notes', [])
+            if not isinstance(notes, list) or len(notes) > 12:
+                raise WorkflowError('notes must be a bounded list')
+            for note in notes:
+                mapping(note, {'text','evidence'}, {'text','evidence'}, 'note')
+                text(note['text'], 'note text', 1000)
+                if not set(path_list(note['evidence'], 'note evidence', True)) <= set(opened):
+                    raise WorkflowError('note exceeds opened sources')
             before = loads(n['snapshot'])
             current = fingerprint(Path(s.get('snapshot_root', r['root'])), list(before), set(s['writes']))
             drift = [p for p in before if current[p] != before[p]]
@@ -772,7 +814,7 @@ class Runtime:
         integer(extend_deadline_seconds, 'deadline extension', 0, 86400)
         with self.tx():
             r = self.run(run); c = loads(r['contract'])
-            if r['status'] != 'open' or contract_hash != r['contract_hash'] or sha(c) != contract_hash or c.get('version') not in {'3.0.0', VERSION}:
+            if r['status'] != 'open' or contract_hash != r['contract_hash'] or sha(c) != contract_hash or c.get('version') not in SUPPORTED_CONTRACT_VERSIONS:
                 raise WorkflowError('run state or current contract identity does not permit resume')
             if self.conn.execute('SELECT 1 FROM attempts WHERE run_id=? AND released=0', (run,)).fetchone():
                 raise WorkflowError('all prior host activity must be reconciled before resume')
@@ -907,38 +949,285 @@ class Runtime:
                     return
         raise WorkflowError(f"independent current-candidate verification missing: {n['id']}")
 
-    def triage(self, claim_id, disposition, *, reason, target=None):
-        """Root-only classification; model findings cannot grant acceptance."""
-        if disposition not in {'dismissed', 'advisory', 'promoted'}:
-            raise WorkflowError('invalid supplemental triage disposition')
-        text(reason, 'triage reason', 2000)
+    def _latest_events(self, run, kind, key='claim'):
+        latest = {}
+        for row in self.conn.execute('SELECT seq,data FROM events WHERE run_id=? AND kind=? ORDER BY seq', (run,kind)):
+            data = loads(row['data']); latest[data[key]] = {**data, '_seq':row['seq']}
+        return latest
+
+    def _require_followup(self, r):
+        c = loads(r['contract'])
+        if r['status'] != 'open' or not followup_contract(c) or sha(c) != r['contract_hash']:
+            raise WorkflowError('operation requires an open v4.1 supplemental contract')
+        return c
+
+    def triage(self, claim_id, disposition, *, reason, target=None, duplicate_of=None):
+        """Root screening; a child cannot classify its own delivery risk."""
+        with self.tx():
+            return self._triage_one(claim_id, disposition, reason=reason, target=target, duplicate_of=duplicate_of)
+
+    def screen(self, run, decisions):
+        """Atomically screen a bounded batch; semantic judgments remain Root's duty."""
+        if not isinstance(decisions, list) or not 1 <= len(decisions) <= 64:
+            raise WorkflowError('screen requires 1..64 decisions')
+        with self.tx():
+            self._require_followup(self.run(run)); seen = set(); result = []
+            for d in decisions:
+                mapping(d, {'claim','disposition','reason','target','duplicate_of'}, {'claim','disposition','reason'}, 'screen decision')
+                text(d['claim'], 'claim id', 256)
+                row = self.conn.execute('SELECT run_id FROM claims WHERE id=?', (d['claim'],)).fetchone()
+                if row is None or row['run_id'] != run or d['claim'] in seen:
+                    raise WorkflowError('screen claim must be unique and belong to this run')
+                seen.add(d['claim'])
+                result.append(self._triage_one(d['claim'], d['disposition'], reason=d['reason'],
+                              target=d.get('target'), duplicate_of=d.get('duplicate_of')))
+            return result
+
+    def _triage_one(self, claim_id, disposition, *, reason, target=None, duplicate_of=None):
+        text(disposition, 'triage disposition', 30); text(reason, 'triage reason', 2000)
+        row = self.conn.execute('SELECT * FROM claims WHERE id=?', (claim_id,)).fetchone()
+        if row is None: raise WorkflowError('unknown claim')
+        r = self.run(row['run_id']); c = loads(r['contract']); newer = followup_contract(c)
+        if r['status'] != 'open' or c.get('workflow') != 'astra-mainline' or sha(c) != r['contract_hash']:
+            raise WorkflowError('triage requires an open Astra mainline contract')
+        allowed = {'dismissed', 'advisory', 'promoted'} | ({'duplicate'} if newer else set())
+        if disposition not in allowed: raise WorkflowError('invalid supplemental triage disposition')
+        if not loads(self.node(r['id'], row['node_id'])['spec']).get('supplemental'):
+            raise WorkflowError('triage is only for supplemental claims')
+        paths = loads(row['data'])['claim']['evidence']
+        candidate = fingerprint(Path(r['root']), paths, set(paths))
+        decisions = self._latest_events(r['id'], 'supplemental.triaged') if newer else {}
+        previous = decisions.get(claim_id)
+        if previous and previous['disposition'] == 'promoted' and disposition != 'promoted':
+            raise WorkflowError('promoted findings require explicit resolution, not demotion')
+        if disposition == 'promoted':
+            identifier(target, 'promotion target')
+            t = self.node(r['id'], target); ts = loads(t['spec'])
+            if ts.get('supplemental') or not ts['required'] or ts['tier'] != 'strong' or t['attempts']:
+                raise WorkflowError('promotion needs a never-executed required Astra mainline node')
+            if not set(paths) <= set(ts['sources']):
+                raise WorkflowError('promotion target must cover the claim evidence')
+            if any(loads(t['snapshot']).get(p) != h for p,h in candidate.items()):
+                raise WorkflowError('promotion target is not bound to the current candidate')
+        elif target is not None:
+            raise WorkflowError('only promoted findings have a target')
+        if disposition == 'duplicate':
+            text(duplicate_of, 'canonical claim id', 256)
+            canonical = self.conn.execute('SELECT * FROM claims WHERE id=?', (duplicate_of,)).fetchone()
+            if (canonical is None or canonical['run_id'] != r['id']
+                    or not loads(self.node(r['id'],canonical['node_id'])['spec']).get('supplemental')
+                    or not set(paths) <= set(loads(canonical['data'])['claim']['evidence'])):
+                raise WorkflowError('duplicate must reference a same-run supplemental claim covering its evidence')
+            visited = {claim_id}; current = duplicate_of
+            while current is not None:
+                if len(visited) > 64: raise WorkflowError('duplicate chain too deep')
+                if current in visited: raise WorkflowError('duplicate claim cycle')
+                visited.add(current); d = decisions.get(current, {})
+                current = d.get('duplicate_of') if d.get('disposition') == 'duplicate' else None
+        elif duplicate_of is not None:
+            raise WorkflowError('only duplicate screening accepts duplicate_of')
+        data = {'claim':claim_id, 'disposition':disposition, 'target':target, 'candidate':candidate, 'reason':reason}
+        if disposition == 'duplicate': data['duplicate_of'] = duplicate_of
+        self.event(r['id'], 'supplemental.triaged', data)
+        return {'claim':claim_id, 'disposition':disposition, 'target':target}
+
+    def resolve(self, claim_id, outcome, *, reason, node=None):
+        """Resolve a promoted issue, not merely its investigation task."""
+        text(outcome, 'resolution outcome', 30); text(reason, 'resolution reason', 2000)
+        if outcome not in {'reported','disproved','fixed','blocking'}:
+            raise WorkflowError('invalid issue resolution')
         with self.tx():
             row = self.conn.execute('SELECT * FROM claims WHERE id=?', (claim_id,)).fetchone()
             if row is None: raise WorkflowError('unknown claim')
-            r = self.run(row['run_id']); c = loads(r['contract'])
-            if r['status'] != 'open' or c.get('workflow') != 'astra-mainline' or sha(c) != r['contract_hash']:
-                raise WorkflowError('triage requires an open Astra mainline contract')
-            n = self.node(r['id'], row['node_id']); s = loads(n['spec'])
-            if not s.get('supplemental'): raise WorkflowError('triage is only for supplemental claims')
+            r = self.run(row['run_id']); c = self._require_followup(r)
+            promotion = self._latest_events(r['id'], 'supplemental.triaged').get(claim_id)
+            if not promotion or promotion['disposition'] != 'promoted':
+                raise WorkflowError('resolution requires a promoted finding')
+            if outcome == 'reported' and c['acceptance_mode'] != 'review':
+                raise WorkflowError('reported is not a repair acceptance outcome')
             paths = loads(row['data'])['claim']['evidence']
-            # Root reopens these exact current sources before classifying an old-snapshot finding.
-            candidate = fingerprint(Path(r['root']), paths, set(paths))
-            if disposition == 'promoted':
-                identifier(target, 'promotion target')
-                t = self.node(r['id'], target); ts = loads(t['spec'])
-                if ts.get('supplemental') or not ts['required'] or ts['tier'] != 'strong' or t['attempts']:
-                    raise WorkflowError('promotion needs a never-executed required Astra mainline node')
-                if not set(paths) <= set(ts['sources']):
-                    raise WorkflowError('promotion target must cover the claim evidence')
-                if any(loads(t['snapshot']).get(p) != h for p,h in candidate.items()):
-                    raise WorkflowError('promotion target is not bound to the current candidate')
-            elif target is not None:
-                raise WorkflowError('only promoted findings have a target')
-            self.event(r['id'], 'supplemental.triaged', {'claim':claim_id,
-                'disposition':disposition, 'target':target, 'candidate':candidate, 'reason':reason})
-        return {'claim':claim_id, 'disposition':disposition, 'target':target}
+            if outcome != 'blocking':
+                target = self.node(r['id'], promotion['target'])
+                if target['state'] != 'completed': raise WorkflowError('promoted investigation is incomplete')
+                node = node or promotion['target']; n = self.node(r['id'], node); spec = loads(n['spec'])
+                if (n['state'] != 'completed' or spec.get('supplemental') or not spec['required']
+                        or spec['tier'] != 'strong' or not set(paths) <= set(spec['sources'])):
+                    raise WorkflowError('resolution requires completed required Astra evidence covering the finding')
+                # Resolution must answer this investigation, not borrow unrelated old work.
+                ancestors = set(); pending = [node]
+                while pending:
+                    current = pending.pop()
+                    if current in ancestors: continue
+                    ancestors.add(current)
+                    pending.extend(loads(self.node(r['id'],current)['spec'])['depends'])
+                if promotion['target'] not in ancestors:
+                    raise WorkflowError('resolution must follow the promoted investigation')
+                self._assert_snapshot(r,n,True); self._quality_gate(r,n)
+                if not self._execution_reconciled(self.attempt(n['current_token'])):
+                    raise WorkflowError('resolution evidence execution is not reconciled')
+                if outcome == 'fixed':
+                    if spec['verifies'] is None: raise WorkflowError('fixed requires independent writer verification')
+                    writer = self.node(r['id'], spec['verifies']); ws = loads(writer['spec'])
+                    if (ws['role'] != 'writer' or writer['state'] != 'completed'
+                            or not loads(writer['result'])['submission']['payload']['changed_files']):
+                        raise WorkflowError('fixed requires an observed implementation change')
+                    if self.attempt(n['current_token'])['external_id'] == self.attempt(writer['current_token'])['external_id']:
+                        raise WorkflowError('fixed requires a non-author resolution verifier')
+                    if not set(loads(writer['result'])['snapshot']) <= set(loads(n['snapshot'])):
+                        raise WorkflowError('resolution verifier must cover the writer candidate')
+                    self._quality_gate(r,writer)
+                # The whole resolution evidence set, not only finder-selected files, is bound.
+                paths = sorted(set(paths) | set(spec['sources']) | set(spec['writes']))
+            elif node is not None:
+                raise WorkflowError('blocking resolution does not claim a completed evidence node')
+            data = {'claim':claim_id, 'outcome':outcome, 'reason':reason, 'node':node,
+                    'promotion_seq':promotion['_seq'], 'candidate':fingerprint(Path(r['root']), paths, set(paths))}
+            self.event(r['id'], 'supplemental.resolved', data)
+            return data
+
+    def _followup_claim_gaps(self, r, nodes):
+        decisions = self._latest_events(r['id'], 'supplemental.triaged')
+        resolutions = self._latest_events(r['id'], 'supplemental.resolved')
+        by_id = {n['id']:n for n in nodes}
+        claims = {row['id']:row for row in self.conn.execute('SELECT * FROM claims WHERE run_id=?',(r['id'],))
+                  if loads(by_id[row['node_id']]['spec']).get('supplemental')}
+        memo = {}; source_cache = {}
+        def current_binding(binding):
+            for path in binding:
+                if path not in source_cache:
+                    source_cache[path] = fingerprint(Path(r['root']),[path],{path})[path]
+            return {path:source_cache[path] for path in binding}
+        def inspect(cid, visiting):
+            if cid in memo: return memo[cid]
+            if len(visiting) > 64: return 'duplicate-chain-too-deep'
+            if cid in visiting: return 'duplicate-cycle'
+            d = decisions.get(cid)
+            if cid not in claims or d is None: return 'untriaged'
+            if d['disposition'] == 'promoted':
+                n = by_id.get(d['target']); resolution = resolutions.get(cid)
+                if n is None or n['state'] != 'completed': return 'promoted-mainline-incomplete'
+                if not resolution or resolution['promotion_seq'] != d['_seq']: return 'issue-resolution-missing'
+                if resolution['outcome'] == 'blocking': return 'issue-still-blocking'
+                binding = resolution['candidate']
+            else:
+                binding = d['candidate']
+            try:
+                if current_binding(binding) != binding:
+                    return 'resolution candidate changed' if d['disposition']=='promoted' else 'triage candidate changed'
+            except (OSError, WorkflowError) as exc: return str(exc)
+            error = inspect(d['duplicate_of'], visiting | {cid}) if d['disposition']=='duplicate' else None
+            memo[cid] = error
+            return error
+        return [{'claim':cid,'reason':error} for cid in claims if (error := inspect(cid,set())) is not None]
+
+    def report_findings(self, token, report, *, external_id, backend):
+        """Retain early host-delivered evidence even if the probe is later interrupted."""
+        fields = {'report_id','sources_opened','claims'}
+        mapping(report, fields, fields, 'incremental report'); identifier(report['report_id'], 'report id')
+        with self.tx():
+            a = self.attempt(token); r = self.run(a['run_id']); self._require_followup(r)
+            n = self.node(r['id'],a['node_id']); spec = loads(n['spec'])
+            if backend != r['backend'] or not external_id or external_id != a['external_id']:
+                raise WorkflowError('incremental report identity mismatch')
+            previous = self._latest_events(r['id'],'supplemental.reported',key='report_key').get(token+'-'+report['report_id'])
+            if previous:
+                if previous['report'] != report: raise WorkflowError('conflicting incremental report')
+                return {'claims':previous['claims'], 'idempotent':True}
+            if (not spec.get('supplemental') or n['current_token'] != token or a['released']
+                    or a['state'] != 'running'):
+                raise WorkflowError('incremental findings require an active bound supplemental turn')
+            opened = path_list(report['sources_opened'],'sources_opened')
+            if not set(opened) <= set(spec['sources']): raise WorkflowError('report exceeds source scope')
+            claims = [{**claim,'evidence':path_list(claim['evidence'],'claim evidence')}
+                      for claim in validate_claims(report['claims'], opened)]
+            count = self.conn.execute('SELECT COUNT(*) FROM claims WHERE attempt=?',(token,)).fetchone()[0]
+            if not claims or count + len(claims) > 128: raise WorkflowError('incremental claim limit reached')
+            before = loads(n['snapshot']); current = fingerprint(Path(spec['snapshot_root']),list(before))
+            ids = []
+            for i,claim in enumerate(claims):
+                cid = f"{token}-report-{report['report_id']}-{i}"; ids.append(cid)
+                self.conn.execute('INSERT INTO claims(id,run_id,node_id,attempt,data) VALUES(?,?,?,?,?)',
+                    (cid,r['id'],n['id'],token,dump({'claim':claim,'snapshot':before,'evidence_valid':current==before})))
+            self.event(r['id'],'supplemental.reported',{'report_key':token+'-'+report['report_id'],
+                       'attempt':token, 'report':report, 'claims':ids})
+            return {'claims':ids, 'idempotent':False}
+
+    def _candidate(self, r, nodes):
+        paths = sorted({p for n in nodes if not loads(n['spec']).get('supplemental')
+                        for p in loads(n['spec'])['sources'] + loads(n['spec'])['writes']})
+        return fingerprint(Path(r['root']), paths, set(paths))
+
+    def _supplemental_cutoff(self, r):
+        row = self.conn.execute("SELECT seq FROM events WHERE run_id=? AND kind='mainline.accepted' ORDER BY seq DESC LIMIT 1",(r['id'],)).fetchone()
+        if row is None: return False
+        if not followup_contract(loads(r['contract'])): return True
+        reopened = self.conn.execute("SELECT seq FROM events WHERE run_id=? AND kind='supplemental.reopened' ORDER BY seq DESC LIMIT 1",(r['id'],)).fetchone()
+        return reopened is None or reopened['seq'] < row['seq']
+
+    def reopen_supplemental(self, run, changed_paths, *, reason):
+        """Open a new candidate epoch; never reset launch counts or revive omitted nodes."""
+        text(reason,'candidate change reason',2000); changed_paths = path_list(changed_paths,'changed paths')
+        with self.tx():
+            r,c = self.open_run(run); self._require_followup(r)
+            last = self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='mainline.accepted' ORDER BY seq DESC LIMIT 1",(run,)).fetchone()
+            if last is None or not self._supplemental_cutoff(r):
+                raise WorkflowError('reopening requires a closed supplemental admission epoch')
+            nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=?',(run,))]
+            if any(loads(n['spec'])['role']=='writer' and n['current_token']
+                   and not self._execution_reconciled(self.attempt(n['current_token'])) for n in nodes):
+                raise WorkflowError('settle candidate writers before reopening supplemental work')
+            current = self._candidate(r,nodes); previous = loads(last['data'])['candidate']
+            if not set(changed_paths) <= set(current) or not any(previous.get(p) != current[p] for p in changed_paths):
+                raise WorkflowError('reopening needs changed bound candidate bytes, not a renamed task')
+            self.event(run,'supplemental.reopened',{'candidate':current,'changed_paths':changed_paths,
+                       'reason':reason,'budget_reset':False})
+            return {'supplemental_admission_closed':False,'budget_reset':False}
+
+    def closeout(self, run, entries):
+        """Record actual host handoff/stop observations. This method starts no background work."""
+        if not isinstance(entries,list) or not 1 <= len(entries) <= 64:
+            raise WorkflowError('closeout requires 1..64 entries')
+        with self.tx():
+            r = self.run(run); self._require_followup(r); seen = set()
+            for entry in entries:
+                mapping(entry, {'attempt','action','reason','observed_via','receiver','until'},
+                        {'attempt','action','reason','observed_via'}, 'closeout entry')
+                text(entry['attempt'],'attempt token',256)
+                if entry['attempt'] in seen: raise WorkflowError('duplicate closeout attempt')
+                seen.add(entry['attempt']); a = self.attempt(entry['attempt'])
+                if (a['run_id'] != run or not loads(self.node(run,a['node_id'])['spec']).get('supplemental')
+                        or self._execution_reconciled(a)):
+                    raise WorkflowError('closeout requires unreconciled task-owned supplemental execution')
+                text(entry['action'],'closeout action',30); text(entry['reason'],'closeout reason',2000)
+                text(entry['observed_via'],'host observation source',200)
+                if entry['action'] == 'continue':
+                    text(entry.get('receiver'),'actual result receiver',256)
+                    until = entry.get('until')
+                    if type(until) not in (int,float) or not math.isfinite(until) or not time.time() < until <= time.time()+300:
+                        raise WorkflowError('continuation requires a bounded future cutoff within 300 seconds')
+                elif entry['action'] not in {'stop-requested','unknown'}:
+                    raise WorkflowError('invalid closeout action')
+                elif 'receiver' in entry or 'until' in entry:
+                    raise WorkflowError('only a real continuation may name a receiver and cutoff')
+                self.event(run,'supplemental.closeout',entry)
+        return {'recorded':len(entries),'host_resources_released':False}
+
+    def _closeout_status(self, r, nodes, attempts):
+        plans = self._latest_events(r['id'],'supplemental.closeout',key='attempt')
+        ids = {n['id'] for n in nodes if loads(n['spec']).get('supplemental')}
+        result = []
+        for a in attempts:
+            if a['node_id'] not in ids or self._execution_reconciled(a): continue
+            plan = plans.get(a['token']); state = 'needs-host-closeout'
+            if plan:
+                state = plan['action']
+                if state=='continue' and time.time() >= plan['until']: state='continuation-expired'
+            result.append({'attempt':a['token'],'state':state,'plan':plan})
+        return result
 
     def _supplemental_claim_gaps(self, r, nodes):
+        if followup_contract(loads(r['contract'])):
+            return self._followup_claim_gaps(r, nodes)
         by_id = {n['id']:n for n in nodes}; decisions = {}
         for row in self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='supplemental.triaged' ORDER BY seq", (r['id'],)):
             d = loads(row['data']); decisions[d['claim']] = d
@@ -980,6 +1269,10 @@ class Runtime:
                     for n in nodes if not loads(n['spec']).get('supplemental')]
         claims = [dict(c) for c in self.conn.execute('SELECT * FROM claims WHERE run_id=? ORDER BY id', (run,))]
         triage = [e['data'] for e in self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='supplemental.triaged' ORDER BY seq", (run,))]
+        if followup_contract(loads(self.run(run)['contract'])):
+            promotions = [d for d in self._latest_events(run, 'supplemental.triaged').values()
+                          if d['disposition'] == 'promoted']
+            return sha({'mainline':mainline, 'promotions':promotions})
         return sha({'mainline':mainline, 'claims':claims, 'triage':triage})
 
     def omit(self, run, node, *, reason):
@@ -995,7 +1288,7 @@ class Runtime:
     def _finish_mainline(self, run):
         with self.tx():
             r = self.run(run); c = loads(r['contract'])
-            if r['status'] != 'open' or c.get('version') != VERSION or sha(c) != r['contract_hash']:
+            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0'} or sha(c) != r['contract_hash']:
                 raise WorkflowError('run/contract does not permit mainline acceptance')
             nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
             attempts = [dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,))]
@@ -1006,7 +1299,8 @@ class Runtime:
                     self.event(run,'supplemental.omitted',{'node':n['id'],'reason':'mainline acceptance cutoff'})
             key = self._mainline_key(run,nodes)
             self.event(run,'mainline.accepted',{'key':key,'scope':'Astra mainline; received findings triaged',
-                                              'historical_write_evidence':historical})
+                                              'historical_write_evidence':historical,
+                                              **({'candidate':self._candidate(r, nodes)} if followup_contract(c) else {})})
             # Return acceptance now; do not claim a running native turn has ended.
             if all(self._execution_reconciled(a) for a in attempts):
                 self.conn.execute("UPDATE runs SET status='completed' WHERE id=?", (run,))
@@ -1025,7 +1319,10 @@ class Runtime:
                         and loads(last['data'])['key'] == self._mainline_key(r['id'],nodes))
         return {'mainline_complete':bool(mainline) and all(n['state']=='completed' for n in mainline),
                 'mainline_accepted':accepted,'mainline_gate_error':gate_error,
-                'supplemental_admission_closed':last is not None,
+                'supplemental_admission_closed':self._supplemental_cutoff(r),
+                **({'acceptance_state':('accepted' if accepted else 'pending-screen' if last and gaps
+                     and all(g['reason']=='untriaged' for g in gaps) else 'not-accepted'),
+                    'closeout':self._closeout_status(r, nodes, attempts)} if followup_contract(loads(r['contract'])) else {}),
                 'supplemental_claim_gaps':gaps,
                 'supplemental_coverage':{'declared':len(probes),
                     'launched':sum(n['attempts']>0 for n in probes),

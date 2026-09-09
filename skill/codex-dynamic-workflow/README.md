@@ -1,9 +1,9 @@
-# Codex Dynamic Workflow v4.0.0
+# Codex Dynamic Workflow v4.1.0
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
 Astra 保留完整主线；有实质工作量时主动启动至少 3 个不同方向的 Luna 补充探针。
 启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
-详见 [v4 supplemental](references/supplemental.md)。
+详见 [v4.1 结果与收尾协议](references/followup.md)。
 
 - 规范入口：[SKILL.md](SKILL.md)；本机 profile 需单独安装。
 - 事实合同：[evidence](references/evidence.md)。原始文件必须真正打开，摘要只作导航。
