@@ -1,0 +1,24 @@
+name: Export pinned review baseline
+on:
+  push:
+    branches: [codex/v4-followup-baseline-20260909]
+    paths: [.github/workflows/export-review-baseline.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e5f3d6e9b15419724ff6eda5b46a657f61016c58
+          persist-credentials: false
+      - name: Archive tracked baseline only
+        run: git archive --format=tar --output=review-baseline.tar HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cwf-e5f3d6e-review-baseline
+          path: review-baseline.tar
+          retention-days: 3
+          if-no-files-found: error
