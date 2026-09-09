@@ -9,14 +9,18 @@ Skill-only remains normal; the commands below apply only to explicitly selected 
 
 New 4.1 contracts carry supplemental_protocol=2 and immutable acceptance_mode=review or
 repair (default repair when implement=true). Repair mode requires implement authority.
-Saved 3.0.0 and 4.0.0 records retain their exact hashes, fields, budgets and earlier gates.
+Saved 3.0.0, 4.0.0 and 4.1.0 records retain their exact hashes, fields, budgets and earlier gates.
 They are not rewritten or silently upgraded. No model CLI fallback is enabled.
 
-The four shipped fixed routes must match model, profile AND effort. Package validation
-cross-checks all four profile files against Runtime defaults. A conflicting override is
-rejected, not shadowed, downgraded or routed through legacy to bypass this check.
-This does not make high universally optimal: a different effort needs a genuinely
-compatible host profile/adapter contract. No such new neutral profile is assumed here.
+In 4.1.1, Astra reader/writer profiles keep their model and role constraints but omit
+fixed effort. Root explicitly passes the selected host-supported effort; high is only
+the Runtime default. New Astra contracts accept low/medium/high/xhigh/max/ultra.
+Luna profiles retain max/medium. New contracts using any shipped profile, including
+explicit legacy contracts, must match its fixed model and any fixed effort. Package
+validation checks these constraints and rejects accidentally re-pinned Astra effort.
+Inspect the current native tool schema before dispatch: a session still advertising an
+old fixed-high profile cannot execute a different effort under that profile. Reloaded
+profile discovery and effective execution need host evidence; installation alone is not proof.
 
 ## Information channel and bounded Root screening
 The v4.1 result schema is scripts/cwf_runtime/result-v41.schema.json. The original
@@ -64,6 +68,8 @@ resolve --claim CLAIM --outcome reported|disproved|fixed|blocking --reason ... [
 All passing outcomes bind the whole resolution evidence set and the promotion revision.
 Changed evidence invalidates the disposition. Node labels and reasons remain trusted Root
 judgments, not automatic proof that a natural-language requirement was satisfied.
+For new 4.1.1 contracts, the writer used by fixed must itself be the promoted work or
+its causal descendant. A new reviewer cannot turn a pre-investigation writer into a new fix.
 
 ## Capacity and a genuinely new candidate
 For supplemental admission, next requires BOTH actual --host-capacity N and --host-active M.

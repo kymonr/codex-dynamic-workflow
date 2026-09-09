@@ -21,8 +21,8 @@ import uuid
 
 from .policy import budget_admission
 
-VERSION = '4.1.0'
-SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0'}
+VERSION = '4.1.1'
+SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0', '4.1.1'}
 SCHEMA = 1
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -40,7 +40,7 @@ DEFAULT_ROUTES = {
 
 
 def followup_contract(contract):
-    return contract.get('version') == '4.1.0' and contract.get('supplemental_protocol') == 2
+    return contract.get('version') in {'4.1.0', '4.1.1'} and contract.get('supplemental_protocol') == 2
 
 
 class WorkflowError(ValueError):
@@ -353,8 +353,16 @@ class Runtime:
             for key in ('model', 'profile'):
                 if not isinstance(route[key], str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', route[key]):
                     raise WorkflowError('invalid route identity')
-            if route['effort'] not in {'low', 'medium', 'high', 'xhigh', 'max'}:
+            efforts = {'low', 'medium', 'high', 'xhigh', 'max'}
+            if route['model'] == 'gpt-6-astra':
+                efforts.add('ultra')
+            if route['effort'] not in efforts:
                 raise WorkflowError('unsupported effort')
+            # New contracts using shipped profiles must be executable even in legacy mode.
+            for tier, shipped in DEFAULT_ROUTES.items():
+                if route['profile'] == shipped['profile'] and (route['model'] != shipped['model']
+                        or (tier in {'ordinary', 'economy'} and route['effort'] != shipped['effort'])):
+                    raise WorkflowError('route identity mismatch for shipped profile')
         if execution_pool == 'luna':
             if backend != 'exec' or implement or capacity_scope != 'backend' or options['strong_approved'] != 0:
                 raise WorkflowError('Luna pool requires exec, backend capacity, readonly scope and strong_approved=0')
@@ -364,8 +372,8 @@ class Runtime:
         if workflow == 'astra-mainline':
             for tier in ('strong', 'writer', 'ordinary', 'economy'):
                 if any(routing.get(tier, {}).get(k) != DEFAULT_ROUTES[tier][k]
-                       for k in ('model', 'profile', 'effort')):
-                    raise WorkflowError(f'route identity mismatch for {tier}: fixed profile/model/effort must agree')
+                       for k in ('model', 'profile')):
+                    raise WorkflowError(f'route identity mismatch for {tier}: model/profile must agree')
         rid = identifier(run_id or uuid.uuid4().hex)
         contract = {'version': VERSION, 'bounds': options, 'routes': routing, 'implement': implement,
                     'backend': backend, 'root': str(source), 'goal': goal, 'workflow': workflow}
@@ -1054,13 +1062,15 @@ class Runtime:
                         or spec['tier'] != 'strong' or not set(paths) <= set(spec['sources'])):
                     raise WorkflowError('resolution requires completed required Astra evidence covering the finding')
                 # Resolution must answer this investigation, not borrow unrelated old work.
-                ancestors = set(); pending = [node]
-                while pending:
-                    current = pending.pop()
-                    if current in ancestors: continue
-                    ancestors.add(current)
-                    pending.extend(loads(self.node(r['id'],current)['spec'])['depends'])
-                if promotion['target'] not in ancestors:
+                def follows_investigation(start):
+                    ancestors = set(); pending = [start]
+                    while pending:
+                        current = pending.pop()
+                        if current in ancestors: continue
+                        ancestors.add(current)
+                        pending.extend(loads(self.node(r['id'],current)['spec'])['depends'])
+                    return promotion['target'] in ancestors
+                if not follows_investigation(node):
                     raise WorkflowError('resolution must follow the promoted investigation')
                 self._assert_snapshot(r,n,True); self._quality_gate(r,n)
                 if not self._execution_reconciled(self.attempt(n['current_token'])):
@@ -1071,6 +1081,8 @@ class Runtime:
                     if (ws['role'] != 'writer' or writer['state'] != 'completed'
                             or not loads(writer['result'])['submission']['payload']['changed_files']):
                         raise WorkflowError('fixed requires an observed implementation change')
+                    if c['version'] == '4.1.1' and not follows_investigation(writer['id']):
+                        raise WorkflowError('fixed writer must follow the promoted investigation')
                     if self.attempt(n['current_token'])['external_id'] == self.attempt(writer['current_token'])['external_id']:
                         raise WorkflowError('fixed requires a non-author resolution verifier')
                     if not set(loads(writer['result'])['snapshot']) <= set(loads(n['snapshot'])):
@@ -1288,7 +1300,7 @@ class Runtime:
     def _finish_mainline(self, run):
         with self.tx():
             r = self.run(run); c = loads(r['contract'])
-            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0'} or sha(c) != r['contract_hash']:
+            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0', '4.1.1'} or sha(c) != r['contract_hash']:
                 raise WorkflowError('run/contract does not permit mainline acceptance')
             nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
             attempts = [dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,))]

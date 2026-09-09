@@ -63,15 +63,35 @@ class FollowupTests(unittest.TestCase):
         self.rt.conn.execute('UPDATE runs SET contract=?,contract_hash=? WHERE id=?',(dump(c),sha(c),self.run))
         return self.rt.run(self.run)['contract']
 
-    def test_four_fixed_routes_reject_every_conflicting_effort_atomically(self):
+    def test_luna_profiles_reject_conflicting_effort_atomically(self):
         count=self.rt.conn.execute('SELECT COUNT(*) FROM runs').fetchone()[0]
-        for tier in DEFAULT_ROUTES:
+        for tier in ('ordinary','economy'):
             for effort in {'low','medium','high','xhigh','max'}-{DEFAULT_ROUTES[tier]['effort']}:
                 with self.subTest(tier=tier,effort=effort):
                     routes=json.loads(json.dumps(DEFAULT_ROUTES)); routes[tier]['effort']=effort
                     with self.assertRaisesRegex(WorkflowError,'identity mismatch'):
                         self.rt.create(root=self.root,goal='bad override',backend='native',routes=routes)
         self.assertEqual(self.rt.conn.execute('SELECT COUNT(*) FROM runs').fetchone()[0],count)
+    def test_astra_effort_is_selected_and_preserved_in_new_contracts(self):
+        for workflow in ('astra-mainline','legacy'):
+            for effort in ('low','medium','high','xhigh','max','ultra'):
+                with self.subTest(workflow=workflow,effort=effort):
+                    routes=json.loads(json.dumps(DEFAULT_ROUTES))
+                    routes['strong']['effort']=routes['writer']['effort']=effort
+                    run=self.rt.create(root=self.root,goal='selected effort',backend='native',workflow=workflow,routes=routes)
+                    self.assertEqual(loads(self.rt.run(run)['contract'])['routes'],routes)
+                    self.rt.add(run,[node('inspect')],reason='route packet check')
+                    packet=self.rt.acquire(run,backend='native')
+                    self.assertTrue(packet['admitted']);self.assertEqual(packet['route'],routes['strong'])
+                    self.rt.release(packet['attempt'],external_id=None,confirmed=True,reason='synthetic no-launch fixture')
+    def test_legacy_cannot_change_model_of_a_shipped_profile(self):
+        routes=json.loads(json.dumps(DEFAULT_ROUTES));routes['strong']['model']='gpt-5.6-luna'
+        with self.assertRaisesRegex(WorkflowError,'identity mismatch'):
+            self.rt.create(root=self.root,goal='bad fixed model',backend='native',workflow='legacy',routes=routes)
+    def test_unsupported_astra_effort_is_rejected(self):
+        routes=json.loads(json.dumps(DEFAULT_ROUTES));routes['strong']['effort']='unbounded'
+        with self.assertRaisesRegex(WorkflowError,'unsupported effort'):
+            self.rt.create(root=self.root,goal='bad effort',backend='native',routes=routes)
     def test_acceptance_mode_is_explicit_and_repair_requires_authority(self):
         with self.assertRaisesRegex(WorkflowError,'authority'):
             self.rt.create(root=self.root,goal='bad',backend='native',acceptance_mode='repair')
@@ -190,6 +210,35 @@ class FollowupTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError,'follow the promoted'):
             self.rt.resolve(cid,'disproved',node='main',reason='unrelated old work')
         self.assertIn('issue-resolution-missing',str(self.rt.status(self.run)['supplemental_claim_gaps']))
+    def old_writer_with_new_resolution_review(self, saved_v41=False):
+        self.run=self.rt.create(root=self.root,goal='old writer fixture',backend='native',implement=True)
+        if saved_v41:
+            contract=loads(self.rt.run(self.run)['contract']);contract['version']='4.1.0'
+            self.rt.conn.execute('UPDATE runs SET contract=?,contract_hash=? WHERE id=?',(dump(contract),sha(contract),self.run))
+        self.add(node('old_write',role='writer',sources=['a.py','b.py'],writes=['b.py']),
+                 node('old_review',role='reviewer',sources=['a.py','b.py'],verifies='old_write',depends=['old_write']))
+        p,e=self.start();(self.root/'b.py').write_text('y=2\n')
+        self.done(p,e,reply(sources_opened=['a.py','b.py'],changed_files=['b.py']))
+        self.rt.refresh(self.run,'old_review',reason='bind old writer');self.done(result=reply(sources_opened=['a.py','b.py']))
+        self.add(self.probe());p,e=self.done(result=reply(claims=[finding()]))
+        cid=p['attempt']+'-0';self.promote(cid)
+        self.add(node('new_review',role='reviewer',sources=['a.py','b.py'],verifies='old_write',depends=['old_write','investigate']))
+        self.done(result=reply(sources_opened=['a.py','b.py']))
+        return cid
+    def test_new_reviewer_cannot_wrap_pre_investigation_writer_as_fixed(self):
+        cid=self.old_writer_with_new_resolution_review()
+        with self.assertRaisesRegex(WorkflowError,'fixed writer must follow'):
+            self.rt.resolve(cid,'fixed',node='new_review',reason='try to reuse unrelated old write')
+        self.assertEqual(self.root.joinpath('a.py').read_text(),'x=1\n')
+        self.assertIn('issue-resolution-missing',str(self.rt.status(self.run)['supplemental_claim_gaps']))
+        with self.assertRaises(WorkflowError):self.rt.finish(self.run)
+    def test_saved_v41_contract_keeps_original_resolution_behavior_and_identity(self):
+        cid=self.old_writer_with_new_resolution_review(saved_v41=True)
+        before=self.rt.run(self.run)['contract'];before_hash=self.rt.run(self.run)['contract_hash']
+        self.rt.resolve(cid,'fixed',node='new_review',reason='saved v4.1 compatibility fixture')
+        self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
+        self.assertEqual(self.rt.run(self.run)['contract'],before)
+        self.assertEqual(self.rt.run(self.run)['contract_hash'],before_hash)
     def test_cli_triage_exposes_duplicate_and_retains_link(self):
         from cwf_runtime.cli import main
         first,second=self.setup_findings(2)
@@ -354,13 +403,15 @@ class FollowupPackageTests(unittest.TestCase):
             for key in ('model','model_reasoning_effort'):
                 import re
                 with self.subTest(profile=profile,key=key):
-                    path.write_text(re.sub(r'^'+key+r' = ".*"',key+' = "invalid-override"',original,flags=re.M))
+                    changed=re.sub(r'^'+key+r' = ".*"',key+' = "invalid-override"',original,flags=re.M)
+                    if changed==original:changed=key+' = "invalid-override"\n'+original
+                    path.write_text(changed)
                     self.assertTrue(any('runtime/profile/model/effort drift' in e for e in self.validate()))
                     path.write_text(original)
-    def test_runtime_route_effort_mutation_without_profile_change_is_rejected(self):
+    def test_runtime_astra_effort_default_can_change_without_pinning_profile(self):
         p=self.root/'skill/codex-dynamic-workflow/scripts/cwf_runtime/core.py';s=p.read_text()
         p.write_text(s.replace("'effort': 'high', 'profile': 'cwf_reader'","'effort': 'max', 'profile': 'cwf_reader'"))
-        self.assertTrue(any('runtime/profile/model/effort drift' in e for e in self.validate()))
+        self.assertEqual(self.validate(),[])
     def test_v41_schema_and_legacy_schema_remain_separate(self):
         base=self.root/'skill/codex-dynamic-workflow/scripts/cwf_runtime'
         self.assertEqual(json.loads((base/'result.schema.json').read_text()),result_schema())

@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v4.1.0
+# Codex Dynamic Workflow v4.1.1
 
 仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 
@@ -12,7 +12,7 @@ $codex-dynamic-workflow
 主 Skill 在 `skill/codex-dynamic-workflow/`；模型执行 profile 在 `profiles/`。
 旧 `codex-workflow` Python/QuickJS 仓库保持独立。v3 新增显式 Runtime；确定性验收与真实模型集成状态分开记录。
 
-当前协议：[v4.1 设计](DESIGN_V41.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)。
+当前协议：[v4.1 后续规则](skill/codex-dynamic-workflow/references/followup.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)；[v4.1 设计](DESIGN_V41.md)保留初始设计记录。
 确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
 
 ## 本机验证与安装
@@ -36,7 +36,7 @@ Astra 保留完整主线：必要调查、实现、测试与验收不转交给�
 每个有实质工作量的任务，容量允许时主动启动至少 3 个不同方向的 Luna 补充探针：
 查漏覆盖、反例/失败模式、测试缺口/第二意见；有更多独立高价值方向时继续扩展。
 这是每任务的启动意图下限，不是每轮重新开 3 个，也不是等齐结果才能交付。
-主线读取/复核使用 cwf_reader（Astra/high），实施使用 cwf_writer；
+主线读取/复核使用 cwf_reader，实施使用 cwf_writer；Astra 推理强度可显式选择，默认 high，profile 不再固定 high。
 补充探索使用 cwf_general（Luna/max），机械补充使用 cwf_mechanical（Luna/medium）。
 模型名称是初始配置，不代表账户可用性、价格或实测质量。安装保留现有 luna profile 和全局默认值。
 

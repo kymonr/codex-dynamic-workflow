@@ -23,13 +23,16 @@ This package ships four optional profiles, installed separately from openai.yaml
 
 | Profile | Initial mapping | Capability contract |
 |---|---|---|
-| cwf_reader | Astra / high | Bounded read-only raw-source analysis and independent judgment |
-| cwf_writer | Astra / high | Scoped implementation; inherits permissions, never grants writes |
+| cwf_reader | Astra / selected effort (default high) | Bounded read-only raw-source analysis and independent judgment |
+| cwf_writer | Astra / selected effort (default high) | Scoped implementation; inherits permissions, never grants writes |
 | cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
 
-Runtime 4.1 rejects conflicting model/profile/effort triples before creating a new
-Astra-mainline contract; package validation also compares the shipped profile values.
+Runtime 4.1.1 permits explicit Astra effort selection; reader/writer profiles no longer
+pin high. Root passes route.effort through the actual native tool's effort parameter.
+Check the currently exposed profile first: old sessions can still advertise fixed high.
+New contracts, including legacy, reject shipped-profile model or fixed-Luna-effort conflicts.
+Package validation also checks that Astra profiles do not shadow the selected effort.
 Requested identity still does not prove the host used it.
 
 These are model mappings, not built-in tools or a model quality benchmark. Cost tiers

@@ -2,7 +2,7 @@
 name: codex-dynamic-workflow
 description: "Use for Astra-owned native workflows with aggressive Luna supplemental coverage: implementation, investigation, deep review and independent verification. Astra keeps the complete mainline; Luna probes hunt omissions, counterexamples and missing tests without becoming acceptance dependencies."
 metadata:
-  version: "4.1.0"
+  version: "4.1.1"
 ---
 
 # Codex Dynamic Workflow — raw-source-first
@@ -13,6 +13,8 @@ uses **native** agent tools: Luna for qualified exploration/verification and Ast
 for the complete mainline and critical acceptance. Both share the actual host's native
 capacity. Runtime, when selected, owns admission and attempts through its SQLite ledger.
 Skill-only bookkeeping is not persistent; neither mode is a hard token/currency cap.
+For Astra, high is a Runtime default, not a fixed requirement. Select and explicitly
+pass a supported effort using the current host profile contract; see host and routing.
 
 ## Runtime selection
 

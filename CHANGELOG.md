@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.1.1 — 2026-09-09
+
+Astra reader/writer profiles no longer pin reasoning effort. Keep high as the Runtime
+default and preserve explicit low/medium/high/xhigh/max/ultra requests; the active host
+must expose compatible profile support. New legacy contracts also check shipped-profile
+model and fixed Luna effort. Saved contracts keep their recorded routes and behavior.
+
+Require the writer used for a new contract's fixed resolution to follow the promoted
+investigation, preventing a new reviewer from laundering an unrelated historical write.
+Add negative causal-chain and positive selected-effort regression coverage. Existing
+4.1.0 contracts are not silently migrated; use a new 4.1.1 contract for the strengthened gate.
+
 ## 4.1.0 — 2026-09-09
 
 Fix all four fixed model/profile/effort routes and validator cross-checks; remove stale writer version text. Preserve saved 3.0.0 and 4.0.0 contracts instead of silently reinterpreting them.

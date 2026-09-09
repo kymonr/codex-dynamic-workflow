@@ -176,7 +176,10 @@ def validate(root: Path = ROOT) -> list[str]:
                 errors.append(f'reader must request read-only: {name}')
             if name == 'cwf_writer' and 'sandbox_mode' in data:
                 errors.append('writer must inherit, not grant, sandbox permissions')
-            if not data.get('model') or not data.get('model_reasoning_effort'):
+            flexible = version != 'INVALID' and tuple(map(int, version.split('.'))) >= (4,1,1) and name in {'cwf_reader','cwf_writer'}
+            if flexible and 'model_reasoning_effort' in data:
+                errors.append(f'runtime/profile/model/effort drift: flexible profile pins effort: {name}')
+            if not data.get('model') or (not flexible and not data.get('model_reasoning_effort')):
                 errors.append(f'model/effort must be explicit in the profile: {name}')
         except (OSError, ValueError) as exc:
             errors.append(f'profile error {name}: {exc}')
@@ -246,8 +249,11 @@ def validate(root: Path = ROOT) -> list[str]:
                     if not isinstance(route,dict) or any(not isinstance(route.get(k),str) for k in ('model','profile','effort')):
                         errors.append('invalid runtime route: '+tier); continue
                     profile = profile_configs.get(route.get('profile'), {})
+                    flexible = tuple(map(int, version.split('.'))) >= (4,1,1) and tier in {'strong','writer'}
                     if (not profile or profile.get('model') != route.get('model')
-                            or profile.get('model_reasoning_effort') != route.get('effort')):
+                            or (flexible and ('model_reasoning_effort' in profile
+                                or route['effort'] not in {'low','medium','high','xhigh','max','ultra'}))
+                            or (not flexible and profile.get('model_reasoning_effort') != route.get('effort'))):
                         errors.append('runtime/profile/model/effort drift: '+tier)
 
             if version.startswith('4.'):
