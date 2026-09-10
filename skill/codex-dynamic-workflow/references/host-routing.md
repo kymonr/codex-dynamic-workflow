@@ -39,6 +39,22 @@ These are model mappings, not built-in tools or a model quality benchmark. Cost 
 are configured assumptions: check current availability and cost suitability. Existing
 Luna/Sol/Spark profiles and global defaults remain unchanged by installation.
 
+Select effort from uncertainty, cross-module coupling, consequence of a missed issue
+and evidence quality, not the role title or number of edited lines. With no explicit
+choice, high remains the package default. For straightforward, well-specified work,
+low/medium may suffice; unresolved logic or edge cases can justify high, and especially
+demanding reasoning may justify xhigh/max/ultra where the actual host supports them.
+These are task heuristics, not measured guarantees or a requirement to try cheaper first.
+Do not silently downgrade an explicit user selection. Report unsupported or inadequate
+settings instead of substituting another model. Do not reconfigure the parent or global defaults.
+
+Skill-only can select a compatible effort before the next authorized dispatch.
+Runtime routes are fixed per tier when the run is created; execute route.effort from
+the admitted packet. This is not a per-node escalation API. An inadequate saved route
+requires disclosing the capability gap and blocking affected acceptance, not mutating
+the contract or starting a new run to reset spending. Higher effort is not proof of
+independence, source coverage or successful verification.
+
 Astra owns the complete mainline by default. Do not move required investigation,
 reasoning, implementation or acceptance to Luna merely because it is bounded or
 read-only. For every meaningful non-trivial task, proactively use cwf_general for
@@ -50,9 +66,11 @@ Use cwf_general for supplemental bounded read-only work when source access and n
 checks can establish its deliverable and capability is sufficient. Examples include
 scoped call-site tracing, comparing documented behavior with code, collecting test
 evidence and checking a small noncritical change. A supplemental second opinion does
-not become required acceptance merely because its logical role is reviewer. If cwf_general is
-not exposed yet, an existing luna profile with compatible Luna/max and read-only
-constraints can perform this same task; inspect the actual host profile first.
+not become required acceptance merely because its logical role is reviewer.
+In Skill-only mode, if cwf_general is not exposed, an existing luna profile may be used
+only after checking compatible model/effort, source, permission and authority constraints.
+With Runtime, execute the exact admitted route; a similar profile name is not substitution authority.
+A missing contract profile is a capability gap, not permission to use legacy or another backend.
 
 Before selecting Luna, state the deliverable and how it can be recomputed or checked
 against original evidence: specified input/output cases, an enumerated source list,
@@ -104,10 +122,10 @@ never defeat an existing non-writer profile by relabeling it. No expensive fallb
 outside the approved allowance. Incompatible explicit user route/model selections
 are surfaced, not silently rewritten.
 
-For an explicit supported model/effort override, use a compatible neutral profile
-without conflicting fixed values, when the host supports it. Do not silently ignore
-the override or pass shadowed values to a fixed profile. Model unavailable: retain
-partial results, report the exact observed limitation and proposed bounded alternative.
+Astra reader/writer profiles already omit fixed effort; do not add a neutral profile
+merely to select another supported effort. Other explicit mappings need a compatible
+host and run contract, not a shadowed override. Model unavailable: retain partial
+results and report the exact limitation; do not silently substitute another mapping.
 
 ## Lifecycle
 

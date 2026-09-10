@@ -2,6 +2,8 @@
 
 ## 4.1.2 — 2026-09-10
 
+Unreleased candidate guidance refinement: keep cohesive Astra work with Root rather than staffing every role; add bounded Luna prompt examples and task-based effort guidance without parent/global changes or per-node Runtime overrides. Preserve required independent checks and all material claims, and scope alternative profiles to compatible Skill-only dispatch. Runtime code, route defaults, budgets, schemas and profiles are unchanged by this guidance-only refinement.
+
 Whole-review follow-up: explicit Astra verification now checks non-author identity and full target coverage even for low-risk targets. Unbound dispatch reservations are added to observed host threads rather than hidden by a maximum. New gates apply to new 4.1.2 contracts; saved contracts retain their recorded semantics. JSON writes cannot exceed the reader limit; large aggregate hash preimages remain supported.
 
 Paired comparison schema 2 retains ordered native turn attempts, separates recovered agent failures from final arm acceptance, requires a shared graded reference defect set, and excludes failed arms from delivery-speed statistics without dropping them. Duplicate JSON keys and malformed input fail qualification. No native-model performance claim is made.

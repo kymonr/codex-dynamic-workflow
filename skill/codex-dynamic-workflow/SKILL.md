@@ -13,8 +13,9 @@ uses **native** agent tools: Luna for qualified exploration/verification and Ast
 for the complete mainline and critical acceptance. Both share the actual host's native
 capacity. Runtime, when selected, owns admission and attempts through its SQLite ledger.
 Skill-only bookkeeping is not persistent; neither mode is a hard token/currency cap.
-For Astra, high is a Runtime default, not a fixed requirement. Select and explicitly
-pass a supported effort using the current host profile contract; see host and routing.
+For Astra, high is a Runtime default, not a fixed requirement. Select effort from
+the task's uncertainty and consequences, preserving explicit user choices and the
+current host/run contract; see host and routing. Do not reconfigure the parent.
 
 ## Runtime selection
 
@@ -79,6 +80,9 @@ host, another backend or a weaker model. Do not change configuration or permissi
    create delegation. In parallel, open at least three distinct supplemental Luna
    directions for meaningful work when capacity permits, then expand only for new
    methods or coverage. No result-count or model-ratio success criterion exists.
+   In Skill-only mode, Root may do cohesive mainline work directly.
+   Role names are not a staffing list; use Astra children for independent
+   deliverables or necessary non-author checks. Runtime admission still applies.
 2. Pick the logical role: explorer, verifier, reproducer, designer, writer or
    reviewer. Select a compatible execution profile **separately** from that role.
    Use Astra for mainline reasoning, implementation and required acceptance. Use
@@ -147,6 +151,8 @@ the relevant uncertainty. A deterministic low-risk fact can be checked by Root.
 Do not replace a necessary strong verifier with a cheap model to fit the budget.
 If the necessary check cannot run, block that acceptance and disclose the gap;
 continue unrelated work when safe. Independent review never guarantees completeness.
+Do not add an Astra reviewer for every Luna result or another checker for every
+reviewer. Keep all required writer/high-risk/user-requested checks; see writes.
 
 New counterevidence can reopen any disposition. Keep an ID stable for the same
 proposition and snapshot and increment its evidence revision; semantic changes or
@@ -156,7 +162,9 @@ new candidate snapshots create linked successor records. Never erase old outcome
 
 A child prompt contains the logical role, decided task, scope/exclusions, source
 identity/read method, raw entry points, relevant dependencies/constraints, authority,
-allowed effects, objective checks, stop rule and this return shape:
+allowed effects, objective checks, stop rule and this return shape. For supplemental
+probes, name one concrete question using these existing fields; a role title alone
+is not an assignment. Use the bounded examples in patterns when helpful:
 
 ```text
 NODE: <id / logical role / effective profile-model-effort or UNKNOWN>

@@ -36,6 +36,9 @@ Astra 保留完整主线：必要调查、实现、测试与验收不转交给�
 每个有实质工作量的任务，容量允许时主动启动至少 3 个不同方向的 Luna 补充探针：
 查漏覆盖、反例/失败模式、测试缺口/第二意见；有更多独立高价值方向时继续扩展。
 这是每任务的启动意图下限，不是每轮重新开 3 个，也不是等齐结果才能交付。
+主线不按岗位凑代理：Skill-only 下 Root 可以连贯完成工作，必要独立复核仍保留；Runtime 管理的步骤仍须准入。
+具体派工问题和停止条件见[派工示例](skill/codex-dynamic-workflow/references/patterns.md)；
+推理强度按任务及实际宿主/合同选择，不自动改全局默认或在旧 Runtime 合同内换挡。
 主线读取/复核使用 cwf_reader，实施使用 cwf_writer；Astra 推理强度可显式选择，默认 high，profile 不再固定 high。
 补充探索使用 cwf_general（Luna/max），机械补充使用 cwf_mechanical（Luna/medium）。
 模型名称是初始配置，不代表账户可用性、价格或实测质量。安装保留现有 luna profile 和全局默认值。

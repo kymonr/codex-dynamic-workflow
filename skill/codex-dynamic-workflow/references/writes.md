@@ -36,7 +36,7 @@ case-insensitively where the filesystem does, resolve links/aliases, include sha
 config/lock/generated files and serialized integration. Same-file writers conflict
 even across distinct worktrees; worktrees are not an exception to ownership rules.
 When exclusivity, isolation or baseline cannot be proven, use one writer.
-These conditional parallel-write rules apply to Skill-only coordination. Runtime v3
+These conditional parallel-write rules apply to Skill-only coordination. Runtime
 serializes writers within one coordination database even when their write sets are
 disjoint; separate databases do not grant parallel-write authorization.
 

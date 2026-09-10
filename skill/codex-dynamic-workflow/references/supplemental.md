@@ -1,8 +1,9 @@
 # Astra mainline and supplemental Luna coverage
 
-For new 4.1 contracts, [followup](followup.md) refines screening, issue resolution,
-capacity and candidate epochs. The earlier 4.0 behavior below remains the compatibility
-contract for saved 4.0 runs; it is not the full 4.1 operational contract.
+Use [followup](followup.md) for current screening, resolution, capacity and candidate
+epochs. Runtime state-machine paragraphs below document saved 4.0 compatibility,
+not the current 4.1 acceptance rules. Responsibility and raw-evidence safeguards
+still apply; historical completion behavior does not replace the current protocol.
 
 ## Responsibility and proactive coverage
 Astra retains the complete mainline, including required investigation, implementation,
@@ -43,8 +44,11 @@ Results are evidence about their snapshot, never proof that later working bytes 
 
 ## Evidence triage, not majority voting
 Return compact candidates with source/range, reproducible check, possible impact and
-uncertainty. Prefer three high-value evidence cards; record additional material leads as
-uncovered scope. Semantic deduplication and triage belong to Root, not a vote-count rule.
+uncertainty. Three leading cards are a presentation preference, not an evidence limit:
+every potentially material lead belongs in CLAIMS, not merely NOTES or uncovered scope.
+If transport/storage limits prevent complete risk capture, disclose the unresolved gap.
+Never treat a truncated report as clean coverage or use it to waive a required check.
+Semantic deduplication and triage belong to Root, not a vote-count rule.
 No automatic Astra review per Luna turn; only meaningful received claims need attention.
 
 Runtime triage accepts dismissed, advisory, or promoted with a nonempty Root reason.
