@@ -1,0 +1,58 @@
+"""Task-local Codex app-server client; no config writes or automatic approvals."""
+import json
+import queue
+import subprocess
+import threading
+import time
+
+class HostProbe:
+    def __init__(self, command, cwd, env):
+        self.process = subprocess.Popen([command, 'app-server', '--stdio'], cwd=cwd,
+            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, encoding='utf-8', bufsize=1)
+        self.inbox = queue.Queue()
+        self.events = []
+        self.pending = {}
+        self.sequence = 0
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self):
+        for line in self.process.stdout:
+            try:
+                self.inbox.put(json.loads(line))
+            except ValueError:
+                self.inbox.put({'client_error': 'non-JSON host output'})
+        self.inbox.put({'client_eof': True})
+
+    def send(self, message):
+        self.process.stdin.write(json.dumps(message, ensure_ascii=True) + '\n')
+        self.process.stdin.flush()
+
+    def poll(self):
+        count = 0
+        while True:
+            try:
+                message = self.inbox.get_nowait()
+            except queue.Empty:
+                break
+            if 'id' in message and ('result' in message or 'error' in message):
+                self.pending[message['id']] = message
+            else:
+                self.events.append((time.time(), message))
+            count += 1
+        return count
+
+    def call(self, method, params, timeout=20):
+        self.sequence += 1
+        request_id = self.sequence
+        self.send({'id': request_id, 'method': method, 'params': params})
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.poll()
+            if request_id in self.pending:
+                return self.pending.pop(request_id)
+            if self.process.poll() is not None:
+                raise RuntimeError('app-server exited: ' + str(self.process.returncode))
+            time.sleep(0.05)
+        raise TimeoutError('host request timed out: ' + method)
