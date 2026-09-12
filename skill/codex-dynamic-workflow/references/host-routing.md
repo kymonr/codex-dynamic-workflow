@@ -19,26 +19,59 @@ An explorer, verifier, reproducer, designer or reviewer may use the same capable
 read-only execution profile. A writer needs an authorized writable task and compatible
 host permissions. No logical role is permanently assigned to a cheap or strong model.
 
-This package ships four optional profiles, installed separately from openai.yaml:
+This package ships five optional profiles, installed separately from openai.yaml:
 
 | Profile | Initial mapping | Capability contract |
 |---|---|---|
-| cwf_reader | Astra / high | Bounded read-only raw-source analysis and independent judgment |
-| cwf_writer | Astra / high | Scoped implementation; inherits permissions, never grants writes |
-| cwf_general | Luna / max | Ordinary bounded read-only investigation, analysis, planning and noncritical verification |
+| cwf_reader | Astra / selected effort (default high) | Bounded read-only raw-source analysis and independent judgment |
+| cwf_sol_writer | Sol / selected effort (default high) | Default scoped implementation, tests and repairs; never final acceptance |
+| cwf_writer | Astra / selected effort (default high) | Preserved for old contracts and explicit compatible Skill-only use |
+| cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
+
+Runtime 4.1.1 permits explicit Astra effort selection; reader/writer profiles no longer
+pin high. Root passes route.effort through the actual native tool's effort parameter.
+Check the currently exposed profile first: old sessions can still advertise fixed high.
+New contracts, including legacy, reject shipped-profile model or fixed-Luna-effort conflicts.
+Package validation checks that Astra and Sol profiles do not shadow the selected effort.
+Requested identity still does not prove the host used it.
 
 These are model mappings, not built-in tools or a model quality benchmark. Cost tiers
 are configured assumptions: check current availability and cost suitability. Existing
 Luna/Sol/Spark profiles and global defaults remain unchanged by installation.
 
-Prefer cwf_general for ordinary bounded read-only work when source access and named
+Select effort from uncertainty, cross-module coupling, consequence of a missed issue
+and evidence quality, not the role title or number of edited lines. With no explicit
+choice, high remains the package default. For straightforward, well-specified work,
+low/medium may suffice; unresolved logic or edge cases can justify high, and especially
+demanding reasoning may justify xhigh/max/ultra where the actual host supports them.
+These are task heuristics, not measured guarantees or a requirement to try cheaper first.
+Do not silently downgrade an explicit user selection. Report unsupported or inadequate
+settings instead of substituting another model. Do not reconfigure the parent or global defaults.
+
+Skill-only can select a compatible effort before the next authorized dispatch.
+Runtime routes are fixed per tier when the run is created; execute route.effort from
+the admitted packet. This is not a per-node escalation API. An inadequate saved route
+requires disclosing the capability gap and blocking affected acceptance, not mutating
+the contract or starting a new run to reset spending. Higher effort is not proof of
+independence, source coverage or successful verification.
+
+Astra owns the complete mainline objective; Sol implements, tests and repairs under
+the [delegation contract](delegation.md). Do not move required work to Luna because it is bounded or
+read-only. For every meaningful non-trivial task, proactively use cwf_general for
+at least three distinct supplemental probes when capacity permits: omissions/coverage,
+counterexamples/failure modes, and missing tests/alternative explanations. These
+probes add search width; they are not mainline dependencies or votes.
+
+Use cwf_general for supplemental bounded read-only work when source access and named
 checks can establish its deliverable and capability is sufficient. Examples include
 scoped call-site tracing, comparing documented behavior with code, collecting test
-evidence and checking a small noncritical change. Ordinary planning or review does
-not automatically require Astra just because of its logical role. If cwf_general is
-not exposed yet, an existing luna profile with compatible Luna/max and read-only
-constraints can perform this same task; inspect the actual host profile first.
+evidence and checking a small noncritical change. A supplemental second opinion does
+not become required acceptance merely because its logical role is reviewer.
+In Skill-only mode, if cwf_general is not exposed, an existing luna profile may be used
+only after checking compatible model/effort, source, permission and authority constraints.
+With Runtime, execute the exact admitted route; a similar profile name is not substitution authority.
+A missing contract profile is a capability gap, not permission to use legacy or another backend.
 
 Before selecting Luna, state the deliverable and how it can be recomputed or checked
 against original evidence: specified input/output cases, an enumerated source list,
@@ -55,17 +88,18 @@ Treat a clean Luna result as evidence within its checked scope; Root must examin
 the coverage and residual uncertainty even when Luna reports no capability gap.
 
 Use cwf_mechanical for low-risk mechanical work with objective checks and known cost
-suitability. Its economy reserve is narrower than ordinary Luna delegation. Use the
+suitability. In v4 it uses the same isolated supplemental allowance; the separate
+economy reserve remains available only to legacy policy. Use the
 capable route for complex cross-module reasoning, uncertain security impact, high-risk
-conclusions, implementation and critical independent acceptance, including writer review.
+conclusions and critical independent acceptance, including review of Sol implementation.
 An unknown answer alone does not require Astra. Luna may gather bounded evidence
 about a difficult area while Root/capable review owns its high-risk conclusions.
 Unknown risk or inadequate checks require investigation or the capable route; an
 unqualified task must not be labeled ordinary or mechanical merely to lower cost.
 
-When useful evidence work can be separated from complex judgment, assign the bounded
-branch to Luna instead of absorbing it into Root or a broad Astra task. Keep closely
-dependent work together when decomposition would lose context or add more rework.
+Keep required evidence collection in the complete Astra-led mainline, including Sol's
+implementation checks. Add independent Luna probes rather than removing required work. Keep
+closely dependent work together when decomposition would lose context or add rework.
 Batch distinct bounded exploratory or verification directions when useful, including
 large batches under the user's selected allowance. Stop on coverage/deadline or lack
 of useful new directions. Avoid duplicate or trivial fragments, not unknown outcomes.
@@ -83,16 +117,16 @@ not equal task quality between models. Any quality comparison must use the same
 representative tasks and candidate sources, verified omissions/false findings and
 rework; successful routing or additional agent count is not that comparison.
 
-Cheap writing is not enabled by cwf_mechanical. A future/user-selected economy writer
-must have a writer-capable profile, closed scope and evidence-backed quality checks;
-never defeat an existing non-writer profile by relabeling it. No expensive fallback
+Writing is not enabled by cwf_mechanical or cwf_general. Use the dedicated cwf_sol_writer
+for new implementation, with closed scope and required Astra acceptance; never defeat
+a non-writer profile by relabeling it. There is no automatic expensive fallback
 outside the approved allowance. Incompatible explicit user route/model selections
 are surfaced, not silently rewritten.
 
-For an explicit supported model/effort override, use a compatible neutral profile
-without conflicting fixed values, when the host supports it. Do not silently ignore
-the override or pass shadowed values to a fixed profile. Model unavailable: retain
-partial results, report the exact observed limitation and proposed bounded alternative.
+Astra reader/writer profiles already omit fixed effort; do not add a neutral profile
+merely to select another supported effort. Other explicit mappings need a compatible
+host and run contract, not a shadowed override. Model unavailable: retain partial
+results and report the exact limitation; do not silently substitute another mapping.
 
 ## Lifecycle
 
@@ -110,9 +144,9 @@ infer the active home from a username or directory existence. Some hosts use use
 `.agents/skills`; existing installations may use CODEX_HOME/skills. Verify discovery
 on the actual client and avoid duplicate same-name skill copies.
 
-Luna and Astra both use native host agent tools. Use the compatible native profiles
+Astra, Sol and Luna all use native host agent tools. Use the compatible native profiles
 above, preserving bounded unknown-answer exploration and critical capable judgment.
-Both consume native host capacity; no model label grants a slot exemption. Batch
+All consume native host capacity; no model label grants a slot exemption. Batch
 useful Luna work as capacity allows and keep needed Astra reservations available.
 On a native capacity or capability gap, queue/report the affected work. CLI model
 dispatch and the former independent Luna process pool are disabled, not fallback.

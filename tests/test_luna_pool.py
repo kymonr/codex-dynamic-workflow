@@ -34,7 +34,7 @@ class LunaPoolTests(unittest.TestCase):
         if scope is not None: fields['capacity_scope'] = scope
         if pool: fields['execution_pool'] = 'luna'
         fields.update(extra)
-        return self.rt.create(**fields)
+        return self.rt.create(workflow='legacy', **fields)
 
     def nodes(self, run, *values):
         self.rt.add(run, list(values), reason='bounded test batch')

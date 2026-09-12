@@ -1,6 +1,6 @@
 interface:
   display_name: "Codex Dynamic Workflow"
-  short_description: "Raw-source-first adaptive native workflows"
-  default_prompt: "Use $codex-dynamic-workflow for an evidence-driven native workflow within the current authorization and budget."
+  short_description: "Astra design, Sol implementation, Luna probes"
+  default_prompt: "Use $codex-dynamic-workflow: Astra owns design and final acceptance; Sol implements, tests and repairs; at least three distinct optional Luna probes add evidence on meaningful tasks when budget and capacity permit. Do not repeat probes per stage or waive independent acceptance."
 policy:
   allow_implicit_invocation: true

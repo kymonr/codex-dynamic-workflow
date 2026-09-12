@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import re
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
@@ -13,6 +14,13 @@ import install as installer
 import policy_reference as compatibility
 from validate_package import validate, SKILL
 from cwf_runtime import policy, VERSION
+
+def run_subprocess_captured(args, *, env=None, cwd=None, timeout):
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stdout, \
+            tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stderr:
+        result=subprocess.run(args,cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=stdout,stderr=stderr,timeout=timeout)
+        stdout.seek(0); stderr.seek(0)
+        return subprocess.CompletedProcess(result.args,result.returncode,stdout.read(),stderr.read())
 
 class RuntimePackageTests(unittest.TestCase):
     def setUp(self):
@@ -28,7 +36,7 @@ class RuntimePackageTests(unittest.TestCase):
         self.assertTrue(any('runtime' in e for e in validate(self.root)))
     def test_runtime_version_drift_is_rejected(self):
         p=self.root/SKILL/'scripts/cwf_runtime/core.py'
-        s=p.read_text(encoding='utf-8'); p.write_text(s.replace("VERSION = '3.0.0'","VERSION = '0.0.1'"),encoding='utf-8')
+        s=p.read_text(encoding='utf-8'); p.write_text(re.sub(r"^VERSION = '[0-9.]+'", "VERSION = '0.0.1'", s, count=1, flags=re.M),encoding='utf-8')
         self.assertTrue(any('runtime code version drift' in e for e in validate(self.root)))
     def test_exec_write_capability_cannot_be_silently_enabled(self):
         p=self.root/SKILL/'policy.json'; data=json.loads(p.read_text(encoding='utf-8'))
@@ -44,10 +52,10 @@ class RuntimePackageTests(unittest.TestCase):
             p=home/rel; p.parent.mkdir(parents=True,exist_ok=True); p.write_bytes(data)
         entry=home/'skills/codex-dynamic-workflow/scripts/cwf.py'
         env=os.environ.copy(); env.pop('PYTHONPATH',None); env['PYTHONDONTWRITEBYTECODE']='1'
-        p=subprocess.run([sys.executable,'-B',str(entry),'--version'],cwd=home,env=env,capture_output=True,text=True,encoding='utf-8',timeout=15)
+        p=run_subprocess_captured([sys.executable,'-E','-S','-B',str(entry),'--version'],cwd=home,env=env,timeout=15)
         self.assertEqual(p.returncode,0,p.stderr); self.assertEqual(p.stdout.strip(),VERSION)
         db=home/'state.sqlite'
-        p=subprocess.run([sys.executable,'-B',str(entry),'--db',str(db),'init'],cwd=home,env=env,capture_output=True,text=True,encoding='utf-8',timeout=15)
+        p=run_subprocess_captured([sys.executable,'-E','-S','-B',str(entry),'--db',str(db),'init'],cwd=home,env=env,timeout=15)
         self.assertEqual(p.returncode,0,p.stderr); self.assertTrue(json.loads(p.stdout)['ok']); self.assertTrue(db.is_file())
 
 if __name__=='__main__': unittest.main()

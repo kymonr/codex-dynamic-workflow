@@ -1,5 +1,53 @@
 # Changelog
 
+## 4.2.0 — 2026-09-12 (unreleased)
+
+- Astra owns design and original-goal acceptance; the new cwf_sol_writer profile owns scoped Sol implementation, tests and repairs. Old cwf_writer stays Astra. No second controller or model scheduler.
+- New astra-mainline writer packets are fixed to Sol. They consume total approved launches, not strong_used or the economy reserve; required Astra review is still declared and funded before admission. Saved contracts/routes/counters remain unchanged.
+- Sol implementation cannot launder a promoted finding into a passing resolution; current Astra evidence and independent writer verification remain required.
+- Reuse existing prompt fields, keep three distinct Luna questions per meaningful task rather than per stage, and make a counterexample probe challenge the plan itself. Lack of model budget never authorizes cheap probes or waived acceptance.
+- Verification is zero-model only. Native behavior, model permissions and savings are not claimed. Historical 4.1.2 native failures and pending collector/runner changes remain separately recorded.
+
+## 4.1.2 — 2026-09-10
+
+Unreleased candidate guidance refinement: keep cohesive Astra work with Root rather than staffing every role; add bounded Luna prompt examples and task-based effort guidance without parent/global changes or per-node Runtime overrides. Preserve required independent checks and all material claims, and scope alternative profiles to compatible Skill-only dispatch. Runtime code, route defaults, budgets, schemas and profiles are unchanged by this guidance-only refinement.
+
+Whole-review follow-up: explicit Astra verification now checks non-author identity and full target coverage even for low-risk targets. Unbound dispatch reservations are added to observed host threads rather than hidden by a maximum. New gates apply to new 4.1.2 contracts; saved contracts retain their recorded semantics. JSON writes cannot exceed the reader limit; large aggregate hash preimages remain supported.
+
+Paired comparison schema 2 retains ordered native turn attempts, separates recovered agent failures from final arm acceptance, requires a shared graded reference defect set, and excludes failed arms from delivery-speed statistics without dropping them. Duplicate JSON keys and malformed input fail qualification. No native-model performance claim is made.
+
+## 4.1.1 — 2026-09-09
+
+Astra reader/writer profiles no longer pin reasoning effort. Keep high as the Runtime
+default and preserve explicit low/medium/high/xhigh/max/ultra requests; the active host
+must expose compatible profile support. New legacy contracts also check shipped-profile
+model and fixed Luna effort. Saved contracts keep their recorded routes and behavior.
+
+Require the writer used for a new contract's fixed resolution to follow the promoted
+investigation, preventing a new reviewer from laundering an unrelated historical write.
+Add negative causal-chain and positive selected-effort regression coverage. Existing
+4.1.0 contracts are not silently migrated; use a new 4.1.1 contract for the strengthened gate.
+
+## 4.1.0 — 2026-09-09
+
+Fix all four fixed model/profile/effort routes and validator cross-checks; remove stale writer version text. Preserve saved 3.0.0 and 4.0.0 contracts instead of silently reinterpreting them.
+
+Add bounded informational notes, atomic candidate screening and duplicate links; benign screening restores a current acceptance receipt without rerunning the mainline. Promoted issues require explicit objective-aware resolution, with current causal Astra evidence and actual independently verified writer effects for a fixed outcome. Early reports survive interruption.
+
+Reserve the known next required Astra frontier plus greater explicit demand; require actual host capacity and active-thread observations for Luna. Add explicit changed-candidate supplemental reopening without resetting budgets or omitted nodes. Closeout observations distinguish real bounded receivers, stop requests and unknown cleanup without creating a background scheduler.
+
+Add passive paired-observation validation and a live-host protocol. Deterministic tests and schema discovery do not establish actual native model identity, live joint execution or comparative quality. Real validation status is recorded separately.
+
+## 4.0.0 — 2026-09-09
+
+Astra owns the complete mainline; meaningful tasks proactively launch at least three distinct optional Luna probes when capacity permits, per task rather than per repair cycle.
+
+Added isolated snapshot roots, a 12-attempt supplemental quota, full unused-Astra allowance protection and one-slot capacity reserve. New Runtime contracts enforce Astra mainline routing and prevent supplemental dependencies or mandatory verification.
+
+Added Root triage/promotion, truthful omissions and separate mainline acceptance/coverage/host cleanup. Late findings invalidate prior acceptance; failed-attempt claims cannot disappear through retry. Saved 3.0.0 contracts keep their original identity and semantics.
+
+Canonicalize Windows temporary/output paths in fixtures and example preparation while retaining Runtime snapshot identity checks. Fixed package validation skipped by the major-version change. Added v4 boundary, compatibility and lifecycle tests. Native execution and comparative model quality are separately unverified unless an actual run receipt is supplied.
+
 ## Unreleased — native-only routing correction
 
 - Route both Luna and Astra through native host agent tools; preserve bounded exploratory/verification batches and necessary capable review within shared host capacity.

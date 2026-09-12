@@ -19,7 +19,7 @@ class IndependentFindingTests(unittest.TestCase):
     stream=initial.ExecutorTests.stream
 
     def test_two_reviewed_write_stages_preserve_each_candidate_gate(self):
-        self.run=self.rt.create(root=self.root,goal='two scoped writes',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='two scoped writes',backend='native',implement=True)
         self.add(spec('w1',role='writer',writes=['a.py']),spec('v1',role='reviewer',verifies='w1',depends=['w1']),
                  spec('w2',role='writer',writes=['a.py'],depends=['v1']),spec('v2',role='reviewer',verifies='w2',depends=['w2']))
         p=self.acquire(); (self.root/'a.py').write_text('VALUE=5\n'); self.done(p,reply(changed_files=['a.py']))
@@ -34,7 +34,7 @@ class IndependentFindingTests(unittest.TestCase):
         self.assertFalse(self.rt.status(self.run)['current_evidence_valid'])
 
     def test_review_can_depend_on_historical_explorer_and_current_writer(self):
-        self.run=self.rt.create(root=self.root,goal='fix',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='fix',backend='native',implement=True)
         self.add(spec('explore'),spec('write',role='writer',writes=['a.py'],depends=['explore']),
                  spec('review',role='reviewer',verifies='write',depends=['explore','write']))
         self.done(); p=self.acquire(); (self.root/'a.py').write_text('VALUE=5\n')
@@ -44,7 +44,7 @@ class IndependentFindingTests(unittest.TestCase):
         self.assertEqual(self.rt.finish(self.run)['status'],'completed')
 
     def test_deletion_is_recorded_partial_not_completed_or_replayed(self):
-        self.run=self.rt.create(root=self.root,goal='scoped write',backend='native',implement=True)
+        self.run=self.rt.create(workflow='legacy', root=self.root,goal='scoped write',backend='native',implement=True)
         self.add(spec('write',role='writer',writes=['a.py']),spec('review',role='reviewer',verifies='write',depends=['write']))
         p=self.acquire(); self.assertFalse(p['permissions']['delete_files'])
         (self.root/'a.py').unlink()
@@ -69,7 +69,7 @@ class IndependentFindingTests(unittest.TestCase):
         bad=[reply(outcome=[]),reply(outcome={}),reply(checks=[{'name':'inspect','status':[]}]),
              reply(claims=[{'proposition':'x','evidence':['a.py'],'existence':[], 'applicability':'supported','impact':'low'}])]
         for index,payload in enumerate(bad):
-            run=self.rt.create(root=self.root,goal='bad payload '+str(index),backend='exec')
+            run=self.rt.create(workflow='legacy', root=self.root,goal='bad payload '+str(index),backend='exec')
             self.rt.add(run,[spec()],reason='protocol test')
             def transport(*args,**kw):
                 kw['on_started']('fake-terminal-process')

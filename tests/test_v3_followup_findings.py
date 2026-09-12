@@ -15,7 +15,7 @@ class FollowupFindingTests(unittest.TestCase):
     def test_malformed_result_and_unreadable_source_still_release_ended_process(self):
         for failure in [WorkflowError('missing source'),WorkflowError('source exceeds bound'),PermissionError('source denied')]:
             with self.subTest(error=str(failure)):
-                run=self.rt.create(root=self.root,goal='compound failure',backend='exec')
+                run=self.rt.create(workflow='legacy', root=self.root,goal='compound failure',backend='exec')
                 self.rt.add(run,[spec()],reason='test')
                 original=core.fingerprint; calls=[0]
                 def fingerprint(*args,**kw):
@@ -35,8 +35,8 @@ class FollowupFindingTests(unittest.TestCase):
 
     def test_different_roots_cannot_bypass_default_single_writer(self):
         second=self.base/'other-worktree'; second.mkdir(); (second/'a.py').write_text('VALUE=3')
-        a=self.rt.create(root=self.root,goal='first checkout',backend='native',implement=True)
-        b=self.rt.create(root=second,goal='second checkout',backend='native',implement=True)
+        a=self.rt.create(workflow='legacy', root=self.root,goal='first checkout',backend='native',implement=True)
+        b=self.rt.create(workflow='legacy', root=second,goal='second checkout',backend='native',implement=True)
         for run in (a,b):
             self.rt.add(run,[spec('w',role='writer',writes=['a.py']),spec('v',role='reviewer',verifies='w',depends=['w'])],reason='test')
         p=self.rt.acquire(a,backend='native'); self.assertTrue(p['admitted'])

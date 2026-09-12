@@ -15,9 +15,18 @@ requested or when an allowance decision blocks progress. Defaults are upper boun
 never a target headcount.
 Use the stricter applicable host/authorization constraint. The reserve is per run,
 not per node, wave, retry or model. Unknown cost/risk is not eligible for economy reserve.
-Ordinary Luna/max work consumes approved non-strong allowance. Its sufficient task
-capability does not qualify it for the mechanical economy reserve; keep that reserve
-for explicitly qualified Luna/medium mechanical work. Both tiers count as launches.
+Supplemental Luna/max work consumes the supplemental portion of approved non-strong
+allowance. Plan up to 12 supplemental launches by default for meaningful work, with
+at least three distinct probes as the normal launch intent when host capacity permits.
+These are ceilings/coverage defaults, never a completion quota. Reserve the strong
+allowance needed for Astra design/acceptance and total allowance for Sol implementation before admitting
+supplemental work. In v4, both supplemental tiers use their own approved pool and cannot spill into
+the economy reserve; the reserve is retained for legacy compatibility. All attempts
+still count toward the absolute launch ceiling. The runtime protects all unused
+strong allowance and at least one host slot, not only already declared verifiers.
+In 4.1 this slot count also covers the known upcoming required frontier and any larger
+explicit Root demand. Both observed host-capacity and host-active counts are required
+before new supplemental admission; a configured ceiling alone is not an observation.
 
 Concurrency has no fixed Skill ceiling: `max_concurrent_children: null` follows the
 actual host's available capacity, including retained child sessions. A positive
@@ -26,7 +35,7 @@ controller cap; Root checks host capacity before admission/dispatch. Cumulative
 launch allowances and required-check reservations still apply. If capacity is
 unknown, inspect the host once and queue work on a capacity failure.
 
-All Luna and Astra work uses native agents and shares native host capacity. Broad
+All Astra, Sol and Luna work uses native agents and shares native host capacity. Broad
 Luna exploration can increase the declared useful scope and approved launch allowance,
 but cannot bypass the host's actual slot limit. Admit ready directions in batches,
 queue the rest, and keep capacity and approved strong calls for needed Astra work.
@@ -99,3 +108,18 @@ of consuming approved capacity reserved for mandatory checks. Reserve is cumulat
 Mandatory checks themselves use approved allowance. The caller must update launch,
 reserve and pending counters together before dispatch; this pure reference function
 does not perform atomic bookkeeping or enforce the host's actual spending.
+
+Candidate reopening changes neither spending nor the deadline. Unused supplemental
+allowance is not a fresh per-repair three-probe quota. Follow [4.1 closeout](followup.md)
+for bounded continuation ownership; neither the library nor this Skill installs a receiver.
+
+## 4.2 Sol implementation accounting
+In new astra-mainline contracts only, the fixed Sol writer uses approved total launches
+without incrementing strong_used. Its strong node label still enforces writer capability,
+closed scope and a declared required Astra verifier. It cannot borrow the economy reserve.
+The declared required graph must be fundable before any admission: optional probes and
+Sol implementation cannot consume the remaining Astra review reservation. Old contract
+routes and counters are unchanged. These are launch counters, not account credit pools.
+No available model budget means no model dispatch, not free Luna work. Reserve Root's
+final acceptance separately when its usage is visible; otherwise disclose the unknown
+and block unaffordable required review. See [delegation](delegation.md) for brief and handoff.

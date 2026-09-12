@@ -2,7 +2,7 @@
 name: dispatching-native-agents
 description: "Deprecated compatibility alias for Codex Dynamic Workflow. Use only when an older prompt explicitly invokes $dispatching-native-agents; canonical workflows use $codex-dynamic-workflow."
 metadata:
-  version: "3.0.0-compat"
+  version: "4.2.0-compat"
 ---
 
 # Deprecated compatibility alias

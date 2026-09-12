@@ -191,19 +191,25 @@ def parse_exec(stream, returncode):
     return payload, usage
 
 
-def result_schema():
+def result_schema(supplemental_protocol=1):
     string={'type':'string'}
     strings={'type':'array','items':string}
     claim={'type':'object','additionalProperties':False,'properties':{
         'proposition':string,'evidence':strings,'existence':{'type':'string','enum':['supported','disproved','unknown']},
         'applicability':{'type':'string','enum':['supported','disproved','unknown']},'impact':string},
         'required':['proposition','evidence','existence','applicability','impact']}
-    return {'type':'object','additionalProperties':False,'properties':{
+    schema = {'type':'object','additionalProperties':False,'properties':{
         'outcome':{'type':'string','enum':['completed','partial','failed']},'summary':string,'sources_opened':strings,
         'checks':{'type':'array','items':{'type':'object','additionalProperties':False,
             'properties':{'name':string,'status':{'type':'string','enum':['PASS','FAIL','UNKNOWN','NOT_RUN']}},'required':['name','status']}},
         'changed_files':strings,'claims':{'type':'array','items':claim}},
         'required':['outcome','summary','sources_opened','checks','changed_files','claims']}
+
+    if supplemental_protocol == 2:
+        schema['properties']['notes'] = {'description': 'v4.1 informational observations only; plausible delivery risks belong in claims.', 'type': 'array', 'maxItems': 12, 'items': {'type': 'object', 'additionalProperties': False, 'properties': {'text': {'type': 'string', 'minLength': 1, 'maxLength': 1000}, 'evidence': {'type': 'array', 'maxItems': 128, 'items': {'type': 'string'}}}, 'required': ['text', 'evidence']}}
+    elif supplemental_protocol != 1:
+        raise WorkflowError('unsupported supplemental result schema')
+    return schema
 
 
 def build_prompt(packet):

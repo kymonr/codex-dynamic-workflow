@@ -1,18 +1,21 @@
 ---
 name: codex-dynamic-workflow
-description: "Use for adaptive native-agent workflows: independent substantial branches, deep repository review, or authorized implementation with investigation, verification and review. Use native Luna for bounded exploration and verification alongside native Astra for complex judgment. Use for 并行、派工、深度审核、Agent Fleet; not trivial solo questions or generic JavaScript/CLI orchestration."
+description: "Use for Astra-led native work: Astra plans, designs and accepts; Sol implements, tests and repairs within scope; Luna adds targeted adversarial research. Preserve complete mainline coverage, independent checks and cumulative budget without redundant staffing."
 metadata:
-  version: "3.0.0"
+  version: "4.2.0"
 ---
 
 # Codex Dynamic Workflow — raw-source-first
 
 Quality > automation > latency > cost > observability > recovery.
 Root owns the objective, authorization and final acceptance. All model delegation
-uses **native** agent tools: Luna for qualified exploration/verification and Astra
-for complex judgment and critical acceptance. Both share the actual host's native
+uses **native** agent tools: Astra for design and acceptance, Sol for scoped implementation,
+and Luna for optional targeted evidence. All share the actual host's native
 capacity. Runtime, when selected, owns admission and attempts through its SQLite ledger.
 Skill-only bookkeeping is not persistent; neither mode is a hard token/currency cap.
+For Astra, high is a Runtime default, not a fixed requirement. Select effort from
+the task's uncertainty and consequences, preserving explicit user choices and the
+current host/run contract; see host and routing. Do not reconfigure the parent.
 
 ## Runtime selection
 
@@ -31,14 +34,31 @@ Runtime protocol and actual run receipts for qualification. Deterministic tests 
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
 
-Batch useful native Luna exploration within available host capacity and keep room
-for needed native Astra. Dispatch ready critical work without waiting for unrelated
-Luna siblings. No Luna slot exemption exists in the current native tool contract;
-queue excess work rather than pretending it is outside the host's capacity.
+Astra owns a complete end-to-end mainline, delegating implementation/tests/repairs to Sol:
+removing every Luna probe must still leave all necessary work and acceptance. For every meaningful,
+non-trivial task, proactively launch at least three distinct native Luna supplemental
+probes when host capacity permits: (1) omissions/coverage, (2) counterexamples/failure
+modes, and (3) missing tests or alternative explanations. Three is a launch-intent
+floor, never a completion barrier or vote. Expand further while distinct high-value
+directions remain. Luna probes are readonly, optional and non-authoritative; they
+cannot satisfy mandatory acceptance or become dependencies of mainline work.
+
+Required mainline work and reserved Astra acceptance have capacity and budget priority. Queue or omit supplemental probes
+rather than delaying a ready mainline step, and never wait for unrelated Luna siblings
+to finish. Returned concrete evidence is not disposable: Root checks applicability to
+the current candidate, deduplicates it, and promotes material verified issues into the
+mainline. Empty agreement and generic advice do not create mainline work.
+
+Read the [v4.1 follow-up rules](references/followup.md) and [supplemental protocol](references/supplemental.md) for launch accounting,
+source isolation, Root triage and separate mainline acceptance. The three-probe floor
+is per meaningful task, not per turn, file or repair cycle. Document capability, capacity,
+budget, cancellation or genuinely insufficient independent directions when fewer run.
 
 ## Before work
 
 Read applicable workspace instructions and honor the user's current authorization.
+No available model budget or an explicit no-native boundary means no model dispatch,
+including Luna; separately authorized local checks do not establish native acceptance.
 Record a short run contract: objective, acceptance checks, exact candidate and read
 method, allowed writes, available native tools/profiles, budget and remaining gaps.
 Do not repeat a workspace preflight already completed for this task.
@@ -46,7 +66,7 @@ Do not repeat a workspace preflight already completed for this task.
 Read [host and routing](references/host-routing.md) before the first dispatch;
 [evidence](references/evidence.md) before evidence collection;
 [budget](references/budget.md) and [policy defaults](policy.json) before the first dispatch;
-and [writes](references/writes.md) before any writer.
+and [writes](references/writes.md) plus [delegation](references/delegation.md) before any writer.
 Use [patterns](references/patterns.md) only for the selected workflow shapes.
 [Policy defaults](policy.json) are editable planning defaults, not capability claims.
 
@@ -57,27 +77,32 @@ host, another backend or a weaker model. Do not change configuration or permissi
 
 ## Control loop
 
-1. Identify the most useful unresolved objective or evidence gap. Use solo when
-   one bounded branch suffices; dispatch independent useful work when parallelism
-   materially improves coverage or latency. No fixed agent quota or model ratio.
+1. Astra/Root identifies and owns the complete unresolved mainline objective. Keep
+   closely dependent reasoning together; do not carve required work out merely to
+   create delegation. In parallel, open at least three distinct supplemental Luna
+   directions for meaningful work when capacity permits, then expand only for new
+   methods or coverage. No result-count or model-ratio success criterion exists.
+   In Skill-only mode, Root may do cohesive work directly when delegation adds no value.
+   Role names are not a staffing list; use Astra children for independent
+   deliverables or necessary non-author checks. Runtime admission still applies.
 2. Pick the logical role: explorer, verifier, reproducer, designer, writer or
    reviewer. Select a compatible execution profile **separately** from that role.
-   Prefer Luna/max for ordinary bounded read-only tasks with sufficient source-based
-   checks; Luna/medium for mechanical checks; Astra for complex judgment and critical
-   acceptance. Apply the qualification and escalation rules in host and routing.
+   Use Astra for planning/design/acceptance and Sol for coherent implementation, tests
+   and bounded repair. Use Luna/max for supplemental probes and Luna/medium for
+   mechanical supplemental checks. Apply the qualification and escalation rules.
    Name the concrete deliverable and evidence/coverage checks before
    selecting Luna. Root owns conclusions whose completeness cannot be established
    by those checks, with capable independent review where required.
    The answer need not be known in advance. Batch distinct bounded exploration or
    verification directions; coverage, evidence collected or a deadline can define
    the stop rule. Unknown answers are not automatically high-risk judgments.
-   Split useful independent evidence collection, comparisons or checks from complex
-   judgment when each branch has its own deliverable. Use actual scope and risk,
-   not a role name such as "reviewer", to select the model; no quota or artificial split.
+   Add supplemental evidence collection, comparisons or checks with distinct
+   deliverables without removing necessary coverage from the Astra-led mainline.
+   Avoid artificial fragments; the three-probe floor concerns useful extra directions.
 3. Give each node its own scope, dependencies, raw sources, acceptance/stop rule,
    permissions and budget. Root alone may dispatch or approve scope expansion.
-4. Process ready results immediately. Open the cited original evidence before
-   adopting material claims. Register claims incrementally; deduplicate by meaning,
+4. Screen concise ready candidates at natural mainline checkpoints; escalate credible
+   severe risks promptly. Open current original evidence before adopting material claims. Register claims incrementally; deduplicate by meaning,
    scope and snapshot. Do not wait for every sibling merely to assign IDs.
 5. New evidence may justify a new branch, design comparison, reproduction or fix.
    State the gap, distinct method, possible decision change and budget impact.
@@ -90,9 +115,10 @@ selected whole-set ranking require a barrier. Independent verification can start
 while other exploration continues. A design panel is optional and compares real
 alternatives; votes and headcount never establish facts.
 
-Root may do unrelated work while children run, but must not duplicate an active
-child's scope, question and method. Children must not spawn, message peers, broaden
-permissions or restart budgets. Nested workflows and automatic writer replay are not implemented in v3.
+Root may do unrelated work while children run. An independent second opinion may
+revisit code with a stated distinct method or independent-review purpose; otherwise
+do not duplicate an active child's scope, question and method. Children must not spawn, message peers, broaden
+permissions or restart budgets. Nested workflows and automatic writer replay are not implemented in v4.
 
 ## Raw evidence, not inherited conclusions
 
@@ -127,6 +153,11 @@ the relevant uncertainty. A deterministic low-risk fact can be checked by Root.
 Do not replace a necessary strong verifier with a cheap model to fit the budget.
 If the necessary check cannot run, block that acceptance and disclose the gap;
 continue unrelated work when safe. Independent review never guarantees completeness.
+Do not add an Astra reviewer for every Luna result or another checker for every
+reviewer. Keep all required writer/high-risk/user-requested checks; see writes.
+Astra acceptance tests the original goal and the design itself against the full diff
+and raw evidence, not just Sol's compliance. Reserve acceptance before optional probes.
+Astra designing and later accepting in one context is not independent design verification.
 
 New counterevidence can reopen any disposition. Keep an ID stable for the same
 proposition and snapshot and increment its evidence revision; semantic changes or
@@ -136,11 +167,14 @@ new candidate snapshots create linked successor records. Never erase old outcome
 
 A child prompt contains the logical role, decided task, scope/exclusions, source
 identity/read method, raw entry points, relevant dependencies/constraints, authority,
-allowed effects, objective checks, stop rule and this return shape:
+allowed effects, objective checks, stop rule and this return shape. For supplemental
+probes, name one concrete question using these existing fields; a role title alone
+is not an assignment. Use the bounded examples in patterns when helpful:
 
 ```text
 NODE: <id / logical role / effective profile-model-effort or UNKNOWN>
 STATUS: completed | partial | blocked | failed | interrupted
+NOTES: <compact non-risk suggestions/coverage observations; plausible risks belong in CLAIMS>
 SOURCES_OPENED: <actual path/ref/range or command + result identity>
 CLAIMS:
 - <proposition; original evidence; supported | inferred | UNVERIFIED>
@@ -163,8 +197,8 @@ of which model ran.
 ## Lifecycle and completion
 
 Use the currently exposed wait/list/interrupt/close contract; do not invent tool
-names, parameters or timeout values. Wait only when Root has no useful independent
-work. A timeout alone is not failure. One bounded progress check can distinguish
+names, parameters or timeout values. Wait for real mainline dependencies, not merely
+because Root is idle while optional Luna probes run. A timeout alone is not failure. One bounded progress check can distinguish
 slow work from no progress. Respect the declared deadline; interrupt task-owned
 work once when needed and mark unconfirmed termination UNKNOWN. Do not release a
 write claim or reuse capacity until the host confirms the relevant state.
@@ -174,12 +208,21 @@ A low-value or dry-expansion signal stops optional exploration, not mandatory re
 verification or acceptance. Passing a needed independent check is useful progress
 although it creates no new bug. No fixed three-wave ceiling.
 
+At mainline acceptance, omit pending probes and close that candidate
+epoch. Do not wait for all Luna, but do not automatically kill a still-useful probe either.
+Continuation needs a real result receiver and bounded cutoff; without one, perform a
+bounded host closeout and disclose incomplete coverage. A stop request is not release.
+Root may reopen supplementation for changed candidate bytes within the SAME remaining
+budget; no fresh three-probe quota. Handle returned risks through screening and explicit
+issue resolution. Investigation completed does not mean a repair is finished. Runtime
+reports mainline_accepted separately from scope_complete and run/host cleanup state.
+
 For authorized implementation, continue investigation → decided change → focused
 tests → independent review → bounded repair without requesting approval at every
 step. These are available shapes, not a compulsory pipeline for every task.
 Root also counts as a writer. No overlapping owned write sets, even in different
 worktrees. Skill-only parallel writing requires the explicit authorization and isolation
-contract in [writes](references/writes.md); Runtime v3 serializes writers within its DB.
+contract in [writes](references/writes.md); Runtime v4 serializes writers within its DB.
 Commit/push/merge require the separate authority in that contract.
 
 Finish with actual changes or findings, actual verification, remaining risks/gaps,

@@ -25,7 +25,7 @@ or other external effects require separate authority. Report tests that cannot r
 
 ## Writer contract
 
-Default one active writer, counting Root. A writer gets a decided task, acceptance
+Default one active writer (Sol for new implementation), counting Root. A writer gets a decided task, acceptance
 criteria, exact baseline, closed owned files and allowed effects. It reads original
 sources and necessary dependencies; decisions are constraints, not proof that a
 planned fix is correct. Stop and request a bounded adjustment on unexpected scope.
@@ -36,7 +36,7 @@ case-insensitively where the filesystem does, resolve links/aliases, include sha
 config/lock/generated files and serialized integration. Same-file writers conflict
 even across distinct worktrees; worktrees are not an exception to ownership rules.
 When exclusivity, isolation or baseline cannot be proven, use one writer.
-These conditional parallel-write rules apply to Skill-only coordination. Runtime v3
+These conditional parallel-write rules apply to Skill-only coordination. Runtime
 serializes writers within one coordination database even when their write sets are
 disjoint; separate databases do not grant parallel-write authorization.
 
@@ -63,3 +63,9 @@ Address actionable findings in a bounded successor fix, then recheck affected te
 and the resulting diff. Do not loop until an agent happens to approve. If a required
 check is unavailable or repair budget is exhausted, keep the result partial/blocked.
 Final acceptance binds the tested content, not a stale pre-fix revision.
+
+Astra accepts Sol's actual work against the original requirement, not only the plan.
+Planning and accepting in the same Astra context is not independent design verification.
+Keep required independent high-risk review; never let exhausted Astra allowance turn
+Sol self-review or Luna agreement into acceptance. Runtime requires the declared
+Astra verifier even when a low-risk Skill-only Root could otherwise review directly.

@@ -1,7 +1,10 @@
-# Codex Dynamic Workflow v3.0.0
+# Codex Dynamic Workflow v4.2.0
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
-核心是原生派工、原始证据、自适应分支和授权内实现闭环，不是固定人数审核。
+Astra 规划、设计并最终验收；Sol 连贯实施、测试与修复；Luna 提供不同方向的只读补充证据。
+具体分工与额度边界见 [delegation](references/delegation.md)。
+启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
+详见 [v4.1 结果与收尾协议](references/followup.md)。
 
 - 规范入口：[SKILL.md](SKILL.md)；本机 profile 需单独安装。
 - 事实合同：[evidence](references/evidence.md)。原始文件必须真正打开，摘要只作导航。
@@ -12,9 +15,9 @@
 
 质量 > 自动化 > 延迟 > 成本 > 可观察性 > 可恢复性。
 没有独立任务就不派工；出现新的证据缺口可以追加分支；不重复查同一问题填人数。
-高风险结论不能为了节约成本改用不足能力的核验者。`cwf_general`（Luna/max）承担有明确来源和检查边界的普通只读探索与验证；`cwf_mechanical`（Luna/medium）仅承担合格的机械只读任务。
+高风险结论不能为了节约成本改用不足能力的核验者。`cwf_general`（Luna/max）承担有明确来源和检查边界的可选补充探索；`cwf_mechanical`（Luna/medium）仅承担合格的机械只读任务。
 
 `policy.json` 是初始可编辑规划上限，不是推荐用满额度，也不是准确费用报价。
-v3 提供 SQLite DAG、原子调用预留与显式只读恢复；硬费用限制、操作系统文件隔离和嵌套工作流仍未实现。
+v4 延续 SQLite DAG、原子调用预留与显式只读恢复，并加入补充分支隔离与独立主线验收；硬费用限制、操作系统文件隔离和嵌套工作流仍未实现。
 Runtime 入口和限制见 [runtime](references/runtime.md)；原生/模型集成验证状态须单独确认。
 更新安装目录后，以新会话的实际发现和运行回执验证，不能只凭文件存在声称生效。

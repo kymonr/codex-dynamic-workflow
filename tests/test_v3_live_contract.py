@@ -22,7 +22,7 @@ class LiveContractTests(unittest.TestCase):
     def test_invalid_paths_still_fail_but_observed_usage_is_retained(self):
         for path in [str(self.root/'a.py'),'a.py:1-3','file:///a.py']:
             with self.subTest(path=path):
-                run=self.rt.create(root=self.root,goal='invalid path data',backend='exec')
+                run=self.rt.create(workflow='legacy', root=self.root,goal='invalid path data',backend='exec')
                 self.rt.add(run,[spec()],reason='test')
                 def transport(*args,**kw):
                     kw['on_started']('ended-process')

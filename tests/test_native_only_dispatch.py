@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -32,7 +33,7 @@ class NativeOnlyDispatchTests(unittest.TestCase):
                 self.assertFalse(absent.exists()); launch.assert_not_called()
 
     def test_exec_admission_refuses_without_consuming_or_rewriting_legacy_run(self):
-        run = self.rt.create(root=self.root, goal='historic exec record', backend='exec')
+        run = self.rt.create(workflow='legacy', root=self.root, goal='historic exec record', backend='exec')
         self.rt.add(run, [spec()], reason='test historical record')
         before = self.rt.run(run); events = self.rt.events(run)
         code, result = self.command('next','--run',run,'--backend','exec')
@@ -48,9 +49,9 @@ class NativeOnlyDispatchTests(unittest.TestCase):
             self.assertEqual(code, 1); self.assertIn('native-only', result['error'])
             self.assertEqual(self.rt.conn.execute('SELECT COUNT(*) FROM runs').fetchone()[0], before)
 
-    def test_native_luna_plan_admits_through_native_bridge(self):
+    def test_explicit_legacy_native_luna_plan_admits_through_native_bridge(self):
         path = self.base/'native.json'
-        path.write_text(json.dumps(dict(root=str(self.root),goal='ordinary native investigation',backend='native',
+        path.write_text(json.dumps(dict(root=str(self.root),goal='ordinary native investigation',backend='native',workflow='legacy',
                                        bounds={'strong_approved':0},nodes=[spec(ordinary_qualified=True)])),encoding='utf-8')
         code, result = self.command('create','--plan',str(path)); self.assertEqual(code, 0)
         run = result['result']['run_id']
@@ -60,7 +61,7 @@ class NativeOnlyDispatchTests(unittest.TestCase):
         self.assertEqual(packet['route']['model'],'gpt-5.6-luna'); self.assertEqual(packet['route']['effort'],'max')
 
     def test_historical_exec_status_is_still_readable(self):
-        run = self.rt.create(root=self.root, goal='historical inspection', backend='exec')
+        run = self.rt.create(workflow='legacy', root=self.root, goal='historical inspection', backend='exec')
         before = self.rt.run(run)
         code, result = self.command('status','--run',run)
         self.assertEqual(code, 0); self.assertEqual(result['result']['backend'],'exec')
@@ -71,10 +72,14 @@ class NativeOnlyDispatchTests(unittest.TestCase):
         for name in ('verify_installed_exec_smoke.py','verify_installed_luna_pool.py'):
             with self.subTest(name=name):
                 output = self.base/(name+'-output')
-                result = subprocess.run([sys.executable,'-B',str(project/'scripts'/name),
-                                         '--skill-dir',str(project/'skill/codex-dynamic-workflow'),
-                                         '--output-dir',str(output),'--executable',sys.executable],
-                                        capture_output=True,text=True,encoding='utf-8',timeout=15)
+                with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stdout, \
+                        tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stderr:
+                    result = subprocess.run([sys.executable,'-E','-S','-B',str(project/'scripts'/name),
+                                             '--skill-dir',str(project/'skill/codex-dynamic-workflow'),
+                                             '--output-dir',str(output),'--executable',sys.executable],
+                                            stdin=subprocess.DEVNULL,stdout=stdout,stderr=stderr,timeout=15)
+                    stdout.seek(0); stderr.seek(0)
+                    result = subprocess.CompletedProcess(result.args,result.returncode,stdout.read(),stderr.read())
                 self.assertEqual(result.returncode,1); self.assertIn('native-only',result.stderr)
                 self.assertFalse(output.exists())
 

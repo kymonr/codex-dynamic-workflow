@@ -1,0 +1,439 @@
+{
+  "tested_commit": "4e795ac779f801bd358933cd21747a38675b58d3",
+  "qualification": "NOT_QUALIFIED",
+  "new_model_execution_authorized_by_this_bundle": false,
+  "source_note": "Allowlisted summaries and lifecycle events. Raw session/command logs, configurations and SQLite files remain local.",
+  "runtime_r2": {
+    "run_id": "16bf6b3beead412cb921c437ef74f3b0",
+    "status": "completed",
+    "mainline_complete": true,
+    "mainline_accepted": true,
+    "budget": {
+      "used": 7,
+      "reserve_used": 0,
+      "strong_used": 3,
+      "active_holds": 0,
+      "host_resource_holds": 0,
+      "execution_holds": 0,
+      "unknown_usage_attempts": 7
+    }
+  },
+  "runtime_r2_limits": [
+    "Recorded controller release does not prove native slot recovery.",
+    "Actual sandbox was full access.",
+    "All Luna completed before the required verifier finished."
+  ],
+  "paired_pilots": {
+    "final_completed_arms": 6,
+    "final_completed_native_actors": 17,
+    "final_attempt_observed_tokens": 4001161,
+    "all_attempt_observed_token_subtotal": 4535063,
+    "observer_tokens": null,
+    "monetary_cost": null,
+    "rows": [
+      {
+        "case": "config_review",
+        "arm": "astra",
+        "native_actors_final_attempt": 1,
+        "mainline_seconds_final_attempt": 83.27473378181458,
+        "observation_seconds_final_attempt": 84.97341871261597,
+        "tokens_final_attempt": 127081,
+        "observed_token_subtotal_all_attempts": 127081,
+        "all_attempt_elapsed_seconds": 83.27473378181458,
+        "reference_findings": [
+          "CFG_FALSE_ZERO",
+          "CFG_DEFAULT_MUTATION"
+        ],
+        "extra_verified_findings_from_luna": [],
+        "failed_commands": [
+          {
+            "thread_id": "01a08c9a-efe5-7f70-b5be-4807713745fd",
+            "item_id": "exec-eb23aa62-79d3-434b-9b61-5bfad8b06bfe",
+            "exit_code": 1,
+            "duration_ms": 338,
+            "classification": "contract violation found during read-only review"
+          }
+        ]
+      },
+      {
+        "case": "config_review",
+        "arm": "astra_luna",
+        "native_actors_final_attempt": 4,
+        "mainline_seconds_final_attempt": 124.42849230766296,
+        "observation_seconds_final_attempt": 207.8526005744934,
+        "tokens_final_attempt": 831380,
+        "observed_token_subtotal_all_attempts": 1365282,
+        "all_attempt_elapsed_seconds": 807.2525110244751,
+        "reference_findings": [
+          "CFG_FALSE_ZERO",
+          "CFG_DEFAULT_MUTATION"
+        ],
+        "extra_verified_findings_from_luna": [],
+        "failed_commands": []
+      },
+      {
+        "case": "lifecycle_review",
+        "arm": "astra",
+        "native_actors_final_attempt": 1,
+        "mainline_seconds_final_attempt": 75.29494547843933,
+        "observation_seconds_final_attempt": 76.88596248626709,
+        "tokens_final_attempt": 126758,
+        "observed_token_subtotal_all_attempts": 126758,
+        "all_attempt_elapsed_seconds": 75.29494547843933,
+        "reference_findings": [
+          "LIFE_STALE_RESULT",
+          "LIFE_OPTIONAL_BLOCK"
+        ],
+        "extra_verified_findings_from_luna": [],
+        "failed_commands": [
+          {
+            "thread_id": "01a08c9f-c1be-7be0-a291-b7f0ba3d6542",
+            "item_id": "exec-d87d0d98-fbf7-42a7-bf9e-5a5a9d698c73",
+            "exit_code": 1,
+            "duration_ms": 367,
+            "classification": "contract violation found during read-only review"
+          }
+        ]
+      },
+      {
+        "case": "lifecycle_review",
+        "arm": "astra_luna",
+        "native_actors_final_attempt": 4,
+        "mainline_seconds_final_attempt": 313.0690064430237,
+        "observation_seconds_final_attempt": 377.0380914211273,
+        "tokens_final_attempt": 1004100,
+        "observed_token_subtotal_all_attempts": 1004100,
+        "all_attempt_elapsed_seconds": 313.0690064430237,
+        "reference_findings": [
+          "LIFE_STALE_RESULT",
+          "LIFE_OPTIONAL_BLOCK"
+        ],
+        "extra_verified_findings_from_luna": [],
+        "failed_commands": [
+          {
+            "thread_id": "01a08ca3-2481-7d12-8f7a-e55644a93697",
+            "item_id": "exec-fe629913-e463-49a0-91c1-70319244f6f1",
+            "exit_code": 1,
+            "duration_ms": 347,
+            "classification": "contract violation found during read-only review"
+          },
+          {
+            "thread_id": "01a08ca3-ceb5-7620-9b07-cd8368ba4d22",
+            "item_id": "exec-6819d10a-2bc2-433f-b175-dfcc01df764f",
+            "exit_code": 1,
+            "duration_ms": 259,
+            "classification": "supplemental command quoting failure"
+          }
+        ]
+      },
+      {
+        "case": "retry_fix",
+        "arm": "astra",
+        "native_actors_final_attempt": 2,
+        "mainline_seconds_final_attempt": 216.26497101783752,
+        "observation_seconds_final_attempt": 219.11077165603638,
+        "tokens_final_attempt": 522505,
+        "observed_token_subtotal_all_attempts": 522505,
+        "all_attempt_elapsed_seconds": 216.26497101783752,
+        "reference_findings": [
+          "RETRY_INDEXING",
+          "RETRY_ATTEMPT_VALIDATION",
+          "RETRY_BASE_CAP_VALIDATION",
+          "RETRY_BOUNDED_SCALING"
+        ],
+        "extra_verified_findings_from_luna": [],
+        "failed_commands": []
+      },
+      {
+        "case": "retry_fix",
+        "arm": "astra_luna",
+        "native_actors_final_attempt": 5,
+        "mainline_seconds_final_attempt": 237.0529670715332,
+        "observation_seconds_final_attempt": 336.04778385162354,
+        "tokens_final_attempt": 1389337,
+        "observed_token_subtotal_all_attempts": 1389337,
+        "all_attempt_elapsed_seconds": 237.0529670715332,
+        "reference_findings": [
+          "RETRY_INDEXING",
+          "RETRY_ATTEMPT_VALIDATION",
+          "RETRY_BASE_CAP_VALIDATION",
+          "RETRY_BOUNDED_SCALING"
+        ],
+        "extra_verified_findings_from_luna": [],
+        "failed_commands": [
+          {
+            "thread_id": "01a08cab-0081-7a52-8301-0060706e7b19",
+            "item_id": "exec-61485208-395c-4d8b-b170-01f412e58fc7",
+            "exit_code": 1,
+            "duration_ms": 15640,
+            "classification": "original-candidate huge-attempt test stopped after hang"
+          },
+          {
+            "thread_id": "01a08cab-b084-7c81-a665-cefbdb61ca71",
+            "item_id": "exec-867313b0-1fb3-4506-91cc-22180b5dcbf5",
+            "exit_code": 1,
+            "duration_ms": 280,
+            "classification": "supplemental integer-to-string diagnostic failure"
+          }
+        ]
+      }
+    ],
+    "all_failures": [
+      {
+        "case": "config_review",
+        "arm": "astra",
+        "thread_id": "01a08c9a-efe5-7f70-b5be-4807713745fd",
+        "item_id": "exec-eb23aa62-79d3-434b-9b61-5bfad8b06bfe",
+        "exit_code": 1,
+        "duration_ms": 338,
+        "classification": "contract violation found during read-only review"
+      },
+      {
+        "case": "lifecycle_review",
+        "arm": "astra",
+        "thread_id": "01a08c9f-c1be-7be0-a291-b7f0ba3d6542",
+        "item_id": "exec-d87d0d98-fbf7-42a7-bf9e-5a5a9d698c73",
+        "exit_code": 1,
+        "duration_ms": 367,
+        "classification": "contract violation found during read-only review"
+      },
+      {
+        "case": "lifecycle_review",
+        "arm": "astra_luna",
+        "thread_id": "01a08ca3-2481-7d12-8f7a-e55644a93697",
+        "item_id": "exec-fe629913-e463-49a0-91c1-70319244f6f1",
+        "exit_code": 1,
+        "duration_ms": 347,
+        "classification": "contract violation found during read-only review"
+      },
+      {
+        "case": "lifecycle_review",
+        "arm": "astra_luna",
+        "thread_id": "01a08ca3-ceb5-7620-9b07-cd8368ba4d22",
+        "item_id": "exec-6819d10a-2bc2-433f-b175-dfcc01df764f",
+        "exit_code": 1,
+        "duration_ms": 259,
+        "classification": "supplemental command quoting failure"
+      },
+      {
+        "case": "retry_fix",
+        "arm": "astra_luna",
+        "thread_id": "01a08cab-0081-7a52-8301-0060706e7b19",
+        "item_id": "exec-61485208-395c-4d8b-b170-01f412e58fc7",
+        "exit_code": 1,
+        "duration_ms": 15640,
+        "classification": "original-candidate huge-attempt test stopped after hang"
+      },
+      {
+        "case": "retry_fix",
+        "arm": "astra_luna",
+        "thread_id": "01a08cab-b084-7c81-a665-cefbdb61ca71",
+        "item_id": "exec-867313b0-1fb3-4506-91cc-22180b5dcbf5",
+        "exit_code": 1,
+        "duration_ms": 280,
+        "classification": "supplemental integer-to-string diagnostic failure"
+      }
+    ],
+    "rejected_supplemental_candidates": [
+      {
+        "id": "LIFE_ENFORCE_CLASSIFICATION",
+        "reason": "Fixed classification is an input premise, not an added validation obligation."
+      },
+      {
+        "id": "LIFE_ENFORCE_FRESH_ID",
+        "reason": "Fresh attempt IDs are an input premise; repeated IDs are outside the valid test domain."
+      },
+      {
+        "id": "RETRY_REJECT_LARGE_VALID_INT",
+        "reason": "Converting a finite allowed large int to ValueError would violate the contract; final code correctly avoids that option."
+      }
+    ]
+  },
+  "latest_followup": {
+    "status": "PARTIAL_NOT_ACCEPTED",
+    "run_id": "13b57082b79c4863acdcff8a300abb23",
+    "native_turns_observed": 6,
+    "native_model_retries": 0,
+    "mainline_complete": true,
+    "mainline_accepted": false,
+    "finish_error": "live/unreconciled mainline execution attempts remain",
+    "runtime_budget": {
+      "used": 5,
+      "reserve_used": 0,
+      "strong_used": 2,
+      "active_holds": 5,
+      "host_resource_holds": 5,
+      "execution_holds": 5,
+      "unknown_usage_attempts": 5
+    },
+    "runtime_host_resource_state": "UNKNOWN",
+    "readonly_parent_configuration_and_denial_observed": true,
+    "child_effective_model_profile_effort_sandbox": "UNKNOWN: collector missed event-discovered children",
+    "luna_running_at_required_verifier_completion": 0,
+    "runtime_finish_with_running_luna": "NOT_OBSERVED",
+    "main_completion_to_verifier_start_seconds": 285.08219051361084,
+    "observed_total_tokens": 1453302,
+    "observed_cached_input_tokens": 1298944,
+    "outer_root_tokens": null,
+    "money_cost": null,
+    "observer_exit": "interrupted at the approved 600-second boundary",
+    "task_app_server_exit_code": 0,
+    "host_resource_cleanup": "UNKNOWN; child unsubscribe/archive receipts missing; process exit is not release"
+  },
+  "latest_followup_rows": [
+    {
+      "node": "observer",
+      "native_thread_id": "01a08d2f-df22-7381-8eac-41237fd44d54",
+      "native_turns": [
+        {
+          "id": "01a08d2f-e052-7c80-8f0b-f169fc947d72",
+          "status": "interrupted",
+          "error": null,
+          "observed_at": 1789075720.6967854
+        }
+      ],
+      "native_external_id": null,
+      "requested": {
+        "model": "gpt-6-astra",
+        "profile": null,
+        "effort": "high"
+      },
+      "effective_child_identity": "host thread/settings/updated",
+      "runtime_state": null,
+      "total_tokens": 969544,
+      "cached_input_tokens": 907776,
+      "all_observed_tools_settled": true
+    },
+    {
+      "node": "main",
+      "native_thread_id": "01a08d31-f0e8-73f2-bb37-6e7ef9e9a58f",
+      "native_turns": [
+        {
+          "id": "01a08d31-f1d1-7070-8024-95dd8e90c43c",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075300.581326
+        }
+      ],
+      "native_external_id": "/root/rtf_main",
+      "requested": {
+        "effort": "high",
+        "model": "gpt-6-astra",
+        "profile": "cwf_reader"
+      },
+      "effective_child_identity": "UNKNOWN",
+      "runtime_state": "completed",
+      "total_tokens": 95391,
+      "cached_input_tokens": 61952,
+      "all_observed_tools_settled": true
+    },
+    {
+      "node": "coverage",
+      "native_thread_id": "01a08d32-519b-7f40-9a6b-4a4c4c28a3d0",
+      "native_turns": [
+        {
+          "id": "01a08d32-524a-7c92-bfde-9e013e4366fb",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075343.2125747
+        }
+      ],
+      "native_external_id": "/root/rtf_coverage",
+      "requested": {
+        "effort": "max",
+        "model": "gpt-5.6-luna",
+        "profile": "cwf_general"
+      },
+      "effective_child_identity": "UNKNOWN",
+      "runtime_state": "completed",
+      "total_tokens": 97111,
+      "cached_input_tokens": 60928,
+      "all_observed_tools_settled": true
+    },
+    {
+      "node": "counterexample",
+      "native_thread_id": "01a08d32-b315-7ab1-8749-8a6f294e199a",
+      "native_turns": [
+        {
+          "id": "01a08d32-b3a4-7650-8c77-4207874d9e9f",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075349.2759757
+        }
+      ],
+      "native_external_id": "/root/rtf_counterexample",
+      "requested": {
+        "effort": "max",
+        "model": "gpt-5.6-luna",
+        "profile": "cwf_general"
+      },
+      "effective_child_identity": "UNKNOWN",
+      "runtime_state": "partial",
+      "total_tokens": 95936,
+      "cached_input_tokens": 90368,
+      "all_observed_tools_settled": true
+    },
+    {
+      "node": "test_gap",
+      "native_thread_id": "01a08d33-75ae-7a33-8175-f739dcd27f03",
+      "native_turns": [
+        {
+          "id": "01a08d33-7636-7253-87a6-642b0cf32281",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075447.0522513
+        }
+      ],
+      "native_external_id": "/root/rtf_test_gap",
+      "requested": {
+        "effort": "max",
+        "model": "gpt-5.6-luna",
+        "profile": "cwf_general"
+      },
+      "effective_child_identity": "UNKNOWN",
+      "runtime_state": "completed",
+      "total_tokens": 100093,
+      "cached_input_tokens": 90368,
+      "all_observed_tools_settled": true
+    },
+    {
+      "node": "verify",
+      "native_thread_id": "01a08d36-f943-73e2-af06-ac7b2920c8de",
+      "native_turns": [
+        {
+          "id": "01a08d36-f9d7-7320-a2ba-fd40adc04d7c",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075631.4726796
+        }
+      ],
+      "native_external_id": "/root/rtf_verify",
+      "requested": {
+        "effort": "high",
+        "model": "gpt-6-astra",
+        "profile": "cwf_reader"
+      },
+      "effective_child_identity": "UNKNOWN",
+      "runtime_state": "completed",
+      "total_tokens": 95227,
+      "cached_input_tokens": 87552,
+      "all_observed_tools_settled": true
+    }
+  ],
+  "latest_followup_claims": {
+    "observed": 13,
+    "supplemental_untriaged_in_runtime": 7,
+    "root_assessment_applied_to_runtime": false
+  },
+  "fixture_sha256": {
+    "ledger.py": "4e2e415e19a97540c0a4314adba3cea320b3eadd61f367f17ccc020d2a9c17bf",
+    "checks.py": "6cd1e6a4b3777e76d8ebcd3fc999b1cd255159e1110094600162f9c0e8fc5f99"
+  },
+  "limits": [
+    "Parent readonly denial does not attest child sandbox.",
+    "Child requested role is not actual identity proof.",
+    "Offline screening assessment was not applied to the expired Runtime run.",
+    "Actual-event replay verifies collector logic only; no live model retest was run.",
+    "Token sums include cached input and the interrupted observer, and exclude unknown outer Root usage."
+  ]
+}

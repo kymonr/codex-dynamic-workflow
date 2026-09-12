@@ -1,0 +1,161 @@
+{
+  "parent_thread_id": "01a08d2f-df22-7381-8eac-41237fd44d54",
+  "events": [
+    {
+      "observed_at": 1789075120.2596521,
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a08d2f-df22-7381-8eac-41237fd44d54",
+        "turn": {
+          "id": "01a08d2f-e052-7c80-8f0b-f169fc947d72",
+          "status": "inProgress",
+          "error": null,
+          "observed_at": 1789075120.2596521
+        }
+      }
+    },
+    {
+      "observed_at": 1789075255.839496,
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a08d31-f0e8-73f2-bb37-6e7ef9e9a58f",
+        "turn": {
+          "id": "01a08d31-f1d1-7070-8024-95dd8e90c43c",
+          "status": "inProgress",
+          "error": null,
+          "observed_at": 1789075255.839496
+        }
+      }
+    },
+    {
+      "observed_at": 1789075280.5593247,
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a08d32-519b-7f40-9a6b-4a4c4c28a3d0",
+        "turn": {
+          "id": "01a08d32-524a-7c92-bfde-9e013e4366fb",
+          "status": "inProgress",
+          "error": null,
+          "observed_at": 1789075280.5593247
+        }
+      }
+    },
+    {
+      "observed_at": 1789075300.581326,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a08d31-f0e8-73f2-bb37-6e7ef9e9a58f",
+        "turn": {
+          "id": "01a08d31-f1d1-7070-8024-95dd8e90c43c",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075300.581326
+        }
+      }
+    },
+    {
+      "observed_at": 1789075305.4019845,
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a08d32-b315-7ab1-8749-8a6f294e199a",
+        "turn": {
+          "id": "01a08d32-b3a4-7650-8c77-4207874d9e9f",
+          "status": "inProgress",
+          "error": null,
+          "observed_at": 1789075305.4019845
+        }
+      }
+    },
+    {
+      "observed_at": 1789075343.2125747,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a08d32-519b-7f40-9a6b-4a4c4c28a3d0",
+        "turn": {
+          "id": "01a08d32-524a-7c92-bfde-9e013e4366fb",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075343.2125747
+        }
+      }
+    },
+    {
+      "observed_at": 1789075349.2759757,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a08d32-b315-7ab1-8749-8a6f294e199a",
+        "turn": {
+          "id": "01a08d32-b3a4-7650-8c77-4207874d9e9f",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075349.2759757
+        }
+      }
+    },
+    {
+      "observed_at": 1789075355.2999015,
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a08d33-75ae-7a33-8175-f739dcd27f03",
+        "turn": {
+          "id": "01a08d33-7636-7253-87a6-642b0cf32281",
+          "status": "inProgress",
+          "error": null,
+          "observed_at": 1789075355.2999015
+        }
+      }
+    },
+    {
+      "observed_at": 1789075447.0522513,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a08d33-75ae-7a33-8175-f739dcd27f03",
+        "turn": {
+          "id": "01a08d33-7636-7253-87a6-642b0cf32281",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075447.0522513
+        }
+      }
+    },
+    {
+      "observed_at": 1789075585.6635165,
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a08d36-f943-73e2-af06-ac7b2920c8de",
+        "turn": {
+          "id": "01a08d36-f9d7-7320-a2ba-fd40adc04d7c",
+          "status": "inProgress",
+          "error": null,
+          "observed_at": 1789075585.6635165
+        }
+      }
+    },
+    {
+      "observed_at": 1789075631.4726796,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a08d36-f943-73e2-af06-ac7b2920c8de",
+        "turn": {
+          "id": "01a08d36-f9d7-7320-a2ba-fd40adc04d7c",
+          "status": "completed",
+          "error": null,
+          "observed_at": 1789075631.4726796
+        }
+      }
+    },
+    {
+      "observed_at": 1789075720.6967854,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a08d2f-df22-7381-8eac-41237fd44d54",
+        "turn": {
+          "id": "01a08d2f-e052-7c80-8f0b-f169fc947d72",
+          "status": "interrupted",
+          "error": null,
+          "observed_at": 1789075720.6967854
+        }
+      }
+    }
+  ]
+}

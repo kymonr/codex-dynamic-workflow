@@ -43,7 +43,7 @@ class ReviewRegressionTests(unittest.TestCase):
             self.rt.finish(self.run)
 
     def test_postwrite_status_distinguishes_historical_and_invalid_evidence(self):
-        run = self.rt.create(root=self.root, goal='fix', backend='native', implement=True)
+        run = self.rt.create(workflow='legacy', root=self.root, goal='fix', backend='native', implement=True)
         self.run = run
         self.add(spec('explore'), spec('write', role='writer', writes=['a.py'], depends=['explore']),
                  spec('review', role='reviewer', verifies='write', depends=['write']))

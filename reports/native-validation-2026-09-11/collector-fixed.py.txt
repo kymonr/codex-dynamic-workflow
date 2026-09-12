@@ -1,0 +1,234 @@
+"""One native observer turn; outer Root owns Runtime admission and acceptance.
+
+Control messages are task-local, allowlisted host RPCs, never model/permission overrides.
+No automatic model retries or Runtime ledger writes happen in this transport.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+from host_probe import HostProbe
+
+ROOT = Path(__file__).resolve().parent
+OUT = ROOT / 'runtime-case/followup-20260911'
+EXE = '<LOCAL_CODEX_EXECUTABLE_REDACTED>'
+CODEX_DIR = Path(r'D:\CodexData\.codex')
+if (OUT / 'bridge-summary.json').exists():
+    raise SystemExit('Existing native attempt must be preserved')
+assert json.loads((ROOT / 'readonly-session-precheck.json').read_text())['read_only_configuration_confirmed']
+env = dict(os.environ)
+env.update(CODEX_HOME=str(CODEX_DIR), TEMP=str(ROOT), TMP=str(ROOT), TMPDIR=str(ROOT))
+guards = [CODEX_DIR / 'config.toml', ROOT / 'runtime-case/state.sqlite',
+          *(CODEX_DIR / 'agents' / (n + '.toml') for n in ('cwf_general','cwf_reader','cwf_mechanical','cwf_writer')),
+          ROOT / 'runtime-case/live/ledger.py', ROOT / 'runtime-case/live/checks.py']
+before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in guards}
+record = {'status': 'STARTING', 'agents': {}, 'rpc': [], 'controls': [], 'guarded_before': before,
+          'max_native_turns': 6, 'max_seconds': 600, 'host_cleanup_confirmed': False}
+host = HostProbe(EXE, r'D:\codex\projects\codex-dynamic-workflow', env)
+record['pid'] = host.process.pid
+parent = turn_id = None
+known = set()
+seen_turns = set()
+read_controls = 0
+ended = False
+stop = False
+event_file = (OUT / 'bridge-events.jsonl').open('x', encoding='utf-8')
+
+def rpc(method, params, timeout=15):
+    reply = host.call(method, params, timeout=timeout)
+    record['rpc'].append({'at': time.time(), 'method': method, 'params': params, 'error': reply.get('error')})
+    if 'error' in reply:
+        raise RuntimeError(f'{method}: {reply["error"]}')
+    return reply.get('result', {})
+
+def publish():
+    record['observed_at'] = time.time()
+    (OUT / 'bridge-summary.json').write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
+    event_file.flush()
+
+def actors_settled():
+    for tid in [parent, *known]:
+        actor = record['agents'].get(tid, {})
+        turns = actor.get('turns', {})
+        if not turns or any(t.get('status') not in ('completed','failed','interrupted') for t in turns.values()):
+            return False
+        if any(t.get('stage') != 'item/completed' for t in actor.get('tools', {}).values()):
+            return False
+    return True
+
+def capture_context(tid, meta):
+    raw_path = meta.get('path')
+    if not raw_path:
+        return
+    path = Path(raw_path).resolve()
+    if not path.is_relative_to(CODEX_DIR.resolve()) or tid not in path.name or path.suffix != '.jsonl':
+        record['agents'][tid]['context_gap'] = 'Host source path did not pass exact owned-thread guard'
+        return
+    contexts = []
+    with path.open(encoding='utf-8') as stream:
+        for line in stream:
+            if not re.search(r'"type"\s*:\s*"turn_context"', line):
+                continue
+            row = json.loads(line)
+            if row.get('type') == 'turn_context':
+                payload = row.get('payload', {})
+                contexts.append({'timestamp': row.get('timestamp'), **{k: payload.get(k) for k in ('turn_id','model','effort','approval_policy','sandbox_policy')}})
+    record['agents'][tid]['effective_context'] = contexts
+
+def snapshot():
+    data = rpc('thread/list', {'ancestorThreadId': parent, 'sourceKinds': ['subAgent','subAgentThreadSpawn','subAgentOther'], 'limit': 15, 'useStateDbOnly': True})
+    if data.get('nextCursor'):
+        raise RuntimeError('Unexpected descendant pagination')
+    known.update(t['id'] for t in data.get('data', []))
+    if len(known) > 5:
+        raise RuntimeError('Authorized child count exceeded')
+    for tid in [parent, *sorted(known)]:
+        meta = rpc('thread/read', {'threadId': tid, 'includeTurns': False})['thread']
+        entry = record['agents'].setdefault(tid, {'turns': {}, 'messages': [], 'tools': {}})
+        entry.update({k: meta.get(k) for k in ('id','parentThreadId','agentRole','agentNickname','model','reasoningEffort','cwd','status','source')})
+        capture_context(tid, meta)
+    publish()
+
+def drain():
+    global ended
+    host.poll()
+    pending, host.events = host.events, []
+    for observed, message in pending:
+        method = message.get('method')
+        params = message.get('params', {})
+        tid = params.get('threadId')
+        if 'id' in message and method:
+            record['pending_host_request'] = {'id': message['id'], 'method': method}
+            raise RuntimeError('Host user handling required; no automatic approval')
+        keep = method in ('thread/started','thread/status/changed','thread/closed','thread/tokenUsage/updated','thread/settings/updated')
+        if tid:
+            entry = record['agents'].setdefault(tid, {'turns': {}, 'messages': [], 'tools': {}})
+        if method in ('turn/started','turn/completed') and tid:
+            if tid != parent:
+                known.add(tid)
+            turn = params['turn']
+            turn_data = {k: turn.get(k) for k in ('id','status','error')}
+            turn_data['observed_at'] = observed
+            entry['turns'][turn['id']] = turn_data
+            seen_turns.add((tid, turn['id']))
+            if len(seen_turns) > 6:
+                raise RuntimeError('Authorized native turn count exceeded')
+            params = {'threadId': tid, 'turn': turn_data}
+            keep = True
+            if method == 'turn/completed':
+                print(json.dumps({'terminal': tid, **turn_data}), flush=True)
+                if tid == parent:
+                    ended = True
+                    record['observer_completed_at'] = observed
+        if method in ('item/started','item/completed'):
+            item = params.get('item', {})
+            kind = item.get('type')
+            keep = kind in ('agentMessage','commandExecution','fileChange','mcpToolCall','dynamicToolCall','collabAgentToolCall','functionCallOutput','subAgentActivity','sleep')
+            if keep and tid:
+                if kind == 'agentMessage' and method == 'item/completed':
+                    message_data = {k: item.get(k) for k in ('id','phase','text')}
+                    message_data['observed_at'] = observed
+                    entry['messages'].append(message_data)
+                    (OUT / (tid + '-last-message.txt')).write_text(item.get('text', ''), encoding='utf-8')
+                    print(json.dumps({'message_from': tid, 'phase': item.get('phase'), 'text': item.get('text','')[:1400]}, ensure_ascii=False), flush=True)
+                elif kind not in ('agentMessage','functionCallOutput','subAgentActivity'):
+                    entry['tools'][item['id']] = {'type': kind, 'stage': method, **{k: item.get(k) for k in ('status','exitCode','durationMs') if k in item}}
+        if method == 'thread/tokenUsage/updated' and tid:
+            entry['token_usage'] = params.get('tokenUsage')
+        if method == 'thread/settings/updated' and tid:
+            entry['effective_settings'] = params
+        if keep:
+            event_file.write(json.dumps({'observed_at': observed, 'method': method, 'params': params}, ensure_ascii=False) + '\n')
+    if pending:
+        publish()
+
+try:
+    rpc('initialize', {'clientInfo': {'name': 'cwf_runtime_followup', 'version': '4.1.2'}, 'capabilities': {'experimentalApi': True}})
+    host.send({'method': 'initialized'})
+    started = rpc('thread/start', {'cwd': r'D:\codex\projects\codex-dynamic-workflow', 'model': 'gpt-6-astra', 'permissions': ':read-only', 'ephemeral': True})
+    parent = started['thread']['id']
+    record['parent_thread_id'] = parent
+    record['effective_start'] = {k: started.get(k) for k in ('model','reasoningEffort','approvalPolicy','sandbox','activePermissionProfile')}
+    if started.get('sandbox', {}).get('type') != 'readOnly':
+        raise RuntimeError('Requested read-only permission did not take effect')
+    turn = rpc('turn/start', {'threadId': parent, 'input': [{'type':'text','text': (OUT / 'observer-prompt.txt').read_text(encoding='utf-8')}], 'effort':'high'})
+    turn_id = turn['turn']['id']
+    record['parent_turn_id'] = turn_id
+    record['started_at'] = time.time()
+    record['status'] = 'RUNNING'
+    deadline = time.monotonic() + 600
+    next_snapshot = time.monotonic()
+    print(json.dumps({'started': parent, 'turn': turn_id, 'permission': ':read-only'}), flush=True)
+    while not stop and time.monotonic() < deadline:
+        drain()
+        control_path = OUT / 'controls.jsonl'
+        controls = control_path.read_text(encoding='utf-8').splitlines() if control_path.exists() else []
+        for line in controls[read_controls:]:
+            command = json.loads(line)
+            reply = {'at': time.time(), 'command': command}
+            try:
+                if command['op'] == 'steer':
+                    reply['result'] = rpc('turn/steer', {'threadId': parent, 'expectedTurnId': turn_id, 'input':[{'type':'text','text':command['text']}]})
+                elif command['op'] == 'archive':
+                    tid = command['thread_id']
+                    if tid not in known:
+                        raise ValueError('Archive target is not an observed owned child')
+                    reply['result'] = rpc('thread/archive', {'threadId': tid})
+                    reply['metadata_after'] = rpc('thread/read', {'threadId': tid, 'includeTurns': False})['thread']['status']
+                    reply['loaded_after'] = rpc('thread/loaded/list', {})
+                elif command['op'] == 'snapshot':
+                    snapshot()
+                elif command['op'] == 'stop':
+                    stop = True
+                else:
+                    raise ValueError('Unsupported control operation')
+            except Exception as error:
+                reply['error'] = str(error)
+            record['controls'].append(reply)
+            print(json.dumps({'control_result': reply}, ensure_ascii=False), flush=True)
+            read_controls += 1
+        if time.monotonic() >= next_snapshot:
+            snapshot()
+            next_snapshot = time.monotonic() + 12
+        if ended and actors_settled():
+            break
+        time.sleep(0.2)
+    record['status'] = 'OBSERVED' if ended else 'STOPPING_AT_BOUNDARY'
+except Exception as error:
+    record['status'] = 'FAILED_OR_BLOCKED'
+    record['error'] = str(error)
+    print(json.dumps({'bridge_error': str(error)}, ensure_ascii=False), flush=True)
+finally:
+    try:
+        if parent:
+            snapshot()
+            for tid in [*sorted(known), parent]:
+                for turn in record['agents'].get(tid, {}).get('turns', {}).values():
+                    if turn.get('status') == 'inProgress':
+                        rpc('turn/interrupt', {'threadId': tid, 'turnId': turn['id']})
+            cutoff = time.monotonic() + 70
+            while time.monotonic() < cutoff:
+                drain()
+                snapshot()
+                if actors_settled():
+                    break
+                time.sleep(1)
+            for tid in [*sorted(known), parent]:
+                record['agents'][tid]['unsubscribe'] = rpc('thread/unsubscribe', {'threadId': tid})
+            record['loaded_before_exit'] = rpc('thread/loaded/list', {})
+    except Exception as error:
+        record['cleanup_error'] = str(error)
+    host.process.stdin.close()
+    try:
+        record['process_exit_code'] = host.process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        record['process_exit_code'] = 'UNKNOWN'
+    record['finished_at'] = time.time()
+    record['guarded_files_unchanged'] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() == before[str(p)] for p in guards}
+    record['observed_native_turns'] = len(seen_turns)
+    publish()
+    event_file.close()
+    print(json.dumps({'finished': record['status'], 'native_turns': len(seen_turns), 'exit_code': record.get('process_exit_code'), 'summary': str(OUT / 'bridge-summary.json')}, ensure_ascii=False), flush=True)

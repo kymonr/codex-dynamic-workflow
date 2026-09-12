@@ -18,7 +18,7 @@ class LunaRoutingTests(unittest.TestCase):
     done = initial.RuntimeTests.done
 
     def test_qualified_ordinary_defaults_to_luna_max_and_reopens(self):
-        self.run = self.rt.create(root=self.root, goal='bounded source inspection', backend='native',
+        self.run = self.rt.create(workflow='legacy', root=self.root, goal='bounded source inspection', backend='native',
                                   bounds={'strong_approved': 0})
         self.add(spec(risk='medium', ordinary_qualified=True))
         p = self.acquire()
@@ -34,7 +34,7 @@ class LunaRoutingTests(unittest.TestCase):
     def test_ordinary_roles_are_not_restricted_to_explorer(self):
         for role in ('explorer', 'reproducer', 'designer', 'reviewer', 'verifier'):
             with self.subTest(role=role):
-                self.run = self.rt.create(root=self.root, goal='bounded '+role, backend='native')
+                self.run = self.rt.create(workflow='legacy', root=self.root, goal='bounded '+role, backend='native')
                 self.add(spec(role=role, risk='medium', ordinary_qualified=True))
                 self.assertEqual(self.done()[0]['route']['effort'], 'max')
                 self.assertEqual(self.rt.finish(self.run)['status'], 'completed')
@@ -57,7 +57,7 @@ class LunaRoutingTests(unittest.TestCase):
     def test_ordinary_verification_of_bounded_readonly_target(self):
         for risk in ('low', 'medium'):
             with self.subTest(risk=risk):
-                self.run = self.rt.create(root=self.root, goal='verify '+risk, backend='native')
+                self.run = self.rt.create(workflow='legacy', root=self.root, goal='verify '+risk, backend='native')
                 self.add(spec('target', risk=risk, ordinary_qualified=True),
                          spec('check', role='verifier', risk=risk, ordinary_qualified=True,
                               depends=['target'], verifies='target'))
@@ -67,7 +67,7 @@ class LunaRoutingTests(unittest.TestCase):
     def test_ordinary_verification_requires_non_author_and_full_candidate(self):
         for same_author in (False, True):
             with self.subTest(same_author=same_author):
-                self.run = self.rt.create(root=self.root, goal='verification identity', backend='native')
+                self.run = self.rt.create(workflow='legacy', root=self.root, goal='verification identity', backend='native')
                 check_sources = ['a.py'] if same_author else ['b.py']
                 self.add(spec('target', ordinary_qualified=True),
                          spec('check', role='verifier', ordinary_qualified=True, sources=check_sources,
@@ -85,7 +85,7 @@ class LunaRoutingTests(unittest.TestCase):
         for target in (spec('target', risk='high'), spec('target', role='writer', writes=['a.py'])):
             for reverse in (False, True):
                 with self.subTest(target=target['role'], reverse=reverse):
-                    self.run = self.rt.create(root=self.root, goal='critical', backend='native', implement=True)
+                    self.run = self.rt.create(workflow='legacy', root=self.root, goal='critical', backend='native', implement=True)
                     nodes = [target, spec('check', role='reviewer', ordinary_qualified=True,
                                          depends=['target'], verifies='target')]
                     with self.assertRaisesRegex(WorkflowError, 'requires a strong route'):
@@ -100,7 +100,7 @@ class LunaRoutingTests(unittest.TestCase):
         self.assertFalse(self.acquire()['admitted'])
 
     def test_ordinary_work_cannot_consume_mechanical_reserve(self):
-        self.run = self.rt.create(root=self.root, goal='reserve boundary', backend='native',
+        self.run = self.rt.create(workflow='legacy', root=self.root, goal='reserve boundary', backend='native',
                                   bounds={'approved': 1, 'reserve': 1, 'absolute': 2, 'strong_approved': 0})
         self.add(spec('first', ordinary_qualified=True))
         self.done()
@@ -125,7 +125,7 @@ class LunaRoutingTests(unittest.TestCase):
 
     def test_legacy_three_route_contract_and_node_survive_reopen(self):
         routes = {k: v for k, v in DEFAULT_ROUTES.items() if k != 'ordinary'}
-        self.run = self.rt.create(root=self.root, goal='legacy routing', backend='native', routes=routes)
+        self.run = self.rt.create(workflow='legacy', root=self.root, goal='legacy routing', backend='native', routes=routes)
         self.add(spec('legacy'))
         old_spec = loads(self.rt.node(self.run, 'legacy')['spec'])
         old_spec.pop('ordinary_qualified')
