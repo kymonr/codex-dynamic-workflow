@@ -8,6 +8,12 @@ $codex-dynamic-workflow
 
 旧 `$dispatching-native-agents` 仅保留为显式兼容入口，并关闭隐式调用，避免双重自动路由。
 
+2026-09-13 调用规则修订（Runtime 仍为 4.2.0）：
+- 被动调用：自动匹配时，主线程继续执行原任务，子代理只派 Luna；有足够独立问题和额度时展开 6–12 个方向，不启动 Astra/Sol 流程。
+- 主动调用：用户明确要求使用该工作流时，才加载原有 Astra 设计 → Sol 实施 → Astra 验收流程。
+
+仅提到、讨论或修改 Skill 不算主动调用。分流以 [Skill 入口](skill/codex-dynamic-workflow/SKILL.md)为准；下文 Astra/Sol 分工与 Runtime 说明适用于显式模式。
+
 适用：动态调查、深度审核，以及明确授权后的实现、测试、独立 review 与有限修复。
 主 Skill 在 `skill/codex-dynamic-workflow/`；模型执行 profile 在 `profiles/`。
 旧 `codex-workflow` Python/QuickJS 仓库保持独立。v3 新增显式 Runtime；确定性验收与真实模型集成状态分开记录。

@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.2.0 invocation-policy revision — 2026-09-13 (unreleased)
+
+Implicit selection now adds broad native Luna-only evidence gathering while Root keeps
+the original task. Useful independent scope can expand to 6–12 directions within the
+existing cumulative allowance. Explicit user invocation loads the preserved full
+Astra/Sol/Luna workflow from a separate reference. Discussion/editing of the Skill and
+automatic workspace pointers do not activate the full flow. Runtime version, code,
+saved contracts, model profiles and budget defaults remain 4.2.0 and unchanged.
+
 ## 4.2.0 — 2026-09-12 (unreleased)
 
 - Astra owns design and original-goal acceptance; the new cwf_sol_writer profile owns scoped Sol implementation, tests and repairs. Old cwf_writer stays Astra. No second controller or model scheduler.

@@ -1,8 +1,9 @@
 # Codex Dynamic Workflow v4.2.0
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
-Astra 规划、设计并最终验收；Sol 连贯实施、测试与修复；Luna 提供不同方向的只读补充证据。
-具体分工与额度边界见 [delegation](references/delegation.md)。
+2026-09-13 起，隐式匹配只增加 Luna 只读调查：主线程保持原任务，有足够独立问题和额度时展开 6–12 个方向。
+用户显式调用时，才按[原有完整流程](references/explicit-workflow.md)运行 Astra 规划与验收、Sol 实施、Luna 补充。
+具体触发判断见 [SKILL.md](SKILL.md)；下方流程参考均在显式模式按需读取。
 启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
 详见 [v4.1 结果与收尾协议](references/followup.md)。
 
