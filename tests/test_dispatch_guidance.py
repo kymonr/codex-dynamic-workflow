@@ -14,7 +14,7 @@ def read(relative):
 
 class DispatchGuidanceTests(unittest.TestCase):
     def test_root_work_is_not_a_fixed_staffing_list(self):
-        skill = read('SKILL.md')
+        skill = read('references/explicit-workflow.md')
         patterns = read('references/patterns.md')
         self.assertIn('Role names are not a staffing list', skill)
         self.assertIn('For supplemental probes,', ' '.join(skill.split()))
@@ -48,7 +48,7 @@ class DispatchGuidanceTests(unittest.TestCase):
         self.assertIn('retain every other potentially material lead in CLAIMS', profile)
 
     def test_review_efficiency_does_not_remove_required_checks(self):
-        skill = read('SKILL.md')
+        skill = read('references/explicit-workflow.md')
         patterns = read('references/patterns.md')
         self.assertIn('Keep all required writer/high-risk/user-requested checks', skill)
         self.assertIn('Self-review at a higher effort is still self-review', patterns)

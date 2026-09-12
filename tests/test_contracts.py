@@ -39,7 +39,7 @@ class PackageTests(unittest.TestCase):
                             files['skills/dispatching-native-agents/SKILL.md'])
 
     def test_native_and_raw_contracts_remain_visible(self):
-        text=(ROOT/SKILL/'SKILL.md').read_text(encoding='utf-8')
+        text=(ROOT/SKILL/'references/explicit-workflow.md').read_text(encoding='utf-8')
         for marker in ['native', 'directly opens', 'UNKNOWN', 'Root also counts as a writer',
                        'No overlapping', 'not native fallback', 'No fixed refuter count']:
             with self.subTest(marker=marker): self.assertIn(marker, text)
