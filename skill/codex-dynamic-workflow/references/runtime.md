@@ -6,7 +6,7 @@ Saved 4.0 contracts retain their original behavior.
 
 ## Entry and authority
 This package bundles `../scripts/cwf.py` relative to this reference directory (the Skill-root path is `scripts/cwf.py`). Python 3.11+ standard library only. From the source project use `python -B scripts/workflow.py`; from an installed Skill use `python -B <skill-dir>/scripts/cwf.py`. Append `--db <explicit-local-database>` before a subcommand. `--version` and `--help` need no initialized database.
-Ordinary Skill-only native use stays available. Runtime is selected explicitly for persistence/control: one local DB coordinates admissions and cooperative locks. Current model delegation is native-only for both Luna and Astra; the Python controller manages state while Root uses actual native host tools to execute. Root retains authorization and proposes tasks; Runtime alone admits and charges each managed run. Do not dispatch its nodes outside returned packets or reset task limits with new run IDs. Historical exec contracts retain their recorded identity and accounting.
+Ordinary Skill-only native use stays available. Runtime is selected explicitly for persistence/control: one local DB coordinates admissions and cooperative locks. Current model delegation is native-only for Astra, Sol and Luna; the Python controller manages state while Root uses actual native host tools to execute. Root retains authorization and proposes tasks; Runtime alone admits and charges each managed run. Do not dispatch its nodes outside returned packets or reset task limits with new run IDs. Historical exec contracts retain their recorded identity and accounting.
 The database is trusted local controller state, not a multi-tenant security boundary. A malicious process with DB write access can defeat it. Child results are untrusted data; only the authorized Root/host may issue create/add/refresh/resume/decide/release commands. Model output cannot authorize any of these actions. Use host sandbox/approval controls in addition to runtime checks.
 
 ## Minimal command flow
@@ -86,3 +86,16 @@ The earlier Windows suite after the external-review and clock-precision repairs 
 An actual readonly `codex exec` run completed through Runtime admission, bound process identity, ordered JSONL result, valid original source identities, observed usage, confirmed process-tree cleanup and final SQLite acceptance. A first failed live path-format response remains separately recorded; it was not accepted or refunded. The corrected output contract was independently reviewed in the successful run, including 12 rejected path examples. These are bounded checks, not model-quality benchmarks or proof of sandbox denial.
 The earlier native bridge attempt was blocked before a child launch; that historical result remains unchanged. A later actual two-agent readonly native run on 2026-09-06 passed admission, actual distinct host identities, bind, original-source result acceptance, host-observed completed-turn reconciliation, independent verification, finish and fresh-process SQLite readback. It used the installed CLI and preserved both host-resource reservations: `execution_holds=0`, `host_resource_holds=2`, `host_resource_state=UNKNOWN`. This qualifies the bounded readonly execution bridge, not native writer recovery, automatic scheduling, sandbox denial or physical resource cleanup. Actual packets, results, observations and reopened state are recorded in the source project's `reports/native-readonly-live-20260906/`. The host-resource gate remains open.
 Three dedicated independent readonly reviews were completed and their actionable findings fixed. The last narrow review found no static blocker but its own dynamic probe fixtures failed; that failed probe is not counted as a pass. Actual Windows regression and the later successful small-delta review supply separate evidence. Requested Astra/high is not an effective-model receipt; where not exposed, effective identity remains UNKNOWN.
+
+## 4.2 Astra-led / Sol implementation
+New astra-mainline writer packets select gpt-5.6-sol / cwf_sol_writer; all other
+required mainline work and acceptance retain gpt-6-astra / cwf_reader. See [delegation](delegation.md).
+Writer specs retain tier=strong as their capability/scope gate, but only the new fixed
+Sol writer is non-strong for budget charging: it consumes approved/absolute allowance,
+not strong_used, supplemental quota or the economy reserve. A required Astra verifier
+and its reserved allowance still have to exist and be fundable before writer admission.
+Sol cannot provide passing reported/disproved/fixed resolution evidence for a promoted
+claim; use a current Astra evidence node, and an independent writer verifier for fixed.
+Saved routes and accounting are not migrated. New explicit legacy defaults remain Astra
+writer; the old cwf_writer file remains installed for compatibility. No automatic
+model switching, arbitrary new route, second scheduler or writer replay is introduced.

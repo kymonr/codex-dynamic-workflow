@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v4.1.2
+# Codex Dynamic Workflow v4.2.0
 
 仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 
@@ -32,14 +32,16 @@ python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME> --apply
 不同客户端的 discovery 路径可能不同：此安装器面向现场已有的 CODEX_HOME/skills
 布局；无此已确认布局时先验证 discovery，不能复制到多个位置制造同名 Skill。
 
-Astra 保留完整主线：必要调查、实现、测试与验收不转交给可选 Luna。
+Astra 负责规划、关键设计与最终验收；Sol 连贯完成授权范围内的实现、测试和修复。
+必要主线不转交给可选 Luna；原始需求、完整 diff 与证据始终是验收依据。
 每个有实质工作量的任务，容量允许时主动启动至少 3 个不同方向的 Luna 补充探针：
 查漏覆盖、反例/失败模式、测试缺口/第二意见；有更多独立高价值方向时继续扩展。
 这是每任务的启动意图下限，不是每轮重新开 3 个，也不是等齐结果才能交付。
 主线不按岗位凑代理：Skill-only 下 Root 可以连贯完成工作，必要独立复核仍保留；Runtime 管理的步骤仍须准入。
 具体派工问题和停止条件见[派工示例](skill/codex-dynamic-workflow/references/patterns.md)；
 推理强度按任务及实际宿主/合同选择，不自动改全局默认或在旧 Runtime 合同内换挡。
-主线读取/复核使用 cwf_reader，实施使用 cwf_writer；Astra 推理强度可显式选择，默认 high，profile 不再固定 high。
+主线设计/复核使用 cwf_reader（Astra），新实施使用 cwf_sol_writer（Sol）；二者默认 high，profile 不固定强度。
+保留 cwf_writer（Astra）供旧合同兼容，不改写旧 run 的路由或计数。
 补充探索使用 cwf_general（Luna/max），机械补充使用 cwf_mechanical（Luna/medium）。
 模型名称是初始配置，不代表账户可用性、价格或实测质量。安装保留现有 luna profile 和全局默认值。
 
@@ -49,8 +51,8 @@ Astra 保留完整主线：必要调查、实现、测试与验收不转交给�
 路由和安装测试通过不代表新旧模型方案质量相同；漏报、误报与返工仍需相同真实任务的对照评估。
 
 Luna 也可做答案未知的探索：按独立方向收集候选原因、反例和验证证据，以覆盖范围或截止时间收尾。
-Luna 和 Astra 全部通过原生代理工具派出；同一授权范围和额度内不按批次重复确认。
-Luna 可批量探索和验证，两种模型共同受宿主原生槽位限制，超出的工作排队，并保留必要 Astra 复核空间。
+Astra、Sol 和 Luna 全部通过原生代理工具派出；同一授权范围和额度内不按批次重复确认。
+Luna 可批量探索和验证，三种模型共同受宿主原生槽位限制，超出的工作排队，并保留必要 Astra 复核空间。
 CLI 模型派工入口已停用；Runtime 的本地 Python 命令只管理任务状态，由主线程调用原生工具执行。
 此前 exec 记录及回归代码保留，不能作为当前派工入口或原生容量不足时的替代路线。
 
@@ -97,7 +99,7 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 `policy_reference.py` 的测试验证纯参考逻辑，不是对真实模型行为或宿主安全边界的证明。
 真实 Codex 集成验收另存 `reports/`，区分已观察、失败和未覆盖；不宣称零缺陷。
 
-当前设计见 [DESIGN_V41.md](DESIGN_V41.md)，`DESIGN.md` 与 `DESIGN_V3.md` 保留历史设计；本次 review、安装与验收见 `reports/`；
+当前分工见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)；[DESIGN_V41.md](DESIGN_V41.md) 为历史设计，`DESIGN.md` 与 `DESIGN_V3.md` 保留历史设计；本次 review、安装与验收见 `reports/`；
 变更对照见 [CHANGELOG.md](CHANGELOG.md)。源目录与安装目录是独立副本。
 
 ## Windows 原位更新例外
@@ -140,4 +142,15 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 继续运行必须有真实结果接收者和有界截止；控制器不创建后台接收机制。
 真实宿主与效果比较按 `reports/V41_NATIVE_VALIDATION_PROTOCOL.md`执行；
 [evaluate_native_comparison.py](scripts/evaluate_native_comparison.py)只是读取实际记录的比较器，不调用模型。
-当前 `reports/V41_NATIVE_COMPARISON_STATUS.json`为 NOT_RUN，不应算作实际联调通过。
+当前 `reports/V41_NATIVE_COMPARISON_STATUS.json`为 PARTIAL / NOT_QUALIFIED，正式原生验收未通过。
+本轮零模型采集器与 subprocess runner 接手审查记录位于 `reports/native-validation-2026-09-11/COLLECTOR_REVIEW.md`；零模型集成已覆盖事件、RPC、持久化和清理观察，但未连接真实 Codex 模型宿主，不等于正式原生验收通过。
+
+## 4.2.0：Astra 设计与验收，Sol 实施
+
+不增加第二套调度器、账本或固定审查层。新 Runtime 沿用 astra-mainline 与现有节点字段，
+writer 改走专属 Sol profile；实现调用计入总额度，不侵占 Astra strong 计数，也不借用机械储备。
+必须提前声明并保留必要 Astra 复核额度；不因没额度而用 Sol 自审或 Luna 投票替代验收。
+三个不同 Luna 方向是每个实质任务的启动意图，不是每阶段重开三名；新增方向须有实际覆盖价值。
+规划说明使用现有 task/scope/check/stop 字段，Sol 可以用源码反证设计，Astra 最终必须审查方案本身。
+本次更新与历史原生补验分开记录：reports/V420_ACCEPTANCE_2026-09-12.md。
+当前只做零模型代码/包验证；未运行新的原生模型，不宣称实际额度节省或正式原生验收通过。

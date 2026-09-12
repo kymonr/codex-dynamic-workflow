@@ -1,6 +1,6 @@
 interface:
   display_name: "Codex Dynamic Workflow"
-  short_description: "Astra mainline and proactive Luna probes"
-  default_prompt: "Use $codex-dynamic-workflow for a complete Astra mainline and at least three distinct optional Luna probes on meaningful tasks when capacity permits, within the current authorization and budget."
+  short_description: "Astra design, Sol implementation, Luna probes"
+  default_prompt: "Use $codex-dynamic-workflow: Astra owns design and final acceptance; Sol implements, tests and repairs; at least three distinct optional Luna probes add evidence on meaningful tasks when budget and capacity permit. Do not repeat probes per stage or waive independent acceptance."
 policy:
   allow_implicit_invocation: true

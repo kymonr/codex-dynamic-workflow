@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -12,9 +13,17 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'skill/codex-dynamic-workflow/scripts'))
 from cwf_runtime import Runtime, WorkflowError
-from cwf_runtime.core import DEFAULT_ROUTES, dump, loads, sha
+from cwf_runtime.core import DEFAULT_ROUTES, LEGACY_ROUTES, dump, loads, sha
 from cwf_runtime.executor import result_schema
 from test_v4_supplemental import node, reply, finding
+
+
+def run_subprocess_captured(args, *, timeout):
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stdout, \
+            tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stderr:
+        result=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=stdout,stderr=stderr,timeout=timeout)
+        stdout.seek(0); stderr.seek(0)
+        return subprocess.CompletedProcess(result.args,result.returncode,stdout.read(),stderr.read())
 
 
 class FollowupTests(unittest.TestCase):
@@ -76,8 +85,9 @@ class FollowupTests(unittest.TestCase):
         for workflow in ('astra-mainline','legacy'):
             for effort in ('low','medium','high','xhigh','max','ultra'):
                 with self.subTest(workflow=workflow,effort=effort):
-                    routes=json.loads(json.dumps(DEFAULT_ROUTES))
-                    routes['strong']['effort']=routes['writer']['effort']=effort
+                    routes=json.loads(json.dumps(LEGACY_ROUTES if workflow=='legacy' else DEFAULT_ROUTES))
+                    routes['strong']['effort']=effort
+                    if workflow=='legacy': routes['writer']['effort']=effort
                     run=self.rt.create(root=self.root,goal='selected effort',backend='native',workflow=workflow,routes=routes)
                     self.assertEqual(loads(self.rt.run(run)['contract'])['routes'],routes)
                     self.rt.add(run,[node('inspect')],reason='route packet check')
@@ -360,12 +370,11 @@ class FollowupTests(unittest.TestCase):
         path.write_text(json.dumps([dict(attempt=p['attempt'],action='stop-requested',reason='fixture',observed_via='fixture')]))
         cli('closeout','--run',self.run,'--entries',str(path))
     def test_resolution_cli_survives_real_process_readback(self):
-        import subprocess
         cid=self.setup_findings()[0]; self.promote(cid)
         entry=Path(__file__).resolve().parents[1]/'skill/codex-dynamic-workflow/scripts/cwf.py'
         def command(*args):
-            proc=subprocess.run([sys.executable,'-B',str(entry),'--db',str(self.rt.path),*args],
-                                capture_output=True,text=True,encoding='utf-8',timeout=15)
+            proc=run_subprocess_captured([sys.executable,'-E','-S','-B',str(entry),'--db',str(self.rt.path),*args],
+                                        timeout=15)
             self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
             return json.loads(proc.stdout)['result']
         command('resolve','--claim',cid,'--outcome','reported','--reason','fixture review deliverable reports issue')
@@ -398,7 +407,7 @@ class FollowupPackageTests(unittest.TestCase):
         from scripts.validate_package import validate
         return validate(self.root)
     def test_profile_model_and_effort_must_match_runtime_for_every_profile(self):
-        for profile in ('cwf_reader','cwf_writer','cwf_general','cwf_mechanical'):
+        for profile in ('cwf_reader','cwf_writer','cwf_sol_writer','cwf_general','cwf_mechanical'):
             path=self.root/'profiles'/f'{profile}.toml';original=path.read_text()
             for key in ('model','model_reasoning_effort'):
                 import re
@@ -410,7 +419,7 @@ class FollowupPackageTests(unittest.TestCase):
                     path.write_text(original)
     def test_runtime_astra_effort_default_can_change_without_pinning_profile(self):
         p=self.root/'skill/codex-dynamic-workflow/scripts/cwf_runtime/core.py';s=p.read_text()
-        p.write_text(s.replace("'effort': 'high', 'profile': 'cwf_reader'","'effort': 'max', 'profile': 'cwf_reader'"))
+        p.write_text(s.replace("'effort': 'high', 'profile': 'cwf_reader'","'effort': 'max', 'profile': 'cwf_reader'",1))
         self.assertEqual(self.validate(),[])
     def test_v41_schema_and_legacy_schema_remain_separate(self):
         base=self.root/'skill/codex-dynamic-workflow/scripts/cwf_runtime'

@@ -1,7 +1,8 @@
-# Codex Dynamic Workflow v4.1.2
+# Codex Dynamic Workflow v4.2.0
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
-Astra 保留完整主线；有实质工作量时主动启动至少 3 个不同方向的 Luna 补充探针。
+Astra 规划、设计并最终验收；Sol 连贯实施、测试与修复；Luna 提供不同方向的只读补充证据。
+具体分工与额度边界见 [delegation](references/delegation.md)。
 启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
 详见 [v4.1 结果与收尾协议](references/followup.md)。
 

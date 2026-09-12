@@ -21,8 +21,8 @@ import uuid
 
 from .policy import budget_admission
 
-VERSION = '4.1.2'
-SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0', '4.1.1', '4.1.2'}
+VERSION = '4.2.0'
+SUPPORTED_CONTRACT_VERSIONS = {'3.0.0', '4.0.0', '4.1.0', '4.1.1', '4.1.2', '4.2.0'}
 SCHEMA = 1
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -35,12 +35,33 @@ DEFAULT_ROUTES = {
     'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
     'ordinary': {'model': 'gpt-5.6-luna', 'effort': 'max', 'profile': 'cwf_general'},
     'economy': {'model': 'gpt-5.6-luna', 'effort': 'medium', 'profile': 'cwf_mechanical'},
-    'writer': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_writer'},
+    'writer': {'model': 'gpt-5.6-sol', 'effort': 'high', 'profile': 'cwf_sol_writer'},
 }
 
 
+# Existing contracts carry their own routes. New explicit legacy runs keep the old defaults.
+LEGACY_ROUTES = {
+    'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
+    'ordinary': {'model': 'gpt-5.6-luna', 'effort': 'max', 'profile': 'cwf_general'},
+    'economy': {'model': 'gpt-5.6-luna', 'effort': 'medium', 'profile': 'cwf_mechanical'},
+    'writer': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_writer'},
+}
+
+def sol_implementation(contract, spec):
+    """New fixed writer route only; never reinterpret old tier counters or contracts."""
+    route = contract.get('routes', {}).get('writer', {})
+    return (contract.get('version') == '4.2.0'
+            and contract.get('workflow') == 'astra-mainline' and spec['role'] == 'writer'
+            and route.get('model') == 'gpt-5.6-sol' and route.get('profile') == 'cwf_sol_writer')
+
+
+def charges_strong(contract, spec):
+    # 'strong' on a writer remains a capability requirement, not an Astra usage receipt.
+    return spec['tier'] == 'strong' and not sol_implementation(contract, spec)
+
+
 def followup_contract(contract):
-    return contract.get('version') in {'4.1.0', '4.1.1', '4.1.2'} and contract.get('supplemental_protocol') == 2
+    return contract.get('version') in {'4.1.0', '4.1.1', '4.1.2', '4.2.0'} and contract.get('supplemental_protocol') == 2
 
 
 class WorkflowError(ValueError):
@@ -354,7 +375,8 @@ class Runtime:
             integer(value, key, 0 if key in {'reserve', 'strong_approved', 'supplemental_approved'} else 1)
         if options['approved'] + options['reserve'] > options['absolute'] or options['strong_approved'] > options['approved']:
             raise WorkflowError('inconsistent allowance bounds')
-        routing = loads(dump(DEFAULT_ROUTES if routes is None else routes))
+        defaults = LEGACY_ROUTES if workflow == 'legacy' else DEFAULT_ROUTES
+        routing = loads(dump(defaults if routes is None else routes))
         # Explicit legacy route sets stay exact; never inject a model into a saved allowance.
         mapping(routing, {'strong', 'ordinary', 'economy', 'writer'}, {'strong', 'economy', 'writer'}, 'routes')
         for route in routing.values():
@@ -368,7 +390,7 @@ class Runtime:
             if route['effort'] not in efforts:
                 raise WorkflowError('unsupported effort')
             # New contracts using shipped profiles must be executable even in legacy mode.
-            for tier, shipped in DEFAULT_ROUTES.items():
+            for tier, shipped in [*DEFAULT_ROUTES.items(), *LEGACY_ROUTES.items()]:
                 if route['profile'] == shipped['profile'] and (route['model'] != shipped['model']
                         or (tier in {'ordinary', 'economy'} and route['effort'] != shipped['effort'])):
                     raise WorkflowError('route identity mismatch for shipped profile')
@@ -443,7 +465,7 @@ class Runtime:
                 if s['risk'] not in {'low', 'medium', 'high'} or s['tier'] not in {'strong', 'ordinary', 'economy'}:
                     raise WorkflowError('invalid risk/tier')
                 if c.get('workflow') == 'astra-mainline' and not s['supplemental'] and s['tier'] != 'strong':
-                    raise WorkflowError('mainline requires Astra strong routing')
+                    raise WorkflowError('mainline requires strong-capability routing')
                 if 'snapshot_root' in s and not s['supplemental']:
                     raise WorkflowError('only supplemental nodes may bind a snapshot root')
                 if s['supplemental']:
@@ -580,7 +602,7 @@ class Runtime:
             by_id = {n['id']: n for n in nodes}
             pending = [n for n in nodes if loads(n['spec'])['required'] and n['state'] in {'pending', 'failed', 'partial', 'interrupted', 'unknown'}]
             mandatory = len(pending)
-            mandatory_strong = sum(loads(n['spec'])['tier'] == 'strong' for n in pending)
+            mandatory_strong = sum(charges_strong(c, loads(n['spec'])) for n in pending)
             # Opt-in separation changes capacity only, never the DB-wide source locks.
             if c.get('capacity_scope', 'database') == 'backend':
                 active = self.conn.execute('SELECT COUNT(*) FROM attempts JOIN runs ON runs.id=attempts.run_id WHERE attempts.released=0 AND runs.backend=?', (backend,)).fetchone()[0]
@@ -591,7 +613,7 @@ class Runtime:
             capacity = c['bounds']['capacity']
             if host_capacity is not None:
                 capacity = min(capacity, host_capacity) if capacity is not None else host_capacity
-            if c.get('version') == '4.1.2' and host_active is not None:
+            if c.get('version') in {'4.1.2', '4.2.0'} and host_active is not None:
                 sql = 'SELECT COUNT(*) FROM attempts JOIN runs ON runs.id=attempts.run_id WHERE released=0 AND external_id IS NULL'
                 params = ()
                 if c.get('capacity_scope', 'database') == 'backend':
@@ -643,8 +665,9 @@ class Runtime:
                         reasons.append({'node': n['id'], 'reason': why}); continue
                 decision = budget_admission(approved=b['approved'], reserve=b['reserve'], absolute=b['absolute'],
                     used=r['used'], reserve_used=r['reserve_used'], strong_used=r['strong_used'], strong_approved=b['strong_approved'],
-                    economy=s['tier'] != 'strong',
-                    economy_qualified=s.get('ordinary_qualified', False) if s['tier'] == 'ordinary' else s['economy_qualified'],
+                    economy=not charges_strong(c, s),
+                    economy_qualified=(sol_implementation(c, s) or (s.get('ordinary_qualified', False)
+                                       if s['tier'] == 'ordinary' else s['economy_qualified'])),
                     reserve_eligible=s['tier'] == 'economy' and not s.get('supplemental'), active=active, capacity=capacity,
                     mandatory_pending=mandatory, mandatory_strong_pending=mandatory_strong,
                     optional=not s['required'], consumes_mandatory=s['required'])
@@ -656,7 +679,7 @@ class Runtime:
                 self.conn.execute('INSERT INTO attempts(token,run_id,node_id,state,created) VALUES(?,?,?,?,?)', (token, run, n['id'], 'reserved', time.time()))
                 self.conn.execute('UPDATE nodes SET state=?,attempts=attempts+1,current_token=? WHERE run_id=? AND id=?', ('active', token, run, n['id']))
                 self.conn.execute('UPDATE runs SET used=used+1,reserve_used=reserve_used+?,strong_used=strong_used+? WHERE id=?',
-                                  (int(decision.reason == 'cumulative-economy-reserve'), int(s['tier'] == 'strong'), run))
+                                  (int(decision.reason == 'cumulative-economy-reserve'), int(charges_strong(c, s)), run))
                 self.event(run, 'attempt.reserved', {'node': n['id'], 'attempt': token, 'allowance': decision.reason,
                     **({'host_capacity':host_capacity, 'host_active':host_active, 'effective_capacity':capacity,
                         'accounted_active':active, 'mainline_reserve':reserve_slots} if followup_contract(c) else {})})
@@ -949,7 +972,7 @@ class Runtime:
 
     def _quality_gate(self,r,n,*,allow_historical=False):
         s=loads(n['spec'])
-        explicit_verification = loads(r['contract']).get('version') == '4.1.2'
+        explicit_verification = loads(r['contract']).get('version') in {'4.1.2', '4.2.0'}
         if (s['tier'] == 'ordinary' or explicit_verification) and s['verifies'] is not None:
             target_node = self.node(r['id'], s['verifies'])
             target = loads(target_node['result'])['snapshot']
@@ -1032,7 +1055,7 @@ class Runtime:
             identifier(target, 'promotion target')
             t = self.node(r['id'], target); ts = loads(t['spec'])
             if ts.get('supplemental') or not ts['required'] or ts['tier'] != 'strong' or t['attempts']:
-                raise WorkflowError('promotion needs a never-executed required Astra mainline node')
+                raise WorkflowError('promotion needs a never-executed required Astra evidence or Sol writer mainline node')
             if not set(paths) <= set(ts['sources']):
                 raise WorkflowError('promotion target must cover the claim evidence')
             if any(loads(t['snapshot']).get(p) != h for p,h in candidate.items()):
@@ -1079,7 +1102,8 @@ class Runtime:
                 if target['state'] != 'completed': raise WorkflowError('promoted investigation is incomplete')
                 node = node or promotion['target']; n = self.node(r['id'], node); spec = loads(n['spec'])
                 if (n['state'] != 'completed' or spec.get('supplemental') or not spec['required']
-                        or spec['tier'] != 'strong' or not set(paths) <= set(spec['sources'])):
+                        or spec['tier'] != 'strong' or sol_implementation(c, spec)
+                        or not set(paths) <= set(spec['sources'])):
                     raise WorkflowError('resolution requires completed required Astra evidence covering the finding')
                 # Resolution must answer this investigation, not borrow unrelated old work.
                 def follows_investigation(start):
@@ -1101,7 +1125,7 @@ class Runtime:
                     if (ws['role'] != 'writer' or writer['state'] != 'completed'
                             or not loads(writer['result'])['submission']['payload']['changed_files']):
                         raise WorkflowError('fixed requires an observed implementation change')
-                    if c['version'] in {'4.1.1', '4.1.2'} and not follows_investigation(writer['id']):
+                    if c['version'] in {'4.1.1', '4.1.2', '4.2.0'} and not follows_investigation(writer['id']):
                         raise WorkflowError('fixed writer must follow the promoted investigation')
                     if self.attempt(n['current_token'])['external_id'] == self.attempt(writer['current_token'])['external_id']:
                         raise WorkflowError('fixed requires a non-author resolution verifier')
@@ -1320,7 +1344,7 @@ class Runtime:
     def _finish_mainline(self, run):
         with self.tx():
             r = self.run(run); c = loads(r['contract'])
-            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0', '4.1.1', '4.1.2'} or sha(c) != r['contract_hash']:
+            if r['status'] != 'open' or c.get('version') not in {'4.0.0', '4.1.0', '4.1.1', '4.1.2', '4.2.0'} or sha(c) != r['contract_hash']:
                 raise WorkflowError('run/contract does not permit mainline acceptance')
             nodes = [dict(n) for n in self.conn.execute('SELECT * FROM nodes WHERE run_id=? ORDER BY rowid',(run,))]
             attempts = [dict(a) for a in self.conn.execute('SELECT * FROM attempts WHERE run_id=?',(run,))]

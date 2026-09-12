@@ -10,7 +10,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = Path('skill/codex-dynamic-workflow')
 LEGACY_SKILL = Path('skill/dispatching-native-agents')
-PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_general', 'cwf_mechanical')
+PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_sol_writer', 'cwf_general', 'cwf_mechanical')
 
 
 def unique_pairs(pairs: list[tuple]) -> dict:
@@ -172,11 +172,11 @@ def validate(root: Path = ROOT) -> list[str]:
             allowed = {'name', 'description', 'model', 'model_reasoning_effort', 'sandbox_mode', 'developer_instructions'}
             if set(data) - allowed:
                 errors.append(f'unexpected role configuration keys: {name}')
-            if name != 'cwf_writer' and data.get('sandbox_mode') != 'read-only':
+            if name not in {'cwf_writer','cwf_sol_writer'} and data.get('sandbox_mode') != 'read-only':
                 errors.append(f'reader must request read-only: {name}')
-            if name == 'cwf_writer' and 'sandbox_mode' in data:
+            if name in {'cwf_writer','cwf_sol_writer'} and 'sandbox_mode' in data:
                 errors.append('writer must inherit, not grant, sandbox permissions')
-            flexible = version != 'INVALID' and tuple(map(int, version.split('.'))) >= (4,1,1) and name in {'cwf_reader','cwf_writer'}
+            flexible = version != 'INVALID' and tuple(map(int, version.split('.'))) >= (4,1,1) and name in {'cwf_reader','cwf_writer','cwf_sol_writer'}
             if flexible and 'model_reasoning_effort' in data:
                 errors.append(f'runtime/profile/model/effort drift: flexible profile pins effort: {name}')
             if not data.get('model') or (not flexible and not data.get('model_reasoning_effort')):
@@ -243,6 +243,28 @@ def validate(root: Path = ROOT) -> list[str]:
                 if (not isinstance(supported,list) or any(not isinstance(v,str) for v in supported)
                         or set(supported) != literal_tables.get('SUPPORTED_CONTRACT_VERSIONS')):
                     errors.append('supported contract versions drift')
+                if tuple(map(int, version.split('.'))) >= (4,2,0):
+                    expected_models = {'cwf_reader':'gpt-6-astra', 'cwf_writer':'gpt-6-astra',
+                                       'cwf_sol_writer':'gpt-5.6-sol', 'cwf_general':'gpt-5.6-luna',
+                                       'cwf_mechanical':'gpt-5.6-luna'}
+                    if any(profile_configs.get(p, {}).get('model') != model for p,model in expected_models.items()):
+                        errors.append('runtime/profile/model/effort drift: v4.2 fixed model/profile identity drift')
+                    expected_profiles = {'strong':'cwf_reader', 'writer':'cwf_sol_writer',
+                                         'ordinary':'cwf_general', 'economy':'cwf_mechanical'}
+                    for tier, name in expected_profiles.items():
+                        route = routes.get(tier)
+                        if not isinstance(route,dict) or (route.get('model'),route.get('profile')) != (expected_models[name],name):
+                            errors.append('v4.2 fixed route identity drift: '+tier)
+                    if routes.get('writer', {}).get('profile') != 'cwf_sol_writer':
+                        errors.append('v4.2 default writer must be Sol')
+                    if policy.get('profiles', {}).get('capable_writer') != 'cwf_sol_writer':
+                        errors.append('v4.2 policy writer profile drift')
+                    legacy = literal_tables.get('LEGACY_ROUTES', {})
+                    expected_legacy = {tier:dict(model=expected_models[name],profile=name,
+                                               effort={'ordinary':'max','economy':'medium'}.get(tier,'high'))
+                                       for tier,name in (expected_profiles | {'writer':'cwf_writer'}).items()}
+                    if legacy != expected_legacy:
+                        errors.append('legacy Astra writer route drift')
                 if set(routes) != {'strong','writer','ordinary','economy'}:
                     errors.append('runtime routing table incomplete')
                 for tier,route in routes.items():
@@ -252,7 +274,8 @@ def validate(root: Path = ROOT) -> list[str]:
                     flexible = tuple(map(int, version.split('.'))) >= (4,1,1) and tier in {'strong','writer'}
                     if (not profile or profile.get('model') != route.get('model')
                             or (flexible and ('model_reasoning_effort' in profile
-                                or route['effort'] not in {'low','medium','high','xhigh','max','ultra'}))
+                                or route['effort'] not in ({'low','medium','high','xhigh','max','ultra'}
+                                    if route['model']=='gpt-6-astra' else {'low','medium','high','xhigh','max'})))
                             or (not flexible and profile.get('model_reasoning_effort') != route.get('effort'))):
                         errors.append('runtime/profile/model/effort drift: '+tier)
 

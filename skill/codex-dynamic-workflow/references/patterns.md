@@ -1,6 +1,6 @@
 # Dynamic shapes, not mandatory stages
 
-Pick the useful Astra mainline shape; change it when results warrant. Add at least three
+Pick the useful Astra-led mainline shape; change it when results warrant. Add at least three
 distinct optional Luna directions on meaningful tasks when capacity permits. This is
 per task, not per file or repair cycle. Fewer real directions or host/budget constraints
 are disclosed; probes are never a completion barrier. See [supplemental](supplemental.md).
@@ -12,12 +12,13 @@ are disclosed; probes are never a completion barrier. See [supplemental](supplem
 | Pipeline | Each item can independently move to verification | Waiting for unrelated siblings |
 | Expand | New evidence identifies a distinct missing question | Renaming repeated work to reset budget |
 | Compare | A genuine unresolved design choice | Scoring a decision the user already made |
-| Write/review | An authorized implementation objective | Starting writes from an audit-only request |
+| Write/review | Astra brief, coherent Sol implementation/tests, targeted Luna evidence, Astra acceptance | Duplicate Astra implementation or Sol self-approval |
 
 ## Mainline staffing and review
 
 In Skill-only mode, Root can keep cohesive mainline work in its own thread, including
-authorized investigation, implementation and tests. Runtime-managed work still requires an admitted packet;
+necessary direct work when delegation adds no value; normally Sol owns implementation/tests.
+Runtime-managed work still requires an admitted packet;
 do not move a managed step outside its ledger to bypass a gate or exhausted budget.
 Native Astra children are useful for independent
 deliverables or necessary non-author checks, not to fill every named role. Do not add
@@ -87,3 +88,9 @@ but cannot turn an incomplete audit into complete merely by returning no finding
 Claims rejected with evidence stay recorded. An audit with unexamined material scope
 is incomplete even when every examined claim was rejected. No automatic fourth wave,
 mandatory panel, irreversible Sol disposition or old Fleet headcount survives.
+
+For implementation use [delegation](delegation.md): a sufficient brief, one scoped Sol
+writer, then Astra acceptance against the original goal and full diff. One Luna
+counterexample direction should challenge the design itself when useful, not simply
+check conformance. Do not reopen three probes at each stage. A plan contradiction
+needs a concrete escalation; routine commands and in-scope test repair stay with Sol.

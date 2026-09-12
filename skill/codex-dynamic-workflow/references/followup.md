@@ -3,13 +3,13 @@
 ## Defaults and compatibility
 The meaningful-task default remains at least three distinct native Luna probes, started
 early when capability, budget and observed host capacity permit. Astra owns all necessary
-work. Three counts task-level launch intent, not completed results, votes or a new quota
+work and delegates scoped implementation/tests/repairs to Sol in new 4.2 contracts. Three counts task-level launch intent, not completed results, votes or a new quota
 on each repair. Keep probes small enough to return useful evidence during the mainline.
 Skill-only remains normal; the commands below apply only to explicitly selected Runtime.
 
 New 4.1 contracts carry supplemental_protocol=2 and immutable acceptance_mode=review or
 repair (default repair when implement=true). Repair mode requires implement authority.
-Saved 3.0.0, 4.0.0, 4.1.0 and 4.1.1 records retain their exact hashes, fields, budgets and earlier gates.
+Saved 3.0.0, 4.0.0, 4.1.0, 4.1.1 and 4.1.2 records retain exact hashes, fields, budgets and earlier gates.
 They are not rewritten or silently upgraded. No model CLI fallback is enabled.
 
 In 4.1.1, Astra reader/writer profiles keep their model and role constraints but omit
@@ -58,7 +58,8 @@ Up to 128 early claims per attempt are retained, separately from the final resul
 existing 64-claim bound. Interruption or retry does not erase an early finding.
 This records a host-delivered report; it neither polls nor messages the native agent.
 
-Promotion still binds a never-executed required Astra node on the current evidence.
+Promotion binds never-executed required mainline work on current evidence. In 4.2 a
+Sol writer may be that work, but only Astra evidence can support a passing resolution.
 Finishing that investigation is NOT the same as resolving the issue. Root records:
 resolve --claim CLAIM --outcome reported|disproved|fixed|blocking --reason ... [--node ID]
 - reported: sufficient only for a review task whose deliverable is the finding report.
@@ -113,7 +114,7 @@ resource release remain separate. Do not wait for all four merely to deliver the
 Resolution evidence must be the promoted investigation itself or its causal mainline descendant; unrelated preexisting completed work cannot close a new finding.
 
 ## 4.1.2 review hardening
-Any explicitly declared verifies relationship in a new 4.1.2 contract requires a
+Any explicitly declared verifies relationship in 4.1.2 and 4.2 contracts requires a
 different native author identity and matching coverage of the entire target candidate,
 even when the target is low-risk Astra work. Low-risk work without a declared verifier
 does not acquire a new review requirement. Older saved contracts are not migrated.

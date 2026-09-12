@@ -1,16 +1,16 @@
 ---
 name: codex-dynamic-workflow
-description: "Use for Astra-owned native workflows with aggressive Luna supplemental coverage: implementation, investigation, deep review and independent verification. Astra keeps the complete mainline; Luna probes hunt omissions, counterexamples and missing tests without becoming acceptance dependencies."
+description: "Use for Astra-led native work: Astra plans, designs and accepts; Sol implements, tests and repairs within scope; Luna adds targeted adversarial research. Preserve complete mainline coverage, independent checks and cumulative budget without redundant staffing."
 metadata:
-  version: "4.1.2"
+  version: "4.2.0"
 ---
 
 # Codex Dynamic Workflow — raw-source-first
 
 Quality > automation > latency > cost > observability > recovery.
 Root owns the objective, authorization and final acceptance. All model delegation
-uses **native** agent tools: Luna for qualified exploration/verification and Astra
-for the complete mainline and critical acceptance. Both share the actual host's native
+uses **native** agent tools: Astra for design and acceptance, Sol for scoped implementation,
+and Luna for optional targeted evidence. All share the actual host's native
 capacity. Runtime, when selected, owns admission and attempts through its SQLite ledger.
 Skill-only bookkeeping is not persistent; neither mode is a hard token/currency cap.
 For Astra, high is a Runtime default, not a fixed requirement. Select effort from
@@ -34,8 +34,8 @@ Runtime protocol and actual run receipts for qualification. Deterministic tests 
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
 
-Astra owns a complete end-to-end mainline: removing every Luna probe must still leave
-all work needed for the user's objective and acceptance. For every meaningful,
+Astra owns a complete end-to-end mainline, delegating implementation/tests/repairs to Sol:
+removing every Luna probe must still leave all necessary work and acceptance. For every meaningful,
 non-trivial task, proactively launch at least three distinct native Luna supplemental
 probes when host capacity permits: (1) omissions/coverage, (2) counterexamples/failure
 modes, and (3) missing tests or alternative explanations. Three is a launch-intent
@@ -43,7 +43,7 @@ floor, never a completion barrier or vote. Expand further while distinct high-va
 directions remain. Luna probes are readonly, optional and non-authoritative; they
 cannot satisfy mandatory acceptance or become dependencies of mainline work.
 
-Astra work always has capacity and budget priority. Queue or omit supplemental probes
+Required mainline work and reserved Astra acceptance have capacity and budget priority. Queue or omit supplemental probes
 rather than delaying a ready mainline step, and never wait for unrelated Luna siblings
 to finish. Returned concrete evidence is not disposable: Root checks applicability to
 the current candidate, deduplicates it, and promotes material verified issues into the
@@ -57,6 +57,8 @@ budget, cancellation or genuinely insufficient independent directions when fewer
 ## Before work
 
 Read applicable workspace instructions and honor the user's current authorization.
+No available model budget or an explicit no-native boundary means no model dispatch,
+including Luna; separately authorized local checks do not establish native acceptance.
 Record a short run contract: objective, acceptance checks, exact candidate and read
 method, allowed writes, available native tools/profiles, budget and remaining gaps.
 Do not repeat a workspace preflight already completed for this task.
@@ -64,7 +66,7 @@ Do not repeat a workspace preflight already completed for this task.
 Read [host and routing](references/host-routing.md) before the first dispatch;
 [evidence](references/evidence.md) before evidence collection;
 [budget](references/budget.md) and [policy defaults](policy.json) before the first dispatch;
-and [writes](references/writes.md) before any writer.
+and [writes](references/writes.md) plus [delegation](references/delegation.md) before any writer.
 Use [patterns](references/patterns.md) only for the selected workflow shapes.
 [Policy defaults](policy.json) are editable planning defaults, not capability claims.
 
@@ -80,13 +82,13 @@ host, another backend or a weaker model. Do not change configuration or permissi
    create delegation. In parallel, open at least three distinct supplemental Luna
    directions for meaningful work when capacity permits, then expand only for new
    methods or coverage. No result-count or model-ratio success criterion exists.
-   In Skill-only mode, Root may do cohesive mainline work directly.
+   In Skill-only mode, Root may do cohesive work directly when delegation adds no value.
    Role names are not a staffing list; use Astra children for independent
    deliverables or necessary non-author checks. Runtime admission still applies.
 2. Pick the logical role: explorer, verifier, reproducer, designer, writer or
    reviewer. Select a compatible execution profile **separately** from that role.
-   Use Astra for mainline reasoning, implementation and required acceptance. Use
-   Luna/max for supplemental investigation/second opinions and Luna/medium for
+   Use Astra for planning/design/acceptance and Sol for coherent implementation, tests
+   and bounded repair. Use Luna/max for supplemental probes and Luna/medium for
    mechanical supplemental checks. Apply the qualification and escalation rules.
    Name the concrete deliverable and evidence/coverage checks before
    selecting Luna. Root owns conclusions whose completeness cannot be established
@@ -95,7 +97,7 @@ host, another backend or a weaker model. Do not change configuration or permissi
    verification directions; coverage, evidence collected or a deadline can define
    the stop rule. Unknown answers are not automatically high-risk judgments.
    Add supplemental evidence collection, comparisons or checks with distinct
-   deliverables without removing necessary coverage from the Astra mainline.
+   deliverables without removing necessary coverage from the Astra-led mainline.
    Avoid artificial fragments; the three-probe floor concerns useful extra directions.
 3. Give each node its own scope, dependencies, raw sources, acceptance/stop rule,
    permissions and budget. Root alone may dispatch or approve scope expansion.
@@ -153,6 +155,9 @@ If the necessary check cannot run, block that acceptance and disclose the gap;
 continue unrelated work when safe. Independent review never guarantees completeness.
 Do not add an Astra reviewer for every Luna result or another checker for every
 reviewer. Keep all required writer/high-risk/user-requested checks; see writes.
+Astra acceptance tests the original goal and the design itself against the full diff
+and raw evidence, not just Sol's compliance. Reserve acceptance before optional probes.
+Astra designing and later accepting in one context is not independent design verification.
 
 New counterevidence can reopen any disposition. Keep an ID stable for the same
 proposition and snapshot and increment its evidence revision; semantic changes or

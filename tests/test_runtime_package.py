@@ -15,6 +15,13 @@ import policy_reference as compatibility
 from validate_package import validate, SKILL
 from cwf_runtime import policy, VERSION
 
+def run_subprocess_captured(args, *, env=None, cwd=None, timeout):
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stdout, \
+            tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stderr:
+        result=subprocess.run(args,cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=stdout,stderr=stderr,timeout=timeout)
+        stdout.seek(0); stderr.seek(0)
+        return subprocess.CompletedProcess(result.args,result.returncode,stdout.read(),stderr.read())
+
 class RuntimePackageTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
@@ -45,10 +52,10 @@ class RuntimePackageTests(unittest.TestCase):
             p=home/rel; p.parent.mkdir(parents=True,exist_ok=True); p.write_bytes(data)
         entry=home/'skills/codex-dynamic-workflow/scripts/cwf.py'
         env=os.environ.copy(); env.pop('PYTHONPATH',None); env['PYTHONDONTWRITEBYTECODE']='1'
-        p=subprocess.run([sys.executable,'-B',str(entry),'--version'],cwd=home,env=env,capture_output=True,text=True,encoding='utf-8',timeout=15)
+        p=run_subprocess_captured([sys.executable,'-E','-S','-B',str(entry),'--version'],cwd=home,env=env,timeout=15)
         self.assertEqual(p.returncode,0,p.stderr); self.assertEqual(p.stdout.strip(),VERSION)
         db=home/'state.sqlite'
-        p=subprocess.run([sys.executable,'-B',str(entry),'--db',str(db),'init'],cwd=home,env=env,capture_output=True,text=True,encoding='utf-8',timeout=15)
+        p=run_subprocess_captured([sys.executable,'-E','-S','-B',str(entry),'--db',str(db),'init'],cwd=home,env=env,timeout=15)
         self.assertEqual(p.returncode,0,p.stderr); self.assertTrue(json.loads(p.stdout)['ok']); self.assertTrue(db.is_file())
 
 if __name__=='__main__': unittest.main()

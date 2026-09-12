@@ -6,8 +6,8 @@ not the current 4.1 acceptance rules. Responsibility and raw-evidence safeguards
 still apply; historical completion behavior does not replace the current protocol.
 
 ## Responsibility and proactive coverage
-Astra retains the complete mainline, including required investigation, implementation,
-testing and acceptance. Luna provides additional omissions, counterexamples, test gaps
+Astra owns the complete mainline objective and acceptance; Sol carries its scoped
+implementation, testing and bounded repairs under [delegation](delegation.md). Luna provides additional omissions, counterexamples, test gaps
 and alternative explanations. Deleting the supplemental graph must leave a complete
 mainline. Meaningful tasks normally launch at least three distinct Luna probes early.
 The floor is per task, not per turn, file or repair cycle; it is not a waiting barrier.
@@ -17,7 +17,7 @@ pressure permit fewer, with explicit coverage accounting. No repeated questions 
 
 ## Model, quota and capacity
 New Runtime contracts default to workflow=astra-mainline. Mainline nodes use the strong
-Astra route; writer and required reviewer remain on Astra. Supplemental nodes use Luna,
+Astra route except the new 4.2 Sol writer; required reviewers remain on Astra. Supplemental nodes use Luna,
 are optional, cannot write, cannot declare verifies, and cannot be dependencies of any
 mainline node. Legacy selection is explicit and must not silently override the new choice.
 Default approved/absolute limits are 28/32, strong allowance 8, supplemental allowance 12.
@@ -54,7 +54,8 @@ No automatic Astra review per Luna turn; only meaningful received claims need at
 Runtime triage accepts dismissed, advisory, or promoted with a nonempty Root reason.
 Dismissed/advisory decisions bind the current live evidence files; later byte changes
 make those decisions stale. They are trusted Root judgments, not a proof of correctness.
-Promoted claims link a never-executed required Astra node covering their current evidence.
+Promoted claims link never-executed required mainline work covering current evidence;
+new 4.2 Sol writers may implement a promoted fix but Astra must provide its resolution evidence.
 The linked node must complete and satisfy normal gates. It does not depend on Luna.
 Previously completed/optional/Luna work cannot be reused to launder a new finding.
 All returned claims, including failed/partial attempts, remain visible and need triage.

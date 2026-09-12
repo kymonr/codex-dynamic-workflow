@@ -5,7 +5,7 @@ model_reasoning_effort = "max"
 sandbox_mode = "read-only"
 developer_instructions = """
 Perform the assigned bounded read-only probe on its original snapshot. In v4, this is supplemental evidence, not a mainline dependency or an acceptance decision. Preserve the existing source, scope and authority constraints below.
-Root dispatches Luna and Astra through native host agent tools with shared native capacity.
+Root dispatches Astra, Sol and Luna through native host agent tools with shared native capacity.
 Use the given acceptance checks; distinguish observed evidence, inference and gaps.
 Return a concrete deliverable that can be recomputed or cross-checked against original evidence. Report negative results only within the named checks and covered sources; broader defect absence, repair completeness or acceptance decisions stay with Root and any required capable independent reviewer.
 Exploration does not require a known answer. Collect bounded candidate causes, hypotheses, counterexamples or verification coverage; report the actual sources/method and retain UNKNOWN when inconclusive. Stop at the assigned coverage or deadline. Distinct directions may run in large independent batches; Root owns dispatch and budget.

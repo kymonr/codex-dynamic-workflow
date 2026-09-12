@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -71,10 +72,14 @@ class NativeOnlyDispatchTests(unittest.TestCase):
         for name in ('verify_installed_exec_smoke.py','verify_installed_luna_pool.py'):
             with self.subTest(name=name):
                 output = self.base/(name+'-output')
-                result = subprocess.run([sys.executable,'-B',str(project/'scripts'/name),
-                                         '--skill-dir',str(project/'skill/codex-dynamic-workflow'),
-                                         '--output-dir',str(output),'--executable',sys.executable],
-                                        capture_output=True,text=True,encoding='utf-8',timeout=15)
+                with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stdout, \
+                        tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stderr:
+                    result = subprocess.run([sys.executable,'-E','-S','-B',str(project/'scripts'/name),
+                                             '--skill-dir',str(project/'skill/codex-dynamic-workflow'),
+                                             '--output-dir',str(output),'--executable',sys.executable],
+                                            stdin=subprocess.DEVNULL,stdout=stdout,stderr=stderr,timeout=15)
+                    stdout.seek(0); stderr.seek(0)
+                    result = subprocess.CompletedProcess(result.args,result.returncode,stdout.read(),stderr.read())
                 self.assertEqual(result.returncode,1); self.assertIn('native-only',result.stderr)
                 self.assertFalse(output.exists())
 

@@ -16,6 +16,15 @@ from cwf_runtime.core import loads, dump, clean_relative
 from cwf_runtime.executor import parse_exec, ProcessResult, execute_one, run_owned, result_schema
 
 
+def run_subprocess_captured(args, *, env=None, cwd=None, timeout):
+    # File-backed capture avoids Windows pipe EOF/handle races while preserving a hard hang deadline.
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stdout, \
+            tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stderr:
+        result = subprocess.run(args, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, timeout=timeout)
+        stdout.seek(0); stderr.seek(0)
+        return subprocess.CompletedProcess(result.args, result.returncode, stdout.read(), stderr.read())
+
+
 def spec(name='n1', **extra):
     result=dict(id=name,role='explorer',task='Read and inspect the tiny fixture.',sources=['a.py'],checks=['inspect'],risk='low')
     result.update(extra)
@@ -402,9 +411,11 @@ class CLITests(unittest.TestCase):
     def test_cli_full_native_flow_and_readonly_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'a.py').write_text('VALUE=3');db=root/'db.sqlite'
-            env=os.environ.copy();env['PYTHONDONTWRITEBYTECODE']='1';env['PYTHONPATH']=str(Path(cwf_runtime.__file__).resolve().parents[1])
+            env={k:v for k,v in os.environ.items() if not k.upper().startswith('PYTHON')}
+            env['PYTHONPATH']=str(Path(cwf_runtime.__file__).resolve().parents[1])
             def cli(*args,ok=True):
-                p=subprocess.run([sys.executable,'-B','-m','cwf_runtime','--db',str(db),*args],env=env,capture_output=True,text=True,encoding='utf-8',timeout=20)
+                p=run_subprocess_captured([sys.executable,'-S','-B','-m','cwf_runtime','--db',str(db),*args],
+                                           env=env,timeout=20)
                 self.assertEqual(p.returncode==0,ok,p.stderr+p.stdout);return json.loads(p.stdout)
             cli('status','--run','absent',ok=False);self.assertFalse(db.exists())
             cli('init');plan=root/'plan.json';plan.write_text(dump({'root':str(root),'goal':'inspect','backend':'native','nodes':[spec()]}))

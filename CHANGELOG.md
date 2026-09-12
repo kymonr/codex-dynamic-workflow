@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.0 — 2026-09-12 (unreleased)
+
+- Astra owns design and original-goal acceptance; the new cwf_sol_writer profile owns scoped Sol implementation, tests and repairs. Old cwf_writer stays Astra. No second controller or model scheduler.
+- New astra-mainline writer packets are fixed to Sol. They consume total approved launches, not strong_used or the economy reserve; required Astra review is still declared and funded before admission. Saved contracts/routes/counters remain unchanged.
+- Sol implementation cannot launder a promoted finding into a passing resolution; current Astra evidence and independent writer verification remain required.
+- Reuse existing prompt fields, keep three distinct Luna questions per meaningful task rather than per stage, and make a counterexample probe challenge the plan itself. Lack of model budget never authorizes cheap probes or waived acceptance.
+- Verification is zero-model only. Native behavior, model permissions and savings are not claimed. Historical 4.1.2 native failures and pending collector/runner changes remain separately recorded.
+
 ## 4.1.2 — 2026-09-10
 
 Unreleased candidate guidance refinement: keep cohesive Astra work with Root rather than staffing every role; add bounded Luna prompt examples and task-based effort guidance without parent/global changes or per-node Runtime overrides. Preserve required independent checks and all material claims, and scope alternative profiles to compatible Skill-only dispatch. Runtime code, route defaults, budgets, schemas and profiles are unchanged by this guidance-only refinement.
