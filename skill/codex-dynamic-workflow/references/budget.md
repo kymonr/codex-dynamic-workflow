@@ -123,3 +123,49 @@ routes and counters are unchanged. These are launch counters, not account credit
 No available model budget means no model dispatch, not free Luna work. Reserve Root's
 final acceptance separately when its usage is visible; otherwise disclose the unknown
 and block unaffordable required review. See [delegation](delegation.md) for brief and handoff.
+
+## Credit-aware phase budgeting and explicitly broader Luna work
+
+Optimize observed credits per accepted deliverable, including Root, children,
+context transfer, screening and rework; launch counts are not account credits.
+Do not embed a price table or claim Luna is free. Record observed credit usage and
+measurement windows in existing task evidence when exposed. Account-wide deltas
+with other concurrent activity cannot be attributed to this task. Unknown remains
+UNKNOWN. Never infer automatic savings or quality parity from model labels.
+Reserve necessary Astra acceptance and safe closeout before optional work; switching
+Root to Sol carries forward all usage, deadlines and unresolved claims. The Runtime
+still has no hard credit cap or automatic phase/model switch.
+
+The unchanged defaults allow 12 supplemental turns inside approved 28 / absolute 32.
+For a user-approved broader NEW task, the following optional bounds permit up to
+24 cumulative supplemental attempts, leave 8 strong calls reserved and leave 8
+other approved calls for implementation/follow-ups. These are planning ceilings,
+not target counts, account-credit guarantees or host concurrency observations:
+
+```json
+{
+  "approved": 40,
+  "reserve": 4,
+  "absolute": 44,
+  "strong_approved": 8,
+  "supplemental_approved": 24
+}
+```
+
+Put this object in the new plan's `bounds` only after that allowance is authorized;
+keep the actual required graph fundable. Skill-only may use the same explicitly
+approved task ceilings as bookkeeping, not as a new Runtime. The legacy reserve
+cannot fund new supplemental work. Within the selected scope/allowance, batch
+launches need no repeated permission; exceeding it does. Do not mutate saved bounds,
+retroactively enable this example or start a new run to reset an active task.
+Stopping optional expansion never waives unaffordable necessary acceptance.
+
+## Burst provider accounting
+An enabled [Burst](burst.md) sidecar has no workflow-imposed expiry, per-task call
+ceiling, follow-up ceiling or per-probe duration ceiling. Grok sidecar turns are
+tracked separately when observable and do **not** consume the Runtime/Skill
+Astra-Sol-Luna launch-count ceilings or their reserves. Different providers' quota
+units are not interchangeable; never add OpenCodex/Grok quota to Codex credits as
+if they were one pool. Required Astra/Sol/Luna acceptance capacity and native host
+slots still have priority over optional Grok work. Resource backpressure pauses new
+Burst dispatch rather than lowering review standards.

@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.2.0 Burst / Luna 1M Fast revision — 2026-09-14 (local)
+
+Add an implicit/explicit Skill-only native OpenCodex Grok sidecar with a dedicated
+read-only profile, automatic useful-probe preference, manual enable/disable,
+source/privacy gates and mainline capacity priority.
+The sidecar has no automatic expiry, per-task call limit, follow-up limit or per-turn
+duration limit. Its calls are recorded separately when observable and do not consume
+Astra/Sol/Luna Runtime/Skill launch-count ceilings. Unlimited calls never create a
+mainline waiting barrier; resource backpressure pauses new optional dispatch.
+Package-owned Luna profiles request 1M Fast. No CLI model dispatch, new ledger,
+Runtime Grok route, quality-parity claim or effective 1M-context claim is added.
+Required Astra review remains unchanged.
+
+## 4.2.0 phase-handoff guidance revision — 2026-09-14 (unreleased)
+
+Prefer an explicit Skill-only Astra planning/acceptance brief, a user/host switch
+to the Sol main thread for continuous implementation and Luna screening, and a
+fresh Astra review of important deliverables. Root authority is distinct from the
+Sol writer-child profile. Full-diff self-review challenges the plan itself.
+
+Broad Luna coverage uses distinct snapshot-bound questions, finite cutoffs, one
+bounded routine follow-up, checkpoint screening, shared-resource backpressure and
+nonblocking closeout. Received plausible risks cannot be discarded for latency.
+Credit-aware accounting remains observational; the documented 24-probe bounds are
+an explicitly authorized new-task example, not new global defaults.
+
+Runtime 4.2.0 code, schemas, routes, budget defaults and saved contracts are unchanged.
+Implicit mode now permits automatic read-only Grok evidence; no automatic main-thread model switch, Runtime handoff, nested
+writer delegation, CLI model dispatch, hard credit cap or background timer is added.
+Deterministic tests are separate from native model quality and cost measurement.
+
 ## 4.2.0 invocation-policy revision — 2026-09-13 (unreleased)
 
 Implicit selection now adds broad native Luna-only evidence gathering while Root keeps

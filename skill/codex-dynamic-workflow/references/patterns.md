@@ -7,7 +7,7 @@ are disclosed; probes are never a completion barrier. See [supplemental](supplem
 
 | Shape | Use | Avoid |
 |---|---|---|
-| Solo mainline | Astra handles a cohesive task end to end | Moving required work into optional Luna probes |
+| Solo mainline | Current Root handles cohesive authorized work; required review remains | Moving required work into optional Luna probes |
 | Fan-out | Independent ready questions or evidence methods | Repeating the same search with more agents |
 | Pipeline | Each item can independently move to verification | Waiting for unrelated siblings |
 | Expand | New evidence identifies a distinct missing question | Renaming repeated work to reset budget |
@@ -94,3 +94,28 @@ writer, then Astra acceptance against the original goal and full diff. One Luna
 counterexample direction should challenge the design itself when useful, not simply
 check conformance. Do not reopen three probes at each stage. A plan contradiction
 needs a concrete escalation; routine commands and in-scope test repair stay with Sol.
+
+## Example: main-thread phase handoff
+
+Astra reads the critical sources, decides the change and writes a sufficient brief
+with concrete staged acceptance evidence in the existing plan. At the checkpoint,
+the user switches the same conversation to Sol using the actual host controls.
+Sol verifies current sources and observed model, continues implementation, tests,
+repairs and Luna dispatch without Astra approving routine operations, and reviews
+the complete diff itself. Root then obtains a fresh Astra review of the important
+candidate against the original goal and design, not just compliance with the brief.
+No new scheduler, ledger, main-thread profile or automatic model-switch tool is
+introduced. See [delegation](delegation.md); Runtime-managed nodes keep their gates.
+
+For a workbook save change, independent Luna questions may cover missed callers,
+partial writes, backup/restore, package-content preservation, file locks and tests
+that can pass with a broken implementation. Tailor the scope and snapshot to each;
+these are six possible directions, not required tasks or a claim about any project.
+Luna may suggest test cases or candidate patches but cannot edit the working tree,
+weaken acceptance, replace Sol's required tests or decide whether to deliver.
+
+If five probes return while the sixth is slow, Sol screens the five at a natural
+checkpoint and proceeds on ready mainline work. A returned credible data-loss risk
+blocks the affected operation until checked; the sixth probe's silence does not
+block unrelated work. At delivery, collect already returned risks, stop optional
+expansion and perform bounded closeout without waiting for a complete batch.

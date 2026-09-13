@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "enabled": true,
+  "activation": "implicit-and-explicit-skill",
+  "backend": "native",
+  "route": {
+    "model": "xai/grok-4.6",
+    "profile": "cwf_burst_grok",
+    "effort": "high"
+  },
+  "purposes": [
+    "design-challenge",
+    "cross-module-analysis",
+    "preacceptance-review",
+    "stalled-diagnosis",
+    "durable-evidence"
+  ]
+}

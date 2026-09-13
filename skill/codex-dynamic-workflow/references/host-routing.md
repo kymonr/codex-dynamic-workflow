@@ -19,7 +19,7 @@ An explorer, verifier, reproducer, designer or reviewer may use the same capable
 read-only execution profile. A writer needs an authorized writable task and compatible
 host permissions. No logical role is permanently assigned to a cheap or strong model.
 
-This package ships five optional profiles, installed separately from openai.yaml:
+This package ships six optional profiles, installed separately from openai.yaml; the sixth is temporary Skill-only Burst, not a Runtime route:
 
 | Profile | Initial mapping | Capability contract |
 |---|---|---|
@@ -28,6 +28,13 @@ This package ships five optional profiles, installed separately from openai.yaml
 | cwf_writer | Astra / selected effort (default high) | Preserved for old contracts and explicit compatible Skill-only use |
 | cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
+| cwf_burst_grok | OpenCodex xai/grok-4.6 / high | Temporary optional read-only evidence, never a required verifier |
+
+The two package Luna profiles request 1M context and Fast service; these are not
+reasoning-effort settings or proof of effective backend support. Preserve the
+user's separate luna profile and global catalog. Burst requires manual enablement
+and actual native capability; see [Burst](burst.md). Existing Runtime route
+identities/effort and acceptance gates remain unchanged.
 
 Runtime 4.1.1 permits explicit Astra effort selection; reader/writer profiles no longer
 pin high. Root passes route.effort through the actual native tool's effort parameter.
@@ -56,7 +63,12 @@ requires disclosing the capability gap and blocking affected acceptance, not mut
 the contract or starting a new run to reset spending. Higher effort is not proof of
 independence, source coverage or successful verification.
 
-Astra owns the complete mainline objective; Sol implements, tests and repairs under
+Root owns the complete mainline objective. In explicit Skill-only work, a user/host
+switch can make Sol the implementation Root; profiles do not switch the parent.
+The no-parent-reconfiguration rule forbids agent configuration edits, not the user's
+manual model selection. Preserve task state and verify observed identity; a child
+profile never grants controller authority. Runtime packets/routes stay unchanged.
+Astra designs and accepts; Sol implements, tests and repairs under
 the [delegation contract](delegation.md). Do not move required work to Luna because it is bounded or
 read-only. For every meaningful non-trivial task, proactively use cwf_general for
 at least three distinct supplemental probes when capacity permits: omissions/coverage,

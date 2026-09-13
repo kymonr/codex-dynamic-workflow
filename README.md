@@ -9,8 +9,8 @@ $codex-dynamic-workflow
 旧 `$dispatching-native-agents` 仅保留为显式兼容入口，并关闭隐式调用，避免双重自动路由。
 
 2026-09-13 调用规则修订（Runtime 仍为 4.2.0）：
-- 被动调用：自动匹配时，主线程继续执行原任务，子代理只派 Luna；有足够独立问题和额度时展开 6–12 个方向，不启动 Astra/Sol 流程。
-- 主动调用：用户明确要求使用该工作流时，才加载原有 Astra 设计 → Sol 实施 → Astra 验收流程。
+- 被动调用：自动匹配时，主线程继续执行原任务；有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 只读探针，不启动 Astra/Sol 流程。
+- 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 补充下述主线程交接规则。
 
 仅提到、讨论或修改 Skill 不算主动调用。分流以 [Skill 入口](skill/codex-dynamic-workflow/SKILL.md)为准；下文 Astra/Sol 分工与 Runtime 说明适用于显式模式。
 
@@ -20,6 +20,44 @@ $codex-dynamic-workflow
 
 当前协议：[v4.1 后续规则](skill/codex-dynamic-workflow/references/followup.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)；[v4.1 设计](DESIGN_V41.md)保留初始设计记录。
 确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
+
+## 2026-09-14：按阶段交接主线程，大量 Luna 不降低验收要求
+
+显式 Skill-only 推荐：**Astra 设计和验收标准 → 用户在宿主切换主对话为 Sol → Sol 连续实施、测试、修复与调度 → 新的 Astra 上下文审查重要成果**。
+Astra 交接目标、非目标、准确基线与未提交改动、关键设计、不变量、阶段依赖、可核验的验收证据及升级条件；不是提前写完全部实现。
+Sol 对照实际源码执行，不为普通命令和测试失败反复召回 Astra；写完后先以代码审查者视角检查整个实际 diff，不默认此前设计正确。
+新 Astra 审查应重新看原始需求、完整 diff、依赖和原始证据，不能把计划或 Luna 发现清单当作审查范围上限。
+
+Root 是当前主线程控制者，不是永久固定的 Astra。Sol 主线程可调度 Luna；`cwf_sol_writer` 是写代码子代理 profile，仍禁止嵌套派工，不能拿它替代主线程模型切换。
+Skill 本身不能自动切换正在运行的模型，也不改全局配置；只有宿主/用户完成切换后才按可观察状态记录，实际模型不可见时为 UNKNOWN。
+切换继承原任务的授权、候选、未解决问题、活动线程、截止条件和已用/预留额度；不重建 run 清零预算，不绕过 Runtime 已声明的 writer/verifier 准入。
+
+复杂任务有足够独立问题时，争取 **6–12 个 Luna 调查方向**，按实际空闲容量分批，不凑数量、不同阶段不重复整批审查。
+更多方向可采用事先明确批准的新任务额度；[预算说明](skill/codex-dynamic-workflow/references/budget.md)提供 24 次补充尝试的配置示例，而不暗中上调旧合同。
+Luna 只读、基于准确版本/隔离快照，可以挑战方案、给出反例和测试/补丁建议，不能直接改主工作区或签署验收。
+每项调查有覆盖目标和有限截止条件，普通跟进至多一次且不重置截止时间/额度。主线就绪即执行，不等无关结果齐套。
+Sol 在自然检查点批量核对普通结果；可信重大风险及时处理受影响的操作，不能为追求不阻塞而忽略已经收到的风险。
+当报告积压或 CPU、磁盘、测试锁、代理槽位影响主线时暂停新补充派工。收尾保留早期发现、报告未完成覆盖，不将停止请求冒充资源已释放。
+
+额度按实际可观察的 **credit/合格交付**理解，包含 Root、子代理、筛查与返工；调用次数不是 credit。价格和质量等价不写成保证，不把未知消耗记为零。
+这是 Skill 指令、profile 指导与回归检查更新；Runtime 仍为 4.2.0，默认 12 次补充/28 次批准/32 次绝对调用额度、旧合同、固定模型路由和必要独立验收不变。
+详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
+
+## 2026-09-14：Burst / Grok sidecar（手动启停）
+
+在原有主线程交接之上，隐式或显式 Skill-only 会自动评估并使用原生 OpenCodex Grok 子代理
+`cwf_burst_grok` / `xai/grok-4.6`（high，只读）做设计反证、跨模块分析、候选预审、
+疑难诊断和可复用证据。复杂任务默认尝试一个有独立价值的 Grok 探针；简单任务或准入失败时记录跳过原因。它不是完成门槛，也不取代 Astra 验收。
+Grok 的自动可用性由 `burst.json` 的 `enabled` 手动启停；**没有自动到期、单任务调用次数、follow-up
+次数或单次运行时长限制**。Grok sidecar 调用也不消耗 Astra/Sol/Luna 的 Runtime/Skill
+调用计数额度；不同供应商额度仍分别记录，不能混算。
+“无限次”不等于“无限阻塞”：主线永远不因可选 Grok 等待；报告积压、槽位、CPU、I/O、
+测试锁或其他资源影响主线时暂停新 Grok 派工。已经返回的可信风险仍需核查。
+Luna 的 `cwf_general` / `cwf_mechanical` 请求 **1M Fast**，仍可处理大范围问题；
+不依据“Grok 上下文更大”分工。现有独立 luna.toml 和 OpenCodex 目录保持原样，
+实际生效需原生执行证据，不能把配置值当作已经验证的能力。
+详见 [Burst](skill/codex-dynamic-workflow/references/burst.md)。预检脚本只检查当前准入、
+profile 和主线容量，不调用模型、不计数、不计时、不切换主线程。
 
 ## 本机验证与安装
 
