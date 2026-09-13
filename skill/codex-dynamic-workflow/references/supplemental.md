@@ -6,14 +6,60 @@ not the current 4.1 acceptance rules. Responsibility and raw-evidence safeguards
 still apply; historical completion behavior does not replace the current protocol.
 
 ## Responsibility and proactive coverage
-Astra owns the complete mainline objective and acceptance; Sol carries its scoped
-implementation, testing and bounded repairs under [delegation](delegation.md). Luna provides additional omissions, counterexamples, test gaps
+Astra owns key design and acceptance; the current Root owns complete mainline progress.
+Sol can own the implementation main thread after the user/host Skill-only switch,
+or carry a scoped child packet under [delegation](delegation.md). Luna provides additional omissions, counterexamples, test gaps
 and alternative explanations. Deleting the supplemental graph must leave a complete
 mainline. Meaningful tasks normally launch at least three distinct Luna probes early.
 The floor is per task, not per turn, file or repair cycle; it is not a waiting barrier.
 More probes are encouraged for genuinely new directions, within the selected allowance.
 Trivial scope, fewer genuine directions, host/capability limits, cancellation or budget
 pressure permit fewer, with explicit coverage accounting. No repeated questions to fill a quota.
+
+## Broad coverage with bounded main-thread attention
+
+On substantial tasks, aim for 6–12 distinct useful questions across design,
+implementation and stable-candidate checkpoints; expand further only with an
+explicitly larger task allowance and genuinely new scope or evidence methods.
+This is a direction count, not a simultaneous-thread target or completion quota.
+Do not relaunch the whole batch after a repair: revisit affected questions only.
+At least one useful counterexample direction should challenge the design itself.
+Removing Luna leaves necessary implementation, tests and review intact, but Root
+need not repeat every search: reopen current raw evidence for material adoption.
+
+Before launch, give each probe one question, exact snapshot/source entry points,
+read scope, objective coverage goal and a finite cutoff bounded by the task's
+remaining window. An intended cutoff is not an enforced host timer. Routine probes
+get at most one follow-up with concrete new input within the same allowance and
+cutoff; no indefinite retry, recursive audit or long-form report polishing.
+Keep useful partial results and every received plausible risk even on failure or
+interruption. Unknown is not negative evidence. A genuinely necessary unresolved
+question becomes owned mainline work, not a dependency on the optional probe.
+
+Current Root screens ordinary returns in compact batches at natural checkpoints;
+Sol Root does this during implementation rather than invoking Astra per report.
+Sol writer children only return evidence to Root; they cannot screen Runtime state
+or spawn reviewers. Immediately inspect credible severe risks and evidence about
+an imminent irreversible action. Pause the affected operation when necessary,
+while independent safe work continues. Nonblocking does not waive a known risk.
+
+Pause new optional admissions when the unscreened queue or shared CPU, I/O, test
+locks, rate limits or host slots threaten ready mainline work. Narrow future
+assignments, deduplicate verified reports and close duplicate/no-progress probes;
+never truncate material risks or mark them advisory merely to drain the queue.
+Snapshots isolate sources, not resource contention: heavy tools need an explicit
+resource allowance. Prefer one tool-generated inventory over duplicated full scans.
+
+Luna may return proposed assertions, reproduction steps and candidate patches as
+text; these are not executed tests or permission to edit the main workspace.
+The authorized Sol implementer validates and applies accepted changes. Keep all
+necessary regression and independent acceptance coverage, including code not
+mentioned in Luna reports. Agent count or agreement is never quality evidence.
+
+Do not wait solely for optional probes, even when Root has no independent work
+left. At delivery, collect received risks and perform the bounded closeout in
+[followup](followup.md); no all-results barrier, indefinite polling or promised
+unattended receiver. Stop requests never establish physical resource release.
 
 ## Model, quota and capacity
 New Runtime contracts default to workflow=astra-mainline. Mainline nodes use the strong

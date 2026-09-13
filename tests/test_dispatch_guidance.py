@@ -70,7 +70,7 @@ class DispatchGuidanceTests(unittest.TestCase):
         self.assertEqual(policy['backend'], 'native-only')
         profiles = {p.stem: tomllib.loads(p.read_text(encoding='utf-8'))
                     for p in (ROOT / 'profiles').glob('*.toml')}
-        self.assertEqual(set(profiles), {'cwf_reader', 'cwf_writer', 'cwf_sol_writer', 'cwf_general', 'cwf_mechanical'})
+        self.assertEqual(set(profiles), {'cwf_reader', 'cwf_writer', 'cwf_sol_writer', 'cwf_general', 'cwf_mechanical', 'cwf_burst_grok'})
         self.assertEqual(profiles['cwf_sol_writer']['model'], 'gpt-5.6-sol')
         self.assertNotIn('model_reasoning_effort', profiles['cwf_sol_writer'])
         for name in ('cwf_reader', 'cwf_writer'):

@@ -1,7 +1,7 @@
 # Codex Dynamic Workflow v4.2.0
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
-2026-09-13 起，隐式匹配只增加 Luna 只读调查：主线程保持原任务，有足够独立问题和额度时展开 6–12 个方向。
+2026-09-14 起，隐式匹配增加 Luna 只读调查和自动 Grok Burst：主线程保持原任务，有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 探针。
 用户显式调用时，才按[原有完整流程](references/explicit-workflow.md)运行 Astra 规划与验收、Sol 实施、Luna 补充。
 具体触发判断见 [SKILL.md](SKILL.md)；下方流程参考均在显式模式按需读取。
 启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
@@ -22,3 +22,11 @@
 v4 延续 SQLite DAG、原子调用预留与显式只读恢复，并加入补充分支隔离与独立主线验收；硬费用限制、操作系统文件隔离和嵌套工作流仍未实现。
 Runtime 入口和限制见 [runtime](references/runtime.md)；原生/模型集成验证状态须单独确认。
 更新安装目录后，以新会话的实际发现和运行回执验证，不能只凭文件存在声称生效。
+
+## Burst / OpenCodex Grok 与 Luna 1M Fast
+
+`burst.json` 以 `enabled` 手动控制隐式和显式 Skill-only 的自动 Grok sidecar；不设置自动到期、
+单任务调用次数、follow-up 次数或单次运行时长上限。复杂任务自动尝试一个有独立价值的探针；准入失败时记录原因。它只读、非完成门槛、非最终验收者。
+Grok 调用不占用 Astra/Sol/Luna 的 Runtime/Skill 调用计数额度；主线资源和必要验收优先。
+包内 Luna profile 请求 1M Fast；用户独立的 luna.toml、OpenCodex 目录和全局配置不改。
+请求配置、目录宣告和实际运行分别记录；不声称已验证 1M 后端、速度、价格或节省。

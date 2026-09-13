@@ -5,6 +5,13 @@ in [the invocation entrypoint](../SKILL.md). Automatic matching or an AGENTS.md
 pointer does not select this branch. All workflow-specific requirements below apply
 to explicit mode. Paths such as `scripts/cwf.py` are relative to the Skill root.
 
+Skill-only phase-handoff revision: 2026-09-14. Read [phase handoff](delegation.md)
+before design/implementation: Astra sets the plan and acceptance criteria, the
+user/host switches the main conversation to Sol for continuous execution, and a
+fresh Astra context reviews important deliverables. This is not an automatic model
+switch or a migration of Runtime-managed work. Keep the implicit supplementation mode
+separate; its automatic Grok probe does not acquire this Astra/Sol pipeline.
+
 Quality > automation > latency > cost > observability > recovery.
 Root owns the objective, authorization and final acceptance. All model delegation
 uses **native** agent tools: Astra for design and acceptance, Sol for scoped implementation,
@@ -14,6 +21,14 @@ Skill-only bookkeeping is not persistent; neither mode is a hard token/currency 
 For Astra, high is a Runtime default, not a fixed requirement. Select effort from
 the task's uncertainty and consequences, preserving explicit user choices and the
 current host/run contract; see host and routing. Do not reconfigure the parent.
+
+## Temporary optional capability
+Read [Burst](burst.md) before additional Grok work in explicit Skill-only mode; the
+same enabled sidecar may already have supplied an automatic implicit probe.
+Use the manually enabled native OpenCodex route, not an extra mandatory
+pipeline. There is no Burst-specific expiry, call-count ceiling or wall-clock ceiling. Required Astra review proceeds without waiting for Grok. Luna requests
+1M Fast and is not restricted to small contexts. Runtime-managed work cannot use
+this Skill-only extension or borrow its model outside admitted packets.
 
 ## Runtime selection
 
@@ -32,8 +47,11 @@ Runtime protocol and actual run receipts for qualification. Deterministic tests 
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
 
-Astra owns a complete end-to-end mainline, delegating implementation/tests/repairs to Sol:
-removing every Luna probe must still leave all necessary work and acceptance. For every meaningful,
+The Astra/Sol mainline owns all necessary work; Sol can be Root after the explicit
+Skill-only host handoff, not merely a writer child supervised by a running Astra.
+Removing every Luna probe must still leave all necessary work and acceptance. Aim
+for 6–12 distinct supplemental directions on substantial tasks within actual capacity
+and allowance; more than twelve requires a larger approved task allowance. For every meaningful,
 non-trivial task, proactively launch at least three distinct native Luna supplemental
 probes when host capacity permits: (1) omissions/coverage, (2) counterexamples/failure
 modes, and (3) missing tests or alternative explanations. Three is a launch-intent
@@ -75,7 +93,7 @@ host, another backend or a weaker model. Do not change configuration or permissi
 
 ## Control loop
 
-1. Astra/Root identifies and owns the complete unresolved mainline objective. Keep
+1. Current Root identifies and owns the complete unresolved mainline objective. Keep
    closely dependent reasoning together; do not carve required work out merely to
    create delegation. In parallel, open at least three distinct supplemental Luna
    directions for meaningful work when capacity permits, then expand only for new
@@ -83,7 +101,10 @@ host, another backend or a weaker model. Do not change configuration or permissi
    In Skill-only mode, Root may do cohesive work directly when delegation adds no value.
    Role names are not a staffing list; use Astra children for independent
    deliverables or necessary non-author checks. Runtime admission still applies.
-2. Pick the logical role: explorer, verifier, reproducer, designer, writer or
+2. During Skill-only implementation, Sol Root owns routine scheduling, tool-result
+   handling and Luna screening; bring Astra back for material design deviations or
+   required review, not every command or generic suggestion. A Sol child still has
+   no dispatch authority. Pick the logical role: explorer, verifier, reproducer, designer, writer or
    reviewer. Select a compatible execution profile **separately** from that role.
    Use Astra for planning/design/acceptance and Sol for coherent implementation, tests
    and bounded repair. Use Luna/max for supplemental probes and Luna/medium for

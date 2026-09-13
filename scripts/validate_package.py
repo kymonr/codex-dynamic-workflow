@@ -10,7 +10,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = Path('skill/codex-dynamic-workflow')
 LEGACY_SKILL = Path('skill/dispatching-native-agents')
-PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_sol_writer', 'cwf_general', 'cwf_mechanical')
+PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_sol_writer', 'cwf_general', 'cwf_mechanical', 'cwf_burst_grok')
 
 
 def unique_pairs(pairs: list[tuple]) -> dict:
@@ -113,6 +113,36 @@ def check_interface(text: str, display: str, implicit: bool) -> None:
         raise ValueError('default_prompt must reference the exact canonical invocation')
 
 
+def validate_burst_files(root: Path, profiles: dict) -> list[str]:
+    """Check declarative Burst data without executing candidate Python code."""
+    errors=[]
+    try:
+        p=load_json_object(root/SKILL/'burst.json')
+        require_keys(p,{'schema_version','enabled','activation','backend','route','purposes'},'burst policy')
+        if type(p['schema_version']) is not int or p['schema_version']!=2 or type(p['enabled']) is not bool:
+            raise ValueError('invalid burst schema/enabled')
+        if p['activation']!='implicit-and-explicit-skill' or p['backend']!='native':
+            raise ValueError('burst must remain implicit-or-explicit Skill-only native')
+        require_keys(p['route'],{'model','profile','effort'},'burst route')
+        if p['route']!={'model':'xai/grok-4.6','profile':'cwf_burst_grok','effort':'high'}:
+            raise ValueError('burst route must match the observed OpenCodex Grok profile')
+        purposes=p['purposes']; known={'design-challenge','cross-module-analysis','preacceptance-review','stalled-diagnosis','durable-evidence'}
+        if not isinstance(purposes,list) or not purposes or any(not isinstance(x,str) or x not in known for x in purposes) or len(set(purposes))!=len(purposes):
+            raise ValueError('invalid burst purposes')
+        grok=profiles.get('cwf_burst_grok',{})
+        if grok.get('model')!=p['route']['model'] or grok.get('model_reasoning_effort')!=p['route']['effort'] or type(grok.get('model_context_window')) is not int or grok['model_context_window']!=500000 or grok.get('service_tier')!='default' or grok.get('sandbox_mode')!='read-only':
+            raise ValueError('burst profile drift')
+        for name in ('cwf_general','cwf_mechanical'):
+            data=profiles.get(name,{})
+            if type(data.get('model_context_window')) is not int or data['model_context_window']!=1000000 or data.get('service_tier')!='fast':
+                raise ValueError('Luna 1M Fast request drift: '+name)
+        for rel in ('scripts/burst_sidecar.py','references/burst.md'):
+            if not (root/SKILL/rel).is_file(): raise ValueError('missing burst file: '+rel)
+    except (OSError,ValueError,TypeError,AttributeError,OverflowError) as exc:
+        errors.append('burst package: '+str(exc))
+    return errors
+
+
 def validate(root: Path = ROOT) -> list[str]:
     errors: list[str] = []
     try:
@@ -170,6 +200,8 @@ def validate(root: Path = ROOT) -> list[str]:
             if data.get('name') != name or not data.get('description') or not data.get('developer_instructions'):
                 errors.append(f'invalid role metadata: {name}')
             allowed = {'name', 'description', 'model', 'model_reasoning_effort', 'sandbox_mode', 'developer_instructions'}
+            if name in {'cwf_general', 'cwf_mechanical', 'cwf_burst_grok'}:
+                allowed |= {'model_context_window', 'service_tier'}
             if set(data) - allowed:
                 errors.append(f'unexpected role configuration keys: {name}')
             if name not in {'cwf_writer','cwf_sol_writer'} and data.get('sandbox_mode') != 'read-only':
@@ -183,6 +215,7 @@ def validate(root: Path = ROOT) -> list[str]:
                 errors.append(f'model/effort must be explicit in the profile: {name}')
         except (OSError, ValueError) as exc:
             errors.append(f'profile error {name}: {exc}')
+    errors.extend(validate_burst_files(root, profile_configs))
     for skill, name, expected_version, display, implicit in (
             (SKILL, 'codex-dynamic-workflow', version, 'Codex Dynamic Workflow', True),
             (LEGACY_SKILL, 'dispatching-native-agents', version+'-compat', 'Native Dispatch (deprecated)', False)):

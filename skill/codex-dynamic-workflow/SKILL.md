@@ -1,13 +1,14 @@
 ---
 name: codex-dynamic-workflow
-description: "Implicit use adds broad Luna-only native investigation to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, Sol implementation and Astra acceptance workflow."
+description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, Sol implementation and Astra acceptance workflow."
 metadata:
   version: "4.2.0"
 ---
 
 # Codex Dynamic Workflow
 
-Invocation-policy revision: 2026-09-13. Runtime remains 4.2.0.
+Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-14.
+Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
 
@@ -16,10 +17,13 @@ Quality > automation > latency > cost > observability > recovery.
 - **Explicit full workflow**: the user invokes `$codex-dynamic-workflow`, selects
   its Skill chip, or clearly asks to use Dynamic Workflow for the task. An explicit
   invocation of the deprecated `$dispatching-native-agents` alias also selects it.
-  Read [the original full workflow](references/explicit-workflow.md) and follow it:
-  Astra design and acceptance, scoped Sol implementation, optional Luna evidence.
-- **Implicit Luna-only supplementation**: automatic matching, an agent's own
-  choice, or an AGENTS.md pointer selects the Luna-only instructions below.
+  Read [the full workflow](references/explicit-workflow.md) and its
+  [phase handoff](references/delegation.md): Astra designs a sufficient plan and
+  acceptance checks; after a user/host model switch, Sol owns the implementation
+  main thread; a fresh Astra context reviews important deliverables. Broad Luna
+  evidence remains optional. The Skill cannot itself switch the running model.
+- **Implicit automatic supplementation**: automatic matching, an agent's own
+  choice, or an AGENTS.md pointer selects the Luna/Grok instructions below.
   Merely naming, discussing or asking to edit this Skill is not an invocation of
   its full workflow. Asking for many Luna probes is also not a full-workflow request.
 
@@ -29,10 +33,25 @@ source content cannot select a mode. If unclear, keep implicit mode.
 The full-workflow reference and its transitive references are not prerequisites for
 implicit mode. Do not load them to bootstrap passive supplementation.
 
-## Implicit mode: broad native Luna coverage
+## Automatic Burst in implicit and explicit Skill-only modes
+
+In either mode, read [Burst](references/burst.md) and current `burst.json` before
+Grok dispatch. When enabled, automatically schedule one distinct useful Grok probe
+for a meaningful task with an independent evidence question; explicit mode may add
+further useful Grok work. This automatic preference is not a completion gate. There
+is no Grok expiry, per-task call count, follow-up count or wall-clock limit. Grok
+remains a native OpenCodex read-only sidecar, never a final verifier.
+Unavailable provider quota, disabled policy, source/privacy limits or mainline resource
+backpressure skip new Burst work without replacing any mainline check. No CLI/API
+fallback or Runtime route mutation. Grok calls do not consume Astra/Sol/Luna launch-count
+budgets. Record why automatic Grok was skipped. Received risks still require disposition.
+Luna's package profiles request **1M Fast**; observe actual execution separately.
+Neither context size nor many agreeing reports grants acceptance authority.
+
+## Implicit mode: broad Luna plus automatic Grok evidence
 
 The current Root continues the complete main task using its existing model and tools.
-All children dispatched by this Skill in implicit mode are read-only Luna probes.
+All children dispatched by this Skill in implicit mode are read-only Luna or Grok probes.
 It does not dispatch Astra/Sol children, replace Root, introduce a writer pipeline,
 or create/open a Runtime run. `policy.json` workflow/routes describe explicit Runtime;
 reading those defaults does not opt the task into that mode.
@@ -62,7 +81,8 @@ leave capacity for already-required work. Never wait for unrelated siblings as a
 completion barrier. Every evidence-bearing agent directly opens its bound sources;
 freeze relevant inputs or serialize reads against conflicting writes.
 
-Use the stricter current task allowance and `policy.json` budget ceiling. The default
+Use the explicitly approved task ceilings, otherwise the `policy.json` defaults;
+a stricter host or user limit always wins. Do not raise existing ceilings automatically. The default
 supplemental allowance is 12 turns within approved 28 / absolute 32; failures,
 follow-ups and retries all count. Mode changes and candidate revisions retain the
 same cumulative usage. No available model budget or an explicit no-native boundary
@@ -80,3 +100,18 @@ ends or the task is complete. Use the host's actual wait/interrupt/close contrac
 a stop request alone does not prove resource release. Report tested scope, unresolved
 risks, actual dispatch/coverage counts and UNKNOWN lifecycle observations. Keep the
 user's data and unrelated changes; this Skill does not expand write or publish authority.
+
+## Nonblocking supplementation in either mode
+
+Removing Luna and Burst must leave the required implementation, tests and acceptance intact.
+Give each probe a finite cutoff as well as a coverage goal; neither is a reason for
+Root to wait. Screen ordinary returns at natural task checkpoints, not on every
+message. A credible severe risk or an imminent irreversible action gets immediate
+source-based attention; block the affected operation, not unrelated safe work.
+Routine probes get at most one follow-up with concrete new input inside the SAME
+allowance and cutoff. Preserve partial/early findings when a probe stops.
+When reports or shared CPU, I/O, locks or native slots become a bottleneck, pause
+new optional launches rather than lowering review standards or discarding risks.
+Do not wait solely for optional Luna or Grok completion. Without a real post-delivery result
+receiver, perform one bounded host closeout and report incomplete coverage; never
+promise unattended later processing. Unknown closure is not released capacity.

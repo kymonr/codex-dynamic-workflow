@@ -128,3 +128,22 @@ Serialized database envelopes share the 1 MiB read limit. Oversized results are 
 inside the transaction without losing the active attempt, budget charge or earlier
 findings; submit a smaller truthful result. Aggregate hash preimages are not stored
 envelopes and may cover multiple individually bounded records.
+
+## 2026-09-14 main-thread throughput clarification
+
+Sol Root performs routine screening during the explicit Skill-only execution phase;
+Astra handles material design escalation and required acceptance. Sol writer children
+remain non-controllers. This does not change Runtime routes or issue-resolution gates.
+
+A large backlog pauses new optional launches, not required mainline work. Screening
+can restore acceptance for checked benign/duplicate claims without another whole
+review; plausible unresolved acceptance risks must still be investigated or blocked.
+Do not relabel them as notes or advisory to meet a latency target. Report selection
+and stop decisions, not a guarantee that Luna can never add verification latency.
+
+Every probe has an objective scope and finite cutoff, with at most one routine
+new-input follow-up within that same cutoff and remaining allowance. At a mainline
+checkpoint, do ready work before polling optional siblings. Without independent
+work, close out rather than waiting only to complete the batch. Preserve early
+risks before interrupting; missing coverage and UNKNOWN closure remain separate
+from accepted mainline evidence. No automatic timer or background receiver is added.
