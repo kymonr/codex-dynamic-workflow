@@ -19,6 +19,11 @@ execution identity is not exposed.
 Enabled Burst automatically prefers one useful Grok probe during meaningful implicit
 or explicit Skill-only work when there is an independent evidence question within the
 task's source and privacy permissions. Explicit work may add further useful Grok turns.
+A controller/model/conversation handoff is still the SAME task: carry forward whether
+the automatic Burst probe already ran or was skipped and the questions/evidence already
+covered. Do not treat a new Sol execution thread or fresh review thread as a new automatic
+probe opportunity. Additional explicit Grok work remains allowed only for a distinct
+useful method/question; a handoff itself is not that distinction.
 The automatic implicit Grok probe is optional to task completion: trivial scope or failed
 source, privacy, provider, profile, capacity or backpressure gates skip it with a reported
 reason. Runtime 4.2.0 cannot represent the Grok route, so Runtime-managed work omits Burst rather than

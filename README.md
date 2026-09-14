@@ -10,7 +10,7 @@ $codex-dynamic-workflow
 
 2026-09-13 调用规则修订（Runtime 仍为 4.2.0）：
 - 被动调用：自动匹配时，主线程继续执行原任务；有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 只读探针，不启动 Astra/Sol 流程。
-- 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 补充下述主线程交接规则。
+- 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 起优先使用下述线程式阶段交接。
 
 仅提到、讨论或修改 Skill 不算主动调用。分流以 [Skill 入口](skill/codex-dynamic-workflow/SKILL.md)为准；下文 Astra/Sol 分工与 Runtime 说明适用于显式模式。
 
@@ -21,16 +21,21 @@ $codex-dynamic-workflow
 当前协议：[v4.1 后续规则](skill/codex-dynamic-workflow/references/followup.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)；[v4.1 设计](DESIGN_V41.md)保留初始设计记录。
 确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
 
-## 2026-09-14：按阶段交接主线程，大量 Luna 不降低验收要求
+## 2026-09-14：线程式阶段交接，Sol 执行线程接管 Root
 
-显式 Skill-only 推荐：**Astra 设计和验收标准 → 用户在宿主切换主对话为 Sol → Sol 连续实施、测试、修复与调度 → 新的 Astra 上下文审查重要成果**。
-Astra 交接目标、非目标、准确基线与未提交改动、关键设计、不变量、阶段依赖、可核验的验收证据及升级条件；不是提前写完全部实现。
-Sol 对照实际源码执行，不为普通命令和测试失败反复召回 Astra；写完后先以代码审查者视角检查整个实际 diff，不默认此前设计正确。
-新 Astra 审查应重新看原始需求、完整 diff、依赖和原始证据，不能把计划或 Luna 发现清单当作审查范围上限。
+显式 Skill-only 的复杂任务优先：**Astra 规划线程定义目标、设计边界与验收标准 → 宿主支持时将紧凑任务状态交给独立 Sol 执行线程，并由该线程成为唯一 implementation Root → Sol 连续实施、测试、修复与调度 Luna/Grok → fresh Astra 审核线程独立验收**。若宿主无法安全建立独立 controller thread，则回退为用户/宿主在当前主对话切换到 Sol。
 
-Root 是当前主线程控制者，不是永久固定的 Astra。Sol 主线程可调度 Luna；`cwf_sol_writer` 是写代码子代理 profile，仍禁止嵌套派工，不能拿它替代主线程模型切换。
-Skill 本身不能自动切换正在运行的模型，也不改全局配置；只有宿主/用户完成切换后才按可观察状态记录，实际模型不可见时为 UNKNOWN。
-切换继承原任务的授权、候选、未解决问题、活动线程、截止条件和已用/预留额度；不重建 run 清零预算，不绕过 Runtime 已声明的 writer/verifier 准入。
+Astra 交接必须包含原始目标和非目标、explicit workflow 模式、准确基线与未提交改动、当前授权与 allowed effects、关键设计和不变量、阶段依赖、可核验验收证据、未解决 claims、活动 child/writer ownership 与 lifecycle holds、截止条件以及累计已用/预留额度；不是提前写完全部实现。
+Sol 接管后重新读取实际源码和依赖，不盲信 Astra 摘要，不为普通命令和测试失败反复召回 Astra；写完后先以代码审查者视角检查整个实际 diff，也要挑战原方案本身。
+
+同一候选只能有一个 implementation Root。Sol 接管后原 Astra 规划线程退出实现热路径，不再写入、派工或改变候选；换线程不自动终止旧 child/writer，也不证明资源已经释放。未确认的 termination/resource hold 保持 UNKNOWN。
+线程变化不创造新任务：授权、候选、未解决问题、截止条件、ownership 和累计额度继续沿用，不能因为新对话重置预算、重新获得 Luna quota、扩大权限、建立第二 writer 或新建 Runtime run 绕过旧合同。
+
+最终验收优先使用新的 Astra review context/thread，而不是回到规划线程继续确认自己的方案。Fresh Astra 重新读取原始需求、最终 candidate、完整 diff、关键依赖、测试/证据和未解决风险；旧计划和 Luna/Grok 发现只是输入，不能成为审查范围上限。若审核打回，默认回到同一个 Sol execution Root 做 bounded repair，不因此生成新额度。
+
+`cwf_sol_writer` 仍是普通 writer-child profile，不是 Sol execution Root；模型身份或“新开一个对话”本身都不会授予 controller/dispatch 权。只有实际当前 Root 才能调度 Luna/Grok。Skill 不能凭文本自动创建或切换 controller，只有实际宿主/用户控制可以完成并观察交接。
+
+这是 Skill-only 交接规则更新；**Runtime 仍为 4.2.0**，同一 DB/run、固定路由、writer/verifier admission、默认 12 次补充/28 次批准/32 次绝对调用额度和必要独立验收全部不变。详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
 
 复杂任务有足够独立问题时，争取 **6–12 个 Luna 调查方向**，按实际空闲容量分批，不凑数量、不同阶段不重复整批审查。
 更多方向可采用事先明确批准的新任务额度；[预算说明](skill/codex-dynamic-workflow/references/budget.md)提供 24 次补充尝试的配置示例，而不暗中上调旧合同。
@@ -40,8 +45,6 @@ Sol 在自然检查点批量核对普通结果；可信重大风险及时处理�
 当报告积压或 CPU、磁盘、测试锁、代理槽位影响主线时暂停新补充派工。收尾保留早期发现、报告未完成覆盖，不将停止请求冒充资源已释放。
 
 额度按实际可观察的 **credit/合格交付**理解，包含 Root、子代理、筛查与返工；调用次数不是 credit。价格和质量等价不写成保证，不把未知消耗记为零。
-这是 Skill 指令、profile 指导与回归检查更新；Runtime 仍为 4.2.0，默认 12 次补充/28 次批准/32 次绝对调用额度、旧合同、固定模型路由和必要独立验收不变。
-详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
 
 ## 2026-09-14：Burst / Grok sidecar（手动启停）
 

@@ -1,6 +1,6 @@
 ---
 name: codex-dynamic-workflow
-description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, Sol implementation and Astra acceptance workflow."
+description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, threaded Sol implementation and Astra acceptance workflow."
 metadata:
   version: "4.2.0"
 ---
@@ -8,7 +8,7 @@ metadata:
 # Codex Dynamic Workflow
 
 Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-14.
-Runtime remains 4.2.0.
+Threaded control-transfer revision: 2026-09-14. Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
 
@@ -19,9 +19,16 @@ Quality > automation > latency > cost > observability > recovery.
   invocation of the deprecated `$dispatching-native-agents` alias also selects it.
   Read [the full workflow](references/explicit-workflow.md) and its
   [phase handoff](references/delegation.md): Astra designs a sufficient plan and
-  acceptance checks; after a user/host model switch, Sol owns the implementation
-  main thread; a fresh Astra context reviews important deliverables. Broad Luna
-  evidence remains optional. The Skill cannot itself switch the running model.
+  acceptance checks; when the host supports a separate conversation/controller
+  handoff, transfer compact task state to a separate Sol execution thread that
+  becomes the sole implementation Root. If that controller transfer is unavailable,
+  the user/host may switch the current main conversation to Sol instead. A fresh Astra
+  review context checks important deliverables. The Skill cannot itself switch the running model
+  or create/switch a controller thread; an ordinary Sol writer child is not a substitute
+  for either handoff path. In Skill-only implementation, Sol Root writes directly
+  by default; writer subagents are only for genuinely needed, explicitly authorized
+  isolated parallel writes. Keep sequential writing in Root. Existing Runtime
+  writer admission remains unchanged; do not select Runtime to bypass this preference.
 - **Implicit automatic supplementation**: automatic matching, an agent's own
   choice, or an AGENTS.md pointer selects the Luna/Grok instructions below.
   Merely naming, discussing or asking to edit this Skill is not an invocation of
@@ -84,9 +91,9 @@ freeze relevant inputs or serialize reads against conflicting writes.
 Use the explicitly approved task ceilings, otherwise the `policy.json` defaults;
 a stricter host or user limit always wins. Do not raise existing ceilings automatically. The default
 supplemental allowance is 12 turns within approved 28 / absolute 32; failures,
-follow-ups and retries all count. Mode changes and candidate revisions retain the
-same cumulative usage. No available model budget or an explicit no-native boundary
-means no dispatch, including Luna. Unknown account/token use stays UNKNOWN.
+follow-ups and retries all count. Mode changes, controller-thread handoffs and candidate
+revisions retain the same cumulative usage. No available model budget or an explicit
+no-native boundary means no dispatch, including Luna. Unknown account/token use stays UNKNOWN.
 
 Root checks returned evidence against current sources, deduplicates it and handles
 material risks within the original task. Luna agreement is not acceptance. An existing
@@ -104,12 +111,14 @@ user's data and unrelated changes; this Skill does not expand write or publish a
 ## Nonblocking supplementation in either mode
 
 Removing Luna and Burst must leave the required implementation, tests and acceptance intact.
-Give each probe a finite cutoff as well as a coverage goal; neither is a reason for
+Give each Luna probe a finite cutoff as well as a coverage goal; neither is a reason for
 Root to wait. Screen ordinary returns at natural task checkpoints, not on every
 message. A credible severe risk or an imminent irreversible action gets immediate
 source-based attention; block the affected operation, not unrelated safe work.
-Routine probes get at most one follow-up with concrete new input inside the SAME
+Routine Luna probes get at most one follow-up with concrete new input inside the SAME
 allowance and cutoff. Preserve partial/early findings when a probe stops.
+Grok instead follows [Burst](references/burst.md), with no workflow-imposed duration
+or follow-up ceiling. User/task deadlines, cancellation and backpressure still apply.
 When reports or shared CPU, I/O, locks or native slots become a bottleneck, pause
 new optional launches rather than lowering review standards or discarding risks.
 Do not wait solely for optional Luna or Grok completion. Without a real post-delivery result

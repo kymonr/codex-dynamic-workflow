@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.2.0 threaded controller-handoff revision — 2026-09-14 (unreleased)
+Adversarial follow-up: scope routine probe time/follow-up bounds to Astra/Sol/Luna
+so the optional Grok Burst exception remains effective. Align routing and writing
+references with direct Sol Root writing, clarify the current Runtime Sol writer
+route, and reject mixed-case Git control directories during full-manifest checks.
+These fixes retain Runtime code, saved contracts and all independent acceptance gates.
+
+For substantial explicit Skill-only work, prefer Astra planning in one context,
+transfer the same task to a separate Sol execution conversation that becomes the
+sole implementation Root when the host can establish that controller handoff, then
+use a fresh non-author Astra review context. Same-conversation model switching remains
+the fallback when a separate Sol Root cannot be established safely.
+
+The handoff now preserves explicit mode, source/candidate identity, user authority,
+active child/writer ownership and lifecycle holds, deadlines, completed/pending
+supplemental directions, Burst history, and cumulative spent/reserved allowance.
+A conversation change cannot reset Luna budgets, create a fresh automatic Burst probe,
+create a second writer/controller, open a replacement Runtime run, expand permissions,
+or treat unknown prior usage/resource release as zero/free.
+
+`cwf_sol_writer` remains a non-controller child and cannot spawn agents. The fresh Astra
+acceptance thread stays non-author/read-only by default; writing a repair invalidates
+that reviewer's independence for the changed bytes. Runtime remains 4.2.0 with unchanged
+routes, schemas, saved contracts and default budgets. Added regression coverage for
+thread continuity, dual-controller prevention, unknown usage, Burst duplication,
+non-author acceptance and source-manifest integrity.
+
 ## 4.2.0 Burst / Luna 1M Fast revision — 2026-09-14 (local)
 
 Add an implicit/explicit Skill-only native OpenCodex Grok sidecar with a dedicated

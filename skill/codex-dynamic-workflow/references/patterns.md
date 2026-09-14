@@ -17,7 +17,9 @@ are disclosed; probes are never a completion barrier. See [supplemental](supplem
 ## Mainline staffing and review
 
 In Skill-only mode, Root can keep cohesive mainline work in its own thread, including
-necessary direct work when delegation adds no value; normally Sol owns implementation/tests.
+implementation/tests. Sol Root writes directly by default; writer subagents are only
+for genuinely needed, explicitly authorized isolated parallel writes, not routine
+sequential implementation. Keep disjoint ownership and an integration owner.
 Runtime-managed work still requires an admitted packet;
 do not move a managed step outside its ledger to bypass a gate or exhausted budget.
 Native Astra children are useful for independent
@@ -99,7 +101,10 @@ needs a concrete escalation; routine commands and in-scope test repair stay with
 
 Astra reads the critical sources, decides the change and writes a sufficient brief
 with concrete staged acceptance evidence in the existing plan. At the checkpoint,
-the user switches the same conversation to Sol using the actual host controls.
+the user/host transfers compact task state to a separate Sol execution thread when
+the host supports controller handoff. Sol becomes the sole implementation Root.
+A same-conversation Sol model switch is only the fallback; neither path promotes
+a writer child or resets authorization, ownership or cumulative usage.
 Sol verifies current sources and observed model, continues implementation, tests,
 repairs and Luna dispatch without Astra approving routine operations, and reviews
 the complete diff itself. Root then obtains a fresh Astra review of the important

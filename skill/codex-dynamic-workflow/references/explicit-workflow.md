@@ -6,10 +6,13 @@ pointer does not select this branch. All workflow-specific requirements below ap
 to explicit mode. Paths such as `scripts/cwf.py` are relative to the Skill root.
 
 Skill-only phase-handoff revision: 2026-09-14. Read [phase handoff](delegation.md)
-before design/implementation: Astra sets the plan and acceptance criteria, the
-user/host switches the main conversation to Sol for continuous execution, and a
-fresh Astra context reviews important deliverables. This is not an automatic model
-switch or a migration of Runtime-managed work. Keep the implicit supplementation mode
+before design/implementation: Astra sets the plan and acceptance criteria; when the
+host supports an independent controller conversation, transfer compact task state to
+a separate Sol execution thread that becomes the implementation Root. Otherwise the
+user/host may switch the current main conversation to Sol as a fallback. A fresh Astra
+review thread/context checks important deliverables. This is not an automatic thread
+creation/model switch or a migration of Runtime-managed work, and a `cwf_sol_writer`
+child is not a substitute for the Sol Root. Keep the implicit supplementation mode
 separate; its automatic Grok probe does not acquire this Astra/Sol pipeline.
 
 Quality > automation > latency > cost > observability > recovery.
@@ -47,8 +50,9 @@ Runtime protocol and actual run receipts for qualification. Deterministic tests 
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
 
-The Astra/Sol mainline owns all necessary work; Sol can be Root after the explicit
-Skill-only host handoff, not merely a writer child supervised by a running Astra.
+The Astra/Sol mainline owns all necessary work; after a successful Skill-only control
+transfer, the Sol execution thread is the sole implementation Root, not merely a writer
+child supervised by a running Astra. The planning thread stops implementation control.
 Removing every Luna probe must still leave all necessary work and acceptance. Aim
 for 6–12 distinct supplemental directions on substantial tasks within actual capacity
 and allowance; more than twelve requires a larger approved task allowance. For every meaningful,
@@ -98,20 +102,24 @@ host, another backend or a weaker model. Do not change configuration or permissi
    create delegation. In parallel, open at least three distinct supplemental Luna
    directions for meaningful work when capacity permits, then expand only for new
    methods or coverage. No result-count or model-ratio success criterion exists.
-   In Skill-only mode, Root may do cohesive work directly when delegation adds no value.
+   In Skill-only implementation, Sol Root writes directly by default. Delegate writing
+   only for genuinely needed, explicitly authorized isolated parallel writes with
+   disjoint ownership and an integration plan; keep sequential writing in Root.
+   A selected Runtime still requires its admitted writer child; do not bypass it.
    Role names are not a staffing list; use Astra children for independent
    deliverables or necessary non-author checks. Runtime admission still applies.
-2. During Skill-only implementation, Sol Root owns routine scheduling, tool-result
-   handling and Luna screening; bring Astra back for material design deviations or
-   required review, not every command or generic suggestion. A Sol child still has
-   no dispatch authority. Pick the logical role: explorer, verifier, reproducer, designer, writer or
-   reviewer. Select a compatible execution profile **separately** from that role.
-   Use Astra for planning/design/acceptance and Sol for coherent implementation, tests
-   and bounded repair. Use Luna/max for supplemental probes and Luna/medium for
-   mechanical supplemental checks. Apply the qualification and escalation rules.
-   Name the concrete deliverable and evidence/coverage checks before
-   selecting Luna. Root owns conclusions whose completeness cannot be established
-   by those checks, with capable independent review where required.
+2. During Skill-only implementation, the transferred Sol execution Root owns routine
+   scheduling, tool-result handling and Luna/Grok screening; bring Astra back for
+   material design deviations or required review, not every command or generic suggestion.
+   The former Astra planning thread must not remain a concurrent implementation controller.
+   A Sol child still has no dispatch authority. Pick the logical role: explorer,
+   verifier, reproducer, designer, writer or reviewer. Select a compatible execution
+   profile **separately** from that role. Use Astra for planning/design/acceptance and
+   Sol for coherent implementation, tests and bounded repair. Use Luna/max for
+   supplemental probes and Luna/medium for mechanical supplemental checks. Apply the
+   qualification and escalation rules. Name the concrete deliverable and evidence/
+   coverage checks before selecting Luna. Root owns conclusions whose completeness
+   cannot be established by those checks, with capable independent review where required.
    The answer need not be known in advance. Batch distinct bounded exploration or
    verification directions; coverage, evidence collected or a deadline can define
    the stop rule. Unknown answers are not automatically high-risk judgments.
@@ -203,9 +211,11 @@ UNCOVERED: <remaining in-scope work, or none>
 EXPANSION_REQUEST: <bounded gap and distinct next method, or none>
 ```
 
-This is a compact Markdown contract, not a request for private reasoning. A missing
-or malformed return gets at most one concrete input/format repair; otherwise retain
-its partial evidence and mark the unresolved branch. Do not retry indefinitely.
+This is a compact Markdown contract, not a request for private reasoning.
+For Astra/Sol/Luna returns, a missing or malformed return gets at most one concrete
+input/format repair; otherwise retain partial evidence and mark the unresolved branch.
+Grok instead follows [Burst](burst.md), with no workflow-imposed duration or follow-up ceiling.
+Do not repeat a no-progress method or delay required work merely to obtain a polished return.
 
 Before each child launch or follow-up, give one short line: task + requested model
 (for example, "复核预算预留 — Astra/high"). Keep routing and budget bookkeeping
