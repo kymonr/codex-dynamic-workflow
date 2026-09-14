@@ -74,7 +74,8 @@ python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME> --apply
 ```
 
 安装默认 dry-run。`--apply` 只更新本包拥有的 Skill 文件和 cwf_* profile；
-不改 config.toml、审批、沙箱默认值、旧角色或 Git。安装前检查目标、保存精确前像，n对被替换的内容做漂移检查，完成后逐文件验证。前像不放在 Skill 扫描目录内。
+不改 config.toml、审批、沙箱默认值、旧角色或 Git。安装前检查目标、保存精确前像，
+对被替换的内容做漂移检查，完成后逐文件验证。前像不放在 Skill 扫描目录内。
 不同客户端的 discovery 路径可能不同：此安装器面向现场已有的 CODEX_HOME/skills
 布局；无此已确认布局时先验证 discovery，不能复制到多个位置制造同名 Skill。
 
