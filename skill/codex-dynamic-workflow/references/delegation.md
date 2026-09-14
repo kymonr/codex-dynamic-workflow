@@ -8,8 +8,7 @@ Astra owns key design decisions, risk boundaries and original-goal acceptance.
 Root is the current main-thread controller, not a permanently Astra-owned model role.
 For substantial explicit Skill-only work, prefer a separate Sol execution thread when
 the host can create or select an independent conversation with the required source/tool
-access and can transfer the task state described below. That Sol thread becomes the sole
-implementation Root for continuous implementation, tests, bounded repair, progress and
+access and can transfer the task state described below. That Sol thread becomes the sole implementation Root for continuous implementation, tests, bounded repair, progress and
 Luna/Grok triage. If separate controller transfer is unavailable, the user/host may
 switch the current main conversation to Sol instead. Do not replace either path with an
 Astra-supervised `cwf_sol_writer` child.
@@ -63,8 +62,7 @@ does not silently retake implementation ownership; reconcile or explicitly trans
 controller ownership before either thread performs further writes or dispatch.
 
 Before transfer, settle or explicitly transfer task-owned active children and ownership
-using real host lifecycle observations. If the host cannot transfer control of active
-children, close out task-owned children where supported; unresolved termination/resource
+using real host lifecycle observations. If the host cannot transfer control of active children, close out task-owned children where supported; unresolved termination/resource
 holds stay UNKNOWN and keep their relevant capacity/ownership reservations. A stop request
 or a new conversation never proves release. Do not terminate unrelated sessions.
 
@@ -177,8 +175,7 @@ After the writer stops, Astra reads the full actual diff, critical dependencies,
 and unresolved evidence against the original goal. It may reject the original Astra
 design. A planning Astra that did not write code can review implementation, but reusing
 that same context is not independent design review. Preserve any required high-risk/
-non-author or user-requested independent check. Runtime always requires its declared
-Astra verifier for a writer; a chat summary cannot replace that node. Recheck affected
+non-author or user-requested independent check. Runtime always requires its declared Astra verifier for a writer; a chat summary cannot replace that node. Recheck affected
 evidence after a repair, not every reviewer recursively. Rejected work returns to the
 same Sol execution Root unless an explicit controller transfer changes ownership; a
 repair cycle never creates a fresh allowance or duplicate writer by itself. Zero-model
