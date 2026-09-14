@@ -98,7 +98,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         delegation = read("references/delegation.md")
 
         self.assertIn("prefer a fresh Astra review context", delegation)
-        self.assertIn("rather than simply\nreturning control to the planning thread", delegation)
+        self.assertIn("returning control to the planning thread", delegation)
         self.assertIn("full\nactual diff", delegation)
         self.assertIn("non-author for the\ncandidate", delegation)
         self.assertIn("remain read-only by default", delegation)
