@@ -1,6 +1,6 @@
 ---
 name: codex-dynamic-workflow
-description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, Sol implementation and Astra acceptance workflow."
+description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, threaded Sol implementation and Astra acceptance workflow."
 metadata:
   version: "4.2.0"
 ---
@@ -8,7 +8,7 @@ metadata:
 # Codex Dynamic Workflow
 
 Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-14.
-Runtime remains 4.2.0.
+Threaded control-transfer revision: 2026-09-14. Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
 
@@ -19,9 +19,13 @@ Quality > automation > latency > cost > observability > recovery.
   invocation of the deprecated `$dispatching-native-agents` alias also selects it.
   Read [the full workflow](references/explicit-workflow.md) and its
   [phase handoff](references/delegation.md): Astra designs a sufficient plan and
-  acceptance checks; after a user/host model switch, Sol owns the implementation
-  main thread; a fresh Astra context reviews important deliverables. Broad Luna
-  evidence remains optional. The Skill cannot itself switch the running model.
+  acceptance checks; when the host supports a separate conversation/controller
+  handoff, transfer compact task state to a separate Sol execution thread that
+  becomes the sole implementation Root. If that controller transfer is unavailable,
+  the user/host may switch the current main conversation to Sol instead. A fresh Astra
+  review context checks important deliverables. The Skill cannot itself create or
+  switch the running controller thread, and an ordinary Sol writer child is not a
+  substitute for either handoff path.
 - **Implicit automatic supplementation**: automatic matching, an agent's own
   choice, or an AGENTS.md pointer selects the Luna/Grok instructions below.
   Merely naming, discussing or asking to edit this Skill is not an invocation of
@@ -84,9 +88,9 @@ freeze relevant inputs or serialize reads against conflicting writes.
 Use the explicitly approved task ceilings, otherwise the `policy.json` defaults;
 a stricter host or user limit always wins. Do not raise existing ceilings automatically. The default
 supplemental allowance is 12 turns within approved 28 / absolute 32; failures,
-follow-ups and retries all count. Mode changes and candidate revisions retain the
-same cumulative usage. No available model budget or an explicit no-native boundary
-means no dispatch, including Luna. Unknown account/token use stays UNKNOWN.
+follow-ups and retries all count. Mode changes, controller-thread handoffs and candidate
+revisions retain the same cumulative usage. No available model budget or an explicit
+no-native boundary means no dispatch, including Luna. Unknown account/token use stays UNKNOWN.
 
 Root checks returned evidence against current sources, deduplicates it and handles
 material risks within the original task. Luna agreement is not acceptance. An existing
