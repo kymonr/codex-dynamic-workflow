@@ -23,8 +23,8 @@ In explicit Skill-only mode, prefer Astra design -> separate Sol execution Root 
 when supported -> continuous Sol execution -> fresh Astra acceptance thread at a
 meaningful delivery or risk boundary. The same-conversation user/host model switch is
 the fallback when a separate Root thread cannot be established with equivalent task
-access. Small cohesive work need not invent phases. Implicit supplementation mode does
-not acquire this pipeline or Astra/Sol children.
+access. Small cohesive work need not invent phases. Implicit supplementation mode does not acquire this pipeline
+or Astra/Sol children.
 
 Before handing off, Astra reads the relevant raw sources and records an executable
 brief in the existing task/plan document when authorized, or in the conversation
