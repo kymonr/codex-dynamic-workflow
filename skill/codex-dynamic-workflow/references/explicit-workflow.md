@@ -102,7 +102,10 @@ host, another backend or a weaker model. Do not change configuration or permissi
    create delegation. In parallel, open at least three distinct supplemental Luna
    directions for meaningful work when capacity permits, then expand only for new
    methods or coverage. No result-count or model-ratio success criterion exists.
-   In Skill-only mode, Root may do cohesive work directly when delegation adds no value.
+   In Skill-only implementation, Sol Root writes directly by default. Delegate writing
+   only for genuinely needed, explicitly authorized isolated parallel writes with
+   disjoint ownership and an integration plan; keep sequential writing in Root.
+   A selected Runtime still requires its admitted writer child; do not bypass it.
    Role names are not a staffing list; use Astra children for independent
    deliverables or necessary non-author checks. Runtime admission still applies.
 2. During Skill-only implementation, the transferred Sol execution Root owns routine

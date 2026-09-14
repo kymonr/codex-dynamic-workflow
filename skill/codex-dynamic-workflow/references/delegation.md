@@ -99,6 +99,22 @@ Its managed steps still need admitted native child packets; moving a writer into
 or opening another conversation does not satisfy or bypass those gates. Never use
 another run or conversation to reset limits.
 
+## Direct writing is the Skill-only default
+After either handoff path, Sol Root writes directly by default: ordinary sequential
+implementation, tests and repair stay in the execution conversation. Do not delegate
+routine writing to `cwf_sol_writer` or `cwf_writer` merely because those profiles exist.
+Writer children are only for genuinely independent parallel write slices, with current
+explicit parallel-write authorization, disjoint owned files, verified host isolation,
+a defined integration owner and required non-author review. Root also counts as a writer.
+Without a real parallel need or safe isolation, keep writing in Root. Luna/Grok remain
+read-only and fresh Astra acceptance remains independent.
+This default does not change Runtime 4.2.0: managed writers still use admitted child
+packets and are serialized within the coordination DB. Do not select Runtime merely
+to delegate sequential writing, bypass a selected Runtime with direct Root writes,
+or create another DB/run to manufacture parallel-writer authority. If an existing
+Runtime conflicts with the user's direct-writing requirement, disclose that mismatch
+and reconcile the execution mode before further writes; continue unrelated safe work.
+
 ## A sufficient brief, not a second implementation
 Use the existing task/scope/sources/check/stop fields. State the original outcome, decided
 change and rationale, invariants, exact baseline and owned files, acceptance evidence,

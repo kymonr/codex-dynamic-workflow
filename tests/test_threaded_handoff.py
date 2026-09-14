@@ -7,10 +7,13 @@ children, or run the requested models.
 from pathlib import Path
 import hashlib
 import json
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skill/codex-dynamic-workflow"
+sys.path.insert(0, str(ROOT / "scripts"))
+from validate_package import parse_package_mapping
 
 
 def read(relative: str) -> str:
@@ -18,6 +21,49 @@ def read(relative: str) -> str:
 
 
 class ThreadedHandoffGuidanceTests(unittest.TestCase):
+    def assert_threaded_prompt(self, prompt):
+        for clause in ('prefer a separate Sol execution thread', 'sole implementation Root',
+                       'when the host supports controller handoff', 'writes directly by default',
+                       'same-conversation Sol model switch is only the fallback',
+                       'writer subagents only for authorized isolated parallel writes',
+                       'fresh read-only Astra context', 'existing Runtime contracts'):
+            self.assertIn(clause, prompt)
+
+    def test_ui_default_prompt_matches_threaded_direct_write_workflow(self):
+        metadata = parse_package_mapping(read("agents/openai.yaml"))
+        self.assertTrue(metadata['policy']['allow_implicit_invocation'])
+        prompt = metadata['interface']['default_prompt']
+        self.assertIn('$codex-dynamic-workflow', prompt)
+        self.assert_threaded_prompt(prompt)
+
+    def test_stale_ui_prompt_cannot_hide_behind_comments_or_descriptions(self):
+        metadata = read("agents/openai.yaml")
+        parsed = parse_package_mapping(metadata)
+        current = parsed['interface']['default_prompt']
+        stale = ('Use $codex-dynamic-workflow: a user/host switch lets Sol own '
+                 'the execution main thread; a fresh Astra context reviews it.')
+        changed = metadata.replace(json.dumps(current), json.dumps(stale))
+        changed += '\n# ' + current + '\n'
+        actual = parse_package_mapping(changed)['interface']['default_prompt']
+        with self.assertRaises(AssertionError):
+            self.assert_threaded_prompt(actual)
+
+    def test_direct_root_writes_and_parallel_exception_are_consistent(self):
+        for relative in ('SKILL.md', 'references/delegation.md', 'references/explicit-workflow.md',
+                         'references/patterns.md'):
+            text = ' '.join(read(relative).split())
+            with self.subTest(relative=relative):
+                self.assertIn('Sol Root writes directly by default', text)
+                self.assertIn('parallel write', text)
+        patterns = ' '.join(read('references/patterns.md').split())
+        self.assertIn('separate Sol execution thread', patterns)
+        self.assertIn('same-conversation Sol model switch is only the fallback', patterns)
+        delegation = ' '.join(read('references/delegation.md').split())
+        for clause in ('Do not delegate routine writing', 'explicit parallel-write authorization',
+                       'disjoint owned files', 'required non-author review',
+                       'serialized within the coordination DB', 'disclose that mismatch'):
+            self.assertIn(clause, delegation)
+
     def test_explicit_mode_prefers_separate_sol_execution_root_with_safe_fallback(self):
         entry = read("SKILL.md")
         delegation = read("references/delegation.md")
@@ -124,6 +170,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
             "profiles/cwf_sol_writer.toml",
             "skill/codex-dynamic-workflow/README.md",
             "skill/codex-dynamic-workflow/SKILL.md",
+            "skill/codex-dynamic-workflow/agents/openai.yaml",
             "skill/codex-dynamic-workflow/references/burst.md",
             "skill/codex-dynamic-workflow/references/delegation.md",
             "skill/codex-dynamic-workflow/references/explicit-workflow.md",

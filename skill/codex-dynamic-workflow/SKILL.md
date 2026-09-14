@@ -25,7 +25,10 @@ Quality > automation > latency > cost > observability > recovery.
   the user/host may switch the current main conversation to Sol instead. A fresh Astra
   review context checks important deliverables. The Skill cannot itself switch the running model
   or create/switch a controller thread; an ordinary Sol writer child is not a substitute
-  for either handoff path.
+  for either handoff path. In Skill-only implementation, Sol Root writes directly
+  by default; writer subagents are only for genuinely needed, explicitly authorized
+  isolated parallel writes. Keep sequential writing in Root. Existing Runtime
+  writer admission remains unchanged; do not select Runtime to bypass this preference.
 - **Implicit automatic supplementation**: automatic matching, an agent's own
   choice, or an AGENTS.md pointer selects the Luna/Grok instructions below.
   Merely naming, discussing or asking to edit this Skill is not an invocation of
