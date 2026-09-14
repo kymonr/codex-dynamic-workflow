@@ -63,11 +63,19 @@ requires disclosing the capability gap and blocking affected acceptance, not mut
 the contract or starting a new run to reset spending. Higher effort is not proof of
 independence, source coverage or successful verification.
 
-Root owns the complete mainline objective. In explicit Skill-only work, a user/host
-switch can make Sol the implementation Root; profiles do not switch the parent.
-The no-parent-reconfiguration rule forbids agent configuration edits, not the user's
-manual model selection. Preserve task state and verify observed identity; a child
-profile never grants controller authority. Runtime packets/routes stay unchanged.
+Root owns the complete mainline objective. In explicit Skill-only work, when the host
+supports a separate controller conversation with the necessary repository/tool access,
+prefer transferring compact task state to that separate Sol execution thread and make
+it the sole implementation Root. If the host cannot establish that controller transfer,
+a user/host model switch in the current main conversation is the fallback. Profiles do
+not switch or promote a controller: `cwf_sol_writer` remains a child profile and never
+gains dispatch authority merely because its model is Sol. The no-parent-reconfiguration
+rule forbids agent configuration edits, not the user's/host's supported conversation or
+model controls. Preserve authorization, candidate/source identity, ownership, unresolved
+claims, deadlines and cumulative spent/reserved allowance across either handoff path.
+Do not create a new Runtime run, fresh quota or second active writer/controller because
+the conversation changed. Verify observed identity and controller/source capability;
+unknown host state remains UNKNOWN. Runtime packets/routes stay unchanged.
 Astra designs and accepts; Sol implements, tests and repairs under
 the [delegation contract](delegation.md). Do not move required work to Luna because it is bounded or
 read-only. For every meaningful non-trivial task, proactively use cwf_general for
@@ -144,6 +152,10 @@ results and report the exact limitation; do not silently substitute another mapp
 
 A host may cap open threads, not only running turns. Use its actual completion/closure
 contract; idle is not automatically closed and interrupt is not confirmed termination.
+A controller handoff does not release old child/writer ownership by itself. Before the
+Sol execution Root takes control, settle or explicitly transfer task-owned active work
+using observed host lifecycle state; unresolved holds remain UNKNOWN. After transfer,
+the former planning thread must not dispatch or write against the same candidate.
 On capacity failure inspect once, queue eligible work, and avoid retry loops. A queued
 branch remains accounted for. Never spawn past capacity or free an unconfirmed writer.
 A host-confirmed completed readonly turn with settled tools can reconcile execution through the Runtime protocol while its host-resource reservation remains UNKNOWN. Keep execution completion and host-resource cleanup separate.
