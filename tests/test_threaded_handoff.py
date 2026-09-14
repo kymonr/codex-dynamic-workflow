@@ -119,6 +119,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
     def test_source_manifest_tracks_threaded_handoff_files(self):
         manifest = json.loads((ROOT / "SOURCE_MANIFEST.json").read_text(encoding="utf-8"))
         tracked = (
+            "CHANGELOG.md",
             "README.md",
             "profiles/cwf_sol_writer.toml",
             "skill/codex-dynamic-workflow/README.md",
