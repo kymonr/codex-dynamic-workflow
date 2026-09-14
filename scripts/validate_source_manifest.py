@@ -32,7 +32,7 @@ def source_path(root: Path, relative: str) -> Path:
             or any(c in relative for c in '\\:\x00*?')
             or PurePosixPath(relative).is_absolute()
             or PurePosixPath(relative).as_posix() != relative
-            or any(p in {'.', '..', '.git'} or p.rstrip(' .') != p
+            or any(p in {'.', '..'} or p.casefold() == '.git' or p.rstrip(' .') != p
                    for p in relative.split('/'))):
         raise ValueError('unsafe/noncanonical manifest path: ' + repr(relative))
     current = root

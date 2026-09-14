@@ -27,11 +27,13 @@ At least one useful counterexample direction should challenge the design itself.
 Removing Luna leaves necessary implementation, tests and review intact, but Root
 need not repeat every search: reopen current raw evidence for material adoption.
 
-Before launch, give each probe one question, exact snapshot/source entry points,
+Before launch, give each Luna probe one question, exact snapshot/source entry points,
 read scope, objective coverage goal and a finite cutoff bounded by the task's
-remaining window. An intended cutoff is not an enforced host timer. Routine probes
+remaining window. An intended cutoff is not an enforced host timer. Routine Luna probes
 get at most one follow-up with concrete new input within the same allowance and
 cutoff; no indefinite retry, recursive audit or long-form report polishing.
+Grok follows [Burst](burst.md), with no workflow-imposed duration or follow-up ceiling;
+usefulness, authorization, provider availability, backpressure and cancellation still govern it.
 Keep useful partial results and every received plausible risk even on failure or
 interruption. Unknown is not negative evidence. A genuinely necessary unresolved
 question becomes owned mainline work, not a dependency on the optional probe.

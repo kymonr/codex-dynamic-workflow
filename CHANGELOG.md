@@ -1,6 +1,11 @@
 # Changelog
 
 ## 4.2.0 threaded controller-handoff revision — 2026-09-14 (unreleased)
+Adversarial follow-up: scope routine probe time/follow-up bounds to Astra/Sol/Luna
+so the optional Grok Burst exception remains effective. Align routing and writing
+references with direct Sol Root writing, clarify the current Runtime Sol writer
+route, and reject mixed-case Git control directories during full-manifest checks.
+These fixes retain Runtime code, saved contracts and all independent acceptance gates.
 
 For substantial explicit Skill-only work, prefer Astra planning in one context,
 transfer the same task to a separate Sol execution conversation that becomes the

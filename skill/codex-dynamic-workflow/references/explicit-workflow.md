@@ -211,9 +211,11 @@ UNCOVERED: <remaining in-scope work, or none>
 EXPANSION_REQUEST: <bounded gap and distinct next method, or none>
 ```
 
-This is a compact Markdown contract, not a request for private reasoning. A missing
-or malformed return gets at most one concrete input/format repair; otherwise retain
-its partial evidence and mark the unresolved branch. Do not retry indefinitely.
+This is a compact Markdown contract, not a request for private reasoning.
+For Astra/Sol/Luna returns, a missing or malformed return gets at most one concrete
+input/format repair; otherwise retain partial evidence and mark the unresolved branch.
+Grok instead follows [Burst](burst.md), with no workflow-imposed duration or follow-up ceiling.
+Do not repeat a no-progress method or delay required work merely to obtain a polished return.
 
 Before each child launch or follow-up, give one short line: task + requested model
 (for example, "复核预算预留 — Astra/high"). Keep routing and budget bookkeeping

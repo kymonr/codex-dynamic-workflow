@@ -24,7 +24,7 @@ This package ships six optional profiles, installed separately from openai.yaml;
 | Profile | Initial mapping | Capability contract |
 |---|---|---|
 | cwf_reader | Astra / selected effort (default high) | Bounded read-only raw-source analysis and independent judgment |
-| cwf_sol_writer | Sol / selected effort (default high) | Default scoped implementation, tests and repairs; never final acceptance |
+| cwf_sol_writer | Sol / selected effort (default high) | Runtime writer or authorized isolated parallel write slice; never final acceptance |
 | cwf_writer | Astra / selected effort (default high) | Preserved for old contracts and explicit compatible Skill-only use |
 | cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
@@ -137,9 +137,11 @@ not equal task quality between models. Any quality comparison must use the same
 representative tasks and candidate sources, verified omissions/false findings and
 rework; successful routing or additional agent count is not that comparison.
 
-Writing is not enabled by cwf_mechanical or cwf_general. Use the dedicated cwf_sol_writer
-for new implementation, with closed scope and required Astra acceptance; never defeat
-a non-writer profile by relabeling it. There is no automatic expensive fallback
+Writing is not enabled by cwf_mechanical or cwf_general. In Skill-only work,
+Sol Root writes directly by default. Use cwf_sol_writer only for admitted Runtime writing
+or authorized isolated parallel writes, with closed scope and required Astra acceptance.
+Do not delegate routine sequential writing or defeat a non-writer profile by relabeling it.
+There is no automatic expensive fallback
 outside the approved allowance. Incompatible explicit user route/model selections
 are surfaced, not silently rewritten.
 

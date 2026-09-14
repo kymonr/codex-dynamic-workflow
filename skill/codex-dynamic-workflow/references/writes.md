@@ -25,6 +25,12 @@ or other external effects require separate authority. Report tests that cannot r
 
 ## Writer contract
 
+In Skill-only work, Sol Root writes directly by default. Routine sequential writing,
+tests and repair stay in the execution conversation. Writer children are reserved for
+genuinely needed, explicitly authorized isolated parallel writes; see [delegation](delegation.md).
+A selected Runtime retains its admitted writer-child protocol and serializes writers.
+Do not bypass that protocol or select Runtime just to outsource sequential writing.
+
 Default one active writer (Sol for new implementation), counting Root. A writer gets a decided task, acceptance
 criteria, exact baseline, closed owned files and allowed effects. It reads original
 sources and necessary dependencies; decisions are constraints, not proof that a

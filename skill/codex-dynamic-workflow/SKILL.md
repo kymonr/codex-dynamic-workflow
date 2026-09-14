@@ -111,12 +111,14 @@ user's data and unrelated changes; this Skill does not expand write or publish a
 ## Nonblocking supplementation in either mode
 
 Removing Luna and Burst must leave the required implementation, tests and acceptance intact.
-Give each probe a finite cutoff as well as a coverage goal; neither is a reason for
+Give each Luna probe a finite cutoff as well as a coverage goal; neither is a reason for
 Root to wait. Screen ordinary returns at natural task checkpoints, not on every
 message. A credible severe risk or an imminent irreversible action gets immediate
 source-based attention; block the affected operation, not unrelated safe work.
-Routine probes get at most one follow-up with concrete new input inside the SAME
+Routine Luna probes get at most one follow-up with concrete new input inside the SAME
 allowance and cutoff. Preserve partial/early findings when a probe stops.
+Grok instead follows [Burst](references/burst.md), with no workflow-imposed duration
+or follow-up ceiling. User/task deadlines, cancellation and backpressure still apply.
 When reports or shared CPU, I/O, locks or native slots become a bottleneck, pause
 new optional launches rather than lowering review standards or discarding risks.
 Do not wait solely for optional Luna or Grok completion. Without a real post-delivery result

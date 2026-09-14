@@ -23,8 +23,9 @@ One deferred-binding exception permits a required writer's verifier/reviewer to 
 
 ## Routing qualification
 
-New CLI and Python runs default to `workflow: "astra-mainline"`; the complete mainline
-uses Astra. Only optional `supplemental: true` nodes may select Luna, with a matching
+New CLI and Python runs default to `workflow: "astra-mainline"`. In new 4.2 contracts,
+the Sol writer implements; required non-writer mainline nodes use Astra. Older saved contracts retain
+their exact writer routes and counters. Only optional `supplemental: true` nodes may select Luna, with a matching
 isolated `snapshot_root`. They cannot write, verify required work or feed mainline
 dependencies. See the [v4 supplemental protocol](supplemental.md) for the full rules.
 The legacy routing options described below apply only to explicit `workflow: "legacy"`
