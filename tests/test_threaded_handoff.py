@@ -33,13 +33,13 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
     def test_control_transfer_keeps_exactly_one_implementation_root(self):
         delegation = read("references/delegation.md")
         routing = read("references/host-routing.md")
+        explicit = read("references/explicit-workflow.md")
 
         self.assertIn("exactly one implementation Root", delegation)
         self.assertIn("stops writing, dispatching", delegation)
-        self.assertIn("must not remain a concurrent implementation controller", explicit := read("references/explicit-workflow.md"))
+        self.assertIn("must not remain a concurrent implementation controller", explicit)
         self.assertIn("former planning thread must not dispatch or write", routing)
         self.assertIn("Do not leave two Roots", delegation)
-        self.assertIn("default_writer_count", read("policy.json"))
         policy = json.loads(read("policy.json"))
         self.assertEqual(policy["default_writer_count"], 1)
         self.assertFalse(policy["overlapping_writers"])
@@ -94,8 +94,8 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
 
         self.assertIn("manual Skill-only handoff is NOT Runtime handoff", delegation)
         self.assertIn("admitted native child packets", delegation)
-        self.assertIn("threaded Skill-only Root", skill_readme)
-        self.assertIn("cannot bypass Runtime", skill_readme)
+        self.assertIn("Skill-only Root 交接", skill_readme)
+        self.assertIn("不能绕过 Runtime", skill_readme)
 
 
 if __name__ == "__main__":
