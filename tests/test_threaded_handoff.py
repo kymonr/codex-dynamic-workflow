@@ -63,11 +63,15 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
 
     def test_unknown_usage_and_supplemental_history_do_not_restart_on_new_thread(self):
         delegation = read("references/delegation.md")
+        burst = read("references/burst.md")
 
         self.assertIn("automatic Burst probe already ran or was skipped", delegation)
         self.assertIn("do not treat UNKNOWN\nusage as zero", delegation)
         self.assertIn("do not re-trigger the normal\nthree-probe intent", delegation)
         self.assertIn("explicit new user allowance", delegation)
+        self.assertIn("handoff is still the SAME task", burst)
+        self.assertIn("Do not treat a new Sol execution thread", burst)
+        self.assertIn("handoff itself is not that distinction", burst)
 
     def test_active_ownership_and_unknown_release_survive_thread_change(self):
         delegation = read("references/delegation.md")
@@ -119,6 +123,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
             "profiles/cwf_sol_writer.toml",
             "skill/codex-dynamic-workflow/README.md",
             "skill/codex-dynamic-workflow/SKILL.md",
+            "skill/codex-dynamic-workflow/references/burst.md",
             "skill/codex-dynamic-workflow/references/delegation.md",
             "skill/codex-dynamic-workflow/references/explicit-workflow.md",
             "skill/codex-dynamic-workflow/references/host-routing.md",
