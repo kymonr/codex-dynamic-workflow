@@ -74,8 +74,7 @@ python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME> --apply
 ```
 
 安装默认 dry-run。`--apply` 只更新本包拥有的 Skill 文件和 cwf_* profile；
-不改 config.toml、审批、沙箱默认值、旧角色或 Git。安装前检查目标、保存精确前像，
-对被替换的内容做漂移检查，完成后逐文件验证。前像不放在 Skill 扫描目录内。
+不改 config.toml、审批、沙箱默认值、旧角色或 Git。安装前检查目标、保存精确前像，n对被替换的内容做漂移检查，完成后逐文件验证。前像不放在 Skill 扫描目录内。
 不同客户端的 discovery 路径可能不同：此安装器面向现场已有的 CODEX_HOME/skills
 布局；无此已确认布局时先验证 discovery，不能复制到多个位置制造同名 Skill。
 
@@ -180,3 +179,24 @@ python -B scripts/workflow.py --db .delivery/runtime.sqlite status --run RUN_ID
 确定性测试覆盖真实 SQLite、竞争准入、负面状态、隔离安装副本及无害本机进程；这些不是实际模型或 native 子代理的端到端证明。真实调用和独立模型 review 的状态以 `reports/` 本轮记录为准。未完成的 live 集成验收不能标记为通过。
 
 历史 v3 在 2026-09-06 已通过两代理真实 native readonly 执行验收，使用安装副本完成准入、实际身份绑定、原文检查、独立验证、宿主完成观察及 SQLite 重开读回。执行协调与宿主资源释放分别记账：本次 `execution_holds=0`，两条 `host_resource_holds` 仍保留，物理回收状态为 `UNKNOWN`。本地完整证据位于 `reports/native-readonly-live-20260906/report.md`；可分发源码副本不包含本地报告。
+
+## 4.1 收尾与实际验证
+
+[4.1 协议](skill/codex-dynamic-workflow/references/followup.md)定义 notes/claims 分流、批量 screen、
+显式 resolve、增量 report，以及新候选在剩余额度内重新开放补充检查。
+主线不等全部 Luna，但不把“主线已完成”当作立即中断有效探针的唯一理由。
+继续运行必须有真实结果接收者和有界截止；控制器不创建后台接收机制。
+真实宿主与效果比较按 `reports/V41_NATIVE_VALIDATION_PROTOCOL.md`执行；
+[evaluate_native_comparison.py](scripts/evaluate_native_comparison.py)只是读取实际记录的比较器，不调用模型。
+当前 `reports/V41_NATIVE_COMPARISON_STATUS.json`为 PARTIAL / NOT_QUALIFIED，正式原生验收未通过。
+本轮零模型采集器与 subprocess runner 接手审查记录位于 `reports/native-validation-2026-09-11/COLLECTOR_REVIEW.md`；零模型集成已覆盖事件、RPC、持久化和清理观察，但未连接真实 Codex 模型宿主，不等于正式原生验收通过。
+
+## 4.2.0：Astra 设计与验收，Sol 实施
+
+不增加第二套调度器、账本或固定审查层。新 Runtime 沿用 astra-mainline 与现有节点字段，
+writer 改走专属 Sol profile；实现调用计入总额度，不侵占 Astra strong 计数，也不借用机械储备。
+必须提前声明并保留必要 Astra 复核额度；不因没额度而用 Sol 自审或 Luna 投票替代验收。
+三个不同 Luna 方向是每个实质任务的启动意图，不是每阶段重开三名；新增方向须有实际覆盖价值。
+规划说明使用现有 task/scope/check/stop 字段，Sol 可以用源码反证设计，Astra 最终必须审查方案本身。
+本次更新与历史原生补验分开记录：reports/V420_ACCEPTANCE_2026-09-12.md。
+当前只做零模型代码/包验证；未运行新的原生模型，不宣称实际额度节省或正式原生验收通过。
