@@ -5,6 +5,7 @@ particular host can create independent controller conversations, transfer native
 children, or run the requested models.
 """
 from pathlib import Path
+import hashlib
 import json
 import unittest
 
@@ -110,6 +111,29 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         self.assertIn("admitted native child packets", delegation)
         self.assertIn("Skill-only Root 交接", skill_readme)
         self.assertIn("不能绕过 Runtime", skill_readme)
+
+    def test_source_manifest_tracks_threaded_handoff_files(self):
+        manifest = json.loads((ROOT / "SOURCE_MANIFEST.json").read_text(encoding="utf-8"))
+        tracked = (
+            "README.md",
+            "profiles/cwf_sol_writer.toml",
+            "skill/codex-dynamic-workflow/README.md",
+            "skill/codex-dynamic-workflow/SKILL.md",
+            "skill/codex-dynamic-workflow/references/delegation.md",
+            "skill/codex-dynamic-workflow/references/explicit-workflow.md",
+            "skill/codex-dynamic-workflow/references/host-routing.md",
+            "tests/test_threaded_handoff.py",
+        )
+        actual = {
+            path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+            for path in tracked
+        }
+        mismatches = {
+            path: {"manifest": manifest.get(path), "actual": actual[path]}
+            for path in tracked
+            if manifest.get(path) != actual[path]
+        }
+        self.assertEqual(mismatches, {}, json.dumps(mismatches, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
