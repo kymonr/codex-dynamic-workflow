@@ -36,8 +36,10 @@ Git merely for handoff); relevant uncommitted changes; protected/owned files; cu
 authorization and allowed effects; invariants and design rationale; staged dependencies;
 concrete acceptance checks and expected evidence; unresolved assumptions and claims;
 escalation conditions; active child/writer ownership and lifecycle holds; deadlines;
-and the cumulative spent/reserved allowance. The receiving thread continues this exact
-task and mode; opening a new conversation is not a new invocation or a new allowance.
+the cumulative spent/reserved allowance; and completed/pending supplemental direction
+identities, including whether the automatic Burst probe already ran or was skipped and
+which returned risks remain open. The receiving thread continues this exact task and
+mode; opening a new conversation is not a new invocation or a new allowance.
 A full outcome/acceptance plan is not a line-by-line implementation script. Detail
 the next executable stage; keep later stages revisable when evidence changes.
 
@@ -56,7 +58,9 @@ Sol execution thread takes ownership, the Astra planning thread stops writing, d
 changing candidate state or acting as a second controller. It may remain available as
 read-only historical context, but material design escalation is a bounded consultation,
 not concurrent control. Do not leave two Roots believing they own the same writer,
-children, candidate or merge boundary.
+children, candidate or merge boundary. A later user message in the old planning thread
+does not silently retake implementation ownership; reconcile or explicitly transfer
+controller ownership before either thread performs further writes or dispatch.
 
 Before transfer, settle or explicitly transfer task-owned active children and ownership
 using real host lifecycle observations. If the host cannot transfer control of active
@@ -68,11 +72,17 @@ The task, source identities, allowed effects, unresolved claims, deadlines, acti
 ownership and spent/reserved allowance continue across the handoff. It is the SAME task
 allowance: do not reset counters, invent fresh probe quotas, create a new Runtime run,
 expand permissions or create parallel writer authority because the conversation changed.
-Sol reopens the named original sources and checks the compact brief against the current
-tree; stale assumptions need reconciliation, not blind execution or wholesale replanning.
-Do not copy every log, full conversation history or other agents' conclusions into the
-execution thread. Preserve the original requirements and decisions needed to understand
-the task, then rely on current raw sources.
+If prior Skill-only launch usage cannot be reconstructed exactly, do not treat UNKNOWN
+usage as zero: preserve the known lower bound/UNKNOWN state and do not spend optional
+allowance that cannot be shown to remain. An explicit new user allowance may extend the
+same task; it does not erase prior use. Thread changes also do not re-trigger the normal
+three-probe intent or the automatic Burst preference for already-covered questions.
+Sol reopens the current Skill entry/relevant references plus the named original sources,
+then checks the compact brief against the current tree. Stale assumptions need
+reconciliation, not blind execution or wholesale replanning. Do not copy every log,
+full conversation history or other agents' conclusions into the execution thread.
+Preserve the original requirements and decisions needed to understand the task, then
+rely on current raw sources.
 
 If a separate Sol Root thread cannot be established safely, keep the existing fallback:
 the user/host switches the current main conversation to Sol and preserves the same task
@@ -154,10 +164,15 @@ review thread, rather than simply returning control to the planning thread. Pass
 original requirements, selected explicit workflow mode, exact candidate identity, full
 actual diff, critical dependencies, tests/evidence, unresolved risks, allowed review
 effects and the remaining/reserved acceptance allowance; the plan is review input, not
-an instruction to confirm it. Do not copy the full planning or implementation conversation
-as the reviewer's premise. Check beyond Luna's findings list and any Grok findings.
-Missing fresh context or raw-source access must be disclosed and cannot waive required
-independent verification.
+an instruction to confirm it. The fresh Astra acceptance thread is non-author for the
+candidate and should remain read-only by default. If it writes or repairs the candidate,
+it loses non-author status for those bytes and a different capable reviewer must perform
+any still-required independent acceptance. Do not copy the full planning or implementation
+conversation as the reviewer's premise. Check beyond Luna's findings list and any Grok
+findings. Prefer a genuinely fresh context rather than a full-history fork; if the host
+can only provide inherited context, disclose that independence limit and do not claim a
+blind independent design review from it. Missing fresh context or raw-source access must
+be disclosed and cannot waive required independent verification.
 After the writer stops, Astra reads the full actual diff, critical dependencies, tests
 and unresolved evidence against the original goal. It may reject the original Astra
 design. A planning Astra that did not write code can review implementation, but reusing
