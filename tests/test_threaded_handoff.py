@@ -40,22 +40,33 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         self.assertIn("must not remain a concurrent implementation controller", explicit)
         self.assertIn("former planning thread must not dispatch or write", routing)
         self.assertIn("Do not leave two Roots", delegation)
+        self.assertIn("does not silently retake implementation ownership", delegation)
         policy = json.loads(read("policy.json"))
         self.assertEqual(policy["default_writer_count"], 1)
         self.assertFalse(policy["overlapping_writers"])
 
-    def test_new_thread_never_resets_authority_budget_or_runtime(self):
+    def test_new_thread_preserves_explicit_mode_and_never_resets_budget_or_runtime(self):
         entry = read("SKILL.md")
         delegation = read("references/delegation.md")
         routing = read("references/host-routing.md")
 
         self.assertIn("controller-thread handoffs", entry)
-        self.assertIn("SAME task allowance", delegation)
+        self.assertIn("explicit full workflow", delegation)
+        self.assertIn("continues this exact task and\nmode", delegation)
+        self.assertIn("SAME task\nallowance", delegation)
         self.assertIn("do not reset counters", delegation)
         self.assertIn("expand permissions", delegation)
         self.assertIn("same DB/run, immutable routes", delegation)
         self.assertIn("another run or conversation to reset limits", delegation)
         self.assertIn("Do not create a new Runtime run", routing)
+
+    def test_unknown_usage_and_supplemental_history_do_not_restart_on_new_thread(self):
+        delegation = read("references/delegation.md")
+
+        self.assertIn("automatic Burst probe already ran or was skipped", delegation)
+        self.assertIn("do not treat UNKNOWN\nusage as zero", delegation)
+        self.assertIn("do not re-trigger the normal\nthree-probe intent", delegation)
+        self.assertIn("explicit new user allowance", delegation)
 
     def test_active_ownership_and_unknown_release_survive_thread_change(self):
         delegation = read("references/delegation.md")
@@ -78,13 +89,16 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         self.assertIn("new conversation also does not promote", writer)
         self.assertIn("Model identity never grants Root authority to a child", delegation)
 
-    def test_fresh_astra_review_is_not_the_planning_context_or_a_summary_review(self):
+    def test_fresh_astra_review_is_non_author_and_not_the_planning_context(self):
         delegation = read("references/delegation.md")
 
-        self.assertIn("fresh Astra review thread/context", delegation)
+        self.assertIn("prefer a fresh Astra review context", delegation)
         self.assertIn("rather than simply\nreturning control to the planning thread", delegation)
-        self.assertIn("full actual diff", delegation)
-        self.assertIn("Do not copy the full planning", delegation)
+        self.assertIn("full\nactual diff", delegation)
+        self.assertIn("non-author for the\ncandidate", delegation)
+        self.assertIn("remain read-only by default", delegation)
+        self.assertIn("loses non-author status", delegation)
+        self.assertIn("full-history fork", delegation)
         self.assertIn("It may reject the original Astra\ndesign", delegation)
         self.assertIn("same Sol execution Root", delegation)
 
