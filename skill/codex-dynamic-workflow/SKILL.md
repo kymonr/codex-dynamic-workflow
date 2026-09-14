@@ -23,8 +23,8 @@ Quality > automation > latency > cost > observability > recovery.
   handoff, transfer compact task state to a separate Sol execution thread that
   becomes the sole implementation Root. If that controller transfer is unavailable,
   the user/host may switch the current main conversation to Sol instead. A fresh Astra
-  review context checks important deliverables. The Skill cannot itself create or
-  switch the running controller thread, and an ordinary Sol writer child is not a
+  review context checks important deliverables. The Skill cannot itself switch the running model
+  or create/switch a controller thread; an ordinary Sol writer child is not a
   substitute for either handoff path.
 - **Implicit automatic supplementation**: automatic matching, an agent's own
   choice, or an AGENTS.md pointer selects the Luna/Grok instructions below.
