@@ -29,13 +29,15 @@ not acquire this pipeline or Astra/Sol children.
 
 Before handing off, Astra reads the relevant raw sources and records an executable
 brief in the existing task/plan document when authorized, or in the conversation
-otherwise. Include the original outcome and non-goals, the baseline commit when
-Git exists (otherwise exact source hashes or a bound snapshot; do not initialize
-Git merely for handoff), relevant uncommitted changes, protected/owned files,
-current authorization and allowed effects, invariants and design rationale,
-staged dependencies, concrete acceptance checks and expected evidence, unresolved
-assumptions and claims, escalation conditions, active child/writer ownership and
-lifecycle holds, deadlines, and the cumulative spent/reserved allowance.
+otherwise. Include the original outcome and non-goals; the selected workflow mode
+(`explicit full workflow`) and applicable Skill/runtime revision; the baseline commit
+when Git exists (otherwise exact source hashes or a bound snapshot; do not initialize
+Git merely for handoff); relevant uncommitted changes; protected/owned files; current
+authorization and allowed effects; invariants and design rationale; staged dependencies;
+concrete acceptance checks and expected evidence; unresolved assumptions and claims;
+escalation conditions; active child/writer ownership and lifecycle holds; deadlines;
+and the cumulative spent/reserved allowance. The receiving thread continues this exact
+task and mode; opening a new conversation is not a new invocation or a new allowance.
 A full outcome/acceptance plan is not a line-by-line implementation script. Detail
 the next executable stage; keep later stages revisable when evidence changes.
 
@@ -43,9 +45,11 @@ the next executable stage; keep later stages revisable when evidence changes.
 When the host supports it, start or select the separate Sol execution conversation
 through the actual host/user control and pass only the compact handoff state needed to
 resume the task. The Skill cannot create an unsupported controller thread, silently
-reconfigure a parent, or claim a transfer from prose alone. Verify the selected model,
-effort, repository/source access and controller capability from exposed host state when
-available; otherwise record unknown facts as UNKNOWN, not as Sol or transferred.
+reconfigure a parent, or claim a transfer from prose alone. Only the user/host can create,
+select or switch the running controller conversation/model through supported controls.
+Verify the selected model, effort, repository/source access and controller capability
+from exposed host state when available; otherwise record effective identity UNKNOWN,
+not Sol, and controller transfer UNKNOWN rather than claiming success.
 
 A successful transfer has exactly one implementation Root for the candidate. Once the
 Sol execution thread takes ownership, the Astra planning thread stops writing, dispatching,
@@ -145,13 +149,15 @@ Sol may be a promoted implementation target, but cannot supply a passing issue r
 use applicable Astra evidence, and an independent writer verifier for fixed outcomes.
 
 ## Non-author acceptance is not automatic independence
-For important deliverables, use a fresh Astra review thread/context rather than simply
-returning control to the planning thread. Pass the original requirements, exact candidate
-identity, full actual diff, critical dependencies, tests/evidence and unresolved risks;
-the plan is review input, not an instruction to confirm it. Do not copy the full planning
-or implementation conversation as the reviewer's premise, and check beyond Luna/Grok
-findings. Missing fresh context or raw-source access must be disclosed and cannot waive
-required independent verification.
+For important deliverables, prefer a fresh Astra review context, normally a separate
+review thread, rather than simply returning control to the planning thread. Pass the
+original requirements, selected explicit workflow mode, exact candidate identity, full
+actual diff, critical dependencies, tests/evidence, unresolved risks, allowed review
+effects and the remaining/reserved acceptance allowance; the plan is review input, not
+an instruction to confirm it. Do not copy the full planning or implementation conversation
+as the reviewer's premise. Check beyond Luna's findings list and any Grok findings.
+Missing fresh context or raw-source access must be disclosed and cannot waive required
+independent verification.
 After the writer stops, Astra reads the full actual diff, critical dependencies, tests
 and unresolved evidence against the original goal. It may reject the original Astra
 design. A planning Astra that did not write code can review implementation, but reusing
