@@ -35,7 +35,7 @@ Sol 接管后重新读取实际源码和依赖，不盲信 Astra 摘要，不为
 
 `cwf_sol_writer` 仍是普通 writer-child profile，不是 Sol execution Root；模型身份或“新开一个对话”本身都不会授予 controller/dispatch 权。只有实际当前 Root 才能调度 Luna/Grok。Skill 不能凭文本自动创建或切换 controller，只有实际宿主/用户控制可以完成并观察交接。
 
-这是 Skill 4.3.0 的 Skill-only 交接规则；**Runtime 仍为 4.2.0**，包版本与 Runtime 版本独立校验，同一 DB/run、固定路由、writer/verifier admission、默认 12 次补充/28 次批准/32 次绝对调用额度和必要独立验收全部不变。真实原生线程记录见 [E2E 证据](reports/V430_THREADED_E2E_2026-09-18.md)；最终独立审核和对应提交的 CI 结果随发布 PR/release 记录。安装结果单独核验，不能从源码版本推断本机已更新。详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
+这是 Skill 4.3.0 的 Skill-only 交接规则；**Runtime 仍为 4.2.0**，包版本与 Runtime 版本独立校验，同一 DB/run、固定路由、writer/verifier admission、默认 12 次补充/28 次批准/32 次绝对调用额度和必要独立验收全部不变。真实原生线程记录见 [E2E 证据](https://github.com/kymonr/codex-dynamic-workflow/blob/d7eb54cabf87c69feef5a5c4c3e97c8a91feea84/reports/V430_THREADED_E2E_2026-09-18.md)；最终独立审核和对应提交的 CI 结果随发布 PR/release 记录。安装结果单独核验，不能从源码版本推断本机已更新。详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
 
 复杂任务有足够独立问题时，争取 **6–12 个 Luna 调查方向**，按实际空闲容量分批，不凑数量、不同阶段不重复整批审查。
 更多方向可采用事先明确批准的新任务额度；[预算说明](skill/codex-dynamic-workflow/references/budget.md)提供 24 次补充尝试的配置示例，而不暗中上调旧合同。

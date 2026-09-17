@@ -19,7 +19,7 @@
 - Add positive 4.3.0/4.2.0 coverage and negative declaration, core-version, support,
   routing, profile and budget mutations. Record real top-level Astra/Sol/Astra
   execution, the initial independent rejection and same-Sol repair in
-  [native E2E evidence](reports/V430_THREADED_E2E_2026-09-18.md). Final acceptance
+  [native E2E evidence](https://github.com/kymonr/codex-dynamic-workflow/blob/d7eb54cabf87c69feef5a5c4c3e97c8a91feea84/reports/V430_THREADED_E2E_2026-09-18.md). Final acceptance
   and exact-head CI remain release gates, recorded on the release PR/release.
 
 ## 4.2.0 threaded controller-handoff revision — 2026-09-14 (unreleased)
