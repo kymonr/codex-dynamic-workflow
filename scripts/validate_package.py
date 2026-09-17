@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = Path('skill/codex-dynamic-workflow')
 LEGACY_SKILL = Path('skill/dispatching-native-agents')
 PROFILE_NAMES = ('cwf_reader', 'cwf_writer', 'cwf_sol_writer', 'cwf_general', 'cwf_mechanical', 'cwf_burst_grok')
+RUNTIME_VERSION = '4.2.0'
 
 
 def unique_pairs(pairs: list[tuple]) -> dict:
@@ -150,12 +151,22 @@ def validate(root: Path = ROOT) -> list[str]:
         main = (root / SKILL / 'SKILL.md').read_text(encoding='utf-8')
     except (OSError, ValueError) as exc:
         return [f'missing or invalid required input: {exc}']
-    version = policy.get('skill_version')
-    if not isinstance(version,str) or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version) is None:
+    skill_version = policy.get('skill_version')
+    if not isinstance(skill_version,str) or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', skill_version) is None:
         errors.append('invalid package skill_version')
-        version = 'INVALID'
+        skill_version = 'INVALID'
+    runtime = policy.get('runtime')
+    if not isinstance(runtime, dict):
+        errors.append('runtime must be an object')
+        runtime = {}
+    declared_runtime_version = runtime.get('version')
+    if not isinstance(declared_runtime_version,str) or re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', declared_runtime_version) is None:
+        errors.append('invalid runtime version')
+    elif declared_runtime_version != RUNTIME_VERSION:
+        errors.append('runtime version drift')
+    runtime_version = RUNTIME_VERSION
     try:
-        check_frontmatter(main, 'codex-dynamic-workflow', version)
+        check_frontmatter(main, 'codex-dynamic-workflow', skill_version)
     except ValueError as exc:
         errors.append(f'canonical frontmatter error: {exc}')
     if len(main.splitlines()) > 250:
@@ -186,7 +197,7 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append('reserve exceeds the absolute ceiling')
     if budget.get('enforcement') != 'instruction-only-unless-host-enforced':
         errors.append('must disclose instruction-only enforcement')
-    if version.startswith('4.'):
+    if runtime_version.startswith('4.'):
         if policy.get('workflow') != 'astra-mainline': errors.append('v4 workflow must be astra-mainline')
         for key in ('supplemental_luna_launches', 'minimum_meaningful_luna_probes', 'mainline_capacity_reserve'):
             if type(budget.get(key)) is not int or budget[key] < 1: errors.append('invalid v4 budget field: '+key)
@@ -208,7 +219,7 @@ def validate(root: Path = ROOT) -> list[str]:
                 errors.append(f'reader must request read-only: {name}')
             if name in {'cwf_writer','cwf_sol_writer'} and 'sandbox_mode' in data:
                 errors.append('writer must inherit, not grant, sandbox permissions')
-            flexible = version != 'INVALID' and tuple(map(int, version.split('.'))) >= (4,1,1) and name in {'cwf_reader','cwf_writer','cwf_sol_writer'}
+            flexible = tuple(map(int, runtime_version.split('.'))) >= (4,1,1) and name in {'cwf_reader','cwf_writer','cwf_sol_writer'}
             if flexible and 'model_reasoning_effort' in data:
                 errors.append(f'runtime/profile/model/effort drift: flexible profile pins effort: {name}')
             if not data.get('model') or (not flexible and not data.get('model_reasoning_effort')):
@@ -217,8 +228,8 @@ def validate(root: Path = ROOT) -> list[str]:
             errors.append(f'profile error {name}: {exc}')
     errors.extend(validate_burst_files(root, profile_configs))
     for skill, name, expected_version, display, implicit in (
-            (SKILL, 'codex-dynamic-workflow', version, 'Codex Dynamic Workflow', True),
-            (LEGACY_SKILL, 'dispatching-native-agents', version+'-compat', 'Native Dispatch (deprecated)', False)):
+            (SKILL, 'codex-dynamic-workflow', skill_version, 'Codex Dynamic Workflow', True),
+            (LEGACY_SKILL, 'dispatching-native-agents', skill_version+'-compat', 'Native Dispatch (deprecated)', False)):
         try:
             text = (root/skill/'SKILL.md').read_text(encoding='utf-8')
             check_frontmatter(text, name, expected_version)
@@ -250,12 +261,12 @@ def validate(root: Path = ROOT) -> list[str]:
             dest = (path.parent / href.split('#', 1)[0]).resolve()
             if not dest.is_relative_to(root.resolve()) or not dest.is_file():
                 errors.append(f'invalid local link: {path.relative_to(root)} -> {href}')
-    if version != 'INVALID' and int(version.split('.')[0]) >= 3:
-        rt = policy.get('runtime', {})
-        if not isinstance(rt, dict) or rt.get('version') != version or rt.get('backends') != ['native'] or rt.get('backend_per_run') != 1 or rt.get('exec_writes') is not False:
+    if int(runtime_version.split('.')[0]) >= 3:
+        rt = runtime
+        if rt.get('backends') != ['native'] or rt.get('backend_per_run') != 1 or rt.get('exec_writes') is not False:
             errors.append('runtime identity/backend contract drift')
         required = ['scripts/cwf.py','scripts/cwf_runtime/__init__.py','scripts/cwf_runtime/__main__.py','scripts/cwf_runtime/core.py','scripts/cwf_runtime/policy.py','scripts/cwf_runtime/executor.py','scripts/cwf_runtime/worker.py','scripts/cwf_runtime/luna_pool.py','scripts/cwf_runtime/cli.py','scripts/cwf_runtime/result.schema.json','references/runtime.md']
-        if version != 'INVALID' and tuple(map(int, version.split('.'))) >= (4,1,0):
+        if tuple(map(int, runtime_version.split('.'))) >= (4,1,0):
             required += ['references/followup.md','scripts/cwf_runtime/result-v41.schema.json']
         for rel in required:
             if not (root/SKILL/rel).is_file(): errors.append('missing runtime delivery file: '+rel)
@@ -263,20 +274,22 @@ def validate(root: Path = ROOT) -> list[str]:
             import ast
             tree=ast.parse((root/SKILL/'scripts/cwf_runtime/core.py').read_text(encoding='utf-8'))
             versions=[node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in node.targets) and isinstance(node.value,ast.Constant)]
-            if versions != [version]: errors.append('runtime code version drift')
+            if versions != [runtime_version]: errors.append('runtime code version drift')
             # Read literal declarations only: validation never imports the untrusted package.
             literal_tables = {n.targets[0].id:ast.literal_eval(n.value) for n in tree.body
                               if isinstance(n,ast.Assign) and len(n.targets)==1
                               and isinstance(n.targets[0],ast.Name) and isinstance(n.value,(ast.Dict,ast.Set))}
             routes = literal_tables.get('DEFAULT_ROUTES', {})
-            if tuple(map(int, version.split('.'))) >= (4,1,0):
-                if policy.get('runtime',{}).get('supplemental_protocol') != 2:
+            if tuple(map(int, runtime_version.split('.'))) >= (4,1,0):
+                if rt.get('supplemental_protocol') != 2:
                     errors.append('v4.1 supplemental protocol drift')
                 supported = rt.get('supported_contract_versions')
                 if (not isinstance(supported,list) or any(not isinstance(v,str) for v in supported)
                         or set(supported) != literal_tables.get('SUPPORTED_CONTRACT_VERSIONS')):
                     errors.append('supported contract versions drift')
-                if tuple(map(int, version.split('.'))) >= (4,2,0):
+                elif runtime_version not in supported:
+                    errors.append('current runtime version missing from supported contracts')
+                if tuple(map(int, runtime_version.split('.'))) >= (4,2,0):
                     expected_models = {'cwf_reader':'gpt-6-astra', 'cwf_writer':'gpt-6-astra',
                                        'cwf_sol_writer':'gpt-5.6-sol', 'cwf_general':'gpt-5.6-luna',
                                        'cwf_mechanical':'gpt-5.6-luna'}
@@ -304,7 +317,7 @@ def validate(root: Path = ROOT) -> list[str]:
                     if not isinstance(route,dict) or any(not isinstance(route.get(k),str) for k in ('model','profile','effort')):
                         errors.append('invalid runtime route: '+tier); continue
                     profile = profile_configs.get(route.get('profile'), {})
-                    flexible = tuple(map(int, version.split('.'))) >= (4,1,1) and tier in {'strong','writer'}
+                    flexible = tuple(map(int, runtime_version.split('.'))) >= (4,1,1) and tier in {'strong','writer'}
                     if (not profile or profile.get('model') != route.get('model')
                             or (flexible and ('model_reasoning_effort' in profile
                                 or route['effort'] not in ({'low','medium','high','xhigh','max','ultra'}
@@ -312,7 +325,7 @@ def validate(root: Path = ROOT) -> list[str]:
                             or (not flexible and profile.get('model_reasoning_effort') != route.get('effort'))):
                         errors.append('runtime/profile/model/effort drift: '+tier)
 
-            if version.startswith('4.'):
+            if runtime_version.startswith('4.'):
                 declarations = {}
                 for node in tree.body:
                     if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'dict':

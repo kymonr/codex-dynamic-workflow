@@ -1,4 +1,4 @@
-# Codex Dynamic Workflow v4.2.0
+# Codex Dynamic Workflow v4.3.0
 
 仅使用原生代理、原始证据优先的 Codex Skill。正式调用名：
 
@@ -8,7 +8,7 @@ $codex-dynamic-workflow
 
 旧 `$dispatching-native-agents` 仅保留为显式兼容入口，并关闭隐式调用，避免双重自动路由。
 
-2026-09-13 调用规则修订（Runtime 仍为 4.2.0）：
+2026-09-18 Skill 4.3.0 Threaded Phase Handoff（Runtime 仍为 4.2.0）：
 - 被动调用：自动匹配时，主线程继续执行原任务；有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 只读探针，不启动 Astra/Sol 流程。
 - 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 起优先使用下述线程式阶段交接。
 
@@ -21,7 +21,7 @@ $codex-dynamic-workflow
 当前协议：[v4.1 后续规则](skill/codex-dynamic-workflow/references/followup.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)；[v4.1 设计](DESIGN_V41.md)保留初始设计记录。
 确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
 
-## 2026-09-14：线程式阶段交接，Sol 执行线程接管 Root
+## 4.3.0：线程式阶段交接，Sol 执行线程接管 Root
 
 显式 Skill-only 的复杂任务优先：**Astra 规划线程定义目标、设计边界与验收标准 → 宿主支持时将紧凑任务状态交给独立 Sol 执行线程，并由该线程成为唯一 implementation Root → Sol 连续实施、测试、修复与调度 Luna/Grok → fresh Astra 审核线程独立验收**。若宿主无法安全建立独立 controller thread，则回退为用户/宿主在当前主对话切换到 Sol。
 
@@ -35,7 +35,7 @@ Sol 接管后重新读取实际源码和依赖，不盲信 Astra 摘要，不为
 
 `cwf_sol_writer` 仍是普通 writer-child profile，不是 Sol execution Root；模型身份或“新开一个对话”本身都不会授予 controller/dispatch 权。只有实际当前 Root 才能调度 Luna/Grok。Skill 不能凭文本自动创建或切换 controller，只有实际宿主/用户控制可以完成并观察交接。
 
-这是 Skill-only 交接规则更新；**Runtime 仍为 4.2.0**，同一 DB/run、固定路由、writer/verifier admission、默认 12 次补充/28 次批准/32 次绝对调用额度和必要独立验收全部不变。详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
+这是 Skill 4.3.0 的 Skill-only 交接规则；**Runtime 仍为 4.2.0**，包版本与 Runtime 版本独立校验，同一 DB/run、固定路由、writer/verifier admission、默认 12 次补充/28 次批准/32 次绝对调用额度和必要独立验收全部不变。真实原生线程记录见 [E2E 证据](https://github.com/kymonr/codex-dynamic-workflow/blob/d7eb54cabf87c69feef5a5c4c3e97c8a91feea84/reports/V430_THREADED_E2E_2026-09-18.md)；最终独立审核和对应提交的 CI 结果随发布 PR/release 记录。安装结果单独核验，不能从源码版本推断本机已更新。详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
 
 复杂任务有足够独立问题时，争取 **6–12 个 Luna 调查方向**，按实际空闲容量分批，不凑数量、不同阶段不重复整批审查。
 更多方向可采用事先明确批准的新任务额度；[预算说明](skill/codex-dynamic-workflow/references/budget.md)提供 24 次补充尝试的配置示例，而不暗中上调旧合同。
@@ -134,6 +134,11 @@ python -B scripts/install.py --codex-home <已确认路径> --adopt-file "skills
 不接受通配符、manifest 外路径、重复条目、错误/过期哈希或缺失文件的接管。
 `--expected-skill-sha` 仅是附加检查，不是接管授权。回执保留接管记录与可恢复前像。
 不要自动读取当前哈希并无条件重试：这样会掩盖人工修改或并发变化。
+
+安装 ownership state 可选记录精确 `local_overrides` 路径/SHA256。条目必须属于当前
+ownership 与发行 manifest，且哈希一致；发行内容需要替换它时，只有匹配当前前像的
+`--adopt-file` 才能授权。未变化条目跨升级保留，已明确接管并替换的条目移除；旧 state
+缺少该字段继续兼容。安装失败或回滚恢复原 state，不自动覆盖或合并本地适配。
 
 校验器仅支持本包使用的受限 YAML 子集：两层 mapping、两空格缩进、JSON 双引号字符串、
 布尔值及仅用于 name 的普通 slug。其他字符串必须加双引号（null 空值不能充当字符串）。拒绝重复字段、缺失字段、错误类型、未知字段及不支持的 YAML 语法；

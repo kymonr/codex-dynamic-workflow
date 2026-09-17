@@ -371,6 +371,14 @@ class InstallationTests(unittest.TestCase):
                                         installer.digest(b'old skill\n')})
         return installer.install(self.root, self.home, **options)
 
+    def mark_local_override(self, relative, data):
+        path=self.home/relative;path.write_bytes(data)
+        state_path=self.root/'.delivery/install-state.json'
+        state=json.loads(state_path.read_text(encoding='utf-8'));sha=installer.digest(data)
+        state['hashes'][relative]=sha;state['local_overrides']={relative:sha}
+        state_path.write_text(json.dumps(state),encoding='utf-8')
+        return path,state_path
+
 
     def test_dry_run_makes_no_install_changes(self):
         self.assertEqual(self.install()['status'],'DRY_RUN')
@@ -573,6 +581,59 @@ class InstallationTests(unittest.TestCase):
         installer.rollback(self.root,self.home,Path(result['receipt']))
         self.assertEqual(self.skill.read_bytes(),b'custom skill')
         self.assertEqual(self.legacy_skill.read_bytes(),b'old skill\n')
+
+    def test_local_override_replacement_requires_adoption_before_any_write(self):
+        self.install(apply=True);relative='skills/codex-dynamic-workflow/SKILL.md'
+        path,state=self.mark_local_override(relative,b'local adapted skill')
+        state_before=state.read_bytes();receipts={p for p in (self.root/'reports').glob('*/receipt.json')}
+        with self.assertRaisesRegex(ValueError,'local override replacement requires exact adoption'):
+            self.install(apply=True)
+        self.assertEqual(path.read_bytes(),b'local adapted skill')
+        self.assertEqual(state.read_bytes(),state_before)
+        self.assertEqual({p for p in (self.root/'reports').glob('*/receipt.json')},receipts)
+
+    def test_exact_adoption_replaces_and_clears_override_then_rollback_restores_it(self):
+        self.install(apply=True);relative='skills/codex-dynamic-workflow/SKILL.md'
+        path,state=self.mark_local_override(relative,b'local adapted skill');before=state.read_bytes()
+        result=self.install(apply=True,adopt={relative:installer.digest(path.read_bytes())})
+        self.assertEqual(path.read_bytes(),installer.manifest(self.root)[relative])
+        self.assertNotIn(relative,json.loads(state.read_text()).get('local_overrides',{}))
+        installer.rollback(self.root,self.home,Path(result['receipt']))
+        self.assertEqual(path.read_bytes(),b'local adapted skill')
+        self.assertEqual(state.read_bytes(),before)
+
+    def test_unchanged_local_override_survives_state_update(self):
+        self.install(apply=True);relative='skills/codex-dynamic-workflow/SKILL.md'
+        path,state=self.mark_local_override(relative,self.skill.read_bytes())
+        expected=json.loads(state.read_text())['local_overrides']
+        self.assertEqual(self.install(apply=True)['changed_files'],0)
+        self.assertEqual(json.loads(state.read_text())['local_overrides'],expected)
+        self.assertEqual(path.read_bytes(),installer.manifest(self.root)[relative])
+
+    def test_local_override_state_is_strictly_validated(self):
+        self.install(apply=True);state_path=self.root/'.delivery/install-state.json'
+        baseline=json.loads(state_path.read_text());relative='skills/codex-dynamic-workflow/SKILL.md'
+        cases=(
+            ('mapping',[], 'path-to-SHA256 mapping'),
+            ('hash',{relative:'0'*64},'must match ownership'),
+        )
+        for name,overrides,error in cases:
+            state=dict(baseline);state['local_overrides']=overrides
+            state_path.write_text(json.dumps(state),encoding='utf-8')
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,error):self.install()
+        state=dict(baseline);state['hashes']=dict(state['hashes']);sha=state['hashes'].pop(relative)
+        state['local_overrides']={relative:sha};state_path.write_text(json.dumps(state),encoding='utf-8')
+        with self.assertRaisesRegex(ValueError,'not owned'):self.install()
+        state=dict(baseline);illegal='skills/codex-dynamic-workflow/not-packaged.txt'
+        state['hashes']=dict(state['hashes']);state['hashes'][illegal]='0'*64
+        state['local_overrides']={illegal:'0'*64};state_path.write_text(json.dumps(state),encoding='utf-8')
+        with self.assertRaisesRegex(ValueError,'exact package manifest'):self.install()
+
+    def test_legacy_state_without_local_overrides_remains_compatible(self):
+        self.install(apply=True);state=self.root/'.delivery/install-state.json'
+        data=json.loads(state.read_text());data.pop('local_overrides',None)
+        state.write_text(json.dumps(data),encoding='utf-8')
+        self.assertEqual(self.install()['status'],'DRY_RUN')
 
     def test_adoption_drift_between_precheck_and_plan_is_rejected(self):
         original=installer.read_if_file; reads=[0]

@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.3.0 Threaded Phase Handoff — 2026-09-18
+
+- Promote the Skill package and compatibility metadata to 4.3.0 while keeping the
+  Runtime declaration, code, contracts, routes, profiles and budgets at 4.2.0.
+- Validate package and Runtime versions independently against this release's fixed
+  Runtime 4.2.0 contract. Candidate metadata cannot lower or disable source-version,
+  route/profile, protocol, support-contract, backend or budget checks.
+- Carry completed preparation/preflight state across a controller handoff; the receiving
+  Root rechecks only necessary mutable state, and automatically matched Skills cannot
+  expand authorized source/write scope or replay unrelated preparation.
+- Preserve optional, exact path/SHA256 `local_overrides` in installation ownership state.
+  A changed override requires matching `--adopt-file`; unchanged overrides survive an
+  upgrade, adopted replacements clear their entry, and rollback restores the prior state.
+- Treat parent-turn interruption separately from child termination: reconcile prior
+  attempt/child receipts before resumed writes or dispatch, retaining UNKNOWN holds and
+  cumulative accounting rather than relaunching work.
+- Add positive 4.3.0/4.2.0 coverage and negative declaration, core-version, support,
+  routing, profile and budget mutations. Record real top-level Astra/Sol/Astra
+  execution, the initial independent rejection and same-Sol repair in
+  [native E2E evidence](https://github.com/kymonr/codex-dynamic-workflow/blob/d7eb54cabf87c69feef5a5c4c3e97c8a91feea84/reports/V430_THREADED_E2E_2026-09-18.md). Final acceptance
+  and exact-head CI remain release gates, recorded on the release PR/release.
+
 ## 4.2.0 threaded controller-handoff revision — 2026-09-14 (unreleased)
 Adversarial follow-up: scope routine probe time/follow-up bounds to Astra/Sol/Luna
 so the optional Grok Burst exception remains effective. Align routing and writing
