@@ -107,6 +107,14 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         self.assertIn("another run or conversation to reset limits", delegation)
         self.assertIn("Do not create a new Runtime run", routing)
 
+    def test_receiving_root_inherits_completed_preflight_and_scope(self):
+        entry = read("SKILL.md")
+
+        self.assertIn("Completed preparation and preflight state transfers with the task", entry)
+        self.assertIn("rechecks only necessary mutable state", entry)
+        self.assertIn("does not replay unrelated preparation", entry)
+        self.assertIn("cannot expand the authorized source or write scope", entry)
+
     def test_unknown_usage_and_supplemental_history_do_not_restart_on_new_thread(self):
         delegation = read("references/delegation.md")
         burst = read("references/burst.md")
@@ -129,6 +137,15 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         self.assertIn("A stop request", delegation)
         self.assertIn("controller handoff does not release", routing)
         self.assertIn("unresolved holds remain UNKNOWN", routing)
+
+    def test_parent_turn_interruption_never_implies_child_termination(self):
+        delegation = ' '.join(read("references/delegation.md").split())
+
+        self.assertIn("Parent-turn interruption or cancellation is not child termination", delegation)
+        self.assertIn("reconcile every previously launched attempt and child ID", delegation)
+        self.assertIn("Late receipts count against the same task", delegation)
+        self.assertIn("keep it UNKNOWN and do not relaunch the same work", delegation)
+        self.assertIn("creates no new controller or ledger", delegation)
 
     def test_sol_writer_profile_remains_a_non_controller_child(self):
         writer = (ROOT / "profiles/cwf_sol_writer.toml").read_text(encoding="utf-8")

@@ -1,7 +1,7 @@
 # Astra design, Sol execution Root, independent Astra acceptance (4.2)
 
-Skill-only phase-handoff revision: 2026-09-14; threaded control-transfer revision:
-2026-09-14. Runtime contracts remain unchanged.
+Skill-only phase-handoff revision: 2026-09-18; threaded control-transfer revision:
+2026-09-18. Runtime contracts remain unchanged.
 
 ## Smallest useful operating model
 Astra owns key design decisions, risk boundaries and original-goal acceptance.
@@ -65,6 +65,11 @@ Before transfer, settle or explicitly transfer task-owned active children and ow
 using real host lifecycle observations. If the host cannot transfer control of active children, close out task-owned children where supported; unresolved termination/resource
 holds stay UNKNOWN and keep their relevant capacity/ownership reservations. A stop request
 or a new conversation never proves release. Do not terminate unrelated sessions.
+Parent-turn interruption or cancellation is not child termination. Before resumed
+writing or any new dispatch, reconcile every previously launched attempt and child ID
+against actual host lifecycle receipts. Late receipts count against the same task. If
+completion or termination cannot be confirmed, keep it UNKNOWN and do not relaunch the
+same work. This uses existing task accounting and creates no new controller or ledger.
 
 The task, source identities, allowed effects, unresolved claims, deadlines, active
 ownership and spent/reserved allowance continue across the handoff. It is the SAME task

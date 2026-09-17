@@ -145,6 +145,7 @@ def install(root: Path, home: Path, *, apply: bool = False,
     if state_before is not None and prior.get('home') != str(home):
         raise ValueError('previous installation belongs to a different home')
     previous_hashes = checked_hashes(prior.get('hashes', {}) if state_before is None else prior.get('hashes'), 'ownership')
+    local_overrides = checked_hashes(prior.get('local_overrides', {}), 'local overrides')
     legacy_enabled = prior.get('legacy_enabled', True)
     if type(legacy_enabled) is not bool or type(retire_missing_legacy) is not bool:
         raise ValueError('legacy installation options must be boolean')
@@ -157,6 +158,13 @@ def install(root: Path, home: Path, *, apply: bool = False,
                 raise ValueError('legacy retirement requires the canonical skill and an absent legacy directory; no files are deleted')
     check_retired_legacy()
     payload = manifest(root, include_legacy=legacy_enabled)
+    for rel, sha in local_overrides.items():
+        if rel not in previous_hashes:
+            raise ValueError(f'local override path is not owned: {rel}')
+        if rel not in payload:
+            raise ValueError(f'local override path is not in the exact package manifest: {rel}')
+        if previous_hashes[rel] != sha:
+            raise ValueError(f'local override hash must match ownership hash: {rel}')
     retired = {r for r in previous_hashes if not legacy_enabled and r.startswith('skills/dispatching-native-agents/')}
     removed = sorted(set(previous_hashes) - set(payload) - retired)
     if removed:
@@ -187,6 +195,8 @@ def install(root: Path, home: Path, *, apply: bool = False,
                     raise ValueError(f'externally changed or missing owned destination: {rel}')
             elif before is not None:
                 raise ValueError(f'unowned destination collision; exact adoption required: {rel}')
+        if rel in local_overrides and before != after and rel not in adoptions:
+            raise ValueError(f'local override replacement requires exact adoption: {rel}')
         if before != after:
             plan.append((rel, dest, before, after))
     if not apply:
@@ -211,8 +221,13 @@ def install(root: Path, home: Path, *, apply: bool = False,
                                   'after_sha': digest(after), 'applied': False, 'pending': False,
                                   'write_mode': 'in-place' if inplace_skill and rel.endswith('/SKILL.md') and before is not None else 'atomic'})
     rp = backup / 'receipt.json'
-    state_after = json.dumps({'home': str(home), 'receipt': str(rp), 'legacy_enabled': legacy_enabled,
-                              'hashes': {r: digest(b) for r,b in payload.items()}}, indent=2).encode('utf-8')
+    remaining_overrides = {rel: sha for rel, sha in local_overrides.items()
+                           if not (rel in adoptions and any(item[0] == rel for item in plan))}
+    state_record = {'home': str(home), 'receipt': str(rp), 'legacy_enabled': legacy_enabled,
+                    'hashes': {r: digest(b) for r,b in payload.items()}}
+    if remaining_overrides:
+        state_record['local_overrides'] = remaining_overrides
+    state_after = json.dumps(state_record, indent=2).encode('utf-8')
     receipt['state_after_sha'] = digest(state_after)
     def save() -> None:
         atomic_write(rp, json.dumps(receipt, ensure_ascii=False, indent=2).encode('utf-8'))

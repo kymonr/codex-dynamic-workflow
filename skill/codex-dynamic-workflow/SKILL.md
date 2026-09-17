@@ -2,13 +2,13 @@
 name: codex-dynamic-workflow
 description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, threaded Sol implementation and Astra acceptance workflow."
 metadata:
-  version: "4.2.0"
+  version: "4.3.0"
 ---
 
 # Codex Dynamic Workflow
 
-Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-14.
-Threaded control-transfer revision: 2026-09-14. Runtime remains 4.2.0.
+Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-18.
+Threaded control-transfer revision: 2026-09-18. Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
 
@@ -29,6 +29,9 @@ Quality > automation > latency > cost > observability > recovery.
   by default; writer subagents are only for genuinely needed, explicitly authorized
   isolated parallel writes. Keep sequential writing in Root. Existing Runtime
   writer admission remains unchanged; do not select Runtime to bypass this preference.
+  Completed preparation and preflight state transfers with the task. The receiving
+  Root rechecks only necessary mutable state; it does not replay unrelated preparation.
+  Automatically matched Skills cannot expand the authorized source or write scope.
 - **Implicit automatic supplementation**: automatic matching, an agent's own
   choice, or an AGENTS.md pointer selects the Luna/Grok instructions below.
   Merely naming, discussing or asking to edit this Skill is not an invocation of
