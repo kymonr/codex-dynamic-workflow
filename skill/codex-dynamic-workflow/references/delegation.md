@@ -49,8 +49,8 @@ resume the task. The Skill cannot create an unsupported controller thread, silen
 reconfigure a parent, or claim a transfer from prose alone. Only the user/host can create,
 select or switch the running controller conversation/model through supported controls.
 Record requested model/profile/effort separately from observed execution identity.
-Without an execution receipt, keep the effective model UNKNOWN rather than asserting
-that Sol ran. Effective model identity and controller transfer are checked separately:
+Without an execution receipt, record effective identity UNKNOWN, not Sol.
+Effective model identity and controller transfer are checked separately:
 missing model evidence does not erase a proven task-owner acknowledgement, and a
 requested model or title does not prove controller capability. An action that requires
 verified model identity remains gated by that requirement even when ownership is known.
@@ -77,9 +77,10 @@ controller ownership before either thread performs further writes or dispatch.
 Before transfer, reconcile task-owned active children and ownership using real host
 lifecycle observations. Settle candidate writers before changing implementation owners;
 prose cannot transfer an active write or release its hold. For old read-only probes,
-either settle them, transfer custody through supported host controls, or explicitly
-retain their original owner as a collection-only custodian. That custodian must have
-actual host access and a working result-delivery path to the current Root, with the
+either settle them or transfer custody through supported host controls.
+If the host cannot transfer control of active children, explicitly retain their original
+owner as a collection-only custodian under the conditions below, or use bounded closeout.
+That custodian must have actual host access and a working result-delivery path to the current Root, with the
 probe IDs, existing stop conditions and retained reservations recorded. It may collect
 already-started results and perform agreed task-owned stop/close actions, but cannot
 launch or follow up probes, change scope, write the candidate or accept it. It is not
