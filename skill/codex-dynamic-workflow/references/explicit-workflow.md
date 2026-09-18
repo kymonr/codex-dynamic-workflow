@@ -14,6 +14,8 @@ review thread/context checks important deliverables. This is not an automatic th
 creation/model switch or a migration of Runtime-managed work, and a `cwf_sol_writer`
 child is not a substitute for the Sol Root. Keep the implicit supplementation mode
 separate; its automatic Grok probe does not acquire this Astra/Sol pipeline.
+An explicitly requested [role simulation](host-routing.md#explicit-role-simulation)
+labels stand-ins and tests only its declared scope; it does not replace native acceptance.
 
 Quality > automation > latency > cost > observability > recovery.
 Root owns the objective, authorization and final acceptance. All model delegation
@@ -196,7 +198,9 @@ A child prompt contains the logical role, decided task, scope/exclusions, source
 identity/read method, raw entry points, relevant dependencies/constraints, authority,
 allowed effects, objective checks, stop rule and this return shape. For supplemental
 probes, name one concrete question using these existing fields; a role title alone
-is not an assignment. Use the bounded examples in patterns when helpful:
+is not an assignment. Creation tool family and exact returned IDs remain the operational
+keys; use [readable titles](host-routing.md#readable-thread-titles) for the user-facing
+responsibility, not identity or permissions. Use the bounded examples in patterns when helpful:
 
 ```text
 NODE: <id / logical role / effective profile-model-effort or UNKNOWN>
@@ -212,6 +216,10 @@ EXPANSION_REQUEST: <bounded gap and distinct next method, or none>
 ```
 
 This is a compact Markdown contract, not a request for private reasoning.
+Before diagnosing a missing/malformed return or spending a repair turn, follow
+[native result collection](evidence.md#native-result-collection): an omitted or truncated
+view is a collection gap, not proof of non-delivery. Preserve known host state and
+already-returned evidence; retrieve existing content before requesting new model work.
 For Astra/Sol/Luna returns, a missing or malformed return gets at most one concrete
 input/format repair; otherwise retain partial evidence and mark the unresolved branch.
 Grok instead follows [Burst](burst.md), with no workflow-imposed duration or follow-up ceiling.

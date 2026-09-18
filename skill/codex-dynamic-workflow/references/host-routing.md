@@ -13,6 +13,44 @@ settings. Resolve effective configuration before dispatch and check the executio
 receipt when exposed. Never bypass approvals, sandbox, hook trust or model availability.
 A read-only role is an intent/constraint; actual host controls must be inspected.
 
+## Readable thread titles
+
+Use WF, not CWF, as the user-facing prefix. Keep existing `cwf_*` profile identifiers,
+the `$codex-dynamic-workflow` invocation and repository paths unchanged.
+When supported, create task-owned threads with a task prefix + responsibility + concrete
+question or deliverable, in the user's language. Examples: `WF · 实施 · 修复结果收口`,
+`WF · 独立审核 · 核对交接证据`, `WF · 探针 · 核对结果是否完整`.
+A model name, "Sol Root", "fresh Astra" or generated nickname alone does not describe
+an assignment. Keep real IDs for tool operations; title changes grant no authority.
+Use a supported creation-title field or rename only exact task-owned IDs. Otherwise
+show the ID-to-responsibility mapping in the conversation. A failed or unsupported
+rename is not an acceptance blocker and is not a model turn. Do not touch unrelated
+threads or expose secrets in titles. Mark simulated roles explicitly, keeping requested
+models separate from observed identities; a title is never execution evidence.
+
+## Explicit role simulation
+
+Only an explicit user request selects role simulation, such as using Grok to stand in
+for several roles. Label logical role, requested model/profile/effort and observed
+execution identity separately. Missing execution receipts stay UNKNOWN. Assess only
+the simulated scope actually exercised. Native routes and actual code writing remain
+NOT_RUN when not exercised. A read-only walkthrough does not authorize writes,
+publication or installation and is not a code-writing E2E.
+
+Use only compatible, exposed host controls: do not mutate shipped profiles, global
+configuration or saved Runtime contracts to force a stand-in model. Unavailable or
+conflicting capability is a reported gap, not CLI/API fallback. Keep simulation results
+separate from native acceptance. The same model can be a non-author reviewer in a
+separate context with sufficient raw sources; that never satisfies a required declared
+Astra verifier under a different fixed route. A Burst sidecar remains non-authoritative.
+
+A stand-in is not a Burst sidecar just because it requests Grok. Keep original task/role
+launch accounting, failures, retries and capacity holds; only admitted optional Burst
+work receives the existing Burst exemption under Burst policy, not as a Runtime node.
+Do not reset allowances or reinterpret all
+simulation calls as free Burst work. No new simulation backend, Runtime mode or ledger
+is introduced; task scope and existing source-sharing permissions remain controlling.
+
 ## Logical role versus execution profile
 
 An explorer, verifier, reproducer, designer or reviewer may use the same capable
@@ -155,9 +193,13 @@ results and report the exact limitation; do not silently substitute another mapp
 A host may cap open threads, not only running turns. Use its actual completion/closure
 contract; idle is not automatically closed and interrupt is not confirmed termination.
 A controller handoff does not release old child/writer ownership by itself. Before the
-Sol execution Root takes control, settle or explicitly transfer task-owned active work
-using observed host lifecycle state; unresolved holds remain UNKNOWN. After transfer,
+Sol execution Root takes control, reconcile task-owned active work through settlement,
+supported transfer or explicitly assigned legacy-probe custody under
+[the handoff rule](delegation.md#threaded-control-transfer); unresolved holds remain UNKNOWN.
+A collection-only custodian is not a second implementation Root. After transfer,
 the former planning thread must not dispatch or write against the same candidate.
+Use [native result collection](evidence.md#native-result-collection) to distinguish
+execution/collection gaps from confirmed failure or resource release.
 On capacity failure inspect once, queue eligible work, and avoid retry loops. A queued
 branch remains accounted for. Never spawn past capacity or free an unconfirmed writer.
 A host-confirmed completed readonly turn with settled tools can reconcile execution through the Runtime protocol while its host-resource reservation remains UNKNOWN. Keep execution completion and host-resource cleanup separate.

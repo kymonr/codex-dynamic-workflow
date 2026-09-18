@@ -48,23 +48,50 @@ through the actual host/user control and pass only the compact handoff state nee
 resume the task. The Skill cannot create an unsupported controller thread, silently
 reconfigure a parent, or claim a transfer from prose alone. Only the user/host can create,
 select or switch the running controller conversation/model through supported controls.
-Verify the selected model, effort, repository/source access and controller capability
-from exposed host state when available; otherwise record effective identity UNKNOWN,
-not Sol, and controller transfer UNKNOWN rather than claiming success.
+Record requested model/profile/effort separately from observed execution identity.
+Without an execution receipt, keep the effective model UNKNOWN rather than asserting
+that Sol ran. Effective model identity and controller transfer are checked separately:
+missing model evidence does not erase a proven task-owner acknowledgement, and a
+requested model or title does not prove controller capability. An action that requires
+verified model identity remains gated by that requirement even when ownership is known.
+Creation lineage, probe custody and implementation control are different facts.
+An unchanged parent ID does not by itself prove two implementation Roots; do not
+rewrite lineage merely to make a handoff look complete. Creating or naming a thread
+is not an ownership acknowledgement. In the existing task conversation or authorized
+plan, bind the candidate, outgoing/incoming thread IDs, allowed effects, existing holds,
+sender's relinquishment and receiver's acknowledgement to the same transfer. Verify
+actual controller/source/tool access. Until this is confirmed, the proposed receiver
+must not write or dispatch. Keep the current owner explicit; do not invent a second
+scheduler, state file or mandatory JSON envelope for these observations.
 
 A successful transfer has exactly one implementation Root for the candidate. Once the
 Sol execution thread takes ownership, the Astra planning thread stops writing, dispatching,
 changing candidate state or acting as a second controller. It may remain available as
-read-only historical context, but material design escalation is a bounded consultation,
-not concurrent control. Do not leave two Roots believing they own the same writer,
+read-only historical context or the explicitly named custodian of old read-only probes
+under the rule below. Custody is not implementation authority. Material design escalation
+is a bounded consultation, not concurrent control. Do not leave two Roots believing they own the same writer,
 children, candidate or merge boundary. A later user message in the old planning thread
 does not silently retake implementation ownership; reconcile or explicitly transfer
 controller ownership before either thread performs further writes or dispatch.
 
-Before transfer, settle or explicitly transfer task-owned active children and ownership
-using real host lifecycle observations. If the host cannot transfer control of active children, close out task-owned children where supported; unresolved termination/resource
-holds stay UNKNOWN and keep their relevant capacity/ownership reservations. A stop request
-or a new conversation never proves release. Do not terminate unrelated sessions.
+Before transfer, reconcile task-owned active children and ownership using real host
+lifecycle observations. Settle candidate writers before changing implementation owners;
+prose cannot transfer an active write or release its hold. For old read-only probes,
+either settle them, transfer custody through supported host controls, or explicitly
+retain their original owner as a collection-only custodian. That custodian must have
+actual host access and a working result-delivery path to the current Root, with the
+probe IDs, existing stop conditions and retained reservations recorded. It may collect
+already-started results and perform agreed task-owned stop/close actions, but cannot
+launch or follow up probes, change scope, write the candidate or accept it. It is not
+an autonomous background receiver. Receiving or polling an old result alone does not
+prove concurrent implementation control. If custody/delivery cannot be established,
+use supported bounded closeout and disclose incomplete coverage; never assume release.
+Any unresolved termination/resource holds stay UNKNOWN and keep their relevant
+capacity/ownership reservations. No all-probe completion barrier is introduced:
+continue nonconflicting mainline work while retaining required evidence/risk gates.
+A stop request or a new conversation never proves release. Do not terminate unrelated
+sessions. Pass source-bound original result references via [result collection](evidence.md#native-result-collection),
+not just an assertion that every probe finished.
 Parent-turn interruption or cancellation is not child termination. Before resumed
 writing or any new dispatch, reconcile every previously launched attempt and child ID
 against actual host lifecycle receipts. Late receipts count against the same task. If

@@ -23,11 +23,50 @@ Non-Git work uses the exact source root and equivalent scoped content identity.
 Live GitHub issues/CI/API contracts have their own identity and observation time.
 Do not equate a published SHA, dirty working tree and live remote state. A frozen
 source result is explicitly as-of that source, not a promise about a moving branch.
+For source, installed, reference and staging trees, compare each relevant relative path
+with its presence, bytes/version and tree role. Missing is not equal. Do not report whole
+trees equal from a subset, or call an intentional local override corruption without its
+expected baseline. Check the delivery manifest before calling a source-only tool missing
+from an installation; never repair a reference checkout as though it were the target.
 
 Read only necessary sources and direct dependencies. A bounded packet may include
 verbatim original text with provenance where direct tool access is impossible;
 label what was supplied versus independently opened. Do not call a summary-only
 review independent source verification. A material access gap blocks acceptance.
+
+## Native result collection
+
+Task execution state, result existence, retrieval completeness, review disposition
+and host-resource release are separate observations. A tool-call success is not the
+task outcome; a completed report can contain failures, and task failures do not become
+clean findings. Keep known positive and negative evidence when another field is UNKNOWN.
+
+Record the originating tool family and exact returned IDs in existing task records.
+Use the current host schema to select compatible wait/read/list operations, target
+identifiers and parameter limits; do not impose one universal tool-name pairing.
+Bind retrieved output to the right thread, turn/attempt, item and candidate. An older
+terminal result cannot complete a resumed turn, and a title cannot identify an attempt.
+
+A summary-only or truncated read is not evidence that no result exists. For example,
+`includeOutputs=false` or `includeTurns=false` may omit content; do not equate these
+adapter-specific options or assume every host supports them. Use supported pagination
+or output-range controls to retrieve the relevant final report and already-returned
+material findings, not entire unrelated histories or private reasoning. Check whether
+the requested range/pages were actually returned before calling a return missing.
+When the producer or its named custodian already has the original NODE/output, obtain
+that source-bound result or its supported locator before rerunning work. Label supplied
+versus independently opened evidence; a handoff summary alone is not verification.
+
+If retrieval remains incomplete, preserve known result existence and execution state;
+record the exact unread portion/access gap in NOTES/UNCOVERED rather than saying the
+agent did not deliver. Retrieving existing output is not a new model turn. Do not
+redispatch or spend a format-repair turn to compensate for an omitted view. A genuinely
+malformed retrieved return still follows the existing bounded repair and accounting
+rules; no new schema or persistent evidence ledger is required.
+
+Block only acceptance that requires the missing evidence; continue independent work,
+and already received material risks still need disposition. This collection rule
+never creates an all-probe waiting stage or a promise of unattended later delivery.
 
 ## Drift and writes
 
