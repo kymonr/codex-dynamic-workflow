@@ -1,6 +1,6 @@
 ---
 name: codex-dynamic-workflow
-description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, threaded Sol implementation and Astra acceptance workflow."
+description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for Astra design, Root-directed Sol implementation and fresh Astra acceptance."
 metadata:
   version: "4.3.0"
 ---
@@ -8,7 +8,7 @@ metadata:
 # Codex Dynamic Workflow
 
 Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-18.
-Threaded control-transfer revision: 2026-09-18. Runtime remains 4.2.0.
+Root-directed writer revision: 2026-09-19. Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
 
@@ -19,16 +19,17 @@ Quality > automation > latency > cost > observability > recovery.
   invocation of the deprecated `$dispatching-native-agents` alias also selects it.
   Read [the full workflow](references/explicit-workflow.md) and its
   [phase handoff](references/delegation.md): Astra designs a sufficient plan and
-  acceptance checks; when the host supports a separate conversation/controller
-  handoff, transfer compact task state to a separate Sol execution thread that
-  becomes the sole implementation Root. If that controller transfer is unavailable,
-  the user/host may switch the current main conversation to Sol instead. A fresh Astra
-  review context checks important deliverables. The Skill cannot itself switch the running model
-  or create/switch a controller thread; an ordinary Sol writer child is not a substitute
-  for either handoff path. In Skill-only implementation, Sol Root writes directly
-  by default; writer subagents are only for genuinely needed, explicitly authorized
-  isolated parallel writes. Keep sequential writing in Root. Existing Runtime
-  writer admission remains unchanged; do not select Runtime to bypass this preference.
+  acceptance checks. The current main conversation remains Root and delegates one
+  `cwf_sol_writer` child to own coherent implementation, tests and bounded repairs.
+  Root keeps orchestration, authorization and closeout, continues nonconflicting
+  read-only work, and does not duplicate the writer or approve routine steps one by
+  one. After the writer stops changing the candidate, a fresh Astra review context
+  checks the full actual diff against the original goal. Root also counts as a writer;
+  use one active writer unless explicit parallel-write authorization and verified
+  isolation apply. Main-conversation direct writing and a true controller transfer
+  remain supported when the user explicitly selects them, but neither is a default
+  prerequisite. The Skill cannot itself switch the running model or controller.
+  Existing Runtime writer admission remains unchanged.
   Completed preparation and preflight state transfers with the task. The receiving
   Root rechecks only necessary mutable state; it does not replay unrelated preparation.
   Automatically matched Skills cannot expand the authorized source or write scope.
@@ -81,7 +82,10 @@ Use the actual native collaboration tools and exposed `cwf_general` (Luna/max);
 An existing `luna` profile is usable only when its observed model, effort and
 permissions are compatible. Missing Luna capability is a reported gap, not an
 Astra/Sol/CLI fallback. Read-only instructions do not prove an OS sandbox.
-Use fresh bounded contexts, not full-history forks. Give each child:
+Use fresh task-focused contexts by default. When the native tool exposes the
+inheritance control, set `fork_context=false`; when history is evidence, retrieve the
+complete relevant conversation or pages rather than imposing a fixed recent-turn,
+fragment or summary limit. Give each child:
 - one distinct question, exact candidate/raw-source entry points, permitted read scope;
 - objective coverage or a deadline, and no writes, nested delegation or peer messaging;
 - a compact return of sources opened, checks, findings with evidence, and uncovered work.
@@ -100,8 +104,11 @@ follow-ups and retries all count. Mode changes, controller-thread handoffs and c
 revisions retain the same cumulative usage. No available model budget or an explicit
 no-native boundary means no dispatch, including Luna. Unknown account/token use stays UNKNOWN.
 
-Root checks returned evidence against current sources, deduplicates it and handles
-material risks within the original task. Before declaring a result missing, use
+Root checks returned evidence against current sources. Deduplicate by question or
+proposition, candidate bytes, evidence scope/path and method; a new child name creates
+no new coverage. After a repair, recheck the fix plus affected callers, dependencies
+and acceptance evidence, not unchanged broad review. Root handles material risks within
+the original task. Before declaring a result missing, use
 [native result collection](references/evidence.md#native-result-collection); an incomplete
 view is not proof of non-delivery. Use [readable thread titles](references/host-routing.md#readable-thread-titles)
 where supported without treating names as authority. These observation rules do not

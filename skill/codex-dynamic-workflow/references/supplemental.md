@@ -38,8 +38,8 @@ Keep useful partial results and every received plausible risk even on failure or
 interruption. Unknown is not negative evidence. A genuinely necessary unresolved
 question becomes owned mainline work, not a dependency on the optional probe.
 
-Current Root screens ordinary returns in compact batches at natural checkpoints;
-Sol Root does this during implementation rather than invoking Astra per report.
+Current Root screens ordinary returns in compact batches at natural checkpoints and
+supplies relevant screened evidence to the active Sol writer without invoking Astra per report.
 Sol writer children only return evidence to Root; they cannot screen Runtime state
 or spawn reviewers. Immediately inspect credible severe risks and evidence about
 an imminent irreversible action. Pause the affected operation when necessary,

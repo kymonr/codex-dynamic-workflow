@@ -1,6 +1,6 @@
 interface:
   display_name: "Codex Dynamic Workflow"
   short_description: "Implicit Luna and Grok probes; explicit full workflow"
-  default_prompt: "Use $codex-dynamic-workflow in explicit full-workflow mode: Astra plans and sets acceptance checks. For Skill-only work, prefer a separate Sol execution thread as the sole implementation Root when the host supports controller handoff. Sol Root writes directly by default, tests and repairs; a same-conversation Sol model switch is only the fallback. Use writer subagents only for authorized isolated parallel writes. A fresh read-only Astra context independently reviews important deliverables. Broad readonly Luna and optional Grok probes add evidence without blocking the mainline. Preserve cumulative budget, ownership, capacity, authorization and existing Runtime contracts."
+  default_prompt: "Use $codex-dynamic-workflow in explicit full-workflow mode: Astra plans and sets acceptance checks. Keep the current main conversation as Root and direct one cwf_sol_writer child through implementation, tests and bounded repair without duplicating its writes or approving routine steps one by one. After the writer stops, use a fresh read-only Astra context to review the full actual diff against the original goal. Preserve one active writer, cumulative budget, ownership, authorization and existing Runtime contracts; main-conversation direct writing and true controller transfer remain explicit user-selected alternatives."
 policy:
   allow_implicit_invocation: true

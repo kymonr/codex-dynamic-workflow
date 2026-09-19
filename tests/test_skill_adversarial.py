@@ -36,16 +36,21 @@ class SkillAdversarialTests(unittest.TestCase):
                               'Routine probes get at most one follow-up'):
                     self.assertNotIn(stale, text)
 
-    def test_routing_and_write_contracts_do_not_force_a_writer_child(self):
+    def test_routing_and_write_contracts_use_one_root_directed_writer_by_default(self):
         for relative in ('references/host-routing.md', 'references/writes.md'):
             text = normalized(SKILL / relative)
             with self.subTest(relative=relative):
-                self.assertIn('Sol Root writes directly by default', text)
+                self.assertIn('current Root', text)
+                self.assertIn('one `cwf_sol_writer` child', text)
+                self.assertIn('by default', text)
                 self.assertIn('parallel', text)
                 self.assertIn('Runtime', text)
+                self.assertNotIn('Sol Root writes directly by default', text)
         routing = normalized(SKILL / 'references/host-routing.md')
-        self.assertNotIn('Use the dedicated cwf_sol_writer for new implementation', routing)
-        self.assertIn('only for admitted Runtime writing or authorized isolated parallel writes', routing)
+        self.assertIn('never gains dispatch authority', routing)
+        self.assertIn('Main-conversation direct writing remains available', routing)
+        self.assertIn('A true controller transfer requires explicit user selection and host proof', routing)
+        self.assertNotIn('only for admitted Runtime writing or authorized isolated parallel writes', routing)
 
     def test_runtime_overview_matches_actual_sol_route(self):
         text = normalized(SKILL / 'references/runtime.md')

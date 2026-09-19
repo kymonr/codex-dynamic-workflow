@@ -42,8 +42,12 @@ Do not route by presumed context superiority. Route by distinct value, evidence 
 current provider availability and host capacity. Keep prompts source-bound rather than
 copying the entire chat history.
 
-Astra owns key design/acceptance, Sol Root owns continuous execution and screening,
-Luna adds broad probes, and Grok adds optional independent evidence. Removing Luna and
+The current Root owns orchestration, screening, authorization and closeout. In explicit
+Skill-only mode, Astra owns key design/acceptance and one Sol writer owns continuous
+implementation, tests and bounded repair by default. In implicit mode, the current
+Root completes the main task using its existing model; this skill adds only Luna/Grok
+supplementation and does not acquire the explicit pipeline. Luna adds broad probes,
+and Grok adds optional independent evidence. Removing Luna and
 Burst must leave required implementation, tests and review intact. Grok is never the
 final verifier, writer or authority to weaken acceptance. Suggested patches/tests are
 proposals until the authorized implementer and real test tools apply/execute them.

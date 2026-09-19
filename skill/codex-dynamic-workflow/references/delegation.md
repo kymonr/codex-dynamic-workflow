@@ -1,32 +1,37 @@
-# Astra design, Sol execution Root, independent Astra acceptance (4.2)
+# Astra design, Root-directed Sol writer, independent Astra acceptance (4.2)
 
-Skill-only phase-handoff revision: 2026-09-18; threaded control-transfer revision:
-2026-09-18. Runtime contracts remain unchanged.
+Skill-only phase-handoff revision: 2026-09-19. Optional threaded control transfer
+remains available. Runtime contracts remain unchanged.
 
 ## Smallest useful operating model
 Astra owns key design decisions, risk boundaries and original-goal acceptance.
 Root is the current main-thread controller, not a permanently Astra-owned model role.
-For substantial explicit Skill-only work, prefer a separate Sol execution thread when
-the host can create or select an independent conversation with the required source/tool
-access and can transfer the task state described below. That Sol thread becomes the sole implementation Root for continuous implementation, tests, bounded repair, progress and
-Luna/Grok triage. If separate controller transfer is unavailable, the user/host may
-switch the current main conversation to Sol instead. Do not replace either path with an
-Astra-supervised `cwf_sol_writer` child.
+For substantial explicit Skill-only work, the current Root delegates one
+`cwf_sol_writer` child as the sole source writer for continuous implementation, tests
+and bounded in-scope repair. Root retains the complete objective, authorization,
+dispatch, result screening and closeout. It may continue independent read-only work,
+but it does not repeat implementation or require approval for each routine command,
+message, test or repair already covered by the task.
 Luna performs independent read-only questions, never final acceptance or voting. Tools
 perform deterministic searches, formatting, tests and hash checks without model delegation.
-This replaces the implementation owner; it does not add a duplicate Astra implementation
-pass, another scheduler, another ledger or a hierarchy of reviewers. Skill-only is normal.
+The writer child owns the coherent implementation loop; Root does not add a duplicate
+Astra implementation pass, another scheduler, another ledger or a hierarchy of reviewers.
+Skill-only is normal.
 
 ## Phase handoff, not another scheduler
 
-In explicit Skill-only mode, prefer Astra design -> separate Sol execution Root thread
-when supported -> continuous Sol execution -> fresh Astra acceptance thread at a
-meaningful delivery or risk boundary. The same-conversation user/host model switch is
-the fallback when a separate Root thread cannot be established with equivalent task
-access. Small cohesive work need not invent phases. Implicit supplementation mode does not acquire this pipeline
-or Astra/Sol children.
+In explicit Skill-only mode, use Astra design -> one persistent Sol writer child ->
+fresh Astra acceptance at a meaningful delivery or risk boundary. Small cohesive work
+need not invent extra stages. Implicit supplementation mode does not acquire this
+pipeline or Astra/Sol children.
+Once the brief below is sufficient for the next executable stage, Astra ends its
+routine implementation role. Do not keep expanding the design merely to supervise
+commands that Sol can decide from current sources. Root dispatches the writer through
+the actual host and verifies its returned identity when exposed; the requested profile
+or model is not proof of effective identity. The current Root always remains assigned.
+Do not run a duplicate Root implementation pass while the child owns the write set.
 
-Before handing off, Astra reads the relevant raw sources and records an executable
+Before dispatching the writer, Astra reads the relevant raw sources and records an executable
 brief in the existing task/plan document when authorized, or in the conversation
 otherwise. Include the original outcome and non-goals; the selected workflow mode
 (`explicit full workflow`) and applicable Skill/runtime revision; the baseline commit
@@ -37,13 +42,14 @@ concrete acceptance checks and expected evidence; unresolved assumptions and cla
 escalation conditions; active child/writer ownership and lifecycle holds; deadlines;
 the cumulative spent/reserved allowance; and completed/pending supplemental direction
 identities, including whether the automatic Burst probe already ran or was skipped and
-which returned risks remain open. The receiving thread continues this exact task and
-mode; opening a new conversation is not a new invocation or a new allowance.
+which returned risks remain open. The writer continues this exact task and mode;
+opening or resuming a conversation is not a new invocation or a new allowance.
 A full outcome/acceptance plan is not a line-by-line implementation script. Detail
 the next executable stage; keep later stages revisable when evidence changes.
 
-### Threaded control transfer
-When the host supports it, start or select the separate Sol execution conversation
+### Optional threaded control transfer
+Only when the user explicitly selects a real controller transfer, start or select the
+separate Sol execution conversation
 through the actual host/user control and pass only the compact handoff state needed to
 resume the task. The Skill cannot create an unsupported controller thread, silently
 reconfigure a parent, or claim a transfer from prose alone. Only the user/host can create,
@@ -115,12 +121,16 @@ full conversation history or other agents' conclusions into the execution thread
 Preserve the original requirements and decisions needed to understand the task, then
 rely on current raw sources.
 
-If a separate Sol Root thread cannot be established safely, keep the existing fallback:
-the user/host switches the current main conversation to Sol and preserves the same task
-state. Do not silently downgrade to a writer child, another backend or a second scheduler.
+If a selected Sol Root transfer cannot be established safely, retain the current Root
+and report the control-transfer gap. The normal Root-directed `cwf_sol_writer` path may
+continue when it is supported by the host and remains within the existing authorization;
+do not silently switch the main conversation model, another backend or a second scheduler.
 
-Sol Root may dispatch and screen Luna and enabled Grok using the actual native host tools.
-It has this authority because it is the current Root, not because its model is Sol.
+In the normal flow, current Root dispatches and screens Luna and enabled Grok using the
+actual native host tools. After a proven optional controller transfer, Sol Root may do so.
+Start each reader with a fresh bounded context (`fork_context=false` when exposed);
+retrieve complete relevant history or pagination when history itself is the authorized
+source. Root has dispatch authority because it is current Root, not because of its model.
 A Sol child using `cwf_sol_writer` remains a child: no nested delegation, peer messaging
 or controller commands. Model identity never grants Root authority to a child. A fresh
 Astra reviewer is opened or dispatched from the current Root/host as a separate review
@@ -132,34 +142,51 @@ Its managed steps still need admitted native child packets; moving a writer into
 or opening another conversation does not satisfy or bypass those gates. Never use
 another run or conversation to reset limits.
 
-## Direct writing is the Skill-only default
-After either handoff path, Sol Root writes directly by default: ordinary sequential
-implementation, tests and repair stay in the execution conversation. Do not delegate
-routine writing to `cwf_sol_writer` or `cwf_writer` merely because those profiles exist.
-Writer children are only for genuinely independent parallel write slices, with current
-explicit parallel-write authorization, disjoint owned files, verified host isolation,
-a defined integration owner and required non-author review. Root also counts as a writer.
-Without a real parallel need or safe isolation, keep writing in Root. Luna/Grok remain
-read-only and fresh Astra acceptance remains independent.
-This default does not change Runtime 4.2.0: managed writers still use admitted child
-packets and are serialized within the coordination DB. Do not select Runtime merely
-to delegate sequential writing, bypass a selected Runtime with direct Root writes,
-or create another DB/run to manufacture parallel-writer authority. If an existing
-Runtime conflicts with the user's direct-writing requirement, disclose that mismatch
-and reconcile the execution mode before further writes; continue unrelated safe work.
+## One writer child by default; direct writing and transfer are explicit alternatives
+The normal explicit Skill-only path gives one `cwf_sol_writer` child the closed write
+set and lets it continue implementation, tests and bounded repair without step-by-step
+Root approval. Root counts as a writer and therefore does not edit the candidate while
+that child owns it. It may inspect stable snapshots and do nonconflicting read-only work.
+The writer retains ownership until the host confirms it stopped and Root inspects effects.
+
+The user may instead explicitly choose main-conversation direct writing or a true
+controller transfer. Direct writing makes the current Root the sole writer. A proven
+controller transfer makes the receiving Root the sole writer/controller under the
+optional transfer contract above. Neither alternative creates a second writer, resets
+usage or changes acceptance. Multiple writers still require current parallel-write
+authorization, disjoint write sets, verified isolation, an integration owner and
+required non-author review.
+
+This default does not change Runtime 4.2.0: managed writers still require admitted
+child packets and are serialized within the coordination DB. Do not bypass a selected
+Runtime with Skill-only direct writes, change its routes, or create another DB/run to
+manufacture writer authority.
+
+## Native completion and resume
+Use the host's completion notification or suspend/resume behavior while the writer runs.
+Root should continue useful independent work. Call wait/read/status only when the next
+step actually depends on the result, or reconcile state once after Root resumes. Do not
+run short-interval polling loops, mechanically wake the writer, or repeat unchanged logs.
+Use only the currently exposed host contract; prose timers and guessed API fields are
+not lifecycle controls. If a completed turn's final content is not visible, follow
+[native result collection](evidence.md#native-result-collection) before any redispatch.
+For the closed-child routing and replacement rule, follow
+[host lifecycle](host-routing.md#lifecycle). Keep the still-open same writer for an
+ordinary bounded repair when capacity permits; a replacement after closure continues
+the same writer claim and task allowance and is never a concurrent second writer.
 
 ## A sufficient brief, not a second implementation
 Use the existing task/scope/sources/check/stop fields. State the original outcome, decided
 change and rationale, invariants, exact baseline and owned files, acceptance evidence,
 and the contradictions or scope/permission/budget changes that require escalation.
 Do not require a new form or make Astra prewrite code, every command or every edge case.
-Sol reads the real sources, decides implementation details and returns concrete
+The Sol writer reads the real sources, decides implementation details and returns concrete
 counterevidence when the brief is wrong. Routine test failures stay with the scoped
 implementer; changing goals, safety policy or weakening acceptance never does.
 Escalate a disproved design premise, required semantic/permission/scope change, or
 bounded diagnosis that no longer produces new evidence. Stop the affected work;
 continue unrelated safe work. Do not repeatedly escalate routine test failures.
-Before handing back the candidate, Sol switches to a code-reviewer perspective and
+Before handing back the candidate, the writer switches to a code-reviewer perspective and
 examines the entire actual diff, original goal, dependencies and tests, including
 whether Astra's plan was wrong. Self-review is required but is not independent
 acceptance. Preserve failing checks; never weaken tests merely to obtain PASS.
@@ -182,7 +209,7 @@ repeat broad audits under different titles, or send the whole conversation to ev
 All material leads remain in CLAIMS; compact summaries never erase risks.
 
 ## Protect the acceptance budget
-Reserve the needed Astra review capacity and allowance before Sol or optional probes.
+Reserve the needed Astra review capacity and allowance before the Sol writer or optional probes.
 Concentrate Astra attention at design and acceptance, escalating only material deviations.
 These are checkpoints, not a promise of exactly two model requests. All native turns,
 including failed starts, follow-ups and repairs, consume the cumulative task allowance.
@@ -220,19 +247,23 @@ findings. Prefer a genuinely fresh context rather than a full-history fork; if t
 can only provide inherited context, disclose that independence limit and do not claim a
 blind independent design review from it. Missing fresh context or raw-source access must
 be disclosed and cannot waive required independent verification.
+Current Root owns obtaining that review before acceptance. Required fresh acceptance is a
+different obligation from design review and cannot be deduplicated merely because both
+read the same requirement or candidate.
 After the writer stops, Astra reads the full actual diff, critical dependencies, tests
 and unresolved evidence against the original goal. It may reject the original Astra
 design. A planning Astra that did not write code can review implementation, but reusing
 that same context is not independent design review. Preserve any required high-risk/
-non-author or user-requested independent check. Runtime always requires its declared Astra verifier for a writer; a chat summary cannot replace that node. Recheck affected
-evidence after a repair, not every reviewer recursively. Rejected work returns to the
-same Sol execution Root unless an explicit controller transfer changes ownership; a
-repair cycle never creates a fresh allowance or duplicate writer by itself. Zero-model
+non-author or user-requested independent check. Runtime always requires its declared Astra verifier for a writer; a chat summary cannot replace that node. After a repair, recheck the fixed proposition and affected dependency and acceptance
+evidence. Unchanged adequate review does not need another reviewer merely because
+the candidate has a new label. Rejected work returns to the same writer under Root
+direction while the host can continue that task. A repair cycle never replays completed
+work, creates a fresh allowance or introduces a duplicate writer. Zero-model
 regression is not live model, permission, quality, price or savings validation.
 
 ## Temporary optional Grok sidecar
 An enabled [Burst sidecar](burst.md) permits extra native OpenCodex evidence in explicit
 Skill-only work. Do not insert Grok as an obligatory design or pre-acceptance stage.
-Sol Root screens current raw evidence; Astra still performs required independent
+Current Root screens current raw evidence; Astra still performs required independent
 acceptance beyond all agents' findings. Luna 1M Fast can handle large scoped work;
 Grok is selected for a distinct useful method, not presumed context superiority.

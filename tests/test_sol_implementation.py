@@ -442,8 +442,10 @@ class SolPackageContractTests(unittest.TestCase):
         path = ROOT/'skill/codex-dynamic-workflow/references/delegation.md'
         text = ' '.join(path.read_text(encoding='utf-8').split())
         for required in ('not a second implementation', 'existing task/scope/sources/check/stop fields',
+                         'one `cwf_sol_writer` child the closed write set',
+                         'Root counts as a writer', 'does not edit the candidate',
                          'per meaningful task, not per stage or repair', 'challenge the design assumptions',
-                         'Astra review capacity and allowance before Sol', 'no model budget',
+                         'Astra review capacity and allowance before the Sol writer', 'no model budget',
                          'not independent design review', 'full actual diff', 'pending acceptance'):
             with self.subTest(required=required):
                 self.assertIn(required, text)

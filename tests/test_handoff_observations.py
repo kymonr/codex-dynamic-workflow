@@ -19,15 +19,20 @@ CONTRACTS = {
         'A summary-only or truncated read is not evidence that no result exists',
         'includeOutputs=false', 'includeTurns=false',
         'do not equate these adapter-specific options',
+        'final message phase such as `final_answer`',
+        'terminal execution and output visibility',
+        'examples, not a universal host schema',
         'originating tool family and exact returned IDs',
         'thread, turn/attempt, item and candidate',
         'pagination or output-range controls',
+        'fixed recent-turn, fragment-count or summary-only limit',
         'preserve known result existence',
         'supplied versus independently opened',
+        'producer, current owner or named custodian',
         'not a new model turn',
         'never creates an all-probe waiting stage',
     )),
-    'handoff': ('references/delegation.md', '### Threaded control transfer', (
+    'handoff': ('references/delegation.md', '### Optional threaded control transfer', (
         'Creation lineage, probe custody and implementation control are different facts',
         'An unchanged parent ID does not by itself prove two implementation Roots',
         'Creating or naming a thread is not an ownership acknowledgement',
@@ -137,14 +142,29 @@ class HandoffObservationTests(unittest.TestCase):
         self.assertIn('former planning thread must not dispatch or write', body)
         self.assertIn('unresolved holds remain UNKNOWN', body)
 
-    def test_existing_direct_write_independence_and_budget_guards_remain(self):
+    def test_native_completion_avoids_polling_and_hard_coded_timers(self):
+        routing = section((ROOT / SKILL / 'references/host-routing.md').read_text(encoding='utf-8'),
+                          '## Lifecycle')
+        for clause in ('completion notification or suspend/resume',
+                       'Wait/read/status only when the next step depends',
+                       'reconcile once after resume', 'short-interval polling',
+                       'mechanical wakeups', 'Do not invent timers or adapter fields'):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, routing)
+        delegation = section((ROOT / SKILL / 'references/delegation.md').read_text(encoding='utf-8'),
+                             '## Native completion and resume')
+        self.assertIn('Root should continue useful independent work', delegation)
+        self.assertIn('only when the next step actually depends', delegation)
+
+    def test_default_writer_independence_and_budget_guards_remain(self):
         text = ' '.join((ROOT / SKILL / 'references/delegation.md').read_text(encoding='utf-8').split())
-        for clause in ('Sol Root writes directly by default', 'explicit parallel-write authorization',
+        for clause in ('one `cwf_sol_writer` child the closed write set', 'parallel-write authorization',
+                       'Root counts as a writer', 'does not edit the candidate',
                        'required non-author review', 'do not reset counters',
                        'do not treat UNKNOWN usage as zero', 'same DB/run, immutable routes',
                        'Parent-turn interruption or cancellation is not child termination',
                        'Late receipts count against the same task', 'stops writing, dispatching',
-                       'same Sol execution Root', 'remain read-only by default',
+                       'same writer under Root', 'remain read-only by default',
                        'unresolved termination/resource'):
             with self.subTest(clause=clause):
                 self.assertIn(clause, text)
@@ -182,7 +202,7 @@ class HandoffObservationTests(unittest.TestCase):
 
     def test_unknown_model_cannot_waive_a_model_specific_gate(self):
         body = section((ROOT / SKILL / 'references/delegation.md').read_text(encoding='utf-8'),
-                       '### Threaded control transfer')
+                       '### Optional threaded control transfer')
         self.assertIn('Effective model identity and controller transfer are checked separately', body)
         self.assertIn('verified model identity remains gated by that requirement', body)
 

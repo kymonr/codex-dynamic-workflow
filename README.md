@@ -8,9 +8,9 @@ $codex-dynamic-workflow
 
 旧 `$dispatching-native-agents` 仅保留为显式兼容入口，并关闭隐式调用，避免双重自动路由。
 
-2026-09-18 Skill 4.3.0 Threaded Phase Handoff（Runtime 仍为 4.2.0）：
+2026-09-19 Skill 4.3.0 Root-directed Sol Writer（Runtime 仍为 4.2.0）：
 - 被动调用：自动匹配时，主线程继续执行原任务；有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 只读探针，不启动 Astra/Sol 流程。
-- 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 起优先使用下述线程式阶段交接。
+- 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Root 统筹单一 Sol writer 实施 → fresh Astra 验收流程。
 
 仅提到、讨论或修改 Skill 不算主动调用。分流以 [Skill 入口](skill/codex-dynamic-workflow/SKILL.md)为准；下文 Astra/Sol 分工与 Runtime 说明适用于显式模式。
 
@@ -21,19 +21,21 @@ $codex-dynamic-workflow
 当前协议：[v4.1 后续规则](skill/codex-dynamic-workflow/references/followup.md)与[补充分支协议](skill/codex-dynamic-workflow/references/supplemental.md)；[v4.1 设计](DESIGN_V41.md)保留初始设计记录。
 确定性验收不等于真实模型联调、模型质量提升或宿主隔离证明。
 
-## 4.3.0：线程式阶段交接，Sol 执行线程接管 Root
+## 4.3.0：Root 统筹，单一 Sol writer 持续实施
 
-显式 Skill-only 的复杂任务优先：**Astra 规划线程定义目标、设计边界与验收标准 → 宿主支持时将紧凑任务状态交给独立 Sol 执行线程，并由该线程成为唯一 implementation Root → Sol 连续实施、测试、修复与调度 Luna/Grok → fresh Astra 审核线程独立验收**。若宿主无法安全建立独立 controller thread，则回退为用户/宿主在当前主对话切换到 Sol。
+显式 Skill-only 的默认路径：**Astra 定义目标、设计边界与验收标准 → 当前主对话 Root 把封闭写范围交给一个 `cwf_sol_writer` 子代理 → writer 连续实施、测试和范围内修复 → writer 停写后由 fresh Astra 审核完整实际 diff**。Root 保留目标、授权、派工、结果筛查和收口，不重复实现，也不逐命令或逐消息确认已授权步骤。
 
 Astra 交接必须包含原始目标和非目标、explicit workflow 模式、准确基线与未提交改动、当前授权与 allowed effects、关键设计和不变量、阶段依赖、可核验验收证据、未解决 claims、活动 child/writer ownership 与 lifecycle holds、截止条件以及累计已用/预留额度；不是提前写完全部实现。
-Sol 接管后重新读取实际源码和依赖，不盲信 Astra 摘要，不为普通命令和测试失败反复召回 Astra；写完后先以代码审查者视角检查整个实际 diff，也要挑战原方案本身。
+Sol writer 重新读取实际源码和依赖，不盲信 Astra 摘要，不为普通命令和测试失败反复召回 Astra；写完后先以代码审查者视角检查整个实际 diff，也要挑战原方案本身。
 
-同一候选只能有一个 implementation Root。Sol 接管后原 Astra 规划线程退出实现热路径，不再写入、派工或改变候选；换线程不自动终止旧 child/writer，也不证明资源已经释放。未确认的 termination/resource hold 保持 UNKNOWN。
+同一候选默认只有一个 active writer。Root 也计入 writer，因此 `cwf_sol_writer` 持有写范围时 Root 不修改候选，只继续无冲突的只读工作。换线程不自动终止旧 child/writer，也不证明资源已经释放；未确认的 termination/resource hold 保持 UNKNOWN。
 线程变化不创造新任务：授权、候选、未解决问题、截止条件、ownership 和累计额度继续沿用，不能因为新对话重置预算、重新获得 Luna quota、扩大权限、建立第二 writer 或新建 Runtime run 绕过旧合同。
 
-最终验收优先使用新的 Astra review context/thread，而不是回到规划线程继续确认自己的方案。Fresh Astra 重新读取原始需求、最终 candidate、完整 diff、关键依赖、测试/证据和未解决风险；旧计划和 Luna/Grok 发现只是输入，不能成为审查范围上限。若审核打回，默认回到同一个 Sol execution Root 做 bounded repair，不因此生成新额度。
+最终验收优先使用新的 Astra review context/thread，而不是回到规划线程继续确认自己的方案。Fresh Astra 重新读取原始需求、最终 candidate、完整 diff、关键依赖、测试/证据和未解决风险；旧计划和 Luna/Grok 发现只是输入，不能成为审查范围上限。若审核打回，默认由 Root 让同一个 Sol writer 继续 bounded repair，不因此生成新额度或重放已完成 writer。
 
-`cwf_sol_writer` 仍是普通 writer-child profile，不是 Sol execution Root；模型身份或“新开一个对话”本身都不会授予 controller/dispatch 权。只有实际当前 Root 才能调度 Luna/Grok。Skill 不能凭文本自动创建或切换 controller，只有实际宿主/用户控制可以完成并观察交接。
+`cwf_sol_writer` 是默认 writer-child profile，不是 execution Root；模型身份或“新开一个对话”本身都不会授予 controller/dispatch 权。只有实际当前 Root 才能调度 Luna/Grok。用户明确选择主对话直接写或真正控制权交接时，仍遵循单 writer、原授权和累计额度；这两条是可选路径，不是启动实现的默认门槛。Skill 不能凭文本自动创建或切换 controller。
+
+等待使用宿主原生完成通知或挂起恢复能力。Root 有独立工作时继续推进；只有下一步确实依赖结果时才等待/读取，或恢复后对账一次。禁止短间隔重复 wait/read/status、机械唤醒和重复输出未变化日志。相关对话可按任务需要读取完整内容和分页；compact 派工不构成人为的最近轮数、片段数或摘要限制，凭据、PII 和私有推理仍受保护。
 
 这是 Skill 4.3.0 的 Skill-only 交接规则；**Runtime 仍为 4.2.0**，包版本与 Runtime 版本独立校验，同一 DB/run、固定路由、writer/verifier admission、默认 12 次补充/28 次批准/32 次绝对调用额度和必要独立验收全部不变。真实原生线程记录见 [E2E 证据](https://github.com/kymonr/codex-dynamic-workflow/blob/d7eb54cabf87c69feef5a5c4c3e97c8a91feea84/reports/V430_THREADED_E2E_2026-09-18.md)；最终独立审核和对应提交的 CI 结果随发布 PR/release 记录。安装结果单独核验，不能从源码版本推断本机已更新。详细交接见 [delegation](skill/codex-dynamic-workflow/references/delegation.md)，非阻塞边界见 [supplemental](skill/codex-dynamic-workflow/references/supplemental.md) 和 [followup](skill/codex-dynamic-workflow/references/followup.md)。
 
@@ -41,7 +43,7 @@ Sol 接管后重新读取实际源码和依赖，不盲信 Astra 摘要，不为
 更多方向可采用事先明确批准的新任务额度；[预算说明](skill/codex-dynamic-workflow/references/budget.md)提供 24 次补充尝试的配置示例，而不暗中上调旧合同。
 Luna 只读、基于准确版本/隔离快照，可以挑战方案、给出反例和测试/补丁建议，不能直接改主工作区或签署验收。
 每项调查有覆盖目标和有限截止条件，普通跟进至多一次且不重置截止时间/额度。主线就绪即执行，不等无关结果齐套。
-Sol 在自然检查点批量核对普通结果；可信重大风险及时处理受影响的操作，不能为追求不阻塞而忽略已经收到的风险。
+Root 在自然检查点批量核对普通结果；可信重大风险及时处理受影响的操作，不能为追求不阻塞而忽略已经收到的风险。
 当报告积压或 CPU、磁盘、测试锁、代理槽位影响主线时暂停新补充派工。收尾保留早期发现、报告未完成覆盖，不将停止请求冒充资源已释放。
 
 额度按实际可观察的 **credit/合格交付**理解，包含 Root、子代理、筛查与返工；调用次数不是 credit。价格和质量等价不写成保证，不把未知消耗记为零。

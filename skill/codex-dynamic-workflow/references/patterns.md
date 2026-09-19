@@ -7,7 +7,7 @@ are disclosed; probes are never a completion barrier. See [supplemental](supplem
 
 | Shape | Use | Avoid |
 |---|---|---|
-| Solo mainline | Current Root handles cohesive authorized work; required review remains | Moving required work into optional Luna probes |
+| Root-directed writer | Current Root orchestrates one persistent Sol writer child; required review remains | Duplicate implementation or step-by-step supervision |
 | Fan-out | Independent ready questions or evidence methods | Repeating the same search with more agents |
 | Pipeline | Each item can independently move to verification | Waiting for unrelated siblings |
 | Expand | New evidence identifies a distinct missing question | Renaming repeated work to reset budget |
@@ -16,10 +16,11 @@ are disclosed; probes are never a completion barrier. See [supplemental](supplem
 
 ## Mainline staffing and review
 
-In Skill-only mode, Root can keep cohesive mainline work in its own thread, including
-implementation/tests. Sol Root writes directly by default; writer subagents are only
-for genuinely needed, explicitly authorized isolated parallel writes, not routine
-sequential implementation. Keep disjoint ownership and an integration owner.
+In explicit Skill-only mode, current Root keeps the objective, authorization, dispatch
+and closeout in its own thread and assigns coherent implementation/tests/repair to one
+`cwf_sol_writer` child by default. Root does not duplicate that implementation. Direct
+main-conversation writing or true controller transfer remains an explicit user choice;
+parallel writers require separate authorization, disjoint ownership and an integration owner.
 Runtime-managed work still requires an admitted packet;
 do not move a managed step outside its ledger to bypass a gate or exhausted budget.
 Native Astra children are useful for independent
@@ -97,20 +98,20 @@ counterexample direction should challenge the design itself when useful, not sim
 check conformance. Do not reopen three probes at each stage. A plan contradiction
 needs a concrete escalation; routine commands and in-scope test repair stay with Sol.
 
-## Example: main-thread phase handoff
+## Example: Root-directed implementation handoff
 
 Astra reads the critical sources, decides the change and writes a sufficient brief
-with concrete staged acceptance evidence in the existing plan. At the checkpoint,
-the user/host transfers compact task state to a separate Sol execution thread when
-the host supports controller handoff. Sol becomes the sole implementation Root.
-A same-conversation Sol model switch is only the fallback; neither path promotes
-a writer child or resets authorization, ownership or cumulative usage.
-Sol verifies current sources and observed model, continues implementation, tests,
-repairs and Luna dispatch without Astra approving routine operations, and reviews
-the complete diff itself. Root then obtains a fresh Astra review of the important
+with concrete staged acceptance evidence in the existing plan. Root dispatches one
+`cwf_sol_writer` child with the closed write scope. That writer verifies current sources
+and observed model, continues implementation, tests and repairs without Root approving
+routine operations, and reviews the complete diff itself. Root continues independent
+read-only work and screens Luna/Grok when useful. After writer ownership is released,
+Root obtains a fresh Astra review of the important
 candidate against the original goal and design, not just compliance with the brief.
-No new scheduler, ledger, main-thread profile or automatic model-switch tool is
-introduced. See [delegation](delegation.md); Runtime-managed nodes keep their gates.
+An explicitly user-selected main-thread direct-write path or true controller transfer
+may replace the default, without resetting authorization, ownership or cumulative usage.
+No new scheduler, ledger, main-thread profile or automatic model-switch tool is introduced.
+See [delegation](delegation.md); Runtime-managed nodes keep their gates.
 
 For a workbook save change, independent Luna questions may cover missed callers,
 partial writes, backup/restore, package-content preservation, file locks and tests
@@ -119,7 +120,7 @@ these are six possible directions, not required tasks or a claim about any proje
 Luna may suggest test cases or candidate patches but cannot edit the working tree,
 weaken acceptance, replace Sol's required tests or decide whether to deliver.
 
-If five probes return while the sixth is slow, Sol screens the five at a natural
+If five probes return while the sixth is slow, Root screens the five at a natural
 checkpoint and proceeds on ready mainline work. A returned credible data-loss risk
 blocks the affected operation until checked; the sixth probe's silence does not
 block unrelated work. At delivery, collect already returned risks, stop optional

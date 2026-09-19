@@ -18,7 +18,8 @@ class DispatchGuidanceTests(unittest.TestCase):
         patterns = read('references/patterns.md')
         self.assertIn('Role names are not a staffing list', skill)
         self.assertIn('For supplemental probes,', ' '.join(skill.split()))
-        self.assertIn('Root can keep cohesive mainline work in its own thread', patterns)
+        self.assertIn('current Root keeps the objective, authorization, dispatch', patterns)
+        self.assertIn('one `cwf_sol_writer` child by default', ' '.join(patterns.split()))
         self.assertIn('three-probe intent applies to supplemental coverage', patterns)
         self.assertIn('Runtime-managed work still requires an admitted packet', patterns)
 

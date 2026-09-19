@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.3.0 V2 scheduling simplification — 2026-09-19 (unreleased)
+
+- Make the current main conversation the default Skill-only Root for objective,
+  authorization, dispatch and closeout. One `cwf_sol_writer` child now owns coherent
+  implementation, tests and bounded repair; Root does not duplicate writes or approve
+  already-authorized routine steps one by one.
+- Start fresh Astra acceptance only after the writer stops, reading the original goal,
+  full actual diff, critical dependencies and test evidence. Preserve one active writer;
+  main-conversation direct writing and real controller transfer remain explicit options.
+- Use native completion notification or suspend/resume, with dependency-driven waits and
+  one resume reconciliation instead of short polling, mechanical wakeups or repeated logs.
+  Permit complete task-relevant conversation reads and pagination without fixed recent-turn
+  or fragment limits.
+- Record observed adapter behavior where a terminal phase may be `final_answer` while a
+  same-turn read omits or temporarily lags final text. Retrieve the original producer or
+  custodian result before redispatch. These are adapter examples, not new schema fields.
+- Keep implicit Luna/Grok behavior, Runtime 4.2.0 DB/routes/budgets/admitted packets,
+  verifier gates and existing 4.3.0 model/profile configuration unchanged.
+
 ## 4.3.0 Threaded Phase Handoff — 2026-09-18
 
 - Promote the Skill package and compatibility metadata to 4.3.0 while keeping the

@@ -4,12 +4,13 @@
 Skill 4.3.0 中，隐式匹配增加 Luna 只读调查和自动 Grok Burst：主线程保持原任务，有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 探针。
 用户显式调用时，才按[完整流程](references/explicit-workflow.md)运行 Astra 规划与验收、Sol 实施、Luna/Grok 补充。
 
-显式复杂任务优先使用**线程式阶段交接**：Astra 规划线程形成紧凑、可执行的交接状态；宿主支持独立控制器对话时，转交给独立 Sol 执行线程，由它成为唯一 implementation Root 并连续实施、测试、修复和调度补充调查；完成后再交给 fresh Astra 审核线程。若宿主不能安全建立独立 Sol Root，则回退为用户/宿主在当前主对话切换到 Sol。普通 `cwf_sol_writer` 子代理不能替代 Sol Root，因为子代理没有控制器和嵌套派工权限。
+显式任务默认使用**Root 统筹、单一 Sol writer 实施**：Astra 给出紧凑、可执行的设计与验收边界；当前主对话保持 Root，把封闭写范围交给一个 `cwf_sol_writer` 子代理，由它连续实施、测试和范围内修复；Root 不重复实现，也不逐命令、逐消息审核已授权步骤。writer 停止修改候选后，再由 fresh Astra 审核线程重新读取原始目标、完整实际 diff、关键依赖和测试证据。
 
-线程变化不创造新任务：原授权、候选、未解决问题、活动 ownership、截止条件和累计额度继续沿用；不能因为开新对话就重置预算、重建 Runtime run、制造第二 writer 或扩大权限。交接后 Astra 规划线程退出实现热路径，不再与 Sol 同时控制候选。最终 Astra 审核使用新的上下文重新读取原始需求、完整 diff、关键依赖和测试证据，不把旧计划或 Luna/Grok 发现当作审查范围上限。
+Root 计入 writer；默认只有 `cwf_sol_writer` 修改候选，Root 继续无冲突的只读工作并负责调度、授权、结果筛查与收口。用户明确选择时，主对话可直接写，或通过宿主支持的真实控制权交接让另一对话成为 Root；这两种路径不是默认门槛，也不能制造第二 writer。线程变化不创造新任务：原授权、候选、未解决问题、活动 ownership、截止条件和累计额度继续沿用。
 
 具体触发判断见 [SKILL.md](SKILL.md)；线程交接和失败回退见 [delegation](references/delegation.md)。下方流程参考均在显式模式按需读取。
 启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
+等待依赖宿主原生完成通知或挂起恢复；Root 有独立工作时继续推进，只在下一步依赖结果或恢复后对账一次，避免短间隔轮询、机械唤醒和重复日志。
 详见 [v4.1 结果与收尾协议](references/followup.md)。
 
 - 规范入口：[SKILL.md](SKILL.md)；本机 profile 需单独安装。
@@ -24,7 +25,7 @@ Skill 4.3.0 中，隐式匹配增加 Luna 只读调查和自动 Grok Burst：主
 高风险结论不能为了节约成本改用不足能力的核验者。`cwf_general`（Luna/max）承担有明确来源和检查边界的可选补充探索；`cwf_mechanical`（Luna/medium）仅承担合格的机械只读任务。
 
 `policy.json` 是初始可编辑规划上限，不是推荐用满额度，也不是准确费用报价。
-v4 延续 SQLite DAG、原子调用预留与显式只读恢复，并加入补充分支隔离与独立主线验收；硬费用限制、操作系统文件隔离和嵌套工作流仍未实现。线程式 Skill-only Root 交接也不是 Runtime handoff，不能绕过 Runtime 的固定 route、writer/verifier admission 或累计预算。
+v4 延续 SQLite DAG、原子调用预留与显式只读恢复，并加入补充分支隔离与独立主线验收；硬费用限制、操作系统文件隔离和嵌套工作流仍未实现。可选的 Skill-only Root 控制权交接也不是 Runtime handoff，不能绕过 Runtime 的固定 route、writer/verifier admission 或累计预算。
 Runtime 入口和限制见 [runtime](references/runtime.md)；原生/模型集成验证状态须单独确认。
 源码发布与本机安装分别核验；最终独立审核和对应提交的 CI 结果随发布记录提供。更新安装目录后，以新会话的实际发现和运行回执验证，不能只凭文件存在声称生效。
 

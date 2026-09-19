@@ -49,10 +49,17 @@ terminal result cannot complete a resumed turn, and a title cannot identify an a
 
 A summary-only or truncated read is not evidence that no result exists. For example,
 `includeOutputs=false` or `includeTurns=false` may omit content; do not equate these
-adapter-specific options or assume every host supports them. Use supported pagination
-or output-range controls to retrieve the relevant final report and already-returned
-material findings, not entire unrelated histories or private reasoning. Check whether
-the requested range/pages were actually returned before calling a return missing.
+adapter-specific options or assume every host supports them. Some adapters report a
+final message phase such as `final_answer`, while a read of that same completed turn may
+omit or temporarily lag the final text. Treat terminal execution and output visibility
+as separate observations. These field names are examples, not a universal host schema.
+
+Use supported pagination or output-range controls to retrieve all task-relevant
+conversation content, the final report and already-returned material findings. Do not
+impose a fixed recent-turn, fragment-count or summary-only limit; compact dispatch
+packets do not limit evidence retrieval. Exclude unrelated histories, credentials, PII
+and private reasoning. Check whether the requested range/pages were actually returned
+before calling a return missing.
 When the producer or its named custodian already has the original NODE/output, obtain
 that source-bound result or its supported locator before rerunning work. Label supplied
 versus independently opened evidence; a handoff summary alone is not verification.
@@ -60,7 +67,9 @@ versus independently opened evidence; a handoff summary alone is not verificatio
 If retrieval remains incomplete, preserve known result existence and execution state;
 record the exact unread portion/access gap in NOTES/UNCOVERED rather than saying the
 agent did not deliver. Retrieving existing output is not a new model turn. Do not
-redispatch or spend a format-repair turn to compensate for an omitted view. A genuinely
+redispatch or spend a format-repair turn to compensate for an omitted or lagging view;
+first obtain the original result from its producer, current owner or named custodian.
+A genuinely
 malformed retrieved return still follows the existing bounded repair and accounting
 rules; no new schema or persistent evidence ledger is required.
 

@@ -2,10 +2,12 @@
 
 ## Defaults and compatibility
 The meaningful-task default remains at least three distinct native Luna probes, started
-early when capability, budget and observed host capacity permit. Astra owns all necessary
-work and delegates scoped implementation/tests/repairs to Sol in new 4.2 contracts. Three counts task-level launch intent, not completed results, votes or a new quota
-on each repair. Keep probes small enough to return useful evidence during the mainline.
-Skill-only remains normal; the commands below apply only to explicitly selected Runtime.
+early when capability, budget and observed host capacity permit. Current Root owns all
+necessary work and delegates scoped implementation/tests/repairs to one Sol writer child
+in the default explicit Skill-only flow. Three counts task-level launch intent, not
+completed results, votes or a new quota on each repair. Keep probes small enough to return
+useful evidence during the mainline. Skill-only remains normal; the commands below apply
+only to explicitly selected Runtime.
 
 New 4.1 contracts carry supplemental_protocol=2 and immutable acceptance_mode=review or
 repair (default repair when implement=true). Repair mode requires implement authority.
@@ -129,11 +131,12 @@ inside the transaction without losing the active attempt, budget charge or earli
 findings; submit a smaller truthful result. Aggregate hash preimages are not stored
 envelopes and may cover multiple individually bounded records.
 
-## 2026-09-14 main-thread throughput clarification
+## Root-directed throughput clarification
 
-Sol Root performs routine screening during the explicit Skill-only execution phase;
-Astra handles material design escalation and required acceptance. Sol writer children
-remain non-controllers. This does not change Runtime routes or issue-resolution gates.
+Current Root performs routine screening during the explicit Skill-only execution phase;
+Astra handles material design escalation and required acceptance. The single Sol writer
+child owns implementation/tests/repair but remains a non-controller. This does not
+change Runtime routes or issue-resolution gates.
 
 A large backlog pauses new optional launches, not required mainline work. Screening
 can restore acceptance for checked benign/duplicate claims without another whole
@@ -143,8 +146,11 @@ and stop decisions, not a guarantee that Luna can never add verification latency
 
 Every Luna probe has an objective scope and finite cutoff, with at most one routine
 new-input follow-up within that same cutoff and remaining allowance. At a mainline
-checkpoint, do ready work before polling optional siblings. Without independent
-work, close out rather than waiting only to complete the batch. Preserve early
+checkpoint, do ready work and rely on native completion notification or suspend/resume.
+Wait/read/status only when the next step depends on a result, or reconcile once after
+resume; do not short-poll, mechanically wake work or repeat unchanged logs. Without
+independent work, request already collected evidence or close no-progress work rather
+than waiting only to complete a batch. Preserve early
 risks before interrupting; missing coverage and UNKNOWN closure remain separate
 from accepted mainline evidence. No automatic timer or background receiver is added.
 Grok follows [Burst](burst.md), with no workflow-imposed duration or follow-up ceiling;

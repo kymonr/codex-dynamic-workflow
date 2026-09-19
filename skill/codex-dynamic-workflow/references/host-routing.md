@@ -62,7 +62,7 @@ This package ships six optional profiles, installed separately from openai.yaml;
 | Profile | Initial mapping | Capability contract |
 |---|---|---|
 | cwf_reader | Astra / selected effort (default high) | Bounded read-only raw-source analysis and independent judgment |
-| cwf_sol_writer | Sol / selected effort (default high) | Runtime writer or authorized isolated parallel write slice; never final acceptance |
+| cwf_sol_writer | Sol / selected effort (default high) | Default Skill-only sole writer child or admitted Runtime writer; never controller or final acceptance |
 | cwf_writer | Astra / selected effort (default high) | Preserved for old contracts and explicit compatible Skill-only use |
 | cwf_general | Luna / max | Optional omissions, counterexamples, test gaps and second opinions |
 | cwf_mechanical | Luna / medium | Low-risk mechanical read-only work with objective checks |
@@ -101,19 +101,21 @@ requires disclosing the capability gap and blocking affected acceptance, not mut
 the contract or starting a new run to reset spending. Higher effort is not proof of
 independence, source coverage or successful verification.
 
-Root owns the complete mainline objective. In explicit Skill-only work, when the host
-supports a separate controller conversation with the necessary repository/tool access,
-prefer transferring compact task state to that separate Sol execution thread and make
-it the sole implementation Root. If the host cannot establish that controller transfer,
-a user/host model switch in the current main conversation is the fallback. Profiles do
-not switch or promote a controller: `cwf_sol_writer` remains a child profile and never
-gains dispatch authority merely because its model is Sol. The no-parent-reconfiguration
-rule forbids agent configuration edits, not the user's/host's supported conversation or
-model controls. Preserve authorization, candidate/source identity, ownership, unresolved
-claims, deadlines and cumulative spent/reserved allowance across either handoff path.
-Do not create a new Runtime run, fresh quota or second active writer/controller because
-the conversation changed. Verify observed identity and controller/source capability;
-unknown host state remains UNKNOWN. Runtime packets/routes stay unchanged.
+Root owns the complete mainline objective. In explicit Skill-only work, current Root
+directs one `cwf_sol_writer` child as the sole source writer by default. The child owns
+coherent implementation, tests and bounded repair; Root owns dispatch, screening,
+authorization and closeout and may continue nonconflicting read-only work. Profiles do
+not promote a controller: `cwf_sol_writer` never gains dispatch authority merely because
+its model is Sol. Main-conversation direct writing remains available when the user
+explicitly selects it, within the original authorization and single-writer ownership;
+no controller-transfer proof is required. A true controller transfer requires explicit
+user selection and host proof under the full
+[control-transfer contract](delegation.md#optional-threaded-control-transfer). Preserve
+authorization, candidate/source identity, ownership, unresolved claims, deadlines and
+cumulative spent/reserved allowance across any supported alternative. Do not create a
+new Runtime run, fresh quota or second active writer/controller because a conversation
+changed. Verify observed identity and controller/source capability; unknown host state
+remains UNKNOWN. Runtime packets/routes stay unchanged.
 Astra designs and accepts; Sol implements, tests and repairs under
 the [delegation contract](delegation.md). Do not move required work to Luna because it is bounded or
 read-only. For every meaningful non-trivial task, proactively use cwf_general for
@@ -175,10 +177,12 @@ not equal task quality between models. Any quality comparison must use the same
 representative tasks and candidate sources, verified omissions/false findings and
 rework; successful routing or additional agent count is not that comparison.
 
-Writing is not enabled by cwf_mechanical or cwf_general. In Skill-only work,
-Sol Root writes directly by default. Use cwf_sol_writer only for admitted Runtime writing
-or authorized isolated parallel writes, with closed scope and required Astra acceptance.
-Do not delegate routine sequential writing or defeat a non-writer profile by relabeling it.
+Writing is not enabled by cwf_mechanical or cwf_general. In Skill-only work, use one
+`cwf_sol_writer` child for the closed sequential write scope by default, with required
+Astra acceptance. Root counts as a writer and must not edit the candidate while the
+child owns it. Direct Root writing, true controller transfer and parallel writers are
+explicit alternatives under [the delegation contract](delegation.md); never defeat a
+non-writer profile by relabeling it.
 There is no automatic expensive fallback
 outside the approved allowance. Incompatible explicit user route/model selections
 are surfaced, not silently rewritten.
@@ -192,14 +196,46 @@ results and report the exact limitation; do not silently substitute another mapp
 
 A host may cap open threads, not only running turns. Use its actual completion/closure
 contract; idle is not automatically closed and interrupt is not confirmed termination.
-A controller handoff does not release old child/writer ownership by itself. Before the
-Sol execution Root takes control, reconcile task-owned active work through settlement,
-supported transfer or explicitly assigned legacy-probe custody under
-[the handoff rule](delegation.md#threaded-control-transfer); unresolved holds remain UNKNOWN.
+A controller handoff does not release old child/writer ownership by itself. Before an
+optional Sol execution Root takes control, reconcile task-owned active work through
+settlement, supported transfer or explicitly assigned legacy-probe custody under
+[the handoff rule](delegation.md#optional-threaded-control-transfer); unresolved holds remain UNKNOWN.
 A collection-only custodian is not a second implementation Root. After transfer,
 the former planning thread must not dispatch or write against the same candidate.
 Use [native result collection](evidence.md#native-result-collection) to distinguish
 execution/collection gaps from confirmed failure or resource release.
+While work runs, rely on host completion notification or suspend/resume and continue
+independent Root work. Wait/read/status only when the next step depends on the result,
+or reconcile once after resume. Avoid short-interval polling, mechanical wakeups and
+repeated unchanged logs. Do not invent timers or adapter fields.
+
+Distinguish suspending or resuming the Root from restoring a child that was already
+closed. In explicit Skill-only work, a writer whose current turn has stopped may remain
+open and continuable while required review or a repair decision is pending. It still
+occupies host capacity and must not displace required review. When authorized repair
+remains and capacity permits, continue that same writer; close it only after no further
+repair is needed or the task is closing, or when an actual capacity constraint requires
+release for needed review. Do not retain a writer with no pending work merely in case.
+Ordinary bounded repair uses a same-task follow-up to that still-open writer rather than
+a needless close/restore cycle.
+
+After a writer is closed, do not assume that restoring it preserves the requested
+model, profile or effort. When the host cannot reliably preserve that route across
+closed-child restoration, a restored instance must not perform implementation. After
+the old writer is confirmed stopped and retained resource/capacity constraints are
+satisfied, Root may create one replacement writer with the original explicit profile,
+model and effort and a compact continuation of the original task state. This is a
+replacement, not a second writer: the same candidate, authorization, cumulative task
+allowance and unresolved risks continue, with no fresh quota. If observation shows an
+identity mismatch after restoration, stop the affected execution, record the actual
+identity, and never present it as the requested model.
+
+Use the exposed native lifecycle tools and execution observations. A tool-family name
+does not establish the host's internal implementation generation. Do not add a model
+turn merely to handshake, require new fields or ledgers, start another scheduler, probe
+every turn, or switch backends automatically. Runtime work remains on the original
+run's admitted attempts, routes and verifier; this Skill-only replacement rule cannot
+bypass Runtime admission or replay a Runtime writer.
 On capacity failure inspect once, queue eligible work, and avoid retry loops. A queued
 branch remains accounted for. Never spawn past capacity or free an unconfirmed writer.
 A host-confirmed completed readonly turn with settled tools can reconcile execution through the Runtime protocol while its host-resource reservation remains UNKNOWN. Keep execution completion and host-resource cleanup separate.

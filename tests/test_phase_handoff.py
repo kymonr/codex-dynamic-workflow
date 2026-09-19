@@ -33,14 +33,15 @@ def broad_bounds():
 class PhaseHandoffGuidanceTests(unittest.TestCase):
     """Text checks detect guidance drift, not enforcement of natural language."""
 
-    def test_handoff_is_explicit_and_cannot_switch_the_host(self):
+    def test_default_writer_handoff_is_explicit_and_cannot_switch_the_host(self):
         entry = read('SKILL.md')
-        brief = read('references/delegation.md')
+        brief = ' '.join(read('references/delegation.md').split())
         self.assertIn('The Skill cannot itself switch the running model', entry)
         self.assertIn('Implicit supplementation mode does not acquire this pipeline', brief)
         self.assertIn('Only the user/host can', brief)
         self.assertIn('effective identity UNKNOWN', brief)
         self.assertIn('not Sol', brief)
+        self.assertIn('one `cwf_sol_writer` child as the sole source writer', brief)
 
     def test_brief_preserves_source_authority_and_cumulative_state(self):
         brief = read('references/delegation.md')
@@ -53,12 +54,13 @@ class PhaseHandoffGuidanceTests(unittest.TestCase):
         self.assertIn('same DB/run, immutable routes', brief)
         self.assertIn('moving a writer into', brief)
 
-    def test_sol_root_and_writer_child_are_not_conflated(self):
+    def test_root_and_default_writer_child_are_not_conflated(self):
         brief = read('references/delegation.md')
-        self.assertIn('Sol Root may dispatch and screen Luna', brief)
+        self.assertIn('current Root dispatches and screens Luna', brief)
         self.assertIn('Model identity never grants Root authority to a child', brief)
         writer = (ROOT / 'profiles/cwf_sol_writer.toml').read_text(encoding='utf-8')
-        self.assertIn('writer-child profile, not the Sol main-thread controller', writer)
+        self.assertIn('default Skill-only writer-child profile', writer)
+        self.assertIn('not the main-thread controller', writer)
         self.assertIn('do not spawn agents', writer)
 
     def test_self_review_does_not_replace_fresh_acceptance(self):
@@ -108,6 +110,8 @@ class PhaseHandoffGuidanceTests(unittest.TestCase):
         self.assertIn('Preserve early', followup)
         self.assertIn('UNKNOWN closure remain separate', followup)
         self.assertIn('stop-requested and unknown are observations', followup)
+        self.assertIn('reconcile once after', followup)
+        self.assertIn('do not short-poll', followup)
 
 
 class BroadLunaSchedulingTests(unittest.TestCase):
@@ -256,7 +260,7 @@ class PhaseHandoffInstallTests(unittest.TestCase):
             self.assertEqual(result['verified_files'], len(payload))
             for path, expected in payload.items():
                 self.assertEqual((home / path).read_bytes(), expected, path)
-            self.assertIn('Sol Root may dispatch and screen Luna',
+            self.assertIn('current Root dispatches and screens Luna',
                           (home / 'skills/codex-dynamic-workflow/references/delegation.md')
                           .read_text(encoding='utf-8'))
             for path, expected in preserved.items():

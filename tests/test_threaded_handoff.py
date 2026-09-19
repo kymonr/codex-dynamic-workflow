@@ -21,61 +21,61 @@ def read(relative: str) -> str:
 
 
 class ThreadedHandoffGuidanceTests(unittest.TestCase):
-    def assert_threaded_prompt(self, prompt):
-        for clause in ('prefer a separate Sol execution thread', 'sole implementation Root',
-                       'when the host supports controller handoff', 'writes directly by default',
-                       'same-conversation Sol model switch is only the fallback',
-                       'writer subagents only for authorized isolated parallel writes',
-                       'fresh read-only Astra context', 'existing Runtime contracts'):
+    def assert_root_directed_prompt(self, prompt):
+        for clause in ('Keep the current main conversation as Root',
+                       'one cwf_sol_writer child', 'without duplicating its writes',
+                       'fresh read-only Astra context', 'full actual diff',
+                       'one active writer', 'true controller transfer remain explicit',
+                       'existing Runtime contracts'):
             self.assertIn(clause, prompt)
 
-    def test_ui_default_prompt_matches_threaded_direct_write_workflow(self):
+    def test_ui_default_prompt_matches_root_directed_writer_workflow(self):
         metadata = parse_package_mapping(read("agents/openai.yaml"))
         self.assertTrue(metadata['policy']['allow_implicit_invocation'])
         prompt = metadata['interface']['default_prompt']
         self.assertIn('$codex-dynamic-workflow', prompt)
-        self.assert_threaded_prompt(prompt)
+        self.assert_root_directed_prompt(prompt)
 
     def test_stale_ui_prompt_cannot_hide_behind_comments_or_descriptions(self):
         metadata = read("agents/openai.yaml")
         parsed = parse_package_mapping(metadata)
         current = parsed['interface']['default_prompt']
-        stale = ('Use $codex-dynamic-workflow: a user/host switch lets Sol own '
-                 'the execution main thread; a fresh Astra context reviews it.')
+        stale = ('Use $codex-dynamic-workflow: transfer to a Sol Root and let it '
+                 'write directly; a fresh Astra context reviews it.')
         changed = metadata.replace(json.dumps(current), json.dumps(stale))
         changed += '\n# ' + current + '\n'
         actual = parse_package_mapping(changed)['interface']['default_prompt']
         with self.assertRaises(AssertionError):
-            self.assert_threaded_prompt(actual)
+            self.assert_root_directed_prompt(actual)
 
-    def test_direct_root_writes_and_parallel_exception_are_consistent(self):
+    def test_default_single_writer_child_and_explicit_alternatives_are_consistent(self):
         for relative in ('SKILL.md', 'references/delegation.md', 'references/explicit-workflow.md',
                          'references/patterns.md'):
             text = ' '.join(read(relative).split())
             with self.subTest(relative=relative):
-                self.assertIn('Sol Root writes directly by default', text)
-                self.assertIn('parallel write', text)
+                self.assertIn('`cwf_sol_writer`', text)
+                self.assertIn('Root', text)
         patterns = ' '.join(read('references/patterns.md').split())
-        self.assertIn('separate Sol execution thread', patterns)
-        self.assertIn('same-conversation Sol model switch is only the fallback', patterns)
+        self.assertIn('one `cwf_sol_writer` child by default', patterns)
+        self.assertIn('main-thread direct-write path or true controller transfer', patterns)
         delegation = ' '.join(read('references/delegation.md').split())
-        for clause in ('Do not delegate routine writing', 'explicit parallel-write authorization',
-                       'disjoint owned files', 'required non-author review',
-                       'serialized within the coordination DB', 'disclose that mismatch'):
+        for clause in ('one `cwf_sol_writer` child the closed write set',
+                       'Root counts as a writer', 'main-conversation direct writing',
+                       'parallel-write authorization', 'disjoint write sets',
+                       'serialized within the coordination DB'):
             self.assertIn(clause, delegation)
 
-    def test_explicit_mode_prefers_separate_sol_execution_root_with_safe_fallback(self):
+    def test_explicit_mode_defaults_to_root_directed_sol_writer(self):
         entry = read("SKILL.md")
         delegation = read("references/delegation.md")
         explicit = read("references/explicit-workflow.md")
 
         for text in (entry, delegation, explicit):
-            self.assertIn("separate Sol execution", text)
-        self.assertIn("sole implementation Root", delegation)
-        self.assertIn("fallback", delegation)
-        self.assertIn("switch the current main conversation to Sol", delegation)
-        self.assertIn("ordinary Sol writer child", entry)
-        self.assertIn("not a substitute", entry)
+            self.assertIn("`cwf_sol_writer`", text)
+        self.assertIn("current main conversation remains Root", entry)
+        self.assertIn("sole source writer", delegation)
+        self.assertIn("explicit user-selected alternatives", explicit)
+        self.assertNotIn("switch the current main conversation to Sol", delegation)
 
     def test_control_transfer_keeps_exactly_one_implementation_root(self):
         delegation = read("references/delegation.md")
@@ -84,7 +84,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
 
         self.assertIn("exactly one implementation Root", delegation)
         self.assertIn("stops writing, dispatching", delegation)
-        self.assertIn("must not remain a concurrent implementation controller", explicit)
+        self.assertIn("one Sol writer child exclusively owns", explicit)
         self.assertIn("former planning thread must not dispatch or write", routing)
         self.assertIn("Do not leave two Roots", delegation)
         self.assertIn("does not silently retake implementation ownership", delegation)
@@ -99,13 +99,13 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
 
         self.assertIn("controller-thread handoffs", entry)
         self.assertIn("explicit full workflow", delegation)
-        self.assertIn("continues this exact task and\nmode", delegation)
+        self.assertIn("writer continues this exact task and mode", ' '.join(delegation.split()))
         self.assertIn("SAME task\nallowance", delegation)
         self.assertIn("do not reset counters", delegation)
         self.assertIn("expand permissions", delegation)
         self.assertIn("same DB/run, immutable routes", delegation)
         self.assertIn("another run or conversation to reset limits", delegation)
-        self.assertIn("Do not create a new Runtime run", routing)
+        self.assertIn("Do not create a new Runtime run", ' '.join(routing.split()))
 
     def test_receiving_root_inherits_completed_preflight_and_scope(self):
         entry = read("SKILL.md")
@@ -152,7 +152,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         delegation = read("references/delegation.md")
 
         self.assertIn("writer-child profile", writer)
-        self.assertIn("not the Sol execution Root", writer)
+        self.assertIn("not the main-thread controller or an execution Root", writer)
         self.assertIn("do not spawn agents", writer)
         self.assertIn("new conversation also does not promote", writer)
         self.assertIn("Model identity never grants Root authority to a child", delegation)
@@ -168,7 +168,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
         self.assertIn("loses non-author status", delegation)
         self.assertIn("full-history fork", delegation)
         self.assertIn("It may reject the original Astra\ndesign", delegation)
-        self.assertIn("same Sol execution Root", delegation)
+        self.assertIn("same writer under Root", delegation)
 
     def test_threaded_handoff_is_skill_only_not_runtime_handoff(self):
         delegation = read("references/delegation.md")
@@ -176,7 +176,7 @@ class ThreadedHandoffGuidanceTests(unittest.TestCase):
 
         self.assertIn("manual Skill-only handoff is NOT Runtime handoff", delegation)
         self.assertIn("admitted native child packets", delegation)
-        self.assertIn("Skill-only Root 交接", skill_readme)
+        self.assertIn("Skill-only Root 控制权交接", skill_readme)
         self.assertIn("不能绕过 Runtime", skill_readme)
 
     def test_source_manifest_tracks_threaded_handoff_files(self):

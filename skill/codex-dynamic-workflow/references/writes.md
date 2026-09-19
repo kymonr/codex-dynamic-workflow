@@ -25,11 +25,13 @@ or other external effects require separate authority. Report tests that cannot r
 
 ## Writer contract
 
-In Skill-only work, Sol Root writes directly by default. Routine sequential writing,
-tests and repair stay in the execution conversation. Writer children are reserved for
-genuinely needed, explicitly authorized isolated parallel writes; see [delegation](delegation.md).
+In explicit Skill-only work, current Root assigns the closed sequential write scope to
+one `cwf_sol_writer` child by default. That child continuously implements, tests and
+performs bounded in-scope repair; Root does not duplicate its edits or approve routine
+steps one by one. Main-conversation direct writing and true controller transfer remain
+available when the user explicitly chooses them; see [delegation](delegation.md).
 A selected Runtime retains its admitted writer-child protocol and serializes writers.
-Do not bypass that protocol or select Runtime just to outsource sequential writing.
+Do not bypass that protocol or change its fixed route.
 
 Default one active writer (Sol for new implementation), counting Root. A writer gets a decided task, acceptance
 criteria, exact baseline, closed owned files and allowed effects. It reads original
@@ -52,8 +54,9 @@ worktree removal, branch switching, reset, commit, merge or cleanup. Native chil
 cwd instructions are not a hard directory sandbox. Verify actual changed files.
 
 Root follows the same writer rules and is included in any explicit parallel-write
-contract; otherwise Root must not write while a child writer is active. Unrelated source reads can
-continue only when they do not observe a changing candidate. An interrupted writer
+contract; otherwise Root must not write while a child writer is active. Independent
+read-only work may continue against stable or nonconflicting sources; mutable overlapping
+reads must serialize. An interrupted writer
 retains its ownership until termination is confirmed and effects are inspected.
 
 ## Review and completion

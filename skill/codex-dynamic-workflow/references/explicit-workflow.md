@@ -5,15 +5,15 @@ in [the invocation entrypoint](../SKILL.md). Automatic matching or an AGENTS.md
 pointer does not select this branch. All workflow-specific requirements below apply
 to explicit mode. Paths such as `scripts/cwf.py` are relative to the Skill root.
 
-Skill-only phase-handoff revision: 2026-09-14. Read [phase handoff](delegation.md)
-before design/implementation: Astra sets the plan and acceptance criteria; when the
-host supports an independent controller conversation, transfer compact task state to
-a separate Sol execution thread that becomes the implementation Root. Otherwise the
-user/host may switch the current main conversation to Sol as a fallback. A fresh Astra
-review thread/context checks important deliverables. This is not an automatic thread
-creation/model switch or a migration of Runtime-managed work, and a `cwf_sol_writer`
-child is not a substitute for the Sol Root. Keep the implicit supplementation mode
-separate; its automatic Grok probe does not acquire this Astra/Sol pipeline.
+Skill-only phase-handoff revision: 2026-09-19. Read [phase handoff](delegation.md)
+before design/implementation: Astra sets the plan and acceptance criteria; the current
+main conversation remains Root and directs one `cwf_sol_writer` child through coherent
+implementation, tests and bounded repair. After the writer stops, a fresh Astra review
+thread/context checks the full actual diff. Main-conversation direct writing and true
+controller transfer remain explicit user-selected alternatives, not default gates.
+This is not an automatic thread creation/model switch or a migration of Runtime-managed
+work. Keep the implicit supplementation mode separate; its automatic Grok probe does
+not acquire this Astra/Sol pipeline.
 An explicitly requested [role simulation](host-routing.md#explicit-role-simulation)
 labels stand-ins and tests only its declared scope; it does not replace native acceptance.
 
@@ -52,9 +52,10 @@ Runtime protocol and actual run receipts for qualification. Deterministic tests 
 ordinary Skill-only use are not native Runtime end-to-end evidence. Check host
 permissions, model capability and source access before use.
 
-The Astra/Sol mainline owns all necessary work; after a successful Skill-only control
-transfer, the Sol execution thread is the sole implementation Root, not merely a writer
-child supervised by a running Astra. The planning thread stops implementation control.
+The Astra/Sol mainline owns all necessary work. In the default Skill-only path, current
+Root retains implementation control while one Sol writer child exclusively owns the
+candidate write set. Root orchestrates and screens results without duplicating writes
+or approving already-authorized routine steps one by one.
 Removing every Luna probe must still leave all necessary work and acceptance. Aim
 for 6–12 distinct supplemental directions on substantial tasks within actual capacity
 and allowance; more than twelve requires a larger approved task allowance. For every meaningful,
@@ -104,17 +105,18 @@ host, another backend or a weaker model. Do not change configuration or permissi
    create delegation. In parallel, open at least three distinct supplemental Luna
    directions for meaningful work when capacity permits, then expand only for new
    methods or coverage. No result-count or model-ratio success criterion exists.
-   In Skill-only implementation, Sol Root writes directly by default. Delegate writing
-   only for genuinely needed, explicitly authorized isolated parallel writes with
-   disjoint ownership and an integration plan; keep sequential writing in Root.
+   In Skill-only implementation, delegate the closed write set to one persistent
+   `cwf_sol_writer` child by default. Root counts as a writer and must not edit while
+   that child owns the candidate. Main-conversation direct writing or true controller
+   transfer requires the user's explicit choice; parallel writing requires separate
+   authorization, disjoint ownership and an integration plan.
    A selected Runtime still requires its admitted writer child; do not bypass it.
    Role names are not a staffing list; use Astra children for independent
    deliverables or necessary non-author checks. Runtime admission still applies.
-2. During Skill-only implementation, the transferred Sol execution Root owns routine
-   scheduling, tool-result handling and Luna/Grok screening; bring Astra back for
-   material design deviations or required review, not every command or generic suggestion.
-   The former Astra planning thread must not remain a concurrent implementation controller.
-   A Sol child still has no dispatch authority. Pick the logical role: explorer,
+2. During Skill-only implementation, current Root owns routine scheduling, tool-result
+   handling and Luna/Grok screening; bring Astra back for material design deviations or
+   required review, not every command or generic suggestion. The Sol writer child owns
+   implementation/tests/repair inside its packet and has no dispatch authority. Pick the logical role: explorer,
    verifier, reproducer, designer, writer or reviewer. Select a compatible execution
    profile **separately** from that role. Use Astra for planning/design/acceptance and
    Sol for coherent implementation, tests and bounded repair. Use Luna/max for
@@ -157,7 +159,10 @@ answer is navigation, never a substitute for original evidence. A path alone is
 UNVERIFIED until its relevant content has actually been read.
 
 Selectively inherit the original goal, applicable constraints, decisions and source
-identity. Do not copy the whole conversation or other agents' opinions. Verifiers
+identity. Start a fresh task-focused context (`fork_context=false` when exposed) rather
+than copying unrelated conversation or other agents' opinions. Do not impose a fixed
+recent-turn, fragment or summary limit on relevant conversation evidence; use supported
+pagination to read the complete task-relevant history when needed. Verifiers
 and reviewers receive neutral propositions and acceptance criteria, not pressure
 to confirm the finder or writer. Read direct dependencies where necessary within
 the authorized scope; ask Root for a bounded expansion beyond that scope.
@@ -233,10 +238,12 @@ of which model ran.
 
 ## Lifecycle and completion
 
-Use the currently exposed wait/list/interrupt/close contract; do not invent tool
-names, parameters or timeout values. Wait for real mainline dependencies, not merely
-because Root is idle while optional Luna probes run. A timeout alone is not failure. One bounded progress check can distinguish
-slow work from no progress. Respect the declared deadline; interrupt task-owned
+Use the currently exposed completion notification, suspend/resume and
+wait/list/interrupt/close contract; do not invent tool names, parameters or timeout
+values. Root continues independent work and waits or reads only when its next step
+depends on the result. After resume, reconcile state once; avoid short-interval polling,
+mechanical wakeups and repeated unchanged logs. A timeout alone is not failure. One
+dependency-driven progress check can distinguish slow work from no progress. Respect the declared deadline; interrupt task-owned
 work once when needed and mark unconfirmed termination UNKNOWN. Do not release a
 write claim or reuse capacity until the host confirms the relevant state.
 
