@@ -153,7 +153,7 @@ class GeneralProfileInstallationTests(unittest.TestCase):
         result = self.install(apply=True)
         actual = tomllib.loads((self.home/'agents/cwf_general.toml').read_text(encoding='utf-8'))
         self.assertEqual((actual['model'], actual['model_reasoning_effort'], actual['sandbox_mode']),
-                         ('gpt-5.6-luna', 'max', 'read-only'))
+                         ('gpt-5.6-luna--fast', 'max', 'read-only'))
         self.assertEqual(user_luna.read_bytes(), b'user-owned luna profile\n')
         self.assertEqual((self.home/'config.toml').read_bytes(), b'model = "keep-me"\n')
         self.assertEqual(self.install()['changes'], [])

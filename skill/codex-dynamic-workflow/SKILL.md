@@ -1,13 +1,13 @@
 ---
 name: codex-dynamic-workflow
-description: "Implicit use adds broad readonly Luna investigation and automatically eligible Grok Burst evidence to the current task. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, threaded Sol implementation and Astra acceptance workflow."
+description: "Proactively use parallel readonly Luna branches for substantive implementation, debugging, review and research with independent work; retain eligible Grok Burst evidence. Explicitly ask to use $codex-dynamic-workflow for the full Astra design, threaded Sol implementation and Astra acceptance workflow."
 metadata:
   version: "4.3.0"
 ---
 
 # Codex Dynamic Workflow
 
-Invocation-policy revision: 2026-09-13. Phase-handoff revision: 2026-09-18.
+Invocation-policy revision: 2026-09-21. Phase-handoff revision: 2026-09-18.
 Threaded control-transfer revision: 2026-09-18. Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
@@ -58,21 +58,36 @@ budgets. Record why automatic Grok was skipped. Received risks still require dis
 Luna's package profiles request **1M Fast**; observe actual execution separately.
 Neither context size nor many agreeing reports grants acceptance authority.
 
-## Implicit mode: broad Luna plus automatic Grok evidence
+## Implicit mode: proactive parallel Luna work
 
 The current Root continues the complete main task using its existing model and tools.
-All children dispatched by this Skill in implicit mode are read-only Luna or Grok probes.
+Only the current Root dispatches these branches; delegated children return evidence
+to Root and do not dispatch children or contact peers.
+All children dispatched by this Skill in implicit mode are read-only Luna probes or
+non-writer Grok probes.
 It does not dispatch Astra/Sol children, replace Root, introduce a writer pipeline,
 or create/open a Runtime run. `policy.json` workflow/routes describe explicit Runtime;
 reading those defaults does not opt the task into that mode.
 
-For a meaningful task with independent evidence questions, expand coverage broadly:
-aim for **6–12 distinct directions** when useful questions, authorization, budget and
-host capacity permit. Three distinct probes are the normal launch intent, not a
-ceiling; more than twelve needs an existing larger allowance. Do not manufacture
-questions to meet a count. A trivial task or a single cohesive question stays with
-Root; respect workspace rules on independently deliverable implicit branches.
-Report fewer directions when scope, budget, capability or capacity limits coverage.
+On a substantive task, actively split ready independent read-only work and dispatch
+Luna while Root continues a different useful branch. This is an instruction to
+delegate in implicit mode when active rules permit it, not merely a routing hint.
+Check for branches at task entry and when new scope or evidence appears; launch the
+first useful batch before Root performs that same investigation. Root's ability to
+do the work alone is not a reason to keep independently deliverable branches local.
+
+Use 3–6 useful Luna branches as a planning guide for ordinary substantive tasks and
+6–12 for broad cross-module work, within the turn allowance and observed free slots.
+Dispatch only the branches that actually exist: one independent branch merits one
+Luna, and trivial or indivisible work stays with Root. These ranges are not quotas;
+never split one cohesive question or repeat evidence to reach a number.
+
+Eligible work includes source/caller mapping, requirements and compatibility checks,
+edge cases, failure/recovery analysis, test gaps and independent candidate review.
+A branch needs a concrete useful deliverable and bounded authorized sources; it need
+not wait for Root to be blocked, a known defect, or a predicted decision reversal.
+Reuse evidence that already answers the question. Keep a separate useful Root branch
+and honor explicit no-delegation, source, privacy, budget and host restrictions.
 
 Use the actual native collaboration tools and exposed `cwf_general` (Luna/max);
 `cwf_mechanical` (Luna/medium) is for deterministic supplemental inspection.

@@ -135,7 +135,10 @@ def validate_burst_files(root: Path, profiles: dict) -> list[str]:
             raise ValueError('burst profile drift')
         for name in ('cwf_general','cwf_mechanical'):
             data=profiles.get(name,{})
-            if type(data.get('model_context_window')) is not int or data['model_context_window']!=1000000 or data.get('service_tier')!='fast':
+            if (data.get('model') != 'gpt-5.6-luna--fast'
+                    or type(data.get('model_context_window')) is not int
+                    or data['model_context_window'] != 922000
+                    or data.get('service_tier') != 'fast'):
                 raise ValueError('Luna 1M Fast request drift: '+name)
         for rel in ('scripts/burst_sidecar.py','references/burst.md'):
             if not (root/SKILL/rel).is_file(): raise ValueError('missing burst file: '+rel)
@@ -290,23 +293,28 @@ def validate(root: Path = ROOT) -> list[str]:
                 elif runtime_version not in supported:
                     errors.append('current runtime version missing from supported contracts')
                 if tuple(map(int, runtime_version.split('.'))) >= (4,2,0):
-                    expected_models = {'cwf_reader':'gpt-6-astra', 'cwf_writer':'gpt-6-astra',
-                                       'cwf_sol_writer':'gpt-5.6-sol', 'cwf_general':'gpt-5.6-luna',
-                                       'cwf_mechanical':'gpt-5.6-luna'}
-                    if any(profile_configs.get(p, {}).get('model') != model for p,model in expected_models.items()):
+                    expected_route_models = {
+                        'cwf_reader':'gpt-6-astra', 'cwf_writer':'gpt-6-astra',
+                        'cwf_sol_writer':'gpt-5.6-sol', 'cwf_general':'gpt-5.6-luna',
+                        'cwf_mechanical':'gpt-5.6-luna'}
+                    expected_profile_models = expected_route_models | {
+                        'cwf_general':'gpt-5.6-luna--fast',
+                        'cwf_mechanical':'gpt-5.6-luna--fast'}
+                    if any(profile_configs.get(p, {}).get('model') != model
+                           for p,model in expected_profile_models.items()):
                         errors.append('runtime/profile/model/effort drift: v4.2 fixed model/profile identity drift')
                     expected_profiles = {'strong':'cwf_reader', 'writer':'cwf_sol_writer',
                                          'ordinary':'cwf_general', 'economy':'cwf_mechanical'}
                     for tier, name in expected_profiles.items():
                         route = routes.get(tier)
-                        if not isinstance(route,dict) or (route.get('model'),route.get('profile')) != (expected_models[name],name):
+                        if not isinstance(route,dict) or (route.get('model'),route.get('profile')) != (expected_route_models[name],name):
                             errors.append('v4.2 fixed route identity drift: '+tier)
                     if routes.get('writer', {}).get('profile') != 'cwf_sol_writer':
                         errors.append('v4.2 default writer must be Sol')
                     if policy.get('profiles', {}).get('capable_writer') != 'cwf_sol_writer':
                         errors.append('v4.2 policy writer profile drift')
                     legacy = literal_tables.get('LEGACY_ROUTES', {})
-                    expected_legacy = {tier:dict(model=expected_models[name],profile=name,
+                    expected_legacy = {tier:dict(model=expected_route_models[name],profile=name,
                                                effort={'ordinary':'max','economy':'medium'}.get(tier,'high'))
                                        for tier,name in (expected_profiles | {'writer':'cwf_writer'}).items()}
                     if legacy != expected_legacy:
@@ -318,7 +326,11 @@ def validate(root: Path = ROOT) -> list[str]:
                         errors.append('invalid runtime route: '+tier); continue
                     profile = profile_configs.get(route.get('profile'), {})
                     flexible = tuple(map(int, runtime_version.split('.'))) >= (4,1,1) and tier in {'strong','writer'}
-                    if (not profile or profile.get('model') != route.get('model')
+                    profile_model = profile.get('model')
+                    model_matches = profile_model == route.get('model') or (
+                        tier in {'ordinary', 'economy'}
+                        and profile_model == route.get('model') + '--fast')
+                    if (not profile or not model_matches
                             or (flexible and ('model_reasoning_effort' in profile
                                 or route['effort'] not in ({'low','medium','high','xhigh','max','ultra'}
                                     if route['model']=='gpt-6-astra' else {'low','medium','high','xhigh','max'})))

@@ -1,7 +1,7 @@
 # Codex Dynamic Workflow v4.3.0
 
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
-Skill 4.3.0 中，隐式匹配增加 Luna 只读调查和自动 Grok Burst：主线程保持原任务，有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 探针。
+Skill 4.3.0 中，隐式匹配主动把可独立交付的只读工作分给 Luna，主线程并行推进另一分支；数量参考和预算以 SKILL.md 为准。Grok 保留原有规则。
 用户显式调用时，才按[完整流程](references/explicit-workflow.md)运行 Astra 规划与验收、Sol 实施、Luna/Grok 补充。
 
 显式复杂任务优先使用**线程式阶段交接**：Astra 规划线程形成紧凑、可执行的交接状态；宿主支持独立控制器对话时，转交给独立 Sol 执行线程，由它成为唯一 implementation Root 并连续实施、测试、修复和调度补充调查；完成后再交给 fresh Astra 审核线程。若宿主不能安全建立独立 Sol Root，则回退为用户/宿主在当前主对话切换到 Sol。普通 `cwf_sol_writer` 子代理不能替代 Sol Root，因为子代理没有控制器和嵌套派工权限。
@@ -9,7 +9,7 @@ Skill 4.3.0 中，隐式匹配增加 Luna 只读调查和自动 Grok Burst：主
 线程变化不创造新任务：原授权、候选、未解决问题、活动 ownership、截止条件和累计额度继续沿用；不能因为开新对话就重置预算、重建 Runtime run、制造第二 writer 或扩大权限。交接后 Astra 规划线程退出实现热路径，不再与 Sol 同时控制候选。最终 Astra 审核使用新的上下文重新读取原始需求、完整 diff、关键依赖和测试证据，不把旧计划或 Luna/Grok 发现当作审查范围上限。
 
 具体触发判断见 [SKILL.md](SKILL.md)；线程交接和失败回退见 [delegation](references/delegation.md)。下方流程参考均在显式模式按需读取。
-启动下限不是等待门槛，也不是每次修复重开一组；容量、预算或真实独立方向不足时记录原因。
+派工数量是参考而非配额；没有独立问题不凑数，已有证据不重复派工，容量和预算约束始终有效。
 详见 [v4.1 结果与收尾协议](references/followup.md)。
 
 - 规范入口：[SKILL.md](SKILL.md)；本机 profile 需单独安装。

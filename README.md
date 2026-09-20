@@ -9,7 +9,7 @@ $codex-dynamic-workflow
 旧 `$dispatching-native-agents` 仅保留为显式兼容入口，并关闭隐式调用，避免双重自动路由。
 
 2026-09-18 Skill 4.3.0 Threaded Phase Handoff（Runtime 仍为 4.2.0）：
-- 被动调用：自动匹配时，主线程继续执行原任务；有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 只读探针，不启动 Astra/Sol 流程。
+- 被动调用：自动匹配时，主动把可独立交付的只读工作分给 Luna，主线程并行推进另一分支；数量参考和预算以 Skill 入口为准。Grok 保留原有规则，不启动 Astra/Sol 流程。
 - 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 起优先使用下述线程式阶段交接。
 
 仅提到、讨论或修改 Skill 不算主动调用。分流以 [Skill 入口](skill/codex-dynamic-workflow/SKILL.md)为准；下文 Astra/Sol 分工与 Runtime 说明适用于显式模式。
