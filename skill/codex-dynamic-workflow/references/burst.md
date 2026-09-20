@@ -120,12 +120,20 @@ No task-used, Burst-used, deadline, expiry or follow-up counters are part of adm
 
 ## Luna 1M Fast: request versus observation
 
-Package-owned `cwf_general` and `cwf_mechanical` request `model_context_window=1000000`
-and `service_tier="fast"`; reasoning efforts remain max and medium. Fast is service tier,
-not reasoning effort. Do not modify the user's separate `luna.toml`, global config,
-provider catalog or old Runtime routes. At this revision the inspected separate Luna
-profile still declared 500000 and the OpenCodex catalog advertised 272000. These values
-are recorded rather than silently rewritten. A 1M Fast request is not proof of effective
-backend context, latency, price or quota; verify execution evidence when exposed.
+Package-owned `cwf_general` and `cwf_mechanical` request the host's Luna 1M tier as
+`model_context_window=922000`. On the verified OpenCodex host, Codex's 95% reserve exposes
+875900 usable tokens from that advertised window. The profiles select
+`gpt-5.6-luna--fast`, which OpenCodex resolves to the base Luna model while sending the
+Fast request as the provider's `priority` service tier. The parallel
+`service_tier="fast"` field records the same intent. On the observed Desktop
+0.155.0-alpha.9.2 / OpenCodex 2.60.0 path, the base model plus that field did not
+emit priority; a fresh alias-selected child did. Recheck other host versions:
+the selector is OpenCodex-specific, not a portable OpenAI model ID.
+Fast is a service tier, not reasoning
+effort. A profile request is not proof of effective backend context, latency, price or
+quota; verify the child session's token-count event and the OpenCodex usage receipt,
+including `fastOutcome=applied` and `wireValue=priority`.
+An `assumed` confirmation verifies the emitted tier only; it does not establish
+backend scheduling or a latency improvement.
 
 The required independent Astra acceptance remains unchanged by Burst availability, call volume or Grok findings.

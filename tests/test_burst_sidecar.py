@@ -189,9 +189,9 @@ class BurstTests(unittest.TestCase):
     def test_profiles_and_quality_guidance(self):
         for name, effort in [('cwf_general', 'max'), ('cwf_mechanical', 'medium')]:
             profile = tomllib.loads((ROOT / f'profiles/{name}.toml').read_text(encoding='utf-8'))
-            self.assertEqual((profile['model_context_window'], profile['service_tier'],
+            self.assertEqual((profile['model'], profile['model_context_window'], profile['service_tier'],
                               profile['model_reasoning_effort'], profile['sandbox_mode']),
-                             (1000000, 'fast', effort, 'read-only'))
+                             ('gpt-5.6-luna--fast', 922000, 'fast', effort, 'read-only'))
         grok = tomllib.loads((ROOT / 'profiles/cwf_burst_grok.toml').read_text(encoding='utf-8'))
         self.assertEqual((grok['model'], grok['model_reasoning_effort'], grok['sandbox_mode']),
                          ('xai/grok-4.6', 'high', 'read-only'))
@@ -236,8 +236,14 @@ class BurstTests(unittest.TestCase):
             for relpath, old, new in (
                 ('profiles/cwf_burst_grok.toml', 'read-only', 'workspace-write'),
                 ('profiles/cwf_burst_grok.toml', 'xai/grok-4.6', 'gpt-6-astra'),
-                ('profiles/cwf_general.toml', 'model_context_window = 1000000',
+                ('profiles/cwf_general.toml', 'model_context_window = 922000',
                  'model_context_window = true'),
+                ('profiles/cwf_general.toml', 'gpt-5.6-luna--fast', 'gpt-5.6-luna'),
+                ('profiles/cwf_mechanical.toml', 'gpt-5.6-luna--fast', 'gpt-5.6-luna'),
+                ('profiles/cwf_general.toml', 'model_context_window = 922000',
+                 'model_context_window = 1000000'),
+                ('profiles/cwf_mechanical.toml', 'service_tier = "fast"',
+                 'service_tier = "default"'),
             ):
                 path = source / relpath
                 original = path.read_bytes()

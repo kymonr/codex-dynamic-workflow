@@ -9,7 +9,7 @@ $codex-dynamic-workflow
 旧 `$dispatching-native-agents` 仅保留为显式兼容入口，并关闭隐式调用，避免双重自动路由。
 
 2026-09-18 Skill 4.3.0 Threaded Phase Handoff（Runtime 仍为 4.2.0）：
-- 被动调用：自动匹配时，主线程继续执行原任务；有足够独立问题和额度时展开 6–12 个 Luna 方向，并自动尝试一个有独立价值的 Grok 只读探针，不启动 Astra/Sol 流程。
+- 被动调用：自动匹配时，主动把可独立交付的只读工作分给 Luna，主线程并行推进另一分支；数量参考和预算以 Skill 入口为准。Grok 保留原有规则，不启动 Astra/Sol 流程。
 - 主动调用：用户明确要求使用该工作流时，才加载 Astra 设计 → Sol 实施 → Astra 验收流程；2026-09-14 起优先使用下述线程式阶段交接。
 
 仅提到、讨论或修改 Skill 不算主动调用。分流以 [Skill 入口](skill/codex-dynamic-workflow/SKILL.md)为准；下文 Astra/Sol 分工与 Runtime 说明适用于显式模式。
@@ -81,9 +81,9 @@ python -B scripts/install.py --codex-home <经现场确认的CODEX_HOME> --apply
 
 Astra 负责规划、关键设计与最终验收；Sol 连贯完成授权范围内的实现、测试和修复。
 必要主线不转交给可选 Luna；原始需求、完整 diff 与证据始终是验收依据。
-每个有实质工作量的任务，容量允许时主动启动至少 3 个不同方向的 Luna 补充探针：
-查漏覆盖、反例/失败模式、测试缺口/第二意见；有更多独立高价值方向时继续扩展。
-这是每任务的启动意图下限，不是每轮重新开 3 个，也不是等齐结果才能交付。
+有可独立交付的只读问题时，主动分给 Luna，主线程并行推进另一分支；查漏覆盖、
+反例/失败模式、测试缺口/第二意见可作为方向。数量以实际问题、容量和剩余额度为准，
+一个独立问题可派一个探针，琐碎任务不派工；已有证据不重查，也不等齐可选结果才交付。
 主线不按岗位凑代理：Skill-only 下 Root 可以连贯完成工作，必要独立复核仍保留；Runtime 管理的步骤仍须准入。
 具体派工问题和停止条件见[派工示例](skill/codex-dynamic-workflow/references/patterns.md)；
 推理强度按任务及实际宿主/合同选择，不自动改全局默认或在旧 Runtime 合同内换挡。

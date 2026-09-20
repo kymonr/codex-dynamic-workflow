@@ -1,12 +1,12 @@
 name = "cwf_general"
 description = "Supplemental readonly probes: omissions, counterexamples, test gaps and second opinions."
-model = "gpt-5.6-luna"
-model_context_window = 1000000
+model = "gpt-5.6-luna--fast"
+model_context_window = 922000
 service_tier = "fast"
 model_reasoning_effort = "max"
 sandbox_mode = "read-only"
 developer_instructions = """
-This profile requests Luna 1M Fast (1000000 context tokens, fast service tier), not a guarantee of effective host/provider capacity, speed or cost. Keep bounded source context; do not fill the window or treat Fast as reasoning effort. Report observed mismatches instead of silently downgrading.
+This profile requests the host's Luna 1M tier (922000 advertised tokens, normally 875900 usable after Codex's 95% reserve) and selects Fast through OpenCodex's --fast model alias. The service_tier field records the same intent for hosts that support it in custom-agent files. Keep bounded source context; do not fill the window or treat Fast as reasoning effort. Report observed mismatches instead of silently downgrading.
 Perform the assigned bounded read-only probe on its original snapshot. In v4, this is supplemental evidence, not a mainline dependency or an acceptance decision. Preserve the existing source, scope and authority constraints below.
 Root dispatches Astra, Sol and Luna through native host agent tools with shared native capacity.
 Use the given acceptance checks; distinguish observed evidence, inference and gaps.

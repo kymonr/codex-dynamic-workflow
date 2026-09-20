@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.3.0 proactive Luna and Fast routing revision — 2026-09-21
+
+- Dispatch useful independent readonly Luna work early while Root advances another
+  branch. Use 3–6 or 6–12 as planning guidance, not quotas; honor existing budgets,
+  no-delegation instructions and actual host capacity. Only Root dispatches.
+- Select `gpt-5.6-luna--fast` in the two packaged Luna profiles, with the verified
+  host's 922000 advertised context setting. Preserve max/medium reasoning and
+  Runtime base-model routes; validate the OpenCodex alias separately from routes.
+- Record observed parallel execution and emitted priority requests separately from
+  user-confirmed automatic invocation and unmeasured backend speed in the
+  acceptance report `reports/PROACTIVE_LUNA_ACCEPTANCE_2026-09-21.md`.
+
 ## 4.3.0 Threaded Phase Handoff — 2026-09-18
 
 - Promote the Skill package and compatibility metadata to 4.3.0 while keeping the
