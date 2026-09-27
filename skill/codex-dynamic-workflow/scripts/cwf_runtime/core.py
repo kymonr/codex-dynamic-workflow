@@ -27,10 +27,11 @@ SCHEMA = 1
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
 ROLES = {'explorer', 'verifier', 'reproducer', 'designer', 'writer', 'reviewer'}
-DEFAULTS = dict(approved=28, reserve=4, absolute=32, strong_approved=8,
+DEFAULTS = dict(approved=40, reserve=4, absolute=44, strong_approved=8,
                 capacity=None, max_nodes=64, max_depth=6, max_attempts=3,
                 deadline_seconds=1800)
-SUPPLEMENTAL_DEFAULTS = dict(supplemental_approved=12, mainline_capacity_reserve=1)
+SUPPLEMENTAL_DEFAULTS = dict(supplemental_approved=24, mainline_capacity_reserve=1,
+                             supplemental_claims_approved=256)
 DEFAULT_ROUTES = {
     'strong': {'model': 'gpt-6-astra', 'effort': 'high', 'profile': 'cwf_reader'},
     'ordinary': {'model': 'gpt-5.6-luna', 'effort': 'max', 'profile': 'cwf_general'},
@@ -323,6 +324,55 @@ class Runtime:
     def event(self, run, kind, data):
         self.conn.execute('INSERT INTO events(run_id,at,kind,data) VALUES(?,?,?,?)', (run, time.time(), kind, dump(data)))
 
+    def _supplemental_claim_count(self, run):
+        specs = {n['id']: loads(n['spec']).get('supplemental', False)
+                 for n in self.conn.execute('SELECT id,spec FROM nodes WHERE run_id=?', (run,))}
+        return sum(row['count'] for row in self.conn.execute(
+            'SELECT node_id,COUNT(*) AS count FROM claims WHERE run_id=? GROUP BY node_id', (run,))
+            if specs.get(row['node_id']))
+
+    def _claim_backpressure_gaps(self, run):
+        reconciled = self._latest_events(run, 'supplemental.claim_reconciled', key='rejection_seq')
+        gaps = []
+        for row in self.conn.execute("SELECT seq,data FROM events WHERE run_id=? "
+                                     "AND kind='supplemental.claim_rejected' ORDER BY seq", (run,)):
+            data = loads(row['data']); resolution = reconciled.get(row['seq'])
+            reason = 'claim-delivery-backpressure'
+            if resolution is not None:
+                try:
+                    binding = resolution['candidate']
+                    if fingerprint(Path(self.run(run)['root']), list(binding), set(binding)) == binding:
+                        continue
+                    reason = 'claim-reconciliation-candidate-changed'
+                except (WorkflowError, OSError) as exc:
+                    reason = str(exc)
+            gaps.append({'claim': None, 'reason': reason, 'event_seq': row['seq'],
+                         'attempt': data['attempt'], 'delivery': data['delivery']})
+        return gaps
+
+    def _reject_claim_delivery(self, run, token, delivery, submission, offered, stored, limit, reason,
+                               report_id=None, sources_opened=None):
+        # Called inside the submission transaction: no claim or terminal-state writes
+        # occur, but the rejected delivery stays visible to the acceptance gate.
+        identity = {'attempt':token, 'delivery':delivery, 'report_id':report_id, 'offered':offered}
+        if submission is None:
+            # Oversized batches are intentionally not serialized or content-hashed.
+            # Keep each rejected delivery distinct so later changed content cannot
+            # disappear behind an earlier receipt with the same count and report ID.
+            identity['receipt_nonce'] = uuid.uuid4().hex
+        else:
+            identity['submission'] = submission
+        key = sha(identity)
+        existing = self.conn.execute("SELECT data FROM events WHERE run_id=? "
+                                     "AND kind='supplemental.claim_rejected'", (run,))
+        if not any(loads(row['data']).get('delivery_key') == key for row in existing):
+            self.event(run, 'supplemental.claim_rejected',
+                       {'attempt':token, 'delivery':delivery, 'delivery_key':key,
+                        'report_id':report_id, 'offered':offered, 'stored':stored,
+                        'limit':limit, 'reason':reason,
+                        'sources_opened':sources_opened or []})
+        return {'rejected':reason}
+
     def run(self, run):
         row = self.conn.execute('SELECT * FROM runs WHERE id=?', (run,)).fetchone()
         if row is None:
@@ -610,6 +660,9 @@ class Runtime:
                 active = self.conn.execute('SELECT COUNT(*) FROM attempts WHERE released=0').fetchone()[0]
             strict = c.get('workflow') == 'astra-mainline'
             supplemental_used = sum(n['attempts'] for n in nodes if loads(n['spec']).get('supplemental'))
+            claim_limit = c['bounds'].get('supplemental_claims_approved')
+            claim_used = self._supplemental_claim_count(run) if claim_limit is not None else 0
+            claim_delivery_gap = bool(self._claim_backpressure_gaps(run)) if claim_limit is not None else False
             capacity = c['bounds']['capacity']
             if host_capacity is not None:
                 capacity = min(capacity, host_capacity) if capacity is not None else host_capacity
@@ -657,6 +710,8 @@ class Runtime:
                     why = None
                     if cutoff: why = 'supplemental-cutoff-after-mainline-acceptance'
                     elif supplemental_used >= b['supplemental_approved']: why = 'supplemental-allowance-exhausted'
+                    elif claim_delivery_gap or (claim_limit is not None and claim_used >= claim_limit):
+                        why = 'supplemental-claim-backpressure'
                     elif capacity is None or (followup_contract(c) and host_capacity is None): why = 'host-capacity-unknown'
                     elif followup_contract(c) and host_active is None: why = 'host-active-unknown'
                     elif active + 1 + reserve_slots > capacity: why = 'mainline-capacity-reserved'
@@ -708,6 +763,12 @@ class Runtime:
             self.event(a['run_id'], 'attempt.bound', {'attempt': token, 'external_id': external_id})
 
     def complete(self, token, result, *, external_id, backend, usage=None):
+        response = self._complete_checked(token, result, external_id=external_id, backend=backend, usage=usage)
+        if 'rejected' in response:
+            raise WorkflowError(response['rejected'])
+        return response
+
+    def _complete_checked(self, token, result, *, external_id, backend, usage=None):
         # The host, not the model result, supplies identity, usage and terminal attestation.
         fields = {'outcome','summary','sources_opened','checks','changed_files','claims'}
         current_run = self.run(self.attempt(token)['run_id'])
@@ -749,6 +810,11 @@ class Runtime:
                 named[check['name']] = check['status']
             if result['outcome'] == 'completed' and any(named.get(k) != 'PASS' for k in s['checks']):
                 raise WorkflowError('mandatory acceptance checks incomplete')
+            limit = loads(r['contract'])['bounds'].get('supplemental_claims_approved') if s.get('supplemental') else None
+            if limit is not None and isinstance(result['claims'],list) and len(result['claims']) > 64:
+                return self._reject_claim_delivery(r['id'],token,'completion',None,len(result['claims']),
+                                                   self._supplemental_claim_count(r['id']),limit,
+                                                   'supplemental claim batch exceeds 64',sources_opened=opened)
             claims = validate_claims(result['claims'], opened)
             if followup_contract(loads(r['contract'])):
                 claims = [{**claim,'evidence':path_list(claim['evidence'],'claim evidence')} for claim in claims]
@@ -774,15 +840,21 @@ class Runtime:
             saved = {'submission':envelope,'snapshot':current,'evidence_snapshot':before,'drift':drift,
                      'blocked_effects':['deletion:'+p for p in drift if before[p] is not None and current[p] is None],
                      'provenance':'trusted-host-attestation; sources are observed fingerprints'}
-            self.conn.execute('UPDATE attempts SET state=?,result=?,usage=?,ended=? WHERE token=?',
-                              (outcome,dump(saved),dump(usage) if usage is not None else None,time.time(),token))
-            self.conn.execute('UPDATE nodes SET state=?,result=? WHERE run_id=? AND id=?', (outcome,dump(saved),a['run_id'],a['node_id']))
-            for index, claim in enumerate(claims):
-                data={'claim':claim,'snapshot':before,'evidence_valid':not drift}
-                self.conn.execute('INSERT INTO claims(id,run_id,node_id,attempt,data) VALUES(?,?,?,?,?)',
-                                  (f'{token}-{index}',a['run_id'],a['node_id'],token,dump(data)))
-            self.event(a['run_id'],'attempt.completed',{'attempt':token,'state':outcome,'drift':drift,'blocked_effects':saved['blocked_effects'],'usage':usage})
-            return {'state':outcome,'idempotent':False}
+            used = self._supplemental_claim_count(r['id']) if limit is not None else 0
+            if limit is not None and used + len(claims) > limit:
+                return self._reject_claim_delivery(r['id'],token,'completion',envelope,len(claims),used,limit,
+                                                   f'supplemental claim limit reached ({used}+{len(claims)}>{limit})',
+                                                   sources_opened=opened)
+            else:
+                self.conn.execute('UPDATE attempts SET state=?,result=?,usage=?,ended=? WHERE token=?',
+                                  (outcome,dump(saved),dump(usage) if usage is not None else None,time.time(),token))
+                self.conn.execute('UPDATE nodes SET state=?,result=? WHERE run_id=? AND id=?', (outcome,dump(saved),a['run_id'],a['node_id']))
+                for index, claim in enumerate(claims):
+                    data={'claim':claim,'snapshot':before,'evidence_valid':not drift}
+                    self.conn.execute('INSERT INTO claims(id,run_id,node_id,attempt,data) VALUES(?,?,?,?,?)',
+                                      (f'{token}-{index}',a['run_id'],a['node_id'],token,dump(data)))
+                self.event(a['run_id'],'attempt.completed',{'attempt':token,'state':outcome,'drift':drift,'blocked_effects':saved['blocked_effects'],'usage':usage})
+                return {'state':outcome,'idempotent':False}
 
     def release(self, token, *, external_id, confirmed, reason, kind='host-resource', receipt=None, usage=None):
         if confirmed is not True: raise WorkflowError('explicit host termination/closure confirmation required')
@@ -1177,6 +1249,12 @@ class Runtime:
         return [{'claim':cid,'reason':error} for cid in claims if (error := inspect(cid,set())) is not None]
 
     def report_findings(self, token, report, *, external_id, backend):
+        response = self._report_findings_checked(token, report, external_id=external_id, backend=backend)
+        if 'rejected' in response:
+            raise WorkflowError(response['rejected'])
+        return response
+
+    def _report_findings_checked(self, token, report, *, external_id, backend):
         """Retain early host-delivered evidence even if the probe is later interrupted."""
         fields = {'report_id','sources_opened','claims'}
         mapping(report, fields, fields, 'incremental report'); identifier(report['report_id'], 'report id')
@@ -1194,19 +1272,76 @@ class Runtime:
                 raise WorkflowError('incremental findings require an active bound supplemental turn')
             opened = path_list(report['sources_opened'],'sources_opened')
             if not set(opened) <= set(spec['sources']): raise WorkflowError('report exceeds source scope')
+            limit = loads(r['contract'])['bounds'].get('supplemental_claims_approved')
+            if limit is not None and isinstance(report['claims'],list) and len(report['claims']) > 64:
+                return self._reject_claim_delivery(r['id'],token,'report',None,len(report['claims']),
+                                                   self._supplemental_claim_count(r['id']),limit,
+                                                   'supplemental claim batch exceeds 64',report['report_id'],opened)
             claims = [{**claim,'evidence':path_list(claim['evidence'],'claim evidence')}
                       for claim in validate_claims(report['claims'], opened)]
             count = self.conn.execute('SELECT COUNT(*) FROM claims WHERE attempt=?',(token,)).fetchone()[0]
-            if not claims or count + len(claims) > 128: raise WorkflowError('incremental claim limit reached')
+            if not claims: raise WorkflowError('incremental claim list is empty')
             before = loads(n['snapshot']); current = fingerprint(Path(spec['snapshot_root']),list(before))
-            ids = []
-            for i,claim in enumerate(claims):
-                cid = f"{token}-report-{report['report_id']}-{i}"; ids.append(cid)
-                self.conn.execute('INSERT INTO claims(id,run_id,node_id,attempt,data) VALUES(?,?,?,?,?)',
-                    (cid,r['id'],n['id'],token,dump({'claim':claim,'snapshot':before,'evidence_valid':current==before})))
-            self.event(r['id'],'supplemental.reported',{'report_key':token+'-'+report['report_id'],
-                       'attempt':token, 'report':report, 'claims':ids})
-            return {'claims':ids, 'idempotent':False}
+            used = self._supplemental_claim_count(r['id']) if limit is not None else 0
+            if limit is None and count + len(claims) > 128:
+                raise WorkflowError('incremental claim limit reached')
+            if count + len(claims) > 128 or (limit is not None and used + len(claims) > limit):
+                reason = ('incremental claim limit reached' if count + len(claims) > 128
+                          else f'supplemental claim limit reached ({used}+{len(claims)}>{limit})')
+                return self._reject_claim_delivery(r['id'],token,'report',report,len(claims),used,limit,
+                                                   reason,report['report_id'],opened)
+            else:
+                ids = []
+                for i,claim in enumerate(claims):
+                    cid = f"{token}-report-{report['report_id']}-{i}"; ids.append(cid)
+                    self.conn.execute('INSERT INTO claims(id,run_id,node_id,attempt,data) VALUES(?,?,?,?,?)',
+                        (cid,r['id'],n['id'],token,dump({'claim':claim,'snapshot':before,'evidence_valid':current==before})))
+                self.event(r['id'],'supplemental.reported',{'report_key':token+'-'+report['report_id'],
+                           'attempt':token, 'report':report, 'claims':ids})
+                return {'claims':ids, 'idempotent':False}
+
+    def reconcile_claim_delivery(self, run, rejection_seq, *, delivery_key, disposition,
+                                 claim_ids=None, reason):
+        """Root attests that a rejected batch was reviewed against current evidence."""
+        integer(rejection_seq, 'rejection_seq', 1)
+        text(delivery_key, 'delivery_key', 64)
+        if re.fullmatch(r'[0-9a-f]{64}', delivery_key) is None:
+            raise WorkflowError('invalid claim rejection receipt key')
+        text(reason, 'reconciliation reason', 2000)
+        ids = [] if claim_ids is None else claim_ids
+        if (not isinstance(ids, list) or len(ids) > 128 or
+                any(not isinstance(cid, str) or not cid or len(cid) > 256 for cid in ids) or
+                len(set(ids)) != len(ids)):
+            raise WorkflowError('invalid reconciliation claim IDs')
+        if disposition not in {'covered','not-applicable'} or (disposition == 'covered') != bool(ids):
+            raise WorkflowError('reconciliation requires covered claim IDs or a not-applicable decision')
+        with self.tx():
+            r = self.run(run); self._require_followup(r)
+            if r['contract_hash'] != sha(loads(r['contract'])):
+                raise WorkflowError('contract identity mismatch')
+            row = self.conn.execute("SELECT data FROM events WHERE run_id=? AND seq=? "
+                                    "AND kind='supplemental.claim_rejected'", (run,rejection_seq)).fetchone()
+            if row is None:
+                raise WorkflowError('unknown claim rejection receipt')
+            rejected = loads(row['data'])
+            if rejected['delivery_key'] != delivery_key:
+                raise WorkflowError('claim rejection receipt identity mismatch')
+            paths = rejected['sources_opened']
+            if not paths:
+                raise WorkflowError('claim rejection has no source evidence to reconcile')
+            for cid in ids:
+                claim = self.conn.execute('SELECT node_id,data FROM claims WHERE run_id=? AND id=?', (run,cid)).fetchone()
+                if (claim is None or not loads(self.node(run,claim['node_id'])['spec']).get('supplemental')
+                        or not set(loads(claim['data'])['claim']['evidence']) & set(paths)):
+                    raise WorkflowError('reconciliation must cite accepted same-run supplemental claims')
+            data = {'rejection_seq':rejection_seq,'delivery_key':delivery_key,
+                    'disposition':disposition,'claim_ids':ids,'reason':reason,
+                    'candidate':fingerprint(Path(r['root']), paths, set(paths))}
+            previous = self._latest_events(run,'supplemental.claim_reconciled',key='rejection_seq').get(rejection_seq)
+            if previous and all(previous.get(k)==v for k,v in data.items()):
+                return {**data,'idempotent':True}
+            self.event(run,'supplemental.claim_reconciled',data)
+            return {**data,'idempotent':False}
 
     def _candidate(self, r, nodes):
         paths = sorted({p for n in nodes if not loads(n['spec']).get('supplemental')
@@ -1283,7 +1418,7 @@ class Runtime:
 
     def _supplemental_claim_gaps(self, r, nodes):
         if followup_contract(loads(r['contract'])):
-            return self._followup_claim_gaps(r, nodes)
+            return self._followup_claim_gaps(r, nodes) + self._claim_backpressure_gaps(r['id'])
         by_id = {n['id']:n for n in nodes}; decisions = {}
         for row in self.conn.execute("SELECT data FROM events WHERE run_id=? AND kind='supplemental.triaged' ORDER BY seq", (r['id'],)):
             d = loads(row['data']); decisions[d['claim']] = d
@@ -1303,7 +1438,7 @@ class Runtime:
                     if now != d['candidate']: raise WorkflowError('triage candidate changed')
                 except (WorkflowError, OSError) as exc:
                     gaps.append({'claim':row['id'],'reason':str(exc)})
-        return gaps
+        return gaps + self._claim_backpressure_gaps(r['id'])
 
     def _mainline_gate(self, r, nodes, attempts):
         mainline = [n for n in nodes if not loads(n['spec']).get('supplemental')]
@@ -1367,6 +1502,11 @@ class Runtime:
         probes = [n for n in nodes if loads(n['spec']).get('supplemental')]
         mainline = [n for n in nodes if not loads(n['spec']).get('supplemental')]
         gaps = self._supplemental_claim_gaps(r,nodes)
+        claim_limit = loads(r['contract'])['bounds'].get('supplemental_claims_approved')
+        claim_count = self._supplemental_claim_count(r['id'])
+        backpressure_gaps = self._claim_backpressure_gaps(r['id'])
+        rejected_count = self.conn.execute("SELECT COUNT(*) FROM events WHERE run_id=? "
+                                           "AND kind='supplemental.claim_rejected'", (r['id'],)).fetchone()[0]
         gate_error = None
         try: self._mainline_gate(r,nodes,attempts)
         except (WorkflowError,OSError) as exc: gate_error = str(exc)
@@ -1380,6 +1520,11 @@ class Runtime:
                      and all(g['reason']=='untriaged' for g in gaps) else 'not-accepted'),
                     'closeout':self._closeout_status(r, nodes, attempts)} if followup_contract(loads(r['contract'])) else {}),
                 'supplemental_claim_gaps':gaps,
+                 'supplemental_claims':{'accepted':claim_count,'limit':claim_limit,
+                     'backpressured':claim_limit is not None and (claim_count >= claim_limit
+                         or bool(backpressure_gaps)),
+                     'rejected_deliveries':rejected_count,
+                     'unresolved_deliveries':len(backpressure_gaps)},
                 'supplemental_coverage':{'declared':len(probes),
                     'launched':sum(n['attempts']>0 for n in probes),
                     'attempts':sum(n['attempts'] for n in probes),

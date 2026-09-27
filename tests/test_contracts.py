@@ -610,6 +610,23 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(json.loads(state.read_text())['local_overrides'],expected)
         self.assertEqual(path.read_bytes(),installer.manifest(self.root)[relative])
 
+    def test_adoption_of_matching_bytes_clears_stale_override_ownership(self):
+        self.install(apply=True);relative='skills/codex-dynamic-workflow/SKILL.md'
+        path,state_path=self.mark_local_override(relative,self.skill.read_bytes())
+        state=json.loads(state_path.read_text(encoding='utf-8'))
+        state['hashes'][relative]='0'*64
+        state['local_overrides'][relative]='0'*64
+        state_path.write_text(json.dumps(state),encoding='utf-8')
+        current=installer.digest(path.read_bytes())
+        plan=self.install(adopt={relative:current})
+        self.assertEqual(plan['changes'],[])
+        self.assertEqual(plan['ownership_only_adoptions'],[relative])
+        self.assertEqual(self.install(apply=True,adopt={relative:current})['changed_files'],0)
+        updated=json.loads(state_path.read_text(encoding='utf-8'))
+        self.assertEqual(updated['hashes'][relative],current)
+        self.assertNotIn(relative,updated.get('local_overrides',{}))
+        self.assertEqual(self.install()['changes'],[])
+
     def test_local_override_state_is_strictly_validated(self):
         self.install(apply=True);state_path=self.root/'.delivery/install-state.json'
         baseline=json.loads(state_path.read_text());relative='skills/codex-dynamic-workflow/SKILL.md'

@@ -66,7 +66,7 @@ class DispatchGuidanceTests(unittest.TestCase):
     def test_defaults_and_execution_profiles_are_preserved(self):
         policy = json.loads(read('policy.json'))
         self.assertEqual(policy['budget']['minimum_meaningful_luna_probes'], 3)
-        self.assertEqual(policy['budget']['supplemental_luna_launches'], 12)
+        self.assertEqual(policy['budget']['supplemental_luna_launches'], 24)
         self.assertEqual(policy['backend'], 'native-only')
         profiles = {p.stem: tomllib.loads(p.read_text(encoding='utf-8'))
                     for p in (ROOT / 'profiles').glob('*.toml')}

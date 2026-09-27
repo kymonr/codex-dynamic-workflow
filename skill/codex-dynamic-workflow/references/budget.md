@@ -16,7 +16,7 @@ never a target headcount.
 Use the stricter applicable host/authorization constraint. The reserve is per run,
 not per node, wave, retry or model. Unknown cost/risk is not eligible for economy reserve.
 Supplemental Luna/max work consumes the supplemental portion of approved non-strong
-allowance. Plan up to 12 supplemental launches by default for meaningful work, with
+allowance. Plan up to 24 supplemental launches by default for meaningful work, with
 at least three distinct probes as the normal launch intent when host capacity permits.
 These are ceilings/coverage defaults, never a completion quota. Reserve the strong
 allowance needed for Astra design/acceptance and total allowance for Sol implementation before admitting
@@ -136,10 +136,9 @@ Reserve necessary Astra acceptance and safe closeout before optional work; switc
 Root to Sol carries forward all usage, deadlines and unresolved claims. The Runtime
 still has no hard credit cap or automatic phase/model switch.
 
-The unchanged defaults allow 12 supplemental turns inside approved 28 / absolute 32.
-For a user-approved broader NEW task, the following optional bounds permit up to
-24 cumulative supplemental attempts, leave 8 strong calls reserved and leave 8
-other approved calls for implementation/follow-ups. These are planning ceilings,
+The current defaults allow 24 supplemental turns inside approved 40 / absolute 44.
+They leave 8 strong calls reserved and leave 8 other approved calls for
+implementation/follow-ups. These are planning ceilings,
 not target counts, account-credit guarantees or host concurrency observations:
 
 ```json
@@ -152,12 +151,12 @@ not target counts, account-credit guarantees or host concurrency observations:
 }
 ```
 
-Put this object in the new plan's `bounds` only after that allowance is authorized;
-keep the actual required graph fundable. Skill-only may use the same explicitly
-approved task ceilings as bookkeeping, not as a new Runtime. The legacy reserve
+New plans receive these values when no stricter user or host bound applies. Exceeding
+them requires an explicit task budget; keep the actual required graph fundable.
+Skill-only uses the same task ceilings as bookkeeping, not as a new Runtime. The legacy reserve
 cannot fund new supplemental work. Within the selected scope/allowance, batch
 launches need no repeated permission; exceeding it does. Do not mutate saved bounds,
-retroactively enable this example or start a new run to reset an active task.
+retroactively replace saved bounds or start a new run to reset an active task.
 Stopping optional expansion never waives unaffordable necessary acceptance.
 
 ## Burst provider accounting

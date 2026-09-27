@@ -202,7 +202,7 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append('must disclose instruction-only enforcement')
     if runtime_version.startswith('4.'):
         if policy.get('workflow') != 'astra-mainline': errors.append('v4 workflow must be astra-mainline')
-        for key in ('supplemental_luna_launches', 'minimum_meaningful_luna_probes', 'mainline_capacity_reserve'):
+        for key in ('supplemental_luna_launches', 'supplemental_claims_approved', 'minimum_meaningful_luna_probes', 'mainline_capacity_reserve'):
             if type(budget.get(key)) is not int or budget[key] < 1: errors.append('invalid v4 budget field: '+key)
         if type(budget.get('minimum_meaningful_luna_probes')) is int and budget['minimum_meaningful_luna_probes'] < 3:
             errors.append('meaningful-task Luna launch intent must be at least three')
@@ -344,7 +344,7 @@ def validate(root: Path = ROOT) -> list[str]:
                         for target in node.targets:
                             if isinstance(target, ast.Name): declarations[target.id] = {k.arg:ast.literal_eval(k.value) for k in node.value.keywords}
                 expected = {'approved':'approved_child_launches','reserve':'preauthorized_economy_reserve','absolute':'absolute_child_launches','strong_approved':'approved_strong_child_launches'}
-                expected_supplemental = {'supplemental_approved':'supplemental_luna_launches','mainline_capacity_reserve':'mainline_capacity_reserve'}
+                expected_supplemental = {'supplemental_approved':'supplemental_luna_launches','supplemental_claims_approved':'supplemental_claims_approved','mainline_capacity_reserve':'mainline_capacity_reserve'}
                 for table, fields in [('DEFAULTS',expected),('SUPPLEMENTAL_DEFAULTS',expected_supplemental)]:
                     if any(declarations.get(table,{}).get(k) != budget.get(v) for k,v in fields.items()):
                         errors.append('v4 runtime/policy budget drift: '+table)

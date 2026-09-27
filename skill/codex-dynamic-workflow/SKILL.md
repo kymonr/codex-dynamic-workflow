@@ -7,7 +7,7 @@ metadata:
 
 # Codex Dynamic Workflow
 
-Invocation-policy revision: 2026-09-21. Phase-handoff revision: 2026-09-18.
+Invocation-policy revision: 2026-09-27. Phase-handoff revision: 2026-09-18.
 Threaded control-transfer revision: 2026-09-18. Runtime remains 4.2.0.
 Root owns the user's objective, execution permissions and final acceptance.
 Quality > automation > latency > cost > observability > recovery.
@@ -76,8 +76,8 @@ Check for branches at task entry and when new scope or evidence appears; launch 
 first useful batch before Root performs that same investigation. Root's ability to
 do the work alone is not a reason to keep independently deliverable branches local.
 
-Use 3–6 useful Luna branches as a planning guide for ordinary substantive tasks and
-6–12 for broad cross-module work, within the turn allowance and observed free slots.
+Use 6–12 useful Luna branches as a planning guide for ordinary substantive tasks and
+12–24 for broad cross-module work, within the turn allowance and observed free slots.
 Dispatch only the branches that actually exist: one independent branch merits one
 Luna, and trivial or indivisible work stays with Root. These ranges are not quotas;
 never split one cohesive question or repeat evidence to reach a number.
@@ -108,7 +108,7 @@ freeze relevant inputs or serialize reads against conflicting writes.
 
 Use the explicitly approved task ceilings, otherwise the `policy.json` defaults;
 a stricter host or user limit always wins. Do not raise existing ceilings automatically. The default
-supplemental allowance is 12 turns within approved 28 / absolute 32; failures,
+supplemental allowance is 24 turns within approved 40 / absolute 44; failures,
 follow-ups and retries all count. Mode changes, controller-thread handoffs and candidate
 revisions retain the same cumulative usage. No available model budget or an explicit
 no-native boundary means no dispatch, including Luna. Unknown account/token use stays UNKNOWN.

@@ -41,6 +41,7 @@ def parser():
     c=sub.add_parser('screen'); c.add_argument('--run',required=True); c.add_argument('--decisions',required=True)
     c=sub.add_parser('resolve'); c.add_argument('--claim',required=True); c.add_argument('--outcome',required=True,choices=['reported','disproved','fixed','blocking']); c.add_argument('--reason',required=True); c.add_argument('--node')
     c=sub.add_parser('report'); c.add_argument('--attempt',required=True); c.add_argument('--external-id',required=True); c.add_argument('--backend',required=True,choices=['native']); c.add_argument('--report',required=True)
+    c=sub.add_parser('reconcile-claim-delivery'); c.add_argument('--run',required=True); c.add_argument('--rejection-seq',type=int,required=True); c.add_argument('--delivery-key',required=True); c.add_argument('--disposition',required=True,choices=['covered','not-applicable']); c.add_argument('--claim-ids',required=True); c.add_argument('--reason',required=True)
     c=sub.add_parser('reopen-supplemental'); c.add_argument('--run',required=True); c.add_argument('--changed-paths',required=True); c.add_argument('--reason',required=True)
     c=sub.add_parser('closeout'); c.add_argument('--run',required=True); c.add_argument('--entries',required=True)
     return p
@@ -76,6 +77,8 @@ def main(argv=None):
             elif op=='screen': result=rt.screen(args.run,read_json(args.decisions))
             elif op=='resolve': result=rt.resolve(args.claim,args.outcome,reason=args.reason,node=args.node)
             elif op=='report': result=rt.report_findings(args.attempt,read_json(args.report),external_id=args.external_id,backend=args.backend)
+            elif op=='reconcile-claim-delivery': result=rt.reconcile_claim_delivery(args.run,args.rejection_seq,
+                delivery_key=args.delivery_key,disposition=args.disposition,claim_ids=read_json(args.claim_ids),reason=args.reason)
             elif op=='reopen-supplemental': result=rt.reopen_supplemental(args.run,read_json(args.changed_paths),reason=args.reason)
             elif op=='closeout': result=rt.closeout(args.run,read_json(args.entries))
             elif op=='retry': result=rt.retry(args.run,args.node,reason=args.reason)
