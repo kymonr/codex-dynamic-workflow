@@ -203,7 +203,8 @@ def install(root: Path, home: Path, *, apply: bool = False,
         return {'status': 'DRY_RUN', 'home': str(home), 'inplace_skill': inplace_skill,
                 'legacy_enabled': legacy_enabled, 'retire_legacy_ownership': sorted(r for r in previous_hashes
                     if not legacy_enabled and r.startswith('skills/dispatching-native-agents/')),
-                'changes': [r[0] for r in plan]}
+                 'changes': [r[0] for r in plan],
+                 'ownership_only_adoptions': sorted(set(adoptions) - {r[0] for r in plan})}
     backup = root / 'reports' / f'install-backup-{uuid.uuid4().hex[:12]}'
     backup.mkdir(parents=True, exist_ok=False)
     receipt = {'schema': 2, 'home': str(home), 'project': str(root.resolve()),
@@ -221,8 +222,10 @@ def install(root: Path, home: Path, *, apply: bool = False,
                                   'after_sha': digest(after), 'applied': False, 'pending': False,
                                   'write_mode': 'in-place' if inplace_skill and rel.endswith('/SKILL.md') and before is not None else 'atomic'})
     rp = backup / 'receipt.json'
+    # Adoption clears the old override even when its current bytes already equal
+    # the package and no file replacement appears in the plan.
     remaining_overrides = {rel: sha for rel, sha in local_overrides.items()
-                           if not (rel in adoptions and any(item[0] == rel for item in plan))}
+                            if rel not in adoptions}
     state_record = {'home': str(home), 'receipt': str(rp), 'legacy_enabled': legacy_enabled,
                     'hashes': {r: digest(b) for r,b in payload.items()}}
     if remaining_overrides:

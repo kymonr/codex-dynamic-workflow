@@ -68,10 +68,24 @@ New Runtime contracts default to workflow=astra-mainline. Mainline nodes use the
 Astra route except the new 4.2 Sol writer; required reviewers remain on Astra. Supplemental nodes use Luna,
 are optional, cannot write, cannot declare verifies, and cannot be dependencies of any
 mainline node. Legacy selection is explicit and must not silently override the new choice.
-Default approved/absolute limits are 28/32, strong allowance 8, supplemental allowance 12.
+Default approved/absolute limits are 40/44, strong allowance 8, supplemental allowance 24.
 The economy reserve remains 4 for legacy compatibility. New supplemental attempts cannot
-use it or exceed their own 12-call allowance. Failed attempts and retries still count.
+use it or exceed their own 24-call allowance. Failed attempts and retries still count.
 The scheduler protects all unused strong allowance, not just already declared checks.
+New run contracts also cap accepted supplemental claims at 256 across the entire run:
+incremental reports, final results, failed attempts and retries all consume the same
+claim allowance. Mainline claims do not consume it. At the cap, no new supplemental
+attempt is admitted. A batch that would exceed the cap is rejected whole; the
+controller records only a rejection receipt, not a truncated findings list. That
+receipt is an unresolved delivery gap and blocks mainline acceptance, including
+when an earlier acceptance receipt exists. Root must read the original rejected
+delivery from the host, then either submit a complete condensed claim set within
+the remaining allowance or conclude with a source-bound reason that every rejected
+lead is not applicable. `reconcile-claim-delivery` binds that explicit Root decision
+to the rejection event and current candidate; covered decisions must cite accepted
+same-run claims, which still need ordinary triage. A novel uncovered lead remains
+a gap, so Root discloses it and replans rather than claiming acceptance.
+Saved contracts without the new bound retain their original claim behavior and hash.
 
 Ready mainline nodes are considered before all probes, including optional mainline work.
 At least one host slot is reserved for Astra. A stricter run capacity is respected.

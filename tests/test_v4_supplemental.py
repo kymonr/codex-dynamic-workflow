@@ -48,7 +48,7 @@ class SupplementalV4Tests(unittest.TestCase):
         return p,ext
     def test_default_is_astra_mainline(self):
         c=loads(self.rt.run(self.run)['contract'])
-        self.assertEqual(c['workflow'],'astra-mainline'); self.assertEqual(c['bounds']['supplemental_approved'],12)
+        self.assertEqual(c['workflow'],'astra-mainline'); self.assertEqual(c['bounds']['supplemental_approved'],24)
     def test_mainline_cannot_route_luna(self):
         with self.assertRaisesRegex(WorkflowError,'mainline requires'): self.add(node('m',ordinary_qualified=True))
     def test_supplemental_contract_restrictions(self):

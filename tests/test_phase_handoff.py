@@ -97,9 +97,9 @@ class PhaseHandoffGuidanceTests(unittest.TestCase):
         self.assertIn('Unknown remains', budget)
         self.assertIn('not target counts, account-credit guarantees', budget)
         policy = json.loads(read('policy.json'))
-        self.assertEqual(policy['budget']['supplemental_luna_launches'], 12)
-        self.assertEqual(policy['budget']['approved_child_launches'], 28)
-        self.assertEqual(policy['budget']['absolute_child_launches'], 32)
+        self.assertEqual(policy['budget']['supplemental_luna_launches'], 24)
+        self.assertEqual(policy['budget']['approved_child_launches'], 40)
+        self.assertEqual(policy['budget']['absolute_child_launches'], 44)
         self.assertEqual(broad_bounds()['supplemental_approved'], 24)
 
     def test_closeout_is_bounded_and_never_claims_automatic_release(self):

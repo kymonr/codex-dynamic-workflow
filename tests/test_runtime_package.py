@@ -61,7 +61,7 @@ class RuntimePackageTests(unittest.TestCase):
             p=root/SKILL/'policy.json'; data=json.loads(p.read_text(encoding='utf-8'))
             if remove: data['runtime'].pop('version')
             else: data['runtime']['version']=value
-            data['budget']['approved_child_launches']=27
+            data['budget']['approved_child_launches']=39
             p.write_text(json.dumps(data),encoding='utf-8')
             with self.subTest(name=name):
                 errors=validate(root)
@@ -87,8 +87,10 @@ class RuntimePackageTests(unittest.TestCase):
              'v4.2 fixed route identity drift: writer'),
             ('profile','profiles/cwf_sol_writer.toml','model = "gpt-5.6-sol"',
              'model = "gpt-6-astra"','v4.2 fixed model/profile identity drift'),
-            ('budget','skill/codex-dynamic-workflow/policy.json','"approved_child_launches": 28',
-             '"approved_child_launches": 27','v4 runtime/policy budget drift: DEFAULTS'),
+            ('budget','skill/codex-dynamic-workflow/policy.json','"approved_child_launches": 40',
+             '"approved_child_launches": 39','v4 runtime/policy budget drift: DEFAULTS'),
+            ('claim-budget','skill/codex-dynamic-workflow/policy.json','"supplemental_claims_approved": 256',
+             '"supplemental_claims_approved": 255','v4 runtime/policy budget drift: SUPPLEMENTAL_DEFAULTS'),
         )
         for name,rel,old,new,expected in variants:
             root=Path(self.temp.name)/('lower-'+name); shutil.copytree(self.root,root)

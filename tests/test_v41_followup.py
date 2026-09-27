@@ -1,5 +1,6 @@
 """Adversarial controller tests. Every host identity/receipt here is a synthetic fixture."""
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -68,6 +70,7 @@ class FollowupTests(unittest.TestCase):
         return p,e
     def old_contract(self):
         c=loads(self.rt.run(self.run)['contract']); c['version']='4.0.0'
+        c['bounds'].pop('supplemental_claims_approved',None)
         c.pop('supplemental_protocol'); c.pop('acceptance_mode')
         self.rt.conn.execute('UPDATE runs SET contract=?,contract_hash=? WHERE id=?',(dump(c),sha(c),self.run))
         return self.rt.run(self.run)['contract']
@@ -95,7 +98,7 @@ class FollowupTests(unittest.TestCase):
                     self.assertTrue(packet['admitted']);self.assertEqual(packet['route'],routes['strong'])
                     self.rt.release(packet['attempt'],external_id=None,confirmed=True,reason='synthetic no-launch fixture')
     def test_legacy_cannot_change_model_of_a_shipped_profile(self):
-        routes=json.loads(json.dumps(DEFAULT_ROUTES));routes['strong']['model']='gpt-5.6-luna'
+        routes=json.loads(json.dumps(DEFAULT_ROUTES));routes['strong']['model']='gpt-6-luna'
         with self.assertRaisesRegex(WorkflowError,'identity mismatch'):
             self.rt.create(root=self.root,goal='bad fixed model',backend='native',workflow='legacy',routes=routes)
     def test_unsupported_astra_effort_is_rejected(self):
@@ -224,6 +227,7 @@ class FollowupTests(unittest.TestCase):
         self.run=self.rt.create(root=self.root,goal='old writer fixture',backend='native',implement=True)
         if saved_v41:
             contract=loads(self.rt.run(self.run)['contract']);contract['version']='4.1.0'
+            contract['bounds'].pop('supplemental_claims_approved',None)
             self.rt.conn.execute('UPDATE runs SET contract=?,contract_hash=? WHERE id=?',(dump(contract),sha(contract),self.run))
         self.add(node('old_write',role='writer',sources=['a.py','b.py'],writes=['b.py']),
                  node('old_review',role='reviewer',sources=['a.py','b.py'],verifies='old_write',depends=['old_write']))
@@ -292,6 +296,182 @@ class FollowupTests(unittest.TestCase):
             self.rt.report_findings(p['attempt'],dict(report_id=str(i),sources_opened=['a.py'],claims=[finding()]*64),external_id=e,backend='native')
         with self.assertRaisesRegex(WorkflowError,'limit'):
             self.rt.report_findings(p['attempt'],dict(report_id='overflow',sources_opened=['a.py'],claims=[finding()]),external_id=e,backend='native')
+
+    def test_run_claim_limit_combines_incremental_final_and_stops_new_probes(self):
+        self.run=self.rt.create(root=self.root,goal='bounded claims',backend='native',
+                                bounds={'supplemental_claims_approved':3})
+        self.add(node('main'),self.probe(),self.probe('later'))
+        self.done();p,e=self.start()
+        report=dict(report_id='early',sources_opened=['a.py'],claims=[finding(),finding()])
+        first=self.rt.report_findings(p['attempt'],report,external_id=e,backend='native')
+        self.assertTrue(self.rt.report_findings(p['attempt'],report,external_id=e,backend='native')['idempotent'])
+        self.rt.complete(p['attempt'],reply(claims=[finding()]),external_id=e,backend='native')
+        self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='fixture closed')
+        status=self.rt.status(self.run)
+        self.assertEqual(status['supplemental_claims']['accepted'],3)
+        self.assertEqual(status['supplemental_claims']['limit'],3)
+        self.assertIn('supplemental-claim-backpressure',str(self.acquire()))
+        for cid in first['claims']+[p['attempt']+'-0']:
+            self.rt.triage(cid,'advisory',reason='Root fixture reviewed source')
+        self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
+
+    def test_run_claim_limit_rejects_batches_atomically_and_blocks_acceptance(self):
+        self.run=self.rt.create(root=self.root,goal='bounded claims',backend='native',
+                                bounds={'supplemental_claims_approved':2})
+        self.add(node('main'),self.probe())
+        self.done();p,e=self.start()
+        first=self.rt.report_findings(p['attempt'],dict(report_id='first',sources_opened=['a.py'],
+                                                  claims=[finding()]),external_id=e,backend='native')
+        overflow=dict(report_id='overflow',sources_opened=['a.py'],claims=[finding(),finding()])
+        with self.assertRaisesRegex(WorkflowError,'supplemental claim limit'):
+            self.rt.report_findings(p['attempt'],overflow,external_id=e,backend='native')
+        events_after_rejection=self.rt.events(self.run)
+        with self.assertRaisesRegex(WorkflowError,'supplemental claim limit'):
+            self.rt.report_findings(p['attempt'],overflow,external_id=e,backend='native')
+        self.assertEqual(self.rt.events(self.run),events_after_rejection)
+        self.assertEqual(self.rt._supplemental_claim_count(self.run),1)
+        self.assertEqual(self.rt.attempt(p['attempt'])['state'],'running')
+        self.assertFalse(any(ev['kind']=='supplemental.reported' and ev['data']['report']['report_id']=='overflow'
+                             for ev in self.rt.events(self.run)))
+        with self.assertRaisesRegex(WorkflowError,'supplemental claim limit'):
+            self.rt.complete(p['attempt'],reply(claims=[finding(),finding()]),external_id=e,backend='native')
+        self.assertEqual(self.rt._supplemental_claim_count(self.run),1)
+        self.assertEqual(self.rt.attempt(p['attempt'])['state'],'running')
+        self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='fixture closed')
+        self.rt.triage(first['claims'][0],'advisory',reason='Root fixture reviewed source')
+        status=self.rt.status(self.run)
+        self.assertEqual(status['supplemental_claims']['rejected_deliveries'],2)
+        self.assertEqual(len([g for g in status['supplemental_claim_gaps']
+                              if g['reason']=='claim-delivery-backpressure']),2)
+        with self.assertRaisesRegex(WorkflowError,'supplemental evidence'):
+            self.rt.finish(self.run)
+
+    def test_oversized_claim_batch_records_delivery_gap(self):
+        self.run=self.rt.create(root=self.root,goal='batch bound',backend='native')
+        self.add(node('main'),self.probe());self.done();p,e=self.start()
+        report=dict(report_id='too-many',sources_opened=['a.py'],claims=[finding() for _ in range(65)])
+        with self.assertRaisesRegex(WorkflowError,'batch exceeds 64'):
+            self.rt.report_findings(p['attempt'],report,external_id=e,backend='native')
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['accepted'],0)
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['rejected_deliveries'],1)
+        self.assertEqual(self.rt.attempt(p['attempt'])['state'],'running')
+
+    def test_oversized_rejections_with_same_id_and_count_remain_distinct(self):
+        self.add(self.probe(sources=['a.py','b.py']));p,e=self.start()
+        for source in ('a.py','b.py'):
+            claim={**finding(),'evidence':[source]}
+            report=dict(report_id='same',sources_opened=[source],claims=[claim for _ in range(65)])
+            with self.assertRaisesRegex(WorkflowError,'batch exceeds 64'):
+                self.rt.report_findings(p['attempt'],report,external_id=e,backend='native')
+        receipts=[ev['data'] for ev in self.rt.events(self.run) if ev['kind']=='supplemental.claim_rejected']
+        self.assertEqual(len(receipts),2)
+        self.assertNotEqual(receipts[0]['delivery_key'],receipts[1]['delivery_key'])
+        self.assertEqual([r['sources_opened'] for r in receipts],[['a.py'],['b.py']])
+
+    def test_root_reconciles_rejected_batch_after_condensed_claim_is_received(self):
+        self.run=self.rt.create(root=self.root,goal='recover claim delivery',backend='native',
+                                bounds={'supplemental_claims_approved':2})
+        self.add(node('main'),self.probe());self.done();p,e=self.start()
+        first=self.rt.report_findings(p['attempt'],dict(report_id='first',sources_opened=['a.py'],
+                                                  claims=[finding()]),external_id=e,backend='native')
+        with self.assertRaisesRegex(WorkflowError,'supplemental claim limit'):
+            self.rt.report_findings(p['attempt'],dict(report_id='too-many',sources_opened=['a.py'],
+                                               claims=[finding(),finding()]),external_id=e,backend='native')
+        receipt=next(ev for ev in self.rt.events(self.run) if ev['kind']=='supplemental.claim_rejected')
+        condensed=self.rt.report_findings(p['attempt'],dict(report_id='condensed',sources_opened=['a.py'],
+                                                      claims=[finding()]),external_id=e,backend='native')
+        for cid in first['claims']+condensed['claims']:
+            self.rt.triage(cid,'advisory',reason='Root fixture screened source and findings')
+        with self.assertRaisesRegex(WorkflowError,'accepted same-run'):
+            self.rt.reconcile_claim_delivery(self.run,receipt['seq'],
+                delivery_key=receipt['data']['delivery_key'],disposition='covered',
+                claim_ids=['unknown-claim'],reason='fixture invalid coverage')
+        ids_path=self.base/'covered-claims.json';ids_path.write_text(json.dumps(condensed['claims']))
+        from cwf_runtime.cli import main
+        out=io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code=main(['--db',str(self.rt.path),'reconcile-claim-delivery','--run',self.run,
+                       '--rejection-seq',str(receipt['seq']),
+                       '--delivery-key',receipt['data']['delivery_key'],'--disposition','covered',
+                       '--claim-ids',str(ids_path),
+                       '--reason','Root fixture reviewed the rejected original; condensed claim covers both propositions'])
+        self.assertEqual(code,0,out.getvalue())
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['unresolved_deliveries'],0)
+        self.rt.complete(p['attempt'],reply(),external_id=e,backend='native')
+        self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='fixture closed')
+        self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
+        (self.root/'a.py').write_text('x=2\n')
+        self.assertIn('claim-reconciliation-candidate-changed',
+                      str(self.rt.status(self.run)['supplemental_claim_gaps']))
+
+    def test_root_can_screen_rejected_batch_as_not_applicable(self):
+        self.run=self.rt.create(root=self.root,goal='screen rejected delivery',backend='native',
+                                bounds={'supplemental_claims_approved':1})
+        self.add(node('main'),self.probe());self.done();p,e=self.start()
+        first=self.rt.report_findings(p['attempt'],dict(report_id='first',sources_opened=['a.py'],
+                                                  claims=[finding()]),external_id=e,backend='native')
+        with self.assertRaisesRegex(WorkflowError,'supplemental claim limit'):
+            self.rt.report_findings(p['attempt'],dict(report_id='duplicate',sources_opened=['a.py'],
+                                               claims=[finding()]),external_id=e,backend='native')
+        receipt=next(ev for ev in self.rt.events(self.run) if ev['kind']=='supplemental.claim_rejected')
+        self.rt.triage(first['claims'][0],'advisory',reason='Root fixture source screening')
+        self.rt.reconcile_claim_delivery(self.run,receipt['seq'],
+            delivery_key=receipt['data']['delivery_key'],disposition='not-applicable',claim_ids=[],
+            reason='Root fixture reviewed original duplicate and found no applicable new lead')
+        self.rt.complete(p['attempt'],reply(),external_id=e,backend='native')
+        self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='fixture closed')
+        self.assertTrue(self.rt.finish(self.run)['mainline_accepted'])
+
+    def test_failed_attempt_retry_keeps_run_claim_count(self):
+        self.run=self.rt.create(root=self.root,goal='retry claim budget',backend='native',
+                                bounds={'supplemental_claims_approved':2})
+        self.add(node('main'),self.probe(),self.probe('later'))
+        self.done();p,e=self.start()
+        self.rt.complete(p['attempt'],reply(outcome='failed',claims=[finding()]),external_id=e,backend='native')
+        self.rt.release(p['attempt'],external_id=e,confirmed=True,reason='fixture failed attempt closed')
+        self.rt.retry(self.run,'probe',reason='fixture same-source retry')
+        p2,e2=self.start();self.assertEqual(p2['node_id'],'probe')
+        self.rt.complete(p2['attempt'],reply(claims=[finding()]),external_id=e2,backend='native')
+        self.rt.release(p2['attempt'],external_id=e2,confirmed=True,reason='fixture retry closed')
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['accepted'],2)
+        self.assertIn('supplemental-claim-backpressure',str(self.acquire()))
+
+    def test_parallel_reports_compete_for_one_remaining_run_claim(self):
+        self.run=self.rt.create(root=self.root,goal='parallel claim budget',backend='native',
+                                bounds={'supplemental_claims_approved':2})
+        self.add(node('main'),self.probe('first'),self.probe('second'))
+        self.done();p1,e1=self.start();p2,e2=self.start()
+        self.rt.report_findings(p1['attempt'],dict(report_id='initial',sources_opened=['a.py'],
+                                                claims=[finding()]),external_id=e1,backend='native')
+        barrier=threading.Barrier(2)
+        def submit(packet,external_id):
+            with Runtime(self.rt.path) as other:
+                barrier.wait(timeout=5)
+                try:
+                    other.report_findings(packet['attempt'],dict(report_id='competing',sources_opened=['a.py'],
+                                                          claims=[finding()]),external_id=external_id,backend='native')
+                    return 'accepted'
+                except WorkflowError as exc:
+                    return str(exc)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first=pool.submit(submit,p1,e1);second=pool.submit(submit,p2,e2)
+            results=[first.result(timeout=15),second.result(timeout=15)]
+        self.assertEqual(results.count('accepted'),1)
+        self.assertEqual(sum('supplemental claim limit' in x for x in results),1)
+        status=self.rt.status(self.run)['supplemental_claims']
+        self.assertEqual(status['accepted'],2)
+        self.assertEqual(status['rejected_deliveries'],1)
+
+    def test_late_rejected_claims_revoke_existing_acceptance(self):
+        self.run=self.rt.create(root=self.root,goal='late claim gap',backend='native',
+                                bounds={'supplemental_claims_approved':1})
+        p,e=self.late_setup()
+        self.rt.report_findings(p['attempt'],dict(report_id='first',sources_opened=['a.py'],
+                                            claims=[finding()]),external_id=e,backend='native')
+        with self.assertRaisesRegex(WorkflowError,'supplemental claim limit'):
+            self.rt.report_findings(p['attempt'],dict(report_id='late',sources_opened=['a.py'],
+                                               claims=[finding()]),external_id=e,backend='native')
+        self.assertFalse(self.rt.status(self.run)['mainline_accepted'])
     def test_two_upcoming_astra_checks_reserve_two_slots(self):
         self.add(node('main'),node('r1',role='reviewer',depends=['main'],verifies='main'),
                  node('r2',role='reviewer',depends=['main'],verifies='main'),self.probe())

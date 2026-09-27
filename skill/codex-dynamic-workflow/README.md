@@ -1,5 +1,7 @@
 # Codex Dynamic Workflow v4.3.0
 
+新任务默认累计额度为 24 次补充、40 次批准、44 次绝对调用；普通任务参考 6～12 个独立方向，跨模块任务参考 12～24 个。这些是上限而非人数目标，旧合同保留原额度。Runtime 对 supplemental claims 设置每个 run 256 条的累计上限；未处理的拒收交付阻止验收。
+
 保持 `$codex-dynamic-workflow` 调用名，保留隐式匹配。
 Skill 4.3.0 中，隐式匹配主动把可独立交付的只读工作分给 Luna，主线程并行推进另一分支；数量参考和预算以 SKILL.md 为准。Grok 保留原有规则。
 用户显式调用时，才按[完整流程](references/explicit-workflow.md)运行 Astra 规划与验收、Sol 实施、Luna/Grok 补充。

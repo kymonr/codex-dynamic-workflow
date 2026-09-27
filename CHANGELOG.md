@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.3.0 supplemental claim backpressure — 2026-09-28
+
+- New Runtime runs cap accepted supplemental claims at 256 across incremental
+  reports, final results and retries. Saturation stops new supplemental admissions.
+- Over-limit batches are rejected atomically. A durable rejection receipt leaves
+  mainline acceptance blocked so undelivered findings cannot appear as clean
+  coverage. Root can explicitly reconcile a reviewed original batch with
+  accepted claims or a source-bound not-applicable decision; unresolved leads
+  continue to block acceptance. Saved contracts without the new bound keep
+  their stored hashes and behavior. Oversized submissions retain distinct
+  rejection receipts even when they reuse a report ID and claim count.
+- Exact adoption now clears stale local-override ownership even when installed
+  bytes already match the package and no file rewrite is planned. Dry-run reports
+  these ownership-only adoptions separately from file changes.
+
+## 4.3.0 Luna Fast capacity revision — 2026-09-27
+
+- Promote new-task defaults from 12 supplemental / 28 approved / 32 absolute
+  launches to 24 / 40 / 44 while preserving 8 strong launches, the legacy
+  reserve of 4 and at least one mainline host slot.
+- Raise the implicit planning guide to 6–12 independent Luna directions for an
+  ordinary substantive task and 12–24 for broad cross-module work. Distinct
+  evidence questions, observed host capacity and deduplication still control
+  actual dispatch; the ranges are not staffing quotas.
+- Preserve saved-run bounds and the existing published model routes. Local
+  Fast/500k routing overlays remain separate. No price guarantee is inferred.
+
 ## 4.3.0 proactive Luna and Fast routing revision — 2026-09-21
 
 - Dispatch useful independent readonly Luna work early while Root advances another
