@@ -98,7 +98,7 @@ class FollowupTests(unittest.TestCase):
                     self.assertTrue(packet['admitted']);self.assertEqual(packet['route'],routes['strong'])
                     self.rt.release(packet['attempt'],external_id=None,confirmed=True,reason='synthetic no-launch fixture')
     def test_legacy_cannot_change_model_of_a_shipped_profile(self):
-        routes=json.loads(json.dumps(DEFAULT_ROUTES));routes['strong']['model']='gpt-6-luna'
+        routes=json.loads(json.dumps(DEFAULT_ROUTES));routes['strong']['model']='gpt-5.6-luna'
         with self.assertRaisesRegex(WorkflowError,'identity mismatch'):
             self.rt.create(root=self.root,goal='bad fixed model',backend='native',workflow='legacy',routes=routes)
     def test_unsupported_astra_effort_is_rejected(self):
