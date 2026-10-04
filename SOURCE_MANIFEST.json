@@ -87,7 +87,7 @@
   "skill/codex-dynamic-workflow/scripts/cwf_runtime/__init__.py": "9a5690b5d7074f0c1fb7b36ce0456b9dccca07bd6b89a37b8dcba170294f5fc1",
   "skill/codex-dynamic-workflow/scripts/cwf_runtime/__main__.py": "79ee6f134c5c5193377cf9b189cbdcc3e2095e49ba9cec310114441c15a917c4",
   "skill/codex-dynamic-workflow/scripts/cwf_runtime/cli.py": "1068ddde06859533fe1675fe7bd6050b6c6dfe2b52095d2b30dba1f911a12420",
-  "skill/codex-dynamic-workflow/scripts/cwf_runtime/core.py": "b8b1206ca7ab7d4ebaade0f0fa49b5f17d6a27f000f8a257ea2c9f04505033bc",
+  "skill/codex-dynamic-workflow/scripts/cwf_runtime/core.py": "7ba6bc2d79e02f36d7115e335be7ea5d07342d50039cd23350f46451ac30fc36",
   "skill/codex-dynamic-workflow/scripts/cwf_runtime/executor.py": "0e3fdcfcfc0a305ca4cebcfa8484d2299e4398a0dfea18249e3f059a9e6d7d6e",
   "skill/codex-dynamic-workflow/scripts/cwf_runtime/luna_pool.py": "e8cc3ce910f07f3faa79854d0e95ccd94d0b233546ffd1a102c8a27ddd8a6275",
   "skill/codex-dynamic-workflow/scripts/cwf_runtime/policy.py": "22c4f7f96ba0839e919b306e26aecb04e8a68d81e3965cd93efd244f75a70123",
@@ -130,6 +130,6 @@
   "tests/test_v3_live_contract.py": "b7919fbf32ba4ffbec4ed5d209b06a1ec40a499baa53e4c627a54d5dd23a8611",
   "tests/test_v412_evidence.py": "85081f70ec59d66459d155839e7d1c50910311bb4edbcdd5e83ad2552065433e",
   "tests/test_v412_review.py": "3cf101d93f619abe871395c9eb70233584d1a51c60e50649ff5231819eb20881",
-  "tests/test_v41_followup.py": "d1be0295cb443576394263aa7aabd94f75c61ecd982c0560e2fc01cc86aeb3c8",
+  "tests/test_v41_followup.py": "a9200d9ad7ac6fe6774ea726ce6d6b9356d5ed9d85001a4245e6c3e58fa9133b",
   "tests/test_v4_supplemental.py": "ff9538dd6d97c402d59cda2b96ef4b1adda50ea022526549cd8579017b1414ec"
 }

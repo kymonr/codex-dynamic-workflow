@@ -368,6 +368,71 @@ class FollowupTests(unittest.TestCase):
         self.assertNotEqual(receipts[0]['delivery_key'],receipts[1]['delivery_key'])
         self.assertEqual([r['sources_opened'] for r in receipts],[['a.py'],['b.py']])
 
+    def rejection_at_seq(self, seq):
+        self.run=self.rt.create(root=self.root,goal='high event sequence fixture',backend='native')
+        self.add(self.probe());p,e=self.start()
+        # Advance only the temporary fixture's global AUTOINCREMENT counter.
+        self.rt.conn.execute("UPDATE sqlite_sequence SET seq=? WHERE name='events'",(seq-1,))
+        report=dict(report_id='overflow',sources_opened=['a.py'],claims=[finding() for _ in range(65)])
+        with self.assertRaisesRegex(WorkflowError,'batch exceeds 64'):
+            self.rt.report_findings(p['attempt'],report,external_id=e,backend='native')
+        receipt=next(ev for ev in self.rt.events(self.run,seq-1)
+                     if ev['kind']=='supplemental.claim_rejected')
+        self.assertEqual(receipt['seq'],seq)
+        return receipt
+
+    def assert_reconcile_sequence(self, seq):
+        receipt=self.rejection_at_seq(seq)
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['unresolved_deliveries'],1)
+        args=dict(delivery_key=receipt['data']['delivery_key'],disposition='not-applicable',
+                  reason='Root fixture reviewed the rejected batch against current source')
+        result=self.rt.reconcile_claim_delivery(self.run,seq,**args)
+        self.assertEqual(result['rejection_seq'],seq)
+        self.assertFalse(result['idempotent'])
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['unresolved_deliveries'],0)
+        events=self.rt.events(self.run)
+        self.assertEqual(events[-1]['kind'],'supplemental.claim_reconciled')
+        self.assertEqual(events[-1]['data']['rejection_seq'],seq)
+        self.assertTrue(self.rt.reconcile_claim_delivery(self.run,seq,**args)['idempotent'])
+        self.assertEqual(self.rt.events(self.run),events)
+
+    def test_reconcile_claim_delivery_accepts_sequence_100000(self):
+        self.assert_reconcile_sequence(100000)
+
+    def test_reconcile_claim_delivery_accepts_sequence_100001(self):
+        self.assert_reconcile_sequence(100001)
+
+    def test_reconcile_claim_delivery_accepts_event_cursor_max_sequence(self):
+        self.assert_reconcile_sequence(10**12)
+
+    def test_reconcile_claim_delivery_rejects_invalid_sequences_without_writes(self):
+        receipt=self.rejection_at_seq(100001)
+        events=self.rt.events(self.run)
+        for seq in (-1,0,True,False,1.0,100001.0,'100001',None,[],{},10**12+1,2**63):
+            with self.subTest(seq=seq):
+                with self.assertRaisesRegex(WorkflowError,'rejection_seq must be an integer'):
+                    self.rt.reconcile_claim_delivery(self.run,seq,
+                        delivery_key=receipt['data']['delivery_key'],disposition='not-applicable',
+                        reason='fixture invalid sequence')
+                self.assertEqual(self.rt.events(self.run),events)
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['unresolved_deliveries'],1)
+
+    def test_reconcile_high_sequence_preserves_receipt_identity_checks(self):
+        receipt=self.rejection_at_seq(100001)
+        other=self.rt.create(root=self.root,goal='unrelated fixture run',backend='native')
+        self.rt.event(self.run,'fixture.marker',{})
+        events=self.rt.events(self.run)
+        args=dict(delivery_key=receipt['data']['delivery_key'],disposition='not-applicable',
+                  reason='fixture receipt identity check')
+        for run,seq in ((other,100001),(self.run,100000),(self.run,events[-1]['seq'])):
+            with self.subTest(run=run,seq=seq):
+                with self.assertRaisesRegex(WorkflowError,'unknown claim rejection receipt'):
+                    self.rt.reconcile_claim_delivery(run,seq,**args)
+        with self.assertRaisesRegex(WorkflowError,'receipt identity mismatch'):
+            self.rt.reconcile_claim_delivery(self.run,100001,**(args|{'delivery_key':'0'*64}))
+        self.assertEqual(self.rt.events(self.run),events)
+        self.assertEqual(self.rt.status(self.run)['supplemental_claims']['unresolved_deliveries'],1)
+
     def test_root_reconciles_rejected_batch_after_condensed_claim_is_received(self):
         self.run=self.rt.create(root=self.root,goal='recover claim delivery',backend='native',
                                 bounds={'supplemental_claims_approved':2})
