@@ -1303,7 +1303,7 @@ class Runtime:
     def reconcile_claim_delivery(self, run, rejection_seq, *, delivery_key, disposition,
                                  claim_ids=None, reason):
         """Root attests that a rejected batch was reviewed against current evidence."""
-        integer(rejection_seq, 'rejection_seq', 1)
+        integer(rejection_seq, 'rejection_seq', 1, 10**12)
         text(delivery_key, 'delivery_key', 64)
         if re.fullmatch(r'[0-9a-f]{64}', delivery_key) is None:
             raise WorkflowError('invalid claim rejection receipt key')
